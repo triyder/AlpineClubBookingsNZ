@@ -85,11 +85,12 @@ test("an admin approves a review-flagged booking then allocates a bed to its gue
     .last();
   await expect(kenChip).toBeVisible({ timeout: 30_000 });
 
-  // Open the bed Select (Radix combobox, placeholder "Select bed") and choose a
-  // free bed by its "<room> / <bed>" option label, then Allocate.
+  // Open the grouped bed Select (Radix combobox, room label + bed option) and
+  // choose a free bed, then Allocate.
   await kenChip.getByRole("combobox").click();
   await page
-    .getByRole("option", { name: "Bunk Room A / A1", exact: true })
+    .getByRole("group", { name: "Bunk Room A" })
+    .getByRole("option", { name: "A1", exact: true })
     .click();
   await kenChip.getByRole("button", { name: "Allocate" }).click();
   await expect(page.getByText("Allocation saved")).toBeVisible();

@@ -70,6 +70,9 @@ export type BatchModifyInput = {
   adminOverride?: boolean;
   pricingMode?: "shift" | "recalculate";
   confirmOverCapacity?: boolean;
+  // Owner decision (#1668 review): the admin chooses per override edit whether
+  // the member receives the change-notification email. Absent = notify.
+  notifyMember?: boolean;
 };
 
 export type BookingModificationSettlementMethod = "card" | "credit";

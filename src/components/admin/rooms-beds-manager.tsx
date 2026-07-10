@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   BedDouble,
@@ -102,6 +102,79 @@ function bedEditFromBed(bed: DashboardBed): BedDraft {
   };
 }
 
+function roomDraftsEqual(a: RoomDraft, b: RoomDraft): boolean {
+  return (
+    a.name === b.name &&
+    a.sortOrder === b.sortOrder &&
+    a.active === b.active &&
+    a.notes === b.notes
+  );
+}
+
+function bedDraftsEqual(a: BedDraft, b: BedDraft): boolean {
+  return a.name === b.name && a.sortOrder === b.sortOrder && a.active === b.active;
+}
+
+// Describes the row a save just wrote, carrying the exact draft that was sent
+// so the merge can tell an unchanged row (re-sync to server) from one the admin
+// kept editing mid-flight (keep the newer draft). null = a plain refresh.
+type SavedDraft =
+  | { kind: "room"; id: string; sent: RoomDraft }
+  | { kind: "bed"; id: string; sent: BedDraft }
+  | null;
+
+// A draft is dirty when it differs from the current server-derived draft. Beds
+// and rooms always have a seeded edit after the first load, so `existing`
+// truthiness alone can't decide dirtiness — the value comparison does.
+//
+// On refetch we keep every dirty draft. The just-saved row (named in `saved`)
+// re-syncs to the server value — so a server-side normalisation like a trimmed
+// name or "05" -> 5 doesn't leave a phantom "unsaved" badge — BUT only when its
+// draft is still what we sent; if the admin typed more while the save was in
+// flight, that newer draft wins and stays dirty. Entities missing from the
+// payload (deleted server-side) drop out; new entities seed a fresh draft.
+function mergeRoomEdits(
+  prev: Record<string, RoomDraft>,
+  rooms: DashboardRoom[],
+  saved: SavedDraft,
+): Record<string, RoomDraft> {
+  const next: Record<string, RoomDraft> = {};
+  for (const room of rooms) {
+    const serverDraft = roomEditFromRoom(room);
+    const existing = prev[room.id];
+    if (existing === undefined) {
+      next[room.id] = serverDraft;
+    } else if (saved?.kind === "room" && saved.id === room.id) {
+      next[room.id] = roomDraftsEqual(existing, saved.sent) ? serverDraft : existing;
+    } else {
+      next[room.id] = roomDraftsEqual(existing, serverDraft) ? serverDraft : existing;
+    }
+  }
+  return next;
+}
+
+function mergeBedEdits(
+  prev: Record<string, BedDraft>,
+  rooms: DashboardRoom[],
+  saved: SavedDraft,
+): Record<string, BedDraft> {
+  const next: Record<string, BedDraft> = {};
+  for (const room of rooms) {
+    for (const bed of room.beds) {
+      const serverDraft = bedEditFromBed(bed);
+      const existing = prev[bed.id];
+      if (existing === undefined) {
+        next[bed.id] = serverDraft;
+      } else if (saved?.kind === "bed" && saved.id === bed.id) {
+        next[bed.id] = bedDraftsEqual(existing, saved.sent) ? serverDraft : existing;
+      } else {
+        next[bed.id] = bedDraftsEqual(existing, serverDraft) ? serverDraft : existing;
+      }
+    }
+  }
+  return next;
+}
+
 export function RoomsBedsManager({
   permissionMatrix,
 }: {
@@ -127,6 +200,9 @@ export function RoomsBedsManager({
   const [roomEdits, setRoomEdits] = useState<Record<string, RoomDraft>>({});
   const [bedDrafts, setBedDrafts] = useState<Record<string, BedDraft>>({});
   const [bedEdits, setBedEdits] = useState<Record<string, BedDraft>>({});
+  // Monotonic counter so an out-of-order refetch (overlapping saves) can't apply
+  // a stale payload after a newer request has already landed.
+  const loadSeqRef = useRef(0);
   // Lodge context for the page; LodgeSelect renders nothing (and reports the
   // sole lodge) while fewer than two lodges exist (ADR-002).
   const { lodges, loading: lodgesLoading } = useLodgeOptions("admin");
@@ -142,7 +218,24 @@ export function RoomsBedsManager({
     [payload],
   );
 
-  const loadRooms = useCallback(async (signal?: AbortSignal) => {
+  const isRoomDirty = useCallback(
+    (room: DashboardRoom) => {
+      const edit = roomEdits[room.id];
+      return edit !== undefined && !roomDraftsEqual(edit, roomEditFromRoom(room));
+    },
+    [roomEdits],
+  );
+
+  const isBedDirty = useCallback(
+    (bed: DashboardBed) => {
+      const edit = bedEdits[bed.id];
+      return edit !== undefined && !bedDraftsEqual(edit, bedEditFromBed(bed));
+    },
+    [bedEdits],
+  );
+
+  const loadRooms = useCallback(async (signal?: AbortSignal, saved: SavedDraft = null) => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const response = await fetch(
@@ -172,17 +265,14 @@ export function RoomsBedsManager({
       }
 
       const data = (await response.json()) as RoomsBedsPayload;
+      // A newer load started while this one was in flight — drop this (stale)
+      // payload so it can't clobber the fresher list/drafts.
+      if (seq !== loadSeqRef.current) return;
       setPayload(data);
-      setRoomEdits(
-        Object.fromEntries(data.rooms.map((room) => [room.id, roomEditFromRoom(room)])),
-      );
-      setBedEdits(
-        Object.fromEntries(
-          data.rooms.flatMap((room) =>
-            room.beds.map((bed) => [bed.id, bedEditFromBed(bed)]),
-          ),
-        ),
-      );
+      // Preserve every unsaved draft across the refetch; only the just-saved
+      // row and untouched rows re-sync to server state (see mergeRoomEdits).
+      setRoomEdits((prev) => mergeRoomEdits(prev, data.rooms, saved));
+      setBedEdits((prev) => mergeBedEdits(prev, data.rooms, saved));
     } catch (error) {
       // An aborted request means the lodge changed (or the page unmounted);
       // a newer request owns the list now.
@@ -191,7 +281,11 @@ export function RoomsBedsManager({
       }
       toast.error(error instanceof Error ? error.message : "Failed to load rooms and beds");
     } finally {
-      setLoading(false);
+      // Only the latest request owns the loading flag; a superseded one must not
+      // clear it while the newer fetch is still running.
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, [lodgeId]);
 
@@ -204,11 +298,16 @@ export function RoomsBedsManager({
     return () => controller.abort();
   }, [loadRooms, canManageBeds]);
 
+  // Returns true only when the request succeeded, so callers can clear an
+  // add-form draft on success and preserve it on failure.
   async function mutate(
     label: string,
     request: () => Promise<Response>,
     success: string,
-  ) {
+    // The row this write just saved, so the follow-up refetch can re-sync it to
+    // the returned server state (see loadRooms / mergeRoomEdits).
+    saved?: SavedDraft,
+  ): Promise<boolean> {
     setSaving(label);
     try {
       const response = await request();
@@ -216,9 +315,11 @@ export function RoomsBedsManager({
         throw new Error(await readApiError(response, "Request failed"));
       }
       toast.success(success);
-      await loadRooms();
+      await loadRooms(undefined, saved);
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Request failed");
+      return false;
     } finally {
       setSaving(null);
     }
@@ -260,7 +361,7 @@ export function RoomsBedsManager({
   }
 
   async function createRoom() {
-    await mutate(
+    const created = await mutate(
       "room-new",
       () =>
         fetch("/api/admin/bed-allocation/rooms", {
@@ -277,7 +378,10 @@ export function RoomsBedsManager({
         }),
       "Room created",
     );
-    setRoomDraft({ name: "", sortOrder: "0", active: true, notes: "" });
+    // Keep the typed values on failure so a transient error doesn't lose them.
+    if (created) {
+      setRoomDraft({ name: "", sortOrder: "0", active: true, notes: "" });
+    }
   }
 
   async function saveRoom(roomId: string) {
@@ -298,13 +402,14 @@ export function RoomsBedsManager({
           }),
         }),
       "Room saved",
+      { kind: "room", id: roomId, sent: draft },
     );
   }
 
   async function createBed(roomId: string) {
     const draft = bedDrafts[roomId] ?? { name: "", sortOrder: "0", active: true };
 
-    await mutate(
+    const created = await mutate(
       `bed-new-${roomId}`,
       () =>
         fetch("/api/admin/bed-allocation/beds", {
@@ -319,7 +424,10 @@ export function RoomsBedsManager({
         }),
       "Bed created",
     );
-    updateBedDraft(roomId, { name: "", sortOrder: "0", active: true });
+    // Keep the typed values on failure so a transient error doesn't lose them.
+    if (created) {
+      updateBedDraft(roomId, { name: "", sortOrder: "0", active: true });
+    }
   }
 
   async function saveBed(bedId: string) {
@@ -339,6 +447,7 @@ export function RoomsBedsManager({
           }),
         }),
       "Bed saved",
+      { kind: "bed", id: bedId, sent: draft },
     );
   }
 
@@ -365,7 +474,7 @@ export function RoomsBedsManager({
   async function bulkCreateRooms() {
     const roomCount = Number(bulkRoomCount);
     const bedsPerRoom = Number(bulkBedsPerRoom || 0);
-    await mutate(
+    const created = await mutate(
       "rooms-bulk",
       () =>
         fetch("/api/admin/bed-allocation/rooms/bulk", {
@@ -380,7 +489,10 @@ export function RoomsBedsManager({
         }),
       `Created ${roomCount} room${roomCount === 1 ? "" : "s"}`,
     );
-    setBulkRoomCount("");
+    // Keep the typed count on failure so a transient error doesn't lose it.
+    if (created) {
+      setBulkRoomCount("");
+    }
   }
 
   async function importFromConfig() {
@@ -681,15 +793,31 @@ export function RoomsBedsManager({
                           />
                           Active
                         </label>
-                        <Button
-                          variant="outline"
-                          onClick={() => void saveRoom(room.id)}
-                          disabled={saving === `room-${room.id}`}
-                          className="gap-2"
-                        >
-                          <Save className="h-4 w-4" />
-                          Save
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          {/* Fixed-width slot reserves space so the Save button
+                              doesn't shift when the badge appears/disappears. */}
+                          <span className="inline-flex min-w-[5rem] justify-end">
+                            {isRoomDirty(room) ? (
+                              <Badge
+                                role="status"
+                                aria-label="Unsaved changes"
+                                variant="warning"
+                                className="whitespace-nowrap"
+                              >
+                                Unsaved
+                              </Badge>
+                            ) : null}
+                          </span>
+                          <Button
+                            variant="outline"
+                            onClick={() => void saveRoom(room.id)}
+                            disabled={saving === `room-${room.id}`}
+                            className="gap-2"
+                          >
+                            <Save className="h-4 w-4" />
+                            Save
+                          </Button>
+                        </div>
                       </div>
 
                       <div className="mt-4 space-y-3">
@@ -746,7 +874,7 @@ export function RoomsBedsManager({
                                 <TableHead>Bed</TableHead>
                                 <TableHead className="w-24">Sort</TableHead>
                                 <TableHead className="w-24">Active</TableHead>
-                                <TableHead className="w-32" />
+                                <TableHead className="w-48" />
                               </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -789,7 +917,21 @@ export function RoomsBedsManager({
                                       />
                                     </TableCell>
                                     <TableCell>
-                                      <div className="flex gap-2">
+                                      <div className="flex items-center gap-2">
+                                        {/* Fixed-width slot keeps the Save
+                                            button from shifting with the badge. */}
+                                        <span className="inline-flex min-w-[5rem] justify-end">
+                                          {isBedDirty(bed) ? (
+                                            <Badge
+                                              role="status"
+                                              aria-label="Unsaved changes"
+                                              variant="warning"
+                                              className="whitespace-nowrap"
+                                            >
+                                              Unsaved
+                                            </Badge>
+                                          ) : null}
+                                        </span>
                                         <Button
                                           size="sm"
                                           variant="outline"

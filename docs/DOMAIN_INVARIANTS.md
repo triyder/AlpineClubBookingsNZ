@@ -573,8 +573,13 @@ override requires an explicit `pricingMode`:
   activity. The `BookingModification` row is `ADMIN_DATE_SHIFT` with
   `priceDiffCents`/`changeFeeCents` = 0. All date math is date-only
   (`addDaysDateOnly` on UTC-midnight-normalised bounds), so the delta is
-  DST-safe. A fully-past shift does not email the member; a shift whose new
-  check-out is still future does.
+  DST-safe. On every override save the admin explicitly chooses whether the
+  member receives the change-notification email ("Save and email member" /
+  "Save without emailing"); the choice is recorded in the audit metadata
+  (`notifyMember`) and API callers that omit the flag default to notifying.
+  Non-override edits always notify (unchanged), and a recalculate override that
+  moves money still respects the admin's choice — the amounts remain visible on
+  the booking and in Xero regardless.
 - **recalculate** — the existing full-reprice machinery with the locked-period
   clamps lifted, so locked-night pricing semantics are otherwise preserved
   (a night the guest already bought keeps its stored `BookingGuestNight` price).
@@ -590,8 +595,10 @@ so both pricing modes skip the capacity decision for them entirely — a move th
 cannot overbook must never prompt for (or record) an overbooking confirm. Every override move is
 audited as `booking.modify.admin_override` with before/after dates, `pricingMode`,
 and `confirmOverCapacity`, and is linked (best-effort, post-transaction) to the
-booking's most recent APPROVED-but-unlinked `BookingChangeRequest`, closing the
-approve → apply trail. The modify-quote preview mirrors apply exactly for the
+booking's most recent APPROVED-but-unlinked `BookingChangeRequest` **that the
+move actually fulfils** — the request must be date-only (no guest changes) and
+every date it names must equal the applied value, so an unrelated move can never
+mark a different ask as applied — closing the approve → apply trail. The modify-quote preview mirrors apply exactly for the
 same input (same date resolution, capacity signal, and member-night conflict
 check), so the operator never sees a clean preview for a move that would fail.
 
