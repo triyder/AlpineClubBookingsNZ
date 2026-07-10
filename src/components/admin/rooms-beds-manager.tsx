@@ -31,13 +31,12 @@ import {
   initialLodgeIdFromLocation,
   useLodgeOptions,
 } from "@/components/lodge-select";
-import { BedTypeIndicator } from "@/components/admin/bed-type-indicator";
+import {
+  BedTypeIndicator,
+  type BedTypeValue,
+} from "@/components/admin/bed-type-indicator";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import type { LodgeCapacityStatus } from "@/lib/lodge-capacity";
-
-// Mirrors the Prisma BedType enum (#1675). Bed type is descriptive only in v1;
-// it does not change capacity.
-type BedTypeValue = "SINGLE" | "BUNK_TOP" | "BUNK_BOTTOM" | "DOUBLE";
 
 const BED_TYPE_OPTIONS: Array<{ value: BedTypeValue; label: string }> = [
   { value: "SINGLE", label: "Single" },
