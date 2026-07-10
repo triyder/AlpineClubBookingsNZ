@@ -98,8 +98,14 @@ export async function PUT(
       { status: 403 },
     );
   }
+  // Issue #1696: a plain admin edit may now carry notifyMember alone, so the
+  // booking-management role (→ ADMIN) is also resolved when notifyMember is
+  // present — otherwise a Booking Officer's legacy mapping (USER) would make the
+  // service always notify. An explicit adminOverride: false with no notify choice
+  // still keeps the legacy mapping: a caller boolean cannot flip the standard
+  // path's authority (the 403 gate above already required ADMIN for any flag).
   const actorRole =
-    adminOverride === true
+    adminOverride === true || notifyMember !== undefined
       ? bookingManagementAuthorizationRole(session.user)
       : authorizationRoleFromAccessRoles(session.user);
   if (adminOverride && !pricingMode) {
@@ -110,14 +116,11 @@ export async function PUT(
   }
   if (
     !adminOverride &&
-    (pricingMode !== undefined ||
-      confirmOverCapacity !== undefined ||
-      notifyMember !== undefined)
+    (pricingMode !== undefined || confirmOverCapacity !== undefined)
   ) {
     return NextResponse.json(
       {
-        error:
-          "adminOverride is required for pricingMode/confirmOverCapacity/notifyMember",
+        error: "adminOverride is required for pricingMode/confirmOverCapacity",
       },
       { status: 400 },
     );

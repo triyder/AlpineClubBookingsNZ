@@ -148,16 +148,18 @@ export async function PUT(
       { status: 400 },
     );
   }
+  // Issue #1696: an admin may now suppress the member-facing modified email on
+  // ANY edit, so notifyMember is allowed alone (without adminOverride). The
+  // pricing/capacity override flags still require adminOverride. actorRole is
+  // already the booking-management role (ADMIN for Full Admin / Booking Officer),
+  // so the service honours the admin's choice on every edit.
   if (
     !adminOverride &&
-    (pricingMode !== undefined ||
-      confirmOverCapacity !== undefined ||
-      notifyMember !== undefined)
+    (pricingMode !== undefined || confirmOverCapacity !== undefined)
   ) {
     return NextResponse.json(
       {
-        error:
-          "adminOverride is required for pricingMode/confirmOverCapacity/notifyMember",
+        error: "adminOverride is required for pricingMode/confirmOverCapacity",
       },
       { status: 400 },
     );

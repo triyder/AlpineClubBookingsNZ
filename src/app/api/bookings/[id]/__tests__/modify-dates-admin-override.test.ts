@@ -139,3 +139,55 @@ describe("PUT /api/bookings/[id]/modify-dates admin override gating (issue #1668
     expect(arg.actor).toEqual({ id: "u1", role: "USER" });
   });
 });
+
+describe("PUT /api/bookings/[id]/modify-dates notify choice on plain edits (issue #1696)", () => {
+  it("accepts notifyMember alone (no adminOverride) from an ADMIN and threads it with the management role", async () => {
+    const res = await PUT(
+      req({ checkIn: "2026-09-12", notifyMember: false }),
+      { params },
+    );
+
+    expect(res.status).toBe(200);
+    expect(h.modifyBookingDates).toHaveBeenCalledTimes(1);
+    expect(h.adminShiftBookingDates).not.toHaveBeenCalled();
+    const arg = h.modifyBookingDates.mock.calls[0][0];
+    // notifyMember lifts the role to the management mapping (→ ADMIN) so the
+    // service honours the choice, without an adminOverride being present.
+    expect(arg.actor).toEqual({ id: "u1", role: "ADMIN" });
+    expect(arg.input).toMatchObject({ checkIn: "2026-09-12", notifyMember: false });
+    expect(arg.input).not.toHaveProperty("adminOverride", true);
+  });
+
+  it("rejects notifyMember alone from a non-ADMIN with 403, no service call", async () => {
+    h.managementRole.mockReturnValue("USER");
+
+    const res = await PUT(
+      req({ checkIn: "2026-09-12", notifyMember: false }),
+      { params },
+    );
+
+    expect(res.status).toBe(403);
+    expect(h.modifyBookingDates).not.toHaveBeenCalled();
+    expect(h.adminShiftBookingDates).not.toHaveBeenCalled();
+  });
+
+  it("still requires adminOverride for confirmOverCapacity (400)", async () => {
+    const res = await PUT(
+      req({ checkIn: "2026-09-12", confirmOverCapacity: true }),
+      { params },
+    );
+
+    expect(res.status).toBe(400);
+    expect(h.modifyBookingDates).not.toHaveBeenCalled();
+  });
+
+  it("still requires adminOverride for pricingMode (400)", async () => {
+    const res = await PUT(
+      req({ checkIn: "2026-09-12", pricingMode: "recalculate" }),
+      { params },
+    );
+
+    expect(res.status).toBe(400);
+    expect(h.modifyBookingDates).not.toHaveBeenCalled();
+  });
+});

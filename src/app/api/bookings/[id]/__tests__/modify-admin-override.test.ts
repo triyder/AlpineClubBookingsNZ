@@ -84,21 +84,22 @@ describe("PUT /api/bookings/[id]/modify admin override gating (issue #1668)", ()
 
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
-      error:
-        "adminOverride is required for pricingMode/confirmOverCapacity/notifyMember",
+      error: "adminOverride is required for pricingMode/confirmOverCapacity",
     });
     expect(h.adminShiftBookingDates).not.toHaveBeenCalled();
   });
 
-  it("rejects notifyMember without adminOverride (400)", async () => {
+  it("rejects confirmOverCapacity without adminOverride (400)", async () => {
     const res = await PUT(
-      req({ notifyMember: false, checkIn: "2026-09-12" }),
+      req({ confirmOverCapacity: true, checkIn: "2026-09-12" }),
       { params },
     );
 
     expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "adminOverride is required for pricingMode/confirmOverCapacity",
+    });
     expect(h.modifyBookingBatch).not.toHaveBeenCalled();
-    expect(h.adminShiftBookingDates).not.toHaveBeenCalled();
   });
 
   it("enforces the date-only contract (rejects guest inputs with 400)", async () => {
@@ -173,5 +174,40 @@ describe("PUT /api/bookings/[id]/modify admin override gating (issue #1668)", ()
       code: "OVER_CAPACITY_CONFIRM_REQUIRED",
       nightDetails,
     });
+  });
+});
+
+describe("PUT /api/bookings/[id]/modify notify choice on plain edits (issue #1696)", () => {
+  it("accepts notifyMember alone (no adminOverride) from an ADMIN and threads it to the batch service", async () => {
+    const res = await PUT(
+      req({
+        addGuests: [
+          { firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: true },
+        ],
+        notifyMember: false,
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(200);
+    expect(h.modifyBookingBatch).toHaveBeenCalledTimes(1);
+    expect(h.adminShiftBookingDates).not.toHaveBeenCalled();
+    const arg = h.modifyBookingBatch.mock.calls[0][0];
+    expect(arg.actor).toEqual({ id: "u1", role: "ADMIN" });
+    expect(arg.input).toMatchObject({ notifyMember: false });
+    expect(arg.input).not.toHaveProperty("adminOverride", true);
+  });
+
+  it("rejects notifyMember alone from a non-ADMIN with 403, no service call", async () => {
+    h.authorizationRole.mockReturnValue("USER");
+
+    const res = await PUT(
+      req({ notifyMember: false, checkIn: "2026-09-12" }),
+      { params },
+    );
+
+    expect(res.status).toBe(403);
+    expect(h.modifyBookingBatch).not.toHaveBeenCalled();
+    expect(h.adminShiftBookingDates).not.toHaveBeenCalled();
   });
 });
