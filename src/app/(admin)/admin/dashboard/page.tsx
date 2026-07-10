@@ -62,6 +62,7 @@ async function getStats() {
     activeBookings,
     revenueResult,
     upcomingCheckIns,
+    unpaidFinishedStays,
     recentBookings,
     pendingRefundAppeals,
     pendingCreditApprovals,
@@ -91,6 +92,17 @@ async function getStats() {
         status: { in: [...ACTIVE_BOOKING_STATUSES] },
         deletedAt: null,
         checkIn: { gte: today, lte: sevenDaysFromNow },
+      },
+    }),
+    // Unpaid finished stays (#1709): PAYMENT_PENDING with check-out on or
+    // before NZ today — the stay is over but payment is still owing.
+    // Retroactive card creates (#1704) match from the moment of creation;
+    // organic bookings that cross check-out unpaid surface here too.
+    prisma.booking.count({
+      where: {
+        deletedAt: null,
+        status: "PAYMENT_PENDING",
+        checkOut: { lte: today },
       },
     }),
     prisma.booking.findMany({
@@ -146,6 +158,7 @@ async function getStats() {
   const revenueThisMonth = revenueResult._sum.amountCents ?? 0;
 
   return {
+    todayKey,
     totalMembers,
     activeMembers,
     inactiveMembers,
@@ -153,6 +166,7 @@ async function getStats() {
     activeBookings,
     revenueThisMonth,
     upcomingCheckIns,
+    unpaidFinishedStays,
     recentBookings,
     unassignedDatesWithBookings: unassignedHutLeaderDates.map(
       (item) => item.date,
@@ -243,6 +257,31 @@ export default async function AdminDashboardPage() {
                 <p className="font-medium text-amber-900">Booking Requests</p>
                 <p className="text-sm text-amber-800 mt-1">
                   {bookingApprovalSummary.join(" and ")} waiting for admin decision.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
+
+      {/* Unpaid finished stays (#1709): a stay that already ended but is
+          still PAYMENT_PENDING — flagged so it cannot silently linger. */}
+      {stats.unpaidFinishedStays > 0 && (
+        <Link
+          href={`/admin/bookings?status=PAYMENT_PENDING&checkOutTo=${stats.todayKey}`}
+        >
+          <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
+            <CardContent className="flex items-start gap-3 pt-5">
+              <DollarSign className="h-5 w-5 text-amber-700 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium text-amber-950">
+                  Unpaid Finished Stays
+                </p>
+                <p className="text-sm text-amber-800 mt-1">
+                  {stats.unpaidFinishedStays} booking
+                  {stats.unpaidFinishedStays === 1 ? "" : "s"} still payment
+                  pending after check-out. Follow up on payment or settle the
+                  booking.
                 </p>
               </div>
             </CardContent>

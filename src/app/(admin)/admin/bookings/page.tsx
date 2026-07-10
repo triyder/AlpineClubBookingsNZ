@@ -45,6 +45,8 @@ export default async function AdminBookingsPage({
     updatedTo?: string;
     checkInFrom?: string;
     checkInTo?: string;
+    checkOutFrom?: string;
+    checkOutTo?: string;
     search?: string;
     upcoming?: string;
     sort?: string;

@@ -57,6 +57,12 @@ export const adminBookingsQuerySchema = z.object({
   updatedTo: dateSchema.optional(),
   checkInFrom: dateSchema.optional(),
   checkInTo: dateSchema.optional(),
+  // Check-out range (#1709): lets the dashboard "Unpaid Finished Stays" card
+  // deep-link to status=PAYMENT_PENDING&checkOutTo=<today> — every finished
+  // stay with payment still owing (retroactive card creates qualify from the
+  // moment of creation).
+  checkOutFrom: dateSchema.optional(),
+  checkOutTo: dateSchema.optional(),
   search: z.string().trim().max(100).optional(),
   upcoming: z.string().optional(),
   sort: z.string().optional(),
@@ -205,7 +211,9 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
   const updatedAtFilter: Prisma.DateTimeFilter = {};
   const checkInFrom = query.checkInFrom ?? query.from;
   const checkInTo = query.checkInTo;
-  const legacyToDate = query.checkInTo ? undefined : query.to;
+  // Legacy `to` historically bounded check-out; the explicit named params
+  // (checkInTo / checkOutTo) take precedence over it.
+  const legacyToDate = query.checkInTo || query.checkOutTo ? undefined : query.to;
   const upcomingDays = query.upcoming ? parseInt(query.upcoming, 10) : null;
 
   Object.assign(where, buildBookingDeletedWhere(parseBookingDeletedVisibility(query.deleted)));
@@ -237,6 +245,8 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
   if (checkInFrom) checkInFilter.gte = parseDateOnlyFilter(checkInFrom);
   if (checkInTo) checkInFilter.lte = parseDateOnlyFilter(checkInTo);
   if (legacyToDate) checkOutFilter.lte = parseDateOnlyFilter(legacyToDate);
+  if (query.checkOutFrom) checkOutFilter.gte = parseDateOnlyFilter(query.checkOutFrom);
+  if (query.checkOutTo) checkOutFilter.lte = parseDateOnlyFilter(query.checkOutTo);
   if (query.updatedFrom) updatedAtFilter.gte = parseDateTimeStart(query.updatedFrom);
   if (query.updatedTo) updatedAtFilter.lte = parseDateTimeEnd(query.updatedTo);
 

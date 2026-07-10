@@ -49,6 +49,12 @@ import {
   adminBookingsQuerySchema,
   listAdminBookings,
 } from "@/lib/admin-bookings-service";
+import {
+  addDaysDateOnly,
+  formatDateOnly,
+  getTodayDateOnly,
+  parseDateOnly,
+} from "@/lib/date-only";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
@@ -138,6 +144,54 @@ describe("AdminBookingsPage", () => {
     expect(callArgs.where.checkIn.gte).toEqual(new Date("2026-07-01T00:00:00.000Z"));
     expect(callArgs.where.checkIn.lte).toEqual(new Date("2026-07-31T00:00:00.000Z"));
     expect(callArgs.where.checkOut).toBeUndefined();
+  });
+
+  it("applies a check-out date range via checkOutFrom/checkOutTo", async () => {
+    const from = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), -14));
+    const to = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), -7));
+
+    await AdminBookingsPage({
+      searchParams: Promise.resolve({
+        checkOutFrom: from,
+        checkOutTo: to,
+      }),
+    });
+
+    const callArgs = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
+    expect(callArgs.where.checkOut.gte).toEqual(parseDateOnly(from));
+    expect(callArgs.where.checkOut.lte).toEqual(parseDateOnly(to));
+    expect(callArgs.where.checkIn).toBeUndefined();
+  });
+
+  it("expresses the unpaid-finished-stays deep link (#1709): status=PAYMENT_PENDING and checkOutTo=today", async () => {
+    const todayKey = formatDateOnly(getTodayDateOnly());
+
+    await AdminBookingsPage({
+      searchParams: Promise.resolve({
+        status: "PAYMENT_PENDING",
+        checkOutTo: todayKey,
+      }),
+    });
+
+    const callArgs = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
+    expect(callArgs.where.status).toBe("PAYMENT_PENDING");
+    expect(callArgs.where.checkOut.lte).toEqual(parseDateOnly(todayKey));
+  });
+
+  it("prefers explicit checkOutTo over the legacy to param", async () => {
+    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 30));
+    const checkOutTo = formatDateOnly(getTodayDateOnly());
+
+    await AdminBookingsPage({
+      searchParams: Promise.resolve({
+        to: legacyTo,
+        checkOutTo,
+      }),
+    });
+
+    const callArgs = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
+    expect(callArgs.where.checkOut.lte).toEqual(parseDateOnly(checkOutTo));
+    expect(callArgs.where.checkOut.gte).toBeUndefined();
   });
 
   it("keeps legacy from/to compatibility when named check-in params are absent", async () => {
