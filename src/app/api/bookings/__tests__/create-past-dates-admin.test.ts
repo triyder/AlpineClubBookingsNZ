@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
+// The real lookback constant (365 at the time of writing). `@/lib/booking-create`
+// is mocked below, so pull it from the types module it originates in; test dates
+// and assertions derive from it so they can never drift from the enforced value.
+import { RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS as MAX_LOOKBACK_DAYS } from "@/lib/booking-create-types";
 import {
   addDaysDateOnly,
   formatDateOnly,
@@ -123,15 +127,22 @@ vi.mock("@/lib/xero-organisation", () => ({
   getXeroLockDates: h.getXeroLockDates,
   getEffectiveXeroLockDate: h.getEffectiveXeroLockDate,
 }));
-vi.mock("@/lib/booking-create", () => ({
-  createConfirmedBooking: h.createConfirmedBooking,
-  createDraftBooking: h.createDraftBooking,
-  createWaitlistedBooking: h.createWaitlistedBooking,
-  RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS: 365,
-  BookingLodgeError: class extends Error {},
-  BookingPromoError: class extends Error {},
-  BookingReviewJustificationRequiredError: class extends Error {},
-}));
+vi.mock("@/lib/booking-create", async () => {
+  // Re-export the REAL constant (the factory is hoisted, so it cannot see the
+  // top-level import): the route must enforce the same value the test asserts.
+  const { RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS } = await vi.importActual<
+    typeof import("@/lib/booking-create-types")
+  >("@/lib/booking-create-types");
+  return {
+    createConfirmedBooking: h.createConfirmedBooking,
+    createDraftBooking: h.createDraftBooking,
+    createWaitlistedBooking: h.createWaitlistedBooking,
+    RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS,
+    BookingLodgeError: class extends Error {},
+    BookingPromoError: class extends Error {},
+    BookingReviewJustificationRequiredError: class extends Error {},
+  };
+});
 
 import { POST } from "@/app/api/bookings/route";
 
@@ -267,9 +278,9 @@ describe("POST /api/bookings retroactive create gating (#1695)", () => {
     });
   });
 
-  it("rejects 366 days back but allows exactly 365", async () => {
-    const tooFarIn = daysFromTodayStr(-366);
-    const tooFarOut = daysFromTodayStr(-364);
+  it(`rejects ${MAX_LOOKBACK_DAYS + 1} days back but allows exactly ${MAX_LOOKBACK_DAYS}`, async () => {
+    const tooFarIn = daysFromTodayStr(-(MAX_LOOKBACK_DAYS + 1));
+    const tooFarOut = daysFromTodayStr(-(MAX_LOOKBACK_DAYS - 1));
     const resTooFar = await POST(
       makeRequest({
         checkIn: tooFarIn,
@@ -280,11 +291,13 @@ describe("POST /api/bookings retroactive create gating (#1695)", () => {
       }),
     );
     expect(resTooFar.status).toBe(400);
-    expect((await resTooFar.json()).error).toContain("at most 365 days");
+    expect((await resTooFar.json()).error).toContain(
+      `at most ${MAX_LOOKBACK_DAYS} days`,
+    );
     expect(h.createConfirmedBooking).not.toHaveBeenCalled();
 
-    const boundaryIn = daysFromTodayStr(-365);
-    const boundaryOut = daysFromTodayStr(-363);
+    const boundaryIn = daysFromTodayStr(-MAX_LOOKBACK_DAYS);
+    const boundaryOut = daysFromTodayStr(-(MAX_LOOKBACK_DAYS - 2));
     const resBoundary = await POST(
       makeRequest({
         checkIn: boundaryIn,
@@ -434,19 +447,21 @@ describe("POST /api/bookings retroactive create gating (#1695)", () => {
     expect(h.createConfirmedBooking).not.toHaveBeenCalled();
   });
 
-  it("runs the 365-day lookback on the RESOLVED envelope: a guest night 370 days back is a 400", async () => {
+  it(`runs the ${MAX_LOOKBACK_DAYS}-day lookback on the RESOLVED envelope: a guest night ${MAX_LOOKBACK_DAYS + 5} days back is a 400`, async () => {
     const res = await POST(
       makeRequest(
         pastPayload({
           allowPastDates: true,
-          guests: [{ ...guests[0], nights: [daysFromTodayStr(-370)] }],
+          guests: [
+            { ...guests[0], nights: [daysFromTodayStr(-(MAX_LOOKBACK_DAYS + 5))] },
+          ],
         }),
       ),
     );
 
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.error).toContain("at most 365 days");
+    expect(body.error).toContain(`at most ${MAX_LOOKBACK_DAYS} days`);
     expect(h.createConfirmedBooking).not.toHaveBeenCalled();
   });
 
