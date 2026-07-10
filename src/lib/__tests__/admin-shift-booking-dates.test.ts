@@ -279,11 +279,14 @@ describe("adminShiftBookingDates (issue #1668 — pure translation)", () => {
       ipAddress: "1.1.1.1",
     });
 
-    expect(h.linkModification).toHaveBeenCalledWith(
-      expect.anything(),
-      "b1",
-      "mod_1",
-    );
+    // The semantic matcher receives the APPLIED dates so only a request the
+    // move actually fulfils can be linked.
+    expect(h.linkModification).toHaveBeenCalledWith(expect.anything(), {
+      bookingId: "b1",
+      modificationId: "mod_1",
+      appliedCheckIn: D("2026-09-12"),
+      appliedCheckOut: D("2026-09-15"),
+    });
     const auditArgs = h.logAudit.mock.calls[0][0];
     expect(auditArgs.action).toBe("booking.modify.admin_override");
     expect(auditArgs.metadata.linkedChangeRequestId).toBe("req_9");
