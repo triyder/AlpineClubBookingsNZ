@@ -53,11 +53,22 @@ export interface BedAllocationLifecycleResult {
 interface ReconcileBedAllocationsForBookingInput {
   bookingId: string;
   db?: BedAllocationLifecycleDb;
+  // Retained for API stability and as pruning context for the ~45 call sites
+  // that pass a booking's pre-change dates. Since #1686 the auto-placement
+  // range is the booking's CURRENT range only; stale rows outside it are
+  // already handled by pruneAllocationsForBooking, so previousRange no longer
+  // widens the planner scan.
   previousRange?: BedAllocationLifecycleRange | null;
 }
 
 interface AutoAllocateMissingBedNightsInput {
   db: BedAllocationLifecycleDb;
+  // The reconciled booking whose guests are the ONLY ones auto-placed (#1686).
+  // The room/occupancy loads below stay lodge-wide across the range so the
+  // planner still sees every occupied bed-night (and can displace provisional
+  // occupants for a held booking, #1387/#1677), but no OTHER booking's missing
+  // guest-nights are opportunistically drafted into the freed/idle beds.
+  bookingId: string;
   range: BedAllocationLifecycleRange;
   // Lodge of the booking being reconciled. Auto-fill must never place a
   // guest into another lodge's bed (lodge-scoping contract); null (booking
@@ -79,28 +90,6 @@ function normalizeRange(
 ): BedAllocationLifecycleRange | null {
   if (!range || range.checkOut <= range.checkIn) return null;
   return range;
-}
-
-function mergeRanges(
-  left?: BedAllocationLifecycleRange | null,
-  right?: BedAllocationLifecycleRange | null,
-): BedAllocationLifecycleRange | null {
-  const normalizedLeft = normalizeRange(left);
-  const normalizedRight = normalizeRange(right);
-
-  if (!normalizedLeft) return normalizedRight;
-  if (!normalizedRight) return normalizedLeft;
-
-  return {
-    checkIn:
-      normalizedLeft.checkIn < normalizedRight.checkIn
-        ? normalizedLeft.checkIn
-        : normalizedRight.checkIn,
-    checkOut:
-      normalizedLeft.checkOut > normalizedRight.checkOut
-        ? normalizedLeft.checkOut
-        : normalizedRight.checkOut,
-  };
 }
 
 function clampRange(
@@ -260,6 +249,7 @@ export async function resolveAutoAllocationEnabled(
 
 async function autoAllocateMissingBedNights({
   db,
+  bookingId,
   range,
   lodgeId,
 }: AutoAllocateMissingBedNightsInput): Promise<number> {
@@ -386,6 +376,12 @@ async function autoAllocateMissingBedNights({
   );
 
   const plannerBookings: BedAllocationBooking[] = bookings
+    // #1686: only the reconciled booking's guests are auto-placed. Other
+    // overlapping bookings were loaded above so the planner can widen the load
+    // envelope (#1677) and see/displace their occupancy (#1387), but their own
+    // missing guest-nights are never opportunistically drafted here — lodge-
+    // wide re-planning belongs exclusively to the explicit board action.
+    .filter((booking) => booking.id === bookingId)
     .map((booking): BedAllocationBooking | null => {
       const guests: BedAllocationBooking["guests"] = [];
 
@@ -602,7 +598,6 @@ async function recordBedDisplacementAudit(
 export async function reconcileBedAllocationsForBooking({
   bookingId,
   db = prisma,
-  previousRange,
 }: ReconcileBedAllocationsForBookingInput): Promise<BedAllocationLifecycleResult> {
   const enabled = await isEffectiveModuleEnabled("bedAllocation", db);
 
@@ -612,14 +607,27 @@ export async function reconcileBedAllocationsForBooking({
 
   const booking = await loadBookingForBedAllocation(db, bookingId);
   const deletedCount = await pruneAllocationsForBooking(db, bookingId, booking);
-  const currentRange = booking
-    ? { checkIn: booking.checkIn, checkOut: booking.checkOut }
-    : null;
-  const autoAllocationRange = mergeRanges(previousRange, currentRange);
-  const createdCount = autoAllocationRange
+
+  // #1686: auto-placement is scoped to THIS booking on its CURRENT nights.
+  // previousRange no longer widens the planner scan (pruning already removed
+  // stale rows), so a date change/cancellation never re-plans anyone else into
+  // the freed beds. When the booking cannot receive allocations at all —
+  // missing, soft-deleted, non-allocatable status (cancelled etc.), or an
+  // empty range — skip the planner entirely: it would deterministically place
+  // nothing, and cancel/delete flows call this inside their transactions.
+  const bookingCanReceiveAllocations = Boolean(
+    booking && !booking.deletedAt && isAllocatableBookingStatus(booking.status),
+  );
+  const currentRange = normalizeRange(
+    bookingCanReceiveAllocations && booking
+      ? { checkIn: booking.checkIn, checkOut: booking.checkOut }
+      : null,
+  );
+  const createdCount = currentRange
     ? await autoAllocateMissingBedNights({
         db,
-        range: autoAllocationRange,
+        bookingId,
+        range: currentRange,
         lodgeId: booking?.lodgeId ?? null,
       })
     : 0;

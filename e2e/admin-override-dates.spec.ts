@@ -2,7 +2,12 @@ import { type BrowserContext, expect, test, type Page } from "@playwright/test";
 import { loginPersona } from "./helpers/auth";
 import { bookSelfToReviewStep, confirmBookingToPaymentStep } from "./helpers/booking";
 import { personas } from "./helpers/personas";
-import { E2E_ADMIN } from "./helpers/fixtures";
+import {
+  E2E_ADMIN,
+  IB_WINDOW,
+  WAITLIST_FULL_WINDOW,
+  WAITLIST_OFFER_WINDOW,
+} from "./helpers/fixtures";
 import { storageStatePath } from "./helpers/auth";
 import { stayWindow } from "./helpers/stay-dates";
 
@@ -25,7 +30,26 @@ import { stayWindow } from "./helpers/stay-dates";
 // date ranges the normal edit window locks.
 test.describe.configure({ mode: "serial" });
 
-const window = stayWindow(5);
+// stayWindow Mondays drift weekly while the September fixture windows are
+// fixed dates, so index 5 periodically lands ON one of them — including the
+// seeded-FULL waitlist window (22 guests), where this spec's booking creation
+// would be refused outright. Take the first window from index 5 that avoids
+// every reserved September fixture Monday.
+const RESERVED_WINDOW_CHECKINS = new Set([
+  IB_WINDOW.checkIn,
+  WAITLIST_FULL_WINDOW.checkIn,
+  WAITLIST_OFFER_WINDOW.checkIn,
+]);
+function firstFreeWindow(startIndex: number) {
+  for (let index = startIndex; index < startIndex + 8; index++) {
+    const candidate = stayWindow(index);
+    if (!RESERVED_WINDOW_CHECKINS.has(candidate.checkIn)) {
+      return candidate;
+    }
+  }
+  throw new Error("No stay window clear of the reserved September fixtures");
+}
+const window = firstFreeWindow(5);
 
 let memberContext: BrowserContext;
 let adminContext: BrowserContext;
@@ -122,36 +146,12 @@ test.beforeAll(async ({ browser }) => {
   adminContext = await browser.newContext();
   const adminPage = await adminContext.newPage();
   await loginPersona(adminPage, E2E_ADMIN.email);
-
-  // A cross-month shift makes reconcileBedAllocationsForBooking auto-allocate
-  // the whole merged old+new range lodge-wide. With the setting ON, this spec's
-  // Sept→July shifts auto-placed OTHER bookings' guests (it AUTO-placed the
-  // bed-allocation spec's Ken King on the first CI run, emptying that spec's
-  // awaiting-allocation bucket). Disable it for the spec's duration —
-  // bed-allocation.spec.ts manages the same setting for its own run.
-  const disabled = await adminContext.request.put(
-    "/api/admin/bed-allocation/settings",
-    { data: { autoAllocationEnabled: false } },
-  );
-  expect(
-    disabled.ok(),
-    `disable auto-allocation (${disabled.status()})`,
-  ).toBeTruthy();
   await adminPage.close();
 });
 
 test.afterAll(async () => {
-  try {
-    if (adminContext) {
-      // Restore the default (schema default is true).
-      await adminContext.request.put("/api/admin/bed-allocation/settings", {
-        data: { autoAllocationEnabled: true },
-      });
-    }
-  } finally {
-    await memberContext?.close();
-    await adminContext?.close();
-  }
+  await memberContext?.close();
+  await adminContext?.close();
 });
 
 test("member books a future stay for the admin to override", async () => {
@@ -242,5 +242,15 @@ test("admin moves the booking fully into the past, then shifts it again", async 
   await page.reload();
   await expect(page.getByRole("button", { name: "Edit Booking" })).toBeVisible();
   expect(await readTotalDigits(page)).toBe(totalBefore);
+
+  // Park the booking back in its own dedicated future window (a full-circle
+  // override: past → future). With auto-allocation on, each shift drafts THIS
+  // booking's guest onto its resting nights (#1686 scoped reconcile) — parked
+  // near today those could collide with bed-allocation.spec's fixed July seed
+  // window (Bunk Room A/A1) on unlucky run dates, so never leave them there.
+  await adminShiftTo(page, window.checkIn);
+  await page.reload();
+  await page.getByRole("button", { name: "Edit Booking" }).click();
+  await expect(page.locator("#edit-checkin")).toHaveValue(window.checkIn);
   await page.close();
 });
