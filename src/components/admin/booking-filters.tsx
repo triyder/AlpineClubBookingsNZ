@@ -83,8 +83,6 @@ export function BookingFilters({
   const [changeState, setChangeState] = useState(searchParams.get("changeState") || "all");
   const [lodgeId, setLodgeId] = useState(searchParams.get("lodgeId") || "all");
   const showLodgeFilter = lodgeOptions.length > 1;
-  const sortBy = searchParams.get("sortBy") || searchParams.get("sort") || "updatedAt";
-  const sortDir = searchParams.get("sortDir") || "desc";
   const bookingStatuses = ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED", "CANCELLED", "BUMPED", "COMPLETED", "DRAFT"] as const;
   function statusFilterLabel(value: string) {
     if (value === "all") return "All";
@@ -117,26 +115,39 @@ export function BookingFilters({
   // navigation per keystroke) while keeping the URL-driven server model:
   // filtered views stay shareable links.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Mount-time snapshot of the URL-seeded filter values (#1732). While the
-  // live values still equal it, an auto-apply push only renames legacy params
-  // to their canonical form — the result set is unchanged — so the URL's
-  // `page` is carried over; once any value differs, it is dropped. NOTE: the
-  // server currently IGNORES `page` (the list always returns the first 100
-  // rows and no in-page pagination links exist), so today this only keeps a
-  // bookmarked URL stable. If pagination is ever added, revisit: this
-  // mount-scoped snapshot never refreshes, so change-then-revert sequences
-  // would re-attach a stale page onto a different result set.
+  // Mount-time snapshot of the URL-seeded filter values (#1732). A legacy
+  // bookmark like `?from=A&to=B&page=3` encodes the SAME result set the
+  // canonical params do, so the one auto-apply push that renames legacy params
+  // to their canonical form must keep the URL's `page`. Every real filter
+  // change instead resets to page 1 (#1738).
+  //
+  // The snapshot alone is not enough: it never refreshes, so a
+  // change-then-revert sequence (change a filter → paginate the NEW result set
+  // → revert the filter back to the seeded values) would once again equal the
+  // snapshot and re-attach a stale page onto a different result set. The
+  // `filtersDivergedRef` latch closes that trap — once any filter has ever
+  // differed from the mount snapshot, the run is never treated as a pure
+  // rewrite again, even after reverting.
   const initialFilterSnapshotRef = useRef<string | null>(null);
+  const filtersDivergedRef = useRef(false);
   useEffect(() => {
+    // Sort (sortBy/sortDir/sort) is deliberately excluded: it is owned by the
+    // server sort-header links, carried through this component verbatim, and
+    // must not participate in the divergence/canonical comparison (#1738).
     const filterSnapshot = JSON.stringify([
       status, updatedFrom, updatedTo, checkInFrom, checkInTo, checkOutFrom,
-      checkOutTo, search, sortBy, sortDir, month, deleted, paymentSource,
+      checkOutTo, search, month, deleted, paymentSource,
       xeroState, bedState, changeState, lodgeId,
     ]);
     if (initialFilterSnapshotRef.current === null) {
       initialFilterSnapshotRef.current = filterSnapshot;
     }
-    const isPureRewrite = filterSnapshot === initialFilterSnapshotRef.current;
+    if (filterSnapshot !== initialFilterSnapshotRef.current) {
+      filtersDivergedRef.current = true;
+    }
+    const isPureRewrite =
+      filterSnapshot === initialFilterSnapshotRef.current &&
+      !filtersDivergedRef.current;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       const params = new URLSearchParams(window.location.search);
@@ -151,8 +162,6 @@ export function BookingFilters({
       if (checkOutFrom) params.set("checkOutFrom", checkOutFrom);
       if (checkOutTo) params.set("checkOutTo", checkOutTo);
       if (search) params.set("search", search);
-      if (sortBy !== "updatedAt") params.set("sortBy", sortBy);
-      if (sortDir !== "desc") params.set("sortDir", sortDir);
       if (month !== "all") params.set("month", month);
       if (deleted !== "hide") params.set("deleted", deleted);
       if (paymentSource !== "all") params.set("paymentSource", paymentSource);
@@ -161,15 +170,34 @@ export function BookingFilters({
       if (changeState !== "all") params.set("changeState", changeState);
       if (showLodgeFilter && lodgeId !== "all") params.set("lodgeId", lodgeId);
       const next = params.toString();
-      // Compare against the live URL so the initial render is a no-op.
+      // Compare against the live URL so the initial render is a no-op. Sort and
+      // page are excluded from BOTH sides: sort is owned by the server
+      // sort-header links (whose per-column default direction this component
+      // must not second-guess — member/status default to asc, so an explicit
+      // sortDir=desc is a real choice), and page is decided by the
+      // rewrite/reset logic below. Both are re-attached verbatim on any push.
       const current = new URLSearchParams(window.location.search);
       const livePage = current.get("page");
+      const liveSort = {
+        sort: current.get("sort"),
+        sortBy: current.get("sortBy"),
+        sortDir: current.get("sortDir"),
+      };
       current.delete("page");
+      current.delete("sort");
+      current.delete("sortBy");
+      current.delete("sortDir");
       if (next !== current.toString()) {
         // A pure legacy→canonical rewrite (e.g. a bookmarked
-        // ?from=A&to=B&page=3) keeps the URL's inert `page` param; a real
-        // filter change drops it (see the snapshot note above).
+        // ?from=A&to=B&page=3) keeps the URL's `page` param — same result set,
+        // same page; a real filter change drops it, resetting to page 1 (see
+        // the snapshot/latch note above).
         if (isPureRewrite && livePage) params.set("page", livePage);
+        // Carry the current sort verbatim so a desc-landing sort click is
+        // never rewritten (e.g. member/status flipped back to asc) or stripped.
+        if (liveSort.sort) params.set("sort", liveSort.sort);
+        if (liveSort.sortBy) params.set("sortBy", liveSort.sortBy);
+        if (liveSort.sortDir) params.set("sortDir", liveSort.sortDir);
         const target = params.toString();
         router.push(target ? `/admin/bookings?${target}` : "/admin/bookings");
       }
@@ -177,7 +205,7 @@ export function BookingFilters({
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [status, updatedFrom, updatedTo, checkInFrom, checkInTo, checkOutFrom, checkOutTo, search, month, deleted, paymentSource, xeroState, bedState, changeState, sortBy, sortDir, showBedAllocation, lodgeId, showLodgeFilter, router]);
+  }, [status, updatedFrom, updatedTo, checkInFrom, checkInTo, checkOutFrom, checkOutTo, search, month, deleted, paymentSource, xeroState, bedState, changeState, showBedAllocation, lodgeId, showLodgeFilter, router]);
 
   function clearFilters() {
     setStatus("all");

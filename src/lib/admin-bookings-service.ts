@@ -38,6 +38,10 @@ type ChangeStateFilter = "all" | "requiresReview" | "pendingRequest" | "hasModif
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
+// One page of the admin bookings list. Kept as a constant so the service and
+// its callers share a single window size (previously a bare `100`).
+export const ADMIN_BOOKINGS_PAGE_SIZE = 100;
+
 const bookingSortColumns = new Set<BookingSortBy>([
   "member",
   "lastUpdated",
@@ -77,6 +81,11 @@ export const adminBookingsQuerySchema = z.object({
   xeroState: z.enum(xeroStateFilters).optional().default("all"),
   bedState: z.enum(["all", "unallocated", "partial", "complete", "warning"]).optional().default("all"),
   changeState: z.enum(["all", "requiresReview", "pendingRequest", "hasModification", "creditGenerated"]).optional().default("all"),
+  // Page number (1-based). Field-scoped `.catch(1)` so garbage (`page=abc`,
+  // `0`, `-3`, `2.5`) coerces to page 1 instead of failing the whole parse and
+  // dropping every other filter; an out-of-range page is clamped to the last
+  // non-empty page in the service.
+  page: z.coerce.number().int().min(1).catch(1),
 });
 
 export type AdminBookingsQuery = z.infer<typeof adminBookingsQuerySchema>;
@@ -115,8 +124,29 @@ export type AdminBookingRow = BookingCandidate & {
 export interface AdminBookingsResult {
   bookings: AdminBookingRow[];
   total: number;
+  page: number;
+  totalPages: number;
+  pageSize: number;
   sortBy: BookingSortBy;
   sortDir: SortDir;
+}
+
+/**
+ * Windows an already-sorted list to one page. Both list paths sort/derive in
+ * JS (see listAdminBookings), so the page slice happens in JS too. Clamps the
+ * requested page into [1, totalPages] so a narrowed filter never strands the
+ * user on an empty page with no way back.
+ */
+function clampPageWindow<T>(
+  items: T[],
+  requestedPage: number,
+  pageSize = ADMIN_BOOKINGS_PAGE_SIZE
+) {
+  const total = items.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, requestedPage), totalPages);
+  const start = (page - 1) * pageSize;
+  return { pageItems: items.slice(start, start + pageSize), total, page, totalPages };
 }
 
 export interface AdminBookingsOptions {
@@ -688,7 +718,11 @@ export async function listAdminBookings(
       return left.id.localeCompare(right.id);
     });
 
-    const pageIds = sortRows.slice(0, 100).map((row) => row.id);
+    const { pageItems, total, page, totalPages } = clampPageWindow(
+      sortRows,
+      query.page
+    );
+    const pageIds = pageItems.map((row) => row.id);
     const pageCandidates = await loadBookingCandidates({ id: { in: pageIds } });
     const { activityByRecord, invoiceLinkedPaymentIds } =
       await loadXeroStateInputs(pageCandidates);
@@ -709,7 +743,10 @@ export async function listAdminBookings(
 
     return {
       bookings: pageIds.flatMap((id) => rowsById.get(id) ?? []),
-      total: sortRows.length,
+      total,
+      page,
+      totalPages,
+      pageSize: ADMIN_BOOKINGS_PAGE_SIZE,
       sortBy,
       sortDir,
     };
@@ -753,9 +790,17 @@ export async function listAdminBookings(
       return left.id.localeCompare(right.id);
     });
 
+  const { pageItems, total, page, totalPages } = clampPageWindow(
+    filtered,
+    query.page
+  );
+
   return {
-    bookings: filtered.slice(0, 100),
-    total: filtered.length,
+    bookings: pageItems,
+    total,
+    page,
+    totalPages,
+    pageSize: ADMIN_BOOKINGS_PAGE_SIZE,
     sortBy,
     sortDir,
   };

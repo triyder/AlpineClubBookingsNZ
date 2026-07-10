@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { formatCents } from "@/lib/utils";
 import { BookingFilters } from "@/components/admin/booking-filters";
+import { BookingsPagination } from "@/components/admin/bookings-pagination";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
 import {
@@ -59,6 +60,7 @@ export default async function AdminBookingsPage({
     bedState?: string;
     changeState?: string;
     lodgeId?: string;
+    page?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -78,9 +80,10 @@ export default async function AdminBookingsPage({
     select: { id: true, name: true },
   });
   const showLodge = activeLodges.length > 1;
-  const { bookings, total, sortBy, sortDir } = await listAdminBookings(query, {
-    bedAllocationEnabled: showBedAllocation,
-  });
+  const { bookings, total, page, totalPages, sortBy, sortDir } =
+    await listAdminBookings(query, {
+      bedAllocationEnabled: showBedAllocation,
+    });
 
   function visibleSearchParams() {
     const currentSearchParams = new URLSearchParams();
@@ -95,6 +98,13 @@ export default async function AdminBookingsPage({
   const currentSearchParams = visibleSearchParams();
   const currentBookingsPath = buildPathWithSearch("/admin/bookings", currentSearchParams);
 
+  function withPage(nextParams: URLSearchParams, targetPage: number) {
+    nextParams.delete("page");
+    if (targetPage > 1) nextParams.set("page", String(targetPage));
+    const queryString = nextParams.toString();
+    return queryString ? `/admin/bookings?${queryString}` : "/admin/bookings";
+  }
+
   function sortHref(column: BookingSortBy) {
     const nextParams = visibleSearchParams();
 
@@ -105,7 +115,14 @@ export default async function AdminBookingsPage({
     nextParams.set("sortBy", column);
     nextParams.set("sortDir", nextDir);
 
-    return `/admin/bookings?${nextParams.toString()}`;
+    // Sorting reorders the same result set, so it keeps the current page
+    // (#1738). Normalise to the clamped page from the service so a stale
+    // out-of-range `page` in the URL cannot ride along.
+    return withPage(nextParams, page);
+  }
+
+  function pageHref(targetPage: number) {
+    return withPage(visibleSearchParams(), targetPage);
   }
 
   function SortIcon({ column }: { column: BookingSortBy }) {
@@ -253,6 +270,7 @@ export default async function AdminBookingsPage({
         <div className="space-y-2">
           <p className="text-sm text-gray-500">
             Showing {bookings.length} of {total} bookings found
+            {totalPages > 1 ? ` (page ${page} of ${totalPages})` : ""}
           </p>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 bg-white rounded-lg shadow">
@@ -452,6 +470,12 @@ export default async function AdminBookingsPage({
               </tbody>
             </table>
           </div>
+          <BookingsPagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            hrefForPage={pageHref}
+          />
         </div>
       )}
     </div>

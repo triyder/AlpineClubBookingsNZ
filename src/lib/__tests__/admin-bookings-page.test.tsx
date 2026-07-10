@@ -501,6 +501,59 @@ describe("AdminBookingsPage", () => {
     expect(html).not.toContain('href="/admin/book"');
   });
 
+  it("does not render pagination controls when everything fits on one page", async () => {
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      makeBooking({ id: "booking-1" }),
+      makeBooking({ id: "booking-2" }),
+    ] as any);
+
+    const element = await AdminBookingsPage({
+      searchParams: Promise.resolve({}),
+    });
+    const html = renderToStaticMarkup(element);
+
+    expect(html).not.toContain("Bookings pagination");
+  });
+
+  it("renders pagination controls and preserves the page on sort links (#1738)", async () => {
+    const fixtures = Array.from({ length: 101 }, (_, i) =>
+      makeBooking({ id: `b${String(i).padStart(3, "0")}` })
+    );
+    vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as any);
+
+    const element = await AdminBookingsPage({
+      searchParams: Promise.resolve({ page: "2" }),
+    });
+    const html = renderToStaticMarkup(element);
+
+    // Accessible pagination nav with the current-of-total position.
+    expect(html).toContain('aria-label="Bookings pagination"');
+    expect(html).toContain("Page 2 of 2");
+    expect(html).toContain("101 bookings found");
+    // Sort-header links keep the current page (sort reorders the same set).
+    expect(html).toContain("sortBy=member");
+    expect(html).toContain("page=2");
+  });
+
+  it("clamps an out-of-range page and its sort/pagination links to the last page (#1738)", async () => {
+    const fixtures = Array.from({ length: 101 }, (_, i) =>
+      makeBooking({ id: `b${String(i).padStart(3, "0")}` })
+    );
+    vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as any);
+
+    const element = await AdminBookingsPage({
+      searchParams: Promise.resolve({ page: "99" }),
+    });
+    const html = renderToStaticMarkup(element);
+
+    // Service clamps page 99 → 2; the page must render the clamped position and
+    // every generated link (sort headers + pagination) must carry the clamped
+    // page, never the raw out-of-range 99.
+    expect(html).toContain("Page 2 of 2");
+    expect(html).toContain("page=2");
+    expect(html).not.toContain("page=99");
+  });
+
   it("formats total guests with non-member guests in brackets", () => {
     expect(formatAdminBookingGuestCount(6, 2)).toBe("6 (2 non-members)");
     expect(formatAdminBookingGuestCount(1, 1)).toBe("1 (1 non-member)");

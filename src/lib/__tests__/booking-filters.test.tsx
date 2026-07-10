@@ -198,6 +198,85 @@ describe("BookingFilters", () => {
     expect(url.searchParams.has("page")).toBe(false);
   });
 
+  it("does not re-attach a stale page after a change-then-revert (#1738)", async () => {
+    // The change-then-revert trap: change a filter (page drops), paginate the
+    // NEW result set to page 2, then revert the filter to the seeded value.
+    // The reverted state equals the mount snapshot, so without the divergence
+    // latch it would be treated as a pure rewrite and re-attach page 2 — a
+    // stale page from a different result set.
+    const checkInFrom = formatDateOnly(getTodayDateOnly());
+    mocks.currentSearch = `checkInFrom=${checkInFrom}&page=3`;
+    setLocation(mocks.currentSearch);
+
+    render(<BookingFilters />);
+
+    // Real filter change: page must be dropped.
+    fireEvent.change(screen.getByPlaceholderText("Name or email..."), {
+      target: { value: "Aroha" },
+    });
+    await waitFor(() => expect(mocks.routerPush).toHaveBeenCalled());
+    expect(pushedBookingsUrl().searchParams.has("page")).toBe(false);
+
+    // The new result set is now shown and the user paginates it to page 2.
+    setLocation(`checkInFrom=${checkInFrom}&search=Aroha&page=2`);
+    mocks.routerPush.mockClear();
+
+    // Revert the search back to empty (state now equals the mount snapshot).
+    fireEvent.change(screen.getByPlaceholderText("Name or email..."), {
+      target: { value: "" },
+    });
+    await waitFor(() => expect(mocks.routerPush).toHaveBeenCalled());
+
+    const url = pushedBookingsUrl();
+    expect(url.searchParams.get("checkInFrom")).toBe(checkInFrom);
+    expect(url.searchParams.has("search")).toBe(false);
+    // The stale page 2 from the search=Aroha result set must NOT ride along.
+    expect(url.searchParams.has("page")).toBe(false);
+  });
+
+  it("does not rewrite an asc-default column's desc sort or drop its page (#1738)", async () => {
+    // member/status default to asc server-side, so an explicit sortDir=desc is
+    // a real user choice from a sort-header click. The filter auto-apply must
+    // not canonicalise it away (which would both flip it back to asc and strip
+    // the page ~350ms after landing).
+    mocks.currentSearch = "sortBy=member&sortDir=desc&page=2";
+    setLocation(mocks.currentSearch);
+
+    render(<BookingFilters />);
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Either no push (preferred — sort/page are not the filter component's to
+    // touch) or a push that keeps sortDir=desc AND page=2.
+    if (mocks.routerPush.mock.calls.length > 0) {
+      const url = pushedBookingsUrl();
+      expect(url.searchParams.get("sortBy")).toBe("member");
+      expect(url.searchParams.get("sortDir")).toBe("desc");
+      expect(url.searchParams.get("page")).toBe("2");
+    }
+  });
+
+  it("carries the sort verbatim through a legacy→canonical rewrite (#1738)", async () => {
+    // A bookmarked legacy link that also pins a desc sort must keep that sort
+    // (no asc flip) and its page while the param names are rewritten.
+    const legacyFrom = formatDateOnly(getTodayDateOnly());
+    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 14));
+    mocks.currentSearch = `from=${legacyFrom}&to=${legacyTo}&sortBy=member&sortDir=desc&page=3`;
+    setLocation(mocks.currentSearch);
+
+    render(<BookingFilters />);
+
+    await waitFor(() => expect(mocks.routerPush).toHaveBeenCalled());
+    const url = pushedBookingsUrl();
+    expect(url.searchParams.get("checkInFrom")).toBe(legacyFrom);
+    expect(url.searchParams.get("checkOutTo")).toBe(legacyTo);
+    expect(url.searchParams.has("from")).toBe(false);
+    expect(url.searchParams.has("to")).toBe(false);
+    expect(url.searchParams.get("sortBy")).toBe("member");
+    expect(url.searchParams.get("sortDir")).toBe("desc");
+    expect(url.searchParams.get("page")).toBe("3");
+  });
+
   it("navigates when the search input changes", async () => {
     mocks.currentSearch = "";
     setLocation("");
