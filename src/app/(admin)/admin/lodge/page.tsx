@@ -36,11 +36,13 @@ function AccountCard({
   account,
   lodges,
   showLodgeControls,
+  defaultLodgeName,
   onSaved,
 }: {
   account: KioskAccount;
   lodges: Array<{ id: string; name: string }>;
   showLodgeControls: boolean;
+  defaultLodgeName: string | null;
   onSaved: () => void;
 }) {
   const [email, setEmail] = useState(account.email);
@@ -115,20 +117,52 @@ function AccountCard({
               : `Kiosk account — ${account.boundLodgeName ?? "Default lodge"}`
             : "Lodge Account Settings"}
         </CardTitle>
-        {!editing && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setEditing(true);
-              setSaveMessage(null);
-            }}
+        <div className="flex items-center gap-2">
+          {/* Preview this specific kiosk account (issue #23): opens the kiosk
+              exactly as this login would see it — its bound lodge at the kiosk
+              tier — rather than the admin's own default-lodge view. */}
+          <a
+            href={`/lodge/kiosk?previewAccount=${encodeURIComponent(account.id)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="app-button-brand gap-2"
           >
-            Edit
-          </Button>
-        )}
+            Preview kiosk
+          </a>
+          {!editing && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setEditing(true);
+                setSaveMessage(null);
+              }}
+            >
+              Edit
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Binding health (issue #23): make explicit which lodge this account
+            serves, and warn when an unbound account silently falls back to the
+            default lodge — the transitional debt to bind before deploying. */}
+        {showLodgeControls &&
+          account.binding !== "ambiguous" &&
+          (account.boundLodgeName ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+              Serves <span className="font-semibold">{account.boundLodgeName}</span>.
+            </div>
+          ) : (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <p className="font-semibold">Not bound to a lodge</p>
+              <p className="mt-1">
+                This account currently falls back to the club&apos;s default
+                lodge{defaultLodgeName ? ` (${defaultLodgeName})` : ""}. Bind it
+                to the lodge its device lives at before deploying.
+              </p>
+            </div>
+          ))}
         {account.binding === "ambiguous" && (
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             <p className="font-semibold">
@@ -251,6 +285,7 @@ function AccountCard({
 export default function AdminLodgePage() {
   const { hutLeaderLabel } = useClubIdentity();
   const [accounts, setAccounts] = useState<KioskAccount[]>([]);
+  const [defaultLodgeName, setDefaultLodgeName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { lodges } = useLodgeOptions("admin");
@@ -270,6 +305,7 @@ export default function AdminLodgePage() {
       if (!res.ok) throw new Error("Failed to load lodge account");
       const data = await res.json();
       setAccounts(data.accounts ?? (data.lodge ? [data.lodge] : []));
+      setDefaultLodgeName(data.defaultLodgeName ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
@@ -334,17 +370,7 @@ export default function AdminLodgePage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-slate-900">Lodge Kiosk</h1>
-        <a
-          href="/lodge/kiosk"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="app-button-brand gap-2"
-        >
-          Preview Kiosk
-        </a>
-      </div>
+      <h1 className="text-2xl font-bold text-slate-900">Lodge Kiosk</h1>
 
       <p className="max-w-3xl text-sm text-slate-600">
         This is the shared sign-in used on the physical lodge kiosk screen — it is
@@ -352,7 +378,8 @@ export default function AdminLodgePage() {
         it on the lodge device to check in and out and view lodge information. Set
         the email and
         password below, then sign in once on the kiosk device with these details.
-        Use &ldquo;Preview Kiosk&rdquo; above to see exactly what it displays.
+        Use &ldquo;Preview kiosk&rdquo; on an account to see exactly what that
+        login displays (a read-only preview — no changes are saved).
         {showLodgeControls &&
           " With more than one lodge, create one kiosk account per lodge and bind each to the lodge its device lives at."}
       </p>
@@ -363,6 +390,7 @@ export default function AdminLodgePage() {
           account={account}
           lodges={lodges}
           showLodgeControls={showLodgeControls}
+          defaultLodgeName={defaultLodgeName}
           onSaved={() => void load()}
         />
       ))}

@@ -39,7 +39,10 @@ async function resolveWeekAuth(req: NextRequest, dates: string[]) {
   let forbidden: Awaited<ReturnType<typeof checkLodgeAuth>> | null = null;
 
   for (const date of dates) {
-    const authResult = await checkLodgeAuth(date, { request: req });
+    const authResult = await checkLodgeAuth(date, {
+      request: req,
+      allowPreview: true,
+    });
 
     if (!authResult.error) {
       return { authResult, authDate: date };
