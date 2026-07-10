@@ -506,21 +506,27 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     inputCheckOut
   );
 
-  // Retroactive booking (#1695). Honoured only for on-behalf creates. When set,
-  // a past check-in is allowed (up to the rolling lookback) and over-capacity
-  // nights become warn-and-confirm; when unset, every code path below stays
-  // byte-identical to the member flow.
+  // Retroactive booking (#1695). Honoured only for on-behalf creates whose
+  // resolved envelope actually starts in the past — a future-dated create
+  // carrying the flag keeps standard behaviour (hard capacity block, normal
+  // guards); when unset, every code path below stays byte-identical to the
+  // member flow.
   const allowPastDates = Boolean(input.allowPastDates) && isOnBehalf;
+  const todayDateOnly = getTodayDateOnly();
+  const retroactiveOverride = allowPastDates && checkIn < todayDateOnly;
   // The member email is a per-create choice only for on-behalf bookings; a
   // member booking for themselves is always emailed.
   const notifyMember = !isOnBehalf || input.notifyMember !== false;
 
   // Defence in depth: the route already gates a past-dated on-behalf create,
-  // but the service re-checks so no caller can persist a past stay without the
-  // explicit admin override (also guards the group-join and cross-lodge-confirm
-  // callers, which always create today-or-future stays — behaviour-neutral).
-  const todayDateOnly = getTodayDateOnly();
-  if (checkIn < todayDateOnly) {
+  // but the service re-checks the RESOLVED envelope (guest nights can expand
+  // it before the requested check-in, #713) so no caller can persist a past
+  // stay without either the admin override or the internal inherited-stay
+  // marker. `allowPastCheckIn` is set only by callers that join an existing,
+  // already-validated stay envelope — group join (whole-stay unit, #1387) and
+  // cross-lodge waitlist confirm, which legitimately reach a past check-in
+  // once the parent stay is in progress — and is never exposed via the API.
+  if (checkIn < todayDateOnly && !input.allowPastCheckIn) {
     if (!allowPastDates) {
       throw new ApiError("Cannot book in the past", 400);
     }
@@ -787,7 +793,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         !capacityCheck.available &&
         (requestedStatus === BookingStatus.PENDING || effectivePriceCents > 0 || review.blockForReview)
       ) {
-        if (allowPastDates) {
+        if (retroactiveOverride) {
           // Retroactive over-capacity is warn-and-confirm (#1695): the lodge
           // capacity lock is still held, only the availability decision defers
           // to the admin's explicit confirmation.
@@ -886,7 +892,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           tx
         );
         if (!finalCapacityCheck.available) {
-          if (allowPastDates) {
+          if (retroactiveOverride) {
             // Retroactive $0 booking over capacity: warn-and-confirm (#1695).
             if (input.confirmOverCapacity !== true) {
               throw new OverCapacityConfirmationRequiredError(
@@ -1091,7 +1097,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       split: splitBooking,
       // Retroactive-create audit fields (#1695), only when the override is
       // active — a normal create records nothing new.
-      ...(allowPastDates
+      ...(retroactiveOverride
         ? {
             allowPastDates: true,
             confirmOverCapacity: input.confirmOverCapacity === true,
@@ -1124,7 +1130,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         split: splitBooking,
         // The admin's email choice is recorded on every on-behalf create.
         notifyMember,
-        ...(allowPastDates
+        ...(retroactiveOverride
           ? {
               allowPastDates: true,
               confirmOverCapacity: input.confirmOverCapacity === true,
@@ -1520,7 +1526,10 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
   });
 
   const member = await prisma.member.findUnique({ where: { id: effectiveMemberId } });
-  if (member) {
+  // The waitlist confirmation honours the on-behalf email choice too (#1695);
+  // a member joining the waitlist themselves is always emailed.
+  const notifyWaitlistedMember = !isOnBehalf || input.notifyMember !== false;
+  if (member && notifyWaitlistedMember) {
     sendWaitlistConfirmationEmail(
       member.email,
       member.firstName,

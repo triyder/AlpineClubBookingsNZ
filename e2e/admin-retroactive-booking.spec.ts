@@ -30,20 +30,23 @@ function isoDay(offsetDays: number): string {
   return `${y}-${m}-${day}`;
 }
 
-// Alice's seeded fixed-date bookings that count for the member-night conflict
-// check (prisma/demo-seed.ts): the second-lodge DRAFT 2026-08-05..07 has no
-// draftExpiresAt and the conflict check is cross-lodge; the primary DRAFT
-// 2026-07-10..12 is listed as belt-and-braces (its draftExpiresAt has passed).
-// The window below slides with the run clock, so on run dates where the default
-// window would overlap one of these fixed ranges the spec steps further back —
-// otherwise the retroactive create would 409 with a member-night conflict.
-const SEEDED_BOOKER_RANGES: ReadonlyArray<readonly [string, string]> = [
+// Seeded fixed-date windows the sliding past window must dodge
+// (prisma/demo-seed.ts). The retroactive create would otherwise fail on
+// specific CI run dates:
+// - Alice's bookings that count for the (cross-lodge) member-night conflict
+//   check: the second-lodge DRAFT 2026-08-05..07 has no draftExpiresAt; the
+//   primary DRAFT 2026-07-10..12 is belt-and-braces (its expiry has passed).
+// - The waitlist fixture window 2026-09-14..16 is seeded full to lodge
+//   capacity, which would trigger the over-capacity confirm dialog this
+//   happy-path spec deliberately does not drive.
+const SEEDED_BLOCKED_RANGES: ReadonlyArray<readonly [string, string]> = [
   ["2026-07-10", "2026-07-12"],
   ["2026-08-05", "2026-08-07"],
+  ["2026-09-14", "2026-09-16"],
 ];
 
 function overlapsSeededRange(checkIn: string, checkOut: string): boolean {
-  return SEEDED_BOOKER_RANGES.some(
+  return SEEDED_BLOCKED_RANGES.some(
     ([start, end]) => checkIn < end && checkOut > start,
   );
 }

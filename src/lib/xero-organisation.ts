@@ -94,14 +94,20 @@ function parseXeroLockDate(value: string | undefined | null): Date | null {
   const msJson = /\/Date\((\d+)/.exec(value);
   if (msJson) {
     const epochMs = Number(msJson[1]);
-    if (!Number.isFinite(epochMs)) return null;
-    // Normalize to a date-only Date in UTC (lock dates are whole days).
-    const parsed = parseDateOnly(new Date(epochMs).toISOString().slice(0, 10));
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
+    if (Number.isFinite(epochMs)) {
+      // Normalize to a date-only Date in UTC (lock dates are whole days).
+      const parsed = parseDateOnly(new Date(epochMs).toISOString().slice(0, 10));
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+  } else {
+    const parsed = parseDateOnly(value.slice(0, 10));
+    if (!Number.isNaN(parsed.getTime())) return parsed;
   }
 
-  const parsed = parseDateOnly(value.slice(0, 10));
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  // A SET but unrecognisable lock date must not silently disable the guard —
+  // treat-as-unset fails open, so make the format drift loud.
+  logger.warn({ value }, "Unparseable Xero lock date; treating as unset");
+  return null;
 }
 
 /**

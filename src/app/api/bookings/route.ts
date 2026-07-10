@@ -50,6 +50,7 @@ import {
   RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS,
   type BookingGuestInput,
 } from "@/lib/booking-create";
+import { resolveBookingDateEnvelope } from "@/lib/booking-create-guests";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 import { isXeroConnected } from "@/lib/xero";
 import {
@@ -365,11 +366,26 @@ export async function POST(request: NextRequest) {
   const retroactiveCreate =
     parsed.data.allowPastDates === true && isAuthorizedOnBehalf;
   const today = getTodayDateOnly();
+  // The flag is strictly retroactive: a today-or-future check-in carrying it is
+  // rejected rather than silently widening normal-create behaviour (lead-time
+  // skip, capacity warn-and-confirm belong to past stays only).
+  if (retroactiveCreate && checkIn >= today) {
+    return NextResponse.json(
+      { error: "allowPastDates requires a check-in in the past" },
+      { status: 400 },
+    );
+  }
+  // Guards run on the RESOLVED stay envelope: guest nights can expand the stay
+  // before the requested check-in (#713), and the envelope check-in is what the
+  // booking — and its Xero invoice issue date — persists.
+  const envelopeCheckIn = retroactiveCreate
+    ? resolveBookingDateEnvelope(guestInputs, checkIn, checkOut).checkIn
+    : checkIn;
   if (checkIn < today) {
     if (!retroactiveCreate) {
       return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
     }
-    if (checkIn < addDaysDateOnly(today, -RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS)) {
+    if (envelopeCheckIn < addDaysDateOnly(today, -RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS)) {
       return NextResponse.json(
         {
           error: `Retroactive bookings can go back at most ${RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS} days.`,
@@ -395,7 +411,7 @@ export async function POST(request: NextRequest) {
         );
       }
       const effectiveLock = getEffectiveXeroLockDate(lockDates);
-      if (effectiveLock && checkIn <= effectiveLock) {
+      if (effectiveLock && envelopeCheckIn <= effectiveLock) {
         const lockDate = formatDateOnly(effectiveLock);
         return NextResponse.json(
           {
@@ -691,6 +707,7 @@ export async function POST(request: NextRequest) {
         memberReviewJustification,
         lodgeId: parsed.data.lodgeId,
         alternateLodgeIds: parsed.data.alternateLodgeIds,
+        notifyMember: parsed.data.notifyMember,
       });
       return NextResponse.json(waitlisted.booking, { status: 201 });
     } catch (waitlistErr) {

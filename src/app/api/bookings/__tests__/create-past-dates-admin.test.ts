@@ -394,4 +394,77 @@ describe("POST /api/bookings retroactive create gating (#1695)", () => {
       notifyMember: false,
     });
   });
+
+  it("rejects allowPastDates with a today-or-future check-in (400) — the flag is strictly retroactive", async () => {
+    const res = await POST(
+      makeRequest(futurePayload({ allowPastDates: true })),
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("requires a check-in in the past");
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+  });
+
+  it("runs the lock-date guard on the RESOLVED envelope: a guest night before the lock is a 409 even when the requested check-in clears it", async () => {
+    h.isXeroConnected.mockResolvedValue(true);
+    h.getXeroLockDates.mockResolvedValue({});
+    // Lock at -15: the requested check-in (-10) clears it, but a guest night
+    // expands the envelope back to -20 (#713), which must trip the guard.
+    h.getEffectiveXeroLockDate.mockReturnValue(
+      addDaysDateOnly(getTodayDateOnly(), -15),
+    );
+
+    const res = await POST(
+      makeRequest(
+        pastPayload({
+          allowPastDates: true,
+          guests: [{ ...guests[0], nights: [daysFromTodayStr(-20)] }],
+        }),
+      ),
+    );
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("XERO_PERIOD_LOCKED");
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+  });
+
+  it("runs the 365-day lookback on the RESOLVED envelope: a guest night 370 days back is a 400", async () => {
+    const res = await POST(
+      makeRequest(
+        pastPayload({
+          allowPastDates: true,
+          guests: [{ ...guests[0], nights: [daysFromTodayStr(-370)] }],
+        }),
+      ),
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("at most 365 days");
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+  });
+
+  it("threads notifyMember into the waitlist fallback so the choice covers the waitlist confirmation email too", async () => {
+    h.createConfirmedBooking.mockResolvedValue({
+      type: "capacityExceeded",
+      fullNights: [daysFromTodayStr(31)],
+    });
+    h.createWaitlistedBooking.mockResolvedValue({
+      booking: { id: "wl-1", status: "WAITLISTED" },
+    });
+
+    const res = await POST(
+      makeRequest(
+        futurePayload({ waitlist: true, notifyMember: false }),
+      ),
+    );
+
+    expect(res.status).toBe(201);
+    expect(h.createWaitlistedBooking).toHaveBeenCalledTimes(1);
+    expect(h.createWaitlistedBooking.mock.calls[0][0]).toMatchObject({
+      notifyMember: false,
+    });
+  });
 });

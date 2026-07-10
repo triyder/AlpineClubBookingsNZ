@@ -429,6 +429,9 @@ export async function confirmCrossLodgeWaitlistOffer(
       // so a fully-concurrent confirm of the same offer that slipped past
       // Phase 1 rolls back here instead of committing a duplicate booking.
       duplicateStayGuard: { excludeBookingId: entry.id },
+      // A 48h offer accepted after NZ midnight can land past the entry's
+      // check-in; the offered stay was validated when the offer was issued.
+      allowPastCheckIn: true,
     });
   } catch (err) {
     if (err instanceof DuplicateStayConflictError) {

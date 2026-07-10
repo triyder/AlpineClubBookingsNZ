@@ -480,6 +480,12 @@ export default function AdminBookPage() {
                   onChange={(e) => {
                     setAllowPastDates(e.target.checked);
                     setOverCapacityNights(null);
+                    // Unticking must not strand an already-selected past range
+                    // that only the server would reject at submit.
+                    if (!e.target.checked && checkIn && checkIn < localToday) {
+                      setCheckIn(null);
+                      setCheckOut(null);
+                    }
                   }}
                   className="mt-0.5 rounded border-slate-300"
                 />

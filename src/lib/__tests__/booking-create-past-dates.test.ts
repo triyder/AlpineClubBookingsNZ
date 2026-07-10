@@ -106,18 +106,21 @@ import {
   type BookingGuestInput,
 } from "@/lib/booking-create";
 
-// Future dates keep the past-date re-check out of the over-capacity / email
-// scenarios; the service honours allowPastDates independent of the calendar
-// date (the route gates the past-date semantics).
-const checkIn = new Date("2026-09-10T00:00:00.000Z");
-const checkOut = new Date("2026-09-12T00:00:00.000Z");
+// Relative dates so the scenarios never rot with the wall clock. The plain
+// on-behalf / email tests use a future window; the retroactive scenarios use a
+// past window, because the service applies the retroactive semantics (capacity
+// warn-and-confirm) only when the resolved envelope starts in the past.
+const checkIn = addDaysDateOnly(getTodayDateOnly(), 30);
+const checkOut = addDaysDateOnly(getTodayDateOnly(), 32);
+const pastCheckIn = addDaysDateOnly(getTodayDateOnly(), -10);
+const pastCheckOut = addDaysDateOnly(getTodayDateOnly(), -8);
 
 function seasonWithRate(rateCents: number) {
   return [
     {
       id: "season-1",
-      startDate: new Date("2026-09-01T00:00:00.000Z"),
-      endDate: new Date("2026-09-30T00:00:00.000Z"),
+      startDate: addDaysDateOnly(getTodayDateOnly(), -400),
+      endDate: addDaysDateOnly(getTodayDateOnly(), 60),
       rates: [
         { ageTier: AgeTier.ADULT, isMember: true, pricePerNightCents: rateCents },
         { ageTier: AgeTier.ADULT, isMember: false, pricePerNightCents: rateCents },
@@ -135,6 +138,22 @@ function guest(isMember: boolean, firstName: string): BookingGuestInput {
     stayStart: checkIn,
     stayEnd: checkOut,
   };
+}
+
+function pastGuest(isMember: boolean, firstName: string): BookingGuestInput {
+  return { ...guest(isMember, firstName), stayStart: pastCheckIn, stayEnd: pastCheckOut };
+}
+
+// A retroactive on-behalf create: past envelope + the admin flag.
+function retroInput(
+  overrides: Partial<Parameters<typeof createConfirmedBooking>[0]> = {},
+) {
+  return baseInput([pastGuest(true, "Alice")], {
+    checkIn: pastCheckIn,
+    checkOut: pastCheckOut,
+    allowPastDates: true,
+    ...overrides,
+  });
 }
 
 let createdCount = 0;
@@ -234,9 +253,6 @@ afterEach(() => {
 
 describe("createConfirmedBooking retroactive behaviour (#1695)", () => {
   it("rejects a past check-in when allowPastDates is set but the create is not on-behalf", async () => {
-    const pastCheckIn = addDaysDateOnly(getTodayDateOnly(), -10);
-    const pastCheckOut = addDaysDateOnly(getTodayDateOnly(), -8);
-
     await expect(
       createConfirmedBooking(
         baseInput([{ ...guest(true, "Alice"), stayStart: pastCheckIn, stayEnd: pastCheckOut }], {
@@ -264,9 +280,7 @@ describe("createConfirmedBooking retroactive behaviour (#1695)", () => {
 
     let thrown: unknown;
     try {
-      await createConfirmedBooking(
-        baseInput([guest(true, "Alice")], { allowPastDates: true }),
-      );
+      await createConfirmedBooking(retroInput());
     } catch (err) {
       thrown = err;
     }
@@ -285,10 +299,7 @@ describe("createConfirmedBooking retroactive behaviour (#1695)", () => {
     });
 
     const outcome = await createConfirmedBooking(
-      baseInput([guest(true, "Alice")], {
-        allowPastDates: true,
-        confirmOverCapacity: true,
-      }),
+      retroInput({ confirmOverCapacity: true }),
     );
 
     expect(outcome.type).toBe("created");
@@ -351,4 +362,40 @@ describe("createConfirmedBooking retroactive behaviour (#1695)", () => {
       notifyMember: true,
     });
   });
+
+  it("allows a past check-in for the internal inherited-stay marker without retroactive semantics (group-join / waitlist-confirm pin)", async () => {
+    const outcome = await createConfirmedBooking(
+      baseInput([pastGuest(true, "Alice")], {
+        isOnBehalf: false,
+        effectiveMemberId: "member-1",
+        sessionUserId: "member-1",
+        checkIn: pastCheckIn,
+        checkOut: pastCheckOut,
+        allowPastCheckIn: true,
+      }),
+    );
+
+    expect(outcome.type).toBe("created");
+    // No retroactive audit fields: the marker skips only the past-date throw.
+    const created = auditMetadata("booking.created");
+    expect(created).not.toHaveProperty("allowPastDates");
+  });
+
+  it("keeps the hard capacity block for a future-dated create carrying allowPastDates (retroactive semantics need a past envelope)", async () => {
+    h.checkCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      nightDetails: [{ date: checkIn, availableBeds: -2 }],
+    });
+
+    const outcome = await createConfirmedBooking(
+      baseInput([guest(true, "Alice")], {
+        allowPastDates: true,
+        confirmOverCapacity: true,
+      }),
+    );
+
+    expect(outcome.type).toBe("capacityExceeded");
+    expect(h.bookingCreate).not.toHaveBeenCalled();
+  });
+
 });

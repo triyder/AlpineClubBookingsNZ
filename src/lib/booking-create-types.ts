@@ -88,6 +88,15 @@ export interface ConfirmedBookingInput extends BaseInput {
   confirmOverCapacity?: boolean;
   notifyMember?: boolean;
   /**
+   * Internal inherited-stay marker (#1695 H1 fix): set ONLY by callers that
+   * join an existing, already-validated stay envelope — group join (whole-stay
+   * unit, #1387) and cross-lodge waitlist confirm — which legitimately reach a
+   * past check-in once the parent stay is in progress. Skips the service's
+   * past-date rejection without any retroactive semantics (no capacity
+   * warn-and-confirm, no email choice). Never exposed via the API.
+   */
+  allowPastCheckIn?: boolean;
+  /**
    * When set, the group roster row is written in the same transaction as the
    * child booking (#1039 item 2): a concurrent duplicate join aborts here and
    * rolls the booking back instead of leaving an orphaned booking or a
@@ -148,6 +157,10 @@ export type WaitlistedBookingInput = BaseInput & {
   // also accept a bed at. Each must name an active lodge the member is
   // eligible to book; the primary lodge and duplicates are dropped.
   alternateLodgeIds?: string[];
+  // Per-create email choice (#1695): an on-behalf create that falls back to
+  // the waitlist honours the admin's choice for the waitlist confirmation
+  // email too. Absent = notify; member self-flow always notifies.
+  notifyMember?: boolean;
 };
 
 export interface WaitlistedBookingResult {
