@@ -36,13 +36,22 @@ All notable public reference-release changes should be recorded here.
   org id in a sealed `xero-config/source.json`). Bundles are hand-editable:
   manifest checksums/row counts are advisory (mismatches warn in the dry-run,
   never block; import is files-first), with a "reseal" action to regenerate the
-  manifest; only structural/safety problems are hard-refused. Import has a
-  per-run **write mode** (default **merge**): merge writes only fields that
-  carry a value in the bundle (blank/omitted fields keep the record's existing
-  value, so a partial or skeleton bundle patches rather than wipes); overwrite
-  makes the bundle fully define each record (blanks clear). The **dry-run is
-  mode-aware** — it shows the exact per-field changes for the selected mode and
-  marks no-change rows unchanged. Lodge folders carry the `isDefault`
+  manifest; only structural/safety problems are hard-refused (resource caps are
+  enforced before inflation). Import has a per-run **write mode** (default
+  **merge**): merge writes only fields that carry a value in the bundle
+  (blank/omitted fields keep the record's existing value, so a partial or
+  skeleton bundle patches rather than wipes); overwrite makes the bundle fully
+  define each record (blanks clear). The **dry-run is mode-aware** and
+  **strictly validates every row** — malformed dates/enums/money are errors
+  (named by file, row, and field) that block apply until the bundle is fixed.
+  The dry-run also offers a **match picker** for renamed seasons, chore
+  templates, and induction templates, **per-category selection at import**, and
+  prominently names any lodge whose door code would change. The plan
+  fingerprint binds the bundle bytes, mode, selection, and resolutions, and is
+  re-verified inside the apply transaction under the advisory lock — what was
+  previewed is exactly what is applied. Success AND refused applies are
+  audited (with bundle sha256, a bounded per-item diff, and the lodges whose
+  door codes were actually written). Lodge folders carry the `isDefault`
   default-lodge marker (adopted from fork #15), applied via a safe
   clear-then-set. Never carries secrets, members, transactional data, or (by
   default) door codes. Not a

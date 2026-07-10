@@ -1,12 +1,12 @@
 import { strToU8, strFromU8 } from "fflate";
-import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import type { BundleEntry } from "../bundle";
-import { serialiseCsv, parseCsv } from "../csv";
+import { serialiseCsv } from "../csv";
 import { registerEntity } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
+  applyRow,
   changedFields,
   hashRow,
   planActionFor,
@@ -17,7 +17,9 @@ import {
   type CategoryPlanResult,
   type PlanContext,
   type PlanItem,
+  type ReadDb,
 } from "../import-types";
+import { RowValidator, nz, readCsvRows } from "../values";
 
 // xero-config category: the accounting mappings — GL account/item-code mappings
 // and per-category item codes. Contact-group rules/accepted-groups are excluded
@@ -25,11 +27,25 @@ import {
 // The source Xero tenant id is recorded in xero-config/source.json (sealed with
 // the rest of the category, so it only exists when Xero is exported); the plan
 // warns on an org mismatch so codes are verified before applying (ADR-002).
+//
+// Item-code identity: the FULL natural key (category, ageTier, seasonType,
+// isMember, entranceFeeCategory) INCLUDING nulls, matched via an in-memory map
+// — never the compound unique with a null coerced to false, which could not
+// match a null row and duplicated it on every import.
 
 const ACCOUNT_FILE = "xero-config/account-mappings.csv";
 const ITEM_FILE = "xero-config/item-code-mappings.csv";
 /** Provenance: the Xero org connected at export time. Category-local, sealed. */
 const XERO_SOURCE_FILE = "xero-config/source.json";
+
+const ACCOUNT_FIELDS = ["key", "code", "itemCode"] as const;
+const ITEM_FIELDS = [
+  "category", "ageTier", "seasonType", "isMember", "entranceFeeCategory",
+  "itemCode", "amountCents",
+] as const;
+
+/** XeroItemCodeMapping.category is a plain string column with two known values. */
+const ITEM_CATEGORIES = new Set(["HUT_FEE", "ENTRANCE_FEE"]);
 
 const xeroSourceSchema = z.object({ tenantId: z.string().nullable() });
 
@@ -47,11 +63,18 @@ export function readXeroSourceTenantId(
   }
 }
 
-const ACCOUNT_FIELDS = ["key", "code", "itemCode"] as const;
-const ITEM_FIELDS = [
-  "category", "ageTier", "seasonType", "isMember", "entranceFeeCategory",
-  "itemCode", "amountCents",
-] as const;
+/**
+ * The connected Xero org (tenant) id, or null. Single definition shared by the
+ * export-side provenance stamp and the import-side cross-org check, so both
+ * halves of the invariant always agree.
+ */
+export async function connectedXeroTenantId(db: ReadDb): Promise<string | null> {
+  const token = await db.xeroToken.findFirst({
+    select: { tenantId: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  return token?.tenantId ?? null;
+}
 
 registerEntity({
   entity: "xero-account-mapping",
@@ -74,58 +97,94 @@ registerEntity({
   fields: [...ITEM_FIELDS],
 });
 
-const readCsv = (files: Map<string, Uint8Array>, path: string) => {
-  const b = files.get(path);
-  return b ? parseCsv(strFromU8(b)).rows : [];
-};
-const nz = (v: string | undefined) => (v && v.trim() !== "" ? v.trim() : null);
-const nzInt = (v: string | undefined) => {
-  const s = nz(v);
-  return s === null ? null : Number.parseInt(s, 10);
-};
-const nzBool = (v: string | undefined) => {
-  const s = nz(v);
-  return s === null ? null : s.toLowerCase() === "true";
-};
+// ---- Shared parsing + batched state -----------------------------------------
 
-/** Build the correct compound-unique where for an item-code row by category. */
-function itemWhere(row: Record<string, string>): Prisma.XeroItemCodeMappingWhereUniqueInput {
-  if ((row.category ?? "") === "ENTRANCE_FEE") {
-    return {
-      category_entranceFeeCategory: {
-        category: row.category ?? "",
-        entranceFeeCategory: nz(row.entranceFeeCategory) as never,
-      },
-    };
-  }
-  return {
-    category_ageTier_seasonType_isMember: {
-      category: row.category ?? "",
-      ageTier: nz(row.ageTier) as never,
-      seasonType: nz(row.seasonType) as never,
-      // HUT_FEE rows always carry isMember; the compound key requires non-null.
-      isMember: nzBool(row.isMember) ?? false,
-    },
-  };
-}
-
-/** Write-data builders shared by plan (diff) and apply (write). */
-function buildAccountData(raw: Record<string, string>) {
-  return { code: nz(raw.code), itemCode: nz(raw.itemCode) };
-}
-function buildItemData(raw: Record<string, string>) {
-  return { itemCode: nz(raw.itemCode), amountCents: nzInt(raw.amountCents) };
-}
-
-function itemKey(row: Record<string, unknown>): string {
-  return [row.category, row.ageTier, row.seasonType, row.isMember, row.entranceFeeCategory]
-    .map((v) => (v === null || v === undefined || v === "" ? "-" : v))
+/** Null-honest natural key for an item-code row ("-" marks null). */
+function itemKeyOf(parts: {
+  category: string;
+  ageTier: string | null;
+  seasonType: string | null;
+  isMember: boolean | null;
+  entranceFeeCategory: string | null;
+}): string {
+  return [parts.category, parts.ageTier, parts.seasonType, parts.isMember, parts.entranceFeeCategory]
+    .map((v) => (v === null || v === undefined ? "-" : String(v)))
     .join("/");
 }
 
+interface ParsedItemRow {
+  raw: Record<string, string>;
+  key: string;
+  identity: {
+    category: string;
+    ageTier: string | null;
+    seasonType: string | null;
+    isMember: boolean | null;
+    entranceFeeCategory: string | null;
+  };
+  data: { itemCode: string | null; amountCents: number | null };
+}
+
+function parseItemRow(
+  index: number,
+  raw: Record<string, string>,
+  errors: string[],
+): ParsedItemRow | null {
+  const v = new RowValidator(ITEM_FILE, index, errors);
+  const category = v.required("category", raw.category);
+  if (category && !ITEM_CATEGORIES.has(category)) {
+    errors.push(
+      `${ITEM_FILE} row ${index + 2}: category — "${category}" is not HUT_FEE or ENTRANCE_FEE`,
+    );
+    return null;
+  }
+  const identity = {
+    category,
+    ageTier: v.enumOrNull("ageTier", "AgeTier", raw.ageTier),
+    seasonType: v.enumOrNull("seasonType", "SeasonType", raw.seasonType),
+    isMember: nz(raw.isMember) === null ? null : v.bool("isMember", raw.isMember),
+    entranceFeeCategory: v.enumOrNull("entranceFeeCategory", "EntranceFeeCategory", raw.entranceFeeCategory),
+  };
+  const data = {
+    itemCode: nz(raw.itemCode),
+    amountCents: nz(raw.amountCents) === null ? null : v.moneyCents("amountCents", raw.amountCents),
+  };
+  if (!v.ok) return null;
+  return { raw, key: itemKeyOf(identity), identity, data };
+}
+
+interface XeroBatch {
+  accounts: Map<string, { id: string; key: string; code: string | null; itemCode: string | null }>;
+  items: Map<string, { id: string; itemCode: string | null; amountCents: number | null }>;
+}
+
+async function loadXeroBatch(db: ReadDb): Promise<XeroBatch> {
+  const [accountRows, itemRows] = await Promise.all([
+    db.xeroAccountMapping.findMany({
+      select: { id: true, key: true, code: true, itemCode: true },
+    }),
+    db.xeroItemCodeMapping.findMany({
+      select: {
+        id: true, category: true, ageTier: true, seasonType: true,
+        isMember: true, entranceFeeCategory: true, itemCode: true, amountCents: true,
+      },
+    }),
+  ]);
+  const items = new Map<string, { id: string; itemCode: string | null; amountCents: number | null }>();
+  for (const row of itemRows) {
+    const key = itemKeyOf(row);
+    if (!items.has(key)) items.set(key, row); // first match wins on duplicates
+  }
+  return {
+    accounts: new Map(accountRows.map((r) => [r.key, r])),
+    items,
+  };
+}
+
+// ---- Export ----------------------------------------------------------------
+
 export const xeroConfigExporter: CategoryExporter = {
   category: "xero-config",
-  descriptors: [],
   async export(ctx: ExportContext): Promise<BundleEntry[]> {
     const accounts = await ctx.db.xeroAccountMapping.findMany({
       orderBy: { key: "asc" },
@@ -149,87 +208,105 @@ export const xeroConfigExporter: CategoryExporter = {
 
     // Stamp the connected Xero org for provenance whenever the category has any
     // content (or an org is connected), so import can warn on a cross-org apply.
-    const token = await ctx.db.xeroToken.findFirst({
-      select: { tenantId: true },
-      orderBy: { updatedAt: "desc" },
-    });
-    if (entries.length > 0 || token?.tenantId) {
+    const tenantId = await connectedXeroTenantId(ctx.db);
+    if (entries.length > 0 || tenantId) {
       entries.push({
         path: XERO_SOURCE_FILE,
         category: "xero-config",
         rowCount: null,
-        bytes: strToU8(JSON.stringify({ tenantId: token?.tenantId ?? null }, null, 2)),
+        bytes: strToU8(JSON.stringify({ tenantId }, null, 2)),
       });
     }
     return entries;
   },
 };
 
+// ---- Plan ------------------------------------------------------------------
+
 async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
   const items: PlanItem[] = [];
   const warnings: string[] = [];
+  const errors: string[] = [];
   const fingerprintParts: string[] = [];
+  const batch = await loadXeroBatch(ctx.db);
 
-  for (const raw of readCsv(ctx.files, ACCOUNT_FILE)) {
-    const key = raw.key ?? "";
-    const current = await ctx.db.xeroAccountMapping.findUnique({
-      where: { key },
-      select: { key: true, code: true, itemCode: true },
-    });
-    fingerprintParts.push(`xero-account-mapping:${key}:${current ? hashRow([...ACCOUNT_FIELDS], current) : "absent"}`);
-    const write = updateDataForMode(ctx.mode, raw, buildAccountData(raw));
+  readCsvRows(ctx.files, ACCOUNT_FILE).forEach((raw, i) => {
+    const v = new RowValidator(ACCOUNT_FILE, i, errors);
+    const key = v.required("key", raw.key);
+    if (!v.ok) return;
+    const current = batch.accounts.get(key) ?? null;
+    fingerprintParts.push(
+      `xero-account-mapping:${key}:${current ? hashRow([...ACCOUNT_FIELDS], current) : "absent"}`,
+    );
+    const write = updateDataForMode(ctx.mode, raw, { code: nz(raw.code), itemCode: nz(raw.itemCode) });
     const changed = changedFields(write, current);
     items.push({ entity: "xero-account-mapping", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
-  }
+  });
 
-  for (const raw of readCsv(ctx.files, ITEM_FILE)) {
-    const key = itemKey(raw);
-    const current = await ctx.db.xeroItemCodeMapping.findUnique({
-      where: itemWhere(raw),
-      select: { itemCode: true, amountCents: true },
-    });
-    fingerprintParts.push(`xero-item-code-mapping:${key}:${current ? hashRow(["itemCode", "amountCents"], current) : "absent"}`);
-    const write = updateDataForMode(ctx.mode, raw, buildItemData(raw));
+  readCsvRows(ctx.files, ITEM_FILE).forEach((raw, i) => {
+    const parsed = parseItemRow(i, raw, errors);
+    if (!parsed) return;
+    const current = batch.items.get(parsed.key) ?? null;
+    fingerprintParts.push(
+      `xero-item-code-mapping:${parsed.key}:${current ? hashRow(["itemCode", "amountCents"], current) : "absent"}`,
+    );
+    const write = updateDataForMode(ctx.mode, raw, parsed.data);
     const changed = changedFields(write, current);
-    items.push({ entity: "xero-item-code-mapping", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
-  }
+    items.push({ entity: "xero-item-code-mapping", key: parsed.key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
+  });
 
   if (items.length > 0) {
     warnings.push("Xero codes are only valid for the connected Xero org — verify after importing.");
   }
-  return { items, warnings, fingerprintParts };
+  return { items, warnings, errors, fingerprintParts };
 }
+
+// ---- Apply -----------------------------------------------------------------
 
 async function applyXeroConfig(ctx: ApplyContext): Promise<CategoryApplyResult> {
   const result: CategoryApplyResult = { created: 0, updated: 0, unchanged: 0, skipped: 0 };
+  const errors: string[] = []; // plan blocked all errors; defensive only
+  const batch = await loadXeroBatch(ctx.tx);
 
-  for (const raw of readCsv(ctx.files, ACCOUNT_FILE)) {
-    const key = raw.key ?? "";
-    if (!key) { result.skipped += 1; continue; }
-    const data = buildAccountData(raw);
-    const existing = await ctx.tx.xeroAccountMapping.findUnique({ where: { key }, select: { id: true } });
-    await ctx.tx.xeroAccountMapping.upsert({ where: { key }, create: { key, ...data }, update: updateDataForMode(ctx.mode, raw, data) });
-    if (existing) result.updated += 1;
-    else result.created += 1;
+  for (const [i, raw] of readCsvRows(ctx.files, ACCOUNT_FILE).entries()) {
+    const v = new RowValidator(ACCOUNT_FILE, i, errors);
+    const key = v.required("key", raw.key);
+    if (!v.ok) { result.skipped += 1; continue; }
+    const current = batch.accounts.get(key) ?? null;
+    await applyRow({
+      mode: ctx.mode,
+      raw,
+      data: { code: nz(raw.code), itemCode: nz(raw.itemCode) },
+      current,
+      create: (data) => ctx.tx.xeroAccountMapping.create({ data: { key, ...data } }),
+      update: (write) => ctx.tx.xeroAccountMapping.update({ where: { id: current!.id }, data: write }),
+      result,
+    });
   }
 
-  for (const raw of readCsv(ctx.files, ITEM_FILE)) {
-    const category = raw.category ?? "";
-    if (!category) { result.skipped += 1; continue; }
-    const where = itemWhere(raw);
-    const data = buildItemData(raw);
-    const create = {
-      category,
-      ageTier: nz(raw.ageTier) as never,
-      seasonType: nz(raw.seasonType) as never,
-      isMember: nzBool(raw.isMember),
-      entranceFeeCategory: nz(raw.entranceFeeCategory) as never,
-      ...data,
-    };
-    const existing = await ctx.tx.xeroItemCodeMapping.findUnique({ where, select: { id: true } });
-    await ctx.tx.xeroItemCodeMapping.upsert({ where, create, update: updateDataForMode(ctx.mode, raw, data) });
-    if (existing) result.updated += 1;
-    else result.created += 1;
+  for (const [i, raw] of readCsvRows(ctx.files, ITEM_FILE).entries()) {
+    const parsed = parseItemRow(i, raw, errors);
+    if (!parsed) { result.skipped += 1; continue; }
+    const current = batch.items.get(parsed.key) ?? null;
+    await applyRow({
+      mode: ctx.mode,
+      raw,
+      data: parsed.data,
+      current,
+      create: (data) =>
+        ctx.tx.xeroItemCodeMapping.create({
+          data: {
+            category: parsed.identity.category,
+            ageTier: parsed.identity.ageTier as never,
+            seasonType: parsed.identity.seasonType as never,
+            isMember: parsed.identity.isMember,
+            entranceFeeCategory: parsed.identity.entranceFeeCategory as never,
+            ...data,
+          },
+        }),
+      update: (write) => ctx.tx.xeroItemCodeMapping.update({ where: { id: current!.id }, data: write }),
+      result,
+    });
   }
 
   return result;

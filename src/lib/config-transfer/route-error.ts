@@ -3,10 +3,13 @@ import { NextResponse } from "next/server";
 import logger from "@/lib/logger";
 import { ConfigTransferBundleError } from "./bundle";
 
-// Shared error → response mapping for the config-transfer admin routes. A bad
-// bundle is a 400 with its message; anything else is logged server-side (so it
-// shows in the app logs) and returned as a sanitised 500 message, rather than a
-// bare unhandled 500 that surfaces to the admin as an opaque "failed".
+// Shared error → response mapping for the config-transfer admin routes. Curated
+// errors (bad bundle) return their message as a 400; anything unexpected is
+// logged server-side in full and returned as a STATIC 500 message — raw
+// Prisma/library internals (constraint/column names) never reach the client,
+// matching the admin-route convention elsewhere in the repo. With plan-time
+// validation blocking bad rows, unknown apply-time errors should be rare; the
+// app log carries the stack.
 export function configTransferErrorResponse(
   context: string,
   error: unknown,
@@ -15,12 +18,8 @@ export function configTransferErrorResponse(
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
   logger.error({ err: error }, `config-transfer ${context} failed`);
-  const detail =
-    error instanceof Error && error.message
-      ? error.message.replace(/\s+/g, " ").trim().slice(0, 400)
-      : "Unexpected error.";
   return NextResponse.json(
-    { error: `${context} failed: ${detail}` },
+    { error: `${context} failed — the server log has the details.` },
     { status: 500 },
   );
 }

@@ -46,9 +46,11 @@ export function parseCsv(text: string): { headers: string[]; rows: CsvRow[] } {
   let record: string[] = [];
   let inQuotes = false;
   let sawAny = false;
+  let line = 1;
 
   for (let i = 0; i < text.length; i += 1) {
     const ch = text[i];
+    if (ch === "\n") line += 1;
     if (inQuotes) {
       if (ch === '"') {
         if (text[i + 1] === '"') {
@@ -63,6 +65,17 @@ export function parseCsv(text: string): { headers: string[]; rows: CsvRow[] } {
       continue;
     }
     if (ch === '"') {
+      // RFC-4180: a quote may only open a QUOTED field (i.e. at field start).
+      // A quote mid-way through an unquoted field would silently absorb the
+      // following separators (merging fields/rows) — hard-error with the line
+      // instead, so a stray inch-mark in a hand-edited cell is caught, not
+      // silently corrupted. Fix: quote the whole field and double the quote.
+      if (field !== "") {
+        throw new CsvParseError(
+          `Line ${line}: unexpected '"' inside an unquoted field — quote the ` +
+            `whole field and escape embedded quotes as ""`,
+        );
+      }
       inQuotes = true;
       sawAny = true;
       continue;

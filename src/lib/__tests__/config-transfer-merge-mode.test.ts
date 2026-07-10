@@ -49,8 +49,15 @@ describe("config-transfer dry-run change detection", () => {
     // null/undefined/"" all canonicalise to the same empty form.
     expect(canonicalValue(null)).toBe(canonicalValue(undefined));
     expect(canonicalValue("")).toBe(canonicalValue(null));
-    // A date-only Date compares by YYYY-MM-DD (not full ISO), so equal dates match.
-    expect(canonicalValue(new Date("2026-06-01T00:00:00.000Z"))).toBe("2026-06-01");
+    // A Date and the ISO string that represents it canonicalise identically —
+    // so a bundle-side "2026-06-01" cell equals a DB-side @db.Date column, and
+    // a JSON-serialised DateTime string equals its DB Date.
+    expect(canonicalValue(new Date("2026-06-01T00:00:00.000Z"))).toBe(
+      canonicalValue("2026-06-01"),
+    );
+    expect(canonicalValue(new Date("2026-06-01T10:30:00.000Z"))).toBe(
+      canonicalValue("2026-06-01T10:30:00.000Z"),
+    );
     // An invalid date (e.g. blank date cell) is treated as empty, never throws.
     expect(canonicalValue(new Date("not-a-date"))).toBe("");
     expect(canonicalValue(5000)).toBe("5000");

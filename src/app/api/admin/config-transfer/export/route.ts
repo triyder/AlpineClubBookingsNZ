@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireAdmin } from "@/lib/session-guards";
-import { isFullAdmin } from "@/lib/access-roles";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { buildConfigExport } from "@/lib/config-transfer/export";
+import { requireFullAdminForConfigTransfer } from "@/lib/config-transfer/route-helpers";
 import { configTransferErrorResponse } from "@/lib/config-transfer/route-error";
 import { CONFIG_TRANSFER_CATEGORIES } from "@/lib/config-transfer/manifest";
 
@@ -20,15 +19,8 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireFullAdminForConfigTransfer();
   if (!guard.ok) return guard.response;
-  const session = guard.session;
-  if (!isFullAdmin({ accessRoles: session.user.accessRoles })) {
-    return NextResponse.json(
-      { error: "Full admin access is required." },
-      { status: 403 },
-    );
-  }
 
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
@@ -55,7 +47,7 @@ export async function POST(request: Request) {
 
     await createAuditLog({
       action: "configuration.exported",
-      memberId: session.user.id,
+      memberId: guard.memberId,
       category: "admin",
       severity: "info",
       outcome: "success",

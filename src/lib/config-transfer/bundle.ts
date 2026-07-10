@@ -18,11 +18,17 @@ import {
 // manifest, verifies every declared checksum, and rejects anything unexpected
 // or oversized before the engine sees it. See ADR-002 "Security Considerations".
 
-/** Overall bundle upload cap (MVP). Import streams/validates within this. */
+/** Overall (compressed) bundle upload cap (MVP). */
 export const MAX_BUNDLE_BYTES = 50 * 1024 * 1024;
-/** Per-file uncompressed cap (media is separately capped at 2MB by media-image). */
+/**
+ * Per-file uncompressed cap, enforced BEFORE inflation via the unzip filter.
+ * (Media files are additionally capped at MAX_MEDIA_IMAGE_BYTES by the media
+ * plan/apply phase in media.ts.)
+ */
 export const MAX_BUNDLE_FILE_BYTES = 8 * 1024 * 1024;
-/** Guard against zip-bomb-style entry counts. */
+/** Total uncompressed cap across all entries, enforced before inflation. */
+export const MAX_BUNDLE_TOTAL_BYTES = 100 * 1024 * 1024;
+/** Guard against zip-bomb-style entry counts, enforced before inflation. */
 export const MAX_BUNDLE_FILES = 2000;
 
 export class ConfigTransferBundleError extends Error {
@@ -124,29 +130,33 @@ function isUnsafeEntryPath(name: string): boolean {
 }
 
 /**
- * Tolerate the two most common re-zip mistakes for a hand-edited bundle:
- * 1. macOS archive cruft — drop `__MACOSX/…` and any `.DS_Store` entry.
- * 2. a single wrapper directory — if `manifest.json` isn't at the root but
- *    exactly one top-level folder contains it (the "Compress the folder"
- *    mistake), strip that folder prefix so the bundle reads as if at the root.
- * Anything ambiguous (no wrapper, or several candidate folders) is left as-is
- * and falls through to the normal missing-manifest error.
+ * Junk a re-zip adds that is never bundle data: directory markers ("foo/"),
+ * macOS resource forks, and Finder metadata. Skipped BEFORE inflation.
  */
-function normalizeBundleEntries(
-  unzipped: Record<string, Uint8Array>,
-): Record<string, Uint8Array> {
-  const cleaned = Object.entries(unzipped).filter(
-    ([name]) =>
-      // Drop directory markers (a re-zip via macOS/`zip -r` adds explicit
-      // "foo/" entries; our own export stores flat paths), macOS cruft, and
-      // .DS_Store — none are bundle files, so they must not be treated as
-      // undeclared entries.
-      !name.endsWith("/") &&
-      !name.startsWith("__MACOSX/") &&
-      !name.split("/").includes(".DS_Store"),
+function isJunkEntry(name: string): boolean {
+  return (
+    name.endsWith("/") ||
+    name.startsWith("__MACOSX/") ||
+    name.split("/").includes(".DS_Store")
   );
+}
+
+/**
+ * Tolerate the single-wrapper-directory re-zip mistake: if `manifest.json`
+ * isn't at the root but exactly one top-level folder contains it (the macOS
+ * "Compress the folder" shape), strip that folder prefix so the bundle reads
+ * as if at the root. Files OUTSIDE the wrapper are not silently dropped — they
+ * are returned as `discarded` so the dry-run can warn about them. Anything
+ * ambiguous (no wrapper, or several candidates) is left as-is and falls through
+ * to the normal missing-manifest error.
+ */
+function normalizeBundleEntries(unzipped: Record<string, Uint8Array>): {
+  entries: Record<string, Uint8Array>;
+  discarded: string[];
+} {
+  const cleaned = Object.entries(unzipped);
   if (cleaned.some(([name]) => name === CONFIG_TRANSFER_MANIFEST_PATH)) {
-    return Object.fromEntries(cleaned);
+    return { entries: Object.fromEntries(cleaned), discarded: [] };
   }
   const wrapperPrefixes = new Set<string>();
   for (const [name] of cleaned) {
@@ -157,13 +167,19 @@ function normalizeBundleEntries(
   }
   if (wrapperPrefixes.size === 1) {
     const prefix = [...wrapperPrefixes][0];
-    return Object.fromEntries(
-      cleaned
-        .filter(([name]) => name.startsWith(prefix))
-        .map(([name, bytes]) => [name.slice(prefix.length), bytes]),
-    );
+    const discarded = cleaned
+      .filter(([name]) => !name.startsWith(prefix))
+      .map(([name]) => name);
+    return {
+      entries: Object.fromEntries(
+        cleaned
+          .filter(([name]) => name.startsWith(prefix))
+          .map(([name, bytes]) => [name.slice(prefix.length), bytes]),
+      ),
+      discarded,
+    };
   }
-  return Object.fromEntries(cleaned);
+  return { entries: Object.fromEntries(cleaned), discarded: [] };
 }
 
 /**
@@ -182,30 +198,57 @@ export function readBundle(zipBytes: Uint8Array): ReadBundleResult {
     );
   }
 
+  // Resource limits are enforced BEFORE inflation via the unzip filter: junk
+  // entries are never inflated, and the entry-count / per-file / total
+  // UNCOMPRESSED caps fire on the zip's declared sizes — so a high-ratio or
+  // many-entry zip within the 50MB compressed cap cannot exhaust memory
+  // (fflate reports `originalSize` = uncompressed bytes pre-inflation).
+  let entryCount = 0;
+  let totalBytes = 0;
+  let capError: ConfigTransferBundleError | null = null;
   let unzipped: Record<string, Uint8Array>;
   try {
-    unzipped = unzipSync(zipBytes);
-  } catch {
+    unzipped = unzipSync(zipBytes, {
+      filter: (info) => {
+        if (isJunkEntry(info.name)) return false;
+        entryCount += 1;
+        totalBytes += info.originalSize ?? 0;
+        if (entryCount > MAX_BUNDLE_FILES) {
+          capError = new ConfigTransferBundleError(
+            `Bundle has too many files (> ${MAX_BUNDLE_FILES})`,
+          );
+          throw capError;
+        }
+        if ((info.originalSize ?? 0) > MAX_BUNDLE_FILE_BYTES) {
+          capError = new ConfigTransferBundleError(
+            `Bundle file exceeds the per-file limit: ${info.name}`,
+          );
+          throw capError;
+        }
+        if (totalBytes > MAX_BUNDLE_TOTAL_BYTES) {
+          capError = new ConfigTransferBundleError(
+            `Bundle exceeds the total uncompressed limit`,
+          );
+          throw capError;
+        }
+        return true;
+      },
+    });
+  } catch (error) {
+    if (capError) throw capError;
+    if (error instanceof ConfigTransferBundleError) throw error;
     throw new ConfigTransferBundleError("Bundle is not a valid zip archive");
   }
-  // Forgive the common re-zip mistakes (macOS cruft, single wrapper folder).
-  unzipped = normalizeBundleEntries(unzipped);
+  // Forgive the single-wrapper-folder re-zip mistake, keeping note of any
+  // files outside the wrapper so they warn instead of vanishing silently.
+  const normalized = normalizeBundleEntries(unzipped);
+  unzipped = normalized.entries;
 
   const names = Object.keys(unzipped);
-  if (names.length > MAX_BUNDLE_FILES) {
-    throw new ConfigTransferBundleError(
-      `Bundle has too many files (${names.length} > ${MAX_BUNDLE_FILES})`,
-    );
-  }
   for (const name of names) {
     if (isUnsafeEntryPath(name)) {
       throw new ConfigTransferBundleError(
         `Bundle contains an unsafe entry path: ${name}`,
-      );
-    }
-    if (unzipped[name].byteLength > MAX_BUNDLE_FILE_BYTES) {
-      throw new ConfigTransferBundleError(
-        `Bundle file exceeds the per-file limit: ${name}`,
       );
     }
   }
@@ -249,6 +292,12 @@ export function readBundle(zipBytes: Uint8Array): ReadBundleResult {
   // Advisory integrity: compare the manifest's declared file list to what is
   // present. Drift is expected for hand-edited bundles, so these are warnings.
   const warnings: string[] = [];
+  for (const dropped of normalized.discarded) {
+    warnings.push(
+      `${dropped} sits outside the bundle's root folder and will be ignored ` +
+        `(re-zip the bundle contents, not the folder, to include it)`,
+    );
+  }
   const declared = new Set<string>();
   for (const file of manifest.files) {
     declared.add(file.path);
@@ -269,48 +318,98 @@ export function readBundle(zipBytes: Uint8Array): ReadBundleResult {
     }
   }
 
+  // Category coverage: data present for a category the manifest does not mark
+  // as included is silently skipped by the importer — surface it loudly so a
+  // hand-added file can't be believed imported when it never was.
+  const presentCategories = new Set<string>();
+  for (const name of files.keys()) {
+    const seg = name.split("/")[0];
+    if (seg === "media") continue; // media rides with its referencing category
+    if ((CONFIG_TRANSFER_CATEGORIES as readonly string[]).includes(seg)) {
+      presentCategories.add(seg);
+    }
+  }
+  for (const category of presentCategories) {
+    if (!manifest.includedCategories.includes(category as ConfigTransferCategory)) {
+      warnings.push(
+        `Files exist for category "${category}" but the manifest does not list ` +
+          `it in includedCategories — that data will NOT be imported. Reseal ` +
+          `the bundle to fix this.`,
+      );
+    }
+  }
+
   return { manifest, files, warnings };
 }
 
-/** Map a zip path to its owning category (media rides with site-content). */
-function categoryForPath(path: string): ConfigTransferCategory {
+/** Map a zip path to its owning category by layout (media rides with site-content). */
+function categoryForPathHeuristic(path: string): ConfigTransferCategory | null {
   const seg = path.split("/")[0];
   if (seg === "media") return "site-content";
-  const cat = CONFIG_TRANSFER_CATEGORIES.find((c) => c === seg);
-  if (!cat) {
-    throw new ConfigTransferBundleError(
-      `Cannot map "${path}" to a known category for reseal`,
-    );
+  return CONFIG_TRANSFER_CATEGORIES.find((c) => c === seg) ?? null;
+}
+
+/** True when any lodge.json in the bundle carries a doorCode key. */
+function bundleCarriesDoorCodes(files: Map<string, Uint8Array>): boolean {
+  for (const [path, bytes] of files) {
+    if (!/^lodge-config\/lodges\/[^/]+\/lodge\.json$/.test(path)) continue;
+    try {
+      const parsed = JSON.parse(strFromU8(bytes)) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object" && "doorCode" in parsed) {
+        return true;
+      }
+    } catch {
+      // Unreadable lodge.json is the planner's problem; not a door-code signal.
+    }
   }
-  return cat;
+  return false;
 }
 
 /**
  * Regenerate a bundle's manifest from the files actually present, so a
  * hand-edited bundle imports without integrity warnings. Recomputes every
- * checksum + row count and re-derives includedCategories from the files; keeps
- * the envelope metadata (app version, timestamp, door-codes flag). Structural
- * limits still apply (throws on unsafe/oversized/invalid input).
+ * checksum + row count, re-derives includedCategories from the files, and
+ * recomputes doorCodesIncluded from the actual lodge.json contents (a hand-added
+ * door code cannot hide behind a stale export-time flag). Categories come from
+ * the old manifest's declaration first, falling back to the path layout; files
+ * that fit neither are reported together in one actionable error.
  */
 export function resealBundle(zipBytes: Uint8Array): Uint8Array {
   const { manifest, files } = readBundle(zipBytes);
+  const declaredCategory = new Map(
+    manifest.files.map((f) => [f.path, f.category]),
+  );
   const entries: BundleEntry[] = [];
+  const unmappable: string[] = [];
   for (const [path, bytes] of files) {
+    const category =
+      declaredCategory.get(path) ?? categoryForPathHeuristic(path);
+    if (!category) {
+      unmappable.push(path);
+      continue;
+    }
     entries.push({
       path,
-      category: categoryForPath(path),
+      category,
       rowCount: path.endsWith(".csv")
         ? parseCsv(strFromU8(bytes)).rows.length
         : null,
       bytes,
     });
   }
+  if (unmappable.length > 0) {
+    throw new ConfigTransferBundleError(
+      `Cannot reseal: ${unmappable.length} file(s) belong to no category — ` +
+        `${unmappable.join(", ")}. Remove them from the zip, or move each ` +
+        `into a category folder, then reseal again.`,
+    );
+  }
   return buildBundle({
     entries,
     appVersion: manifest.app.version,
     prismaMigration: manifest.app.prismaMigration,
     includedCategories: [...new Set(entries.map((e) => e.category))],
-    doorCodesIncluded: manifest.doorCodesIncluded,
+    doorCodesIncluded: bundleCarriesDoorCodes(files),
     generatedAt: manifest.generatedAt,
   });
 }

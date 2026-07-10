@@ -66,12 +66,12 @@ function sourceDb(): ReadDb {
 function emptyTargetDb(): ReadDb {
   return {
     lodge: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue(null), findFirst: vi.fn().mockResolvedValue(null) },
-    lodgeRoom: { findUnique: vi.fn().mockResolvedValue(null) },
-    lodgeBed: { findUnique: vi.fn().mockResolvedValue(null) },
-    season: { findFirst: vi.fn().mockResolvedValue(null) },
-    seasonRate: { findUnique: vi.fn().mockResolvedValue(null) },
-    lodgeInstruction: { findFirst: vi.fn().mockResolvedValue(null) },
-    choreTemplate: { findFirst: vi.fn().mockResolvedValue(null) },
+    lodgeRoom: { findMany: vi.fn().mockResolvedValue([]) },
+    lodgeBed: { findMany: vi.fn().mockResolvedValue([]) },
+    season: { findMany: vi.fn().mockResolvedValue([]) },
+    seasonRate: { findMany: vi.fn().mockResolvedValue([]) },
+    lodgeInstruction: { findMany: vi.fn().mockResolvedValue([]) },
+    choreTemplate: { findMany: vi.fn().mockResolvedValue([]) },
     xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
   } as unknown as ReadDb;
 }
@@ -136,7 +136,7 @@ describe("config-transfer lodge-config (per-lodge folders)", () => {
 
   it("plans all-create against an empty target and flags the default-lodge change", async () => {
     const { zip } = await exportLodges(false);
-    const plan = await buildImportPlan(emptyTargetDb(), zip);
+    const plan = await buildImportPlan(emptyTargetDb(), zip, { mode: "merge" });
     const cat = plan.categories.find((c) => c.category === "lodge-config")!;
     const actions = Object.fromEntries(cat.items.map((i) => [i.entity, i.action]));
     expect(actions["lodge"]).toBe("create");

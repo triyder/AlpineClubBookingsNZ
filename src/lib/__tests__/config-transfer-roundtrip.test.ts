@@ -23,19 +23,27 @@ function makeStore() {
   const keyed = (map: Map<string, Record<string, unknown>>, field: string) => ({
     findUnique: async ({ where }: { where: Record<string, unknown> }) =>
       map.get(String(where[field])) ?? null,
-    findMany: async () => [...map.values()],
-    upsert: async ({
+    // The batched loader passes `where: { <field>: { in: [...] } }`.
+    findMany: async (args?: { where?: Record<string, { in?: unknown[] }> }) => {
+      const filter = args?.where?.[field]?.in;
+      const all = [...map.values()];
+      if (!filter) return all;
+      const wanted = new Set(filter.map(String));
+      return all.filter((row) => wanted.has(String(row[field])));
+    },
+    create: async ({ data }: { data: Record<string, unknown> }) => {
+      map.set(String(data[field]), { id: `id-${String(data[field])}`, ...data });
+      return { id: `id-${String(data[field])}` };
+    },
+    update: async ({
       where,
-      create,
-      update,
+      data,
     }: {
       where: Record<string, unknown>;
-      create: Record<string, unknown>;
-      update: Record<string, unknown>;
+      data: Record<string, unknown>;
     }) => {
       const k = String(where[field]);
-      const existing = map.get(k);
-      map.set(k, existing ? { ...existing, ...update } : { ...create });
+      map.set(k, { ...(map.get(k) ?? {}), ...data });
     },
   });
 
@@ -44,14 +52,11 @@ function makeStore() {
     siteContent: keyed(site, "key"),
     clubTheme: {
       findUnique: async () => theme,
-      upsert: async ({
-        create,
-        update,
-      }: {
-        create: Record<string, unknown>;
-        update: Record<string, unknown>;
-      }) => {
-        theme = theme ? { ...theme, ...update } : { ...create };
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        theme = { ...data };
+      },
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        theme = { ...(theme ?? {}), ...data };
       },
     },
   };
@@ -100,8 +105,10 @@ describe("config-transfer round-trip (site-content)", () => {
       files,
       manifest,
       mode: "overwrite" as const,
+      resolutions: new Map<string, string>(),
       actorMemberId: "admin-1",
       imageRemap: new Map<string, string>(),
+      notes: { doorCodesWritten: [] as string[] },
     };
 
     const first = await siteContentImporter.apply(applyCtx);

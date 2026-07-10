@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
-import { ArrowRightLeft, Download, Upload, AlertTriangle } from "lucide-react";
+import { ArrowRightLeft, Download, Upload, AlertTriangle, ShieldAlert } from "lucide-react";
 
 import { isFullAdmin } from "@/lib/access-roles";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,8 @@ import {
 
 // Full-admin Configuration Export & Import page. Export selected categories to a
 // portable zip; import a bundle via a mandatory dry-run before applying (the
-// server takes a database backup and never deletes). See docs/config-transfer.
+// server takes a database backup and never deletes). Validation errors BLOCK
+// apply; key-weak renames are resolved via the match picker. docs/config-transfer.
 
 const CATEGORY_LABELS: Record<ConfigTransferCategory, string> = {
   "site-content": "Site content & appearance",
@@ -32,25 +33,42 @@ const CATEGORY_LABELS: Record<ConfigTransferCategory, string> = {
   "xero-config": "Xero configuration",
 };
 
+type ImportMode = "merge" | "overwrite";
+
 type PlanItem = {
   entity: string;
   key: string;
   action: "create" | "update" | "unchanged";
   changedFields?: string[];
+  candidates?: Array<{ id: string; label: string }>;
 };
 type CategoryPlan = {
   category: ConfigTransferCategory;
   items: PlanItem[];
   warnings: string[];
+  errors: string[];
 };
 type ImportPlan = {
   categories: CategoryPlan[];
   fingerprint: string;
   doorCodesIncluded: boolean;
+  doorCodeChanges: string[];
+  selectedCategories: ConfigTransferCategory[];
   integrityWarnings: string[];
+  errors: string[];
   xero: { sourceTenantId: string | null; targetTenantId: string | null; mismatch: boolean };
   summary: { create: number; update: number; unchanged: number };
 };
+type Resolution = { entity: string; key: string; matchId: string };
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function ConfigTransferPage() {
   const { data: session } = useSession();
@@ -69,7 +87,9 @@ export default function ConfigTransferPage() {
   const [plan, setPlan] = useState<ImportPlan | null>(null);
   const [planning, setPlanning] = useState(false);
   const [applying, setApplying] = useState(false);
-  const [mode, setMode] = useState<"merge" | "overwrite">("merge");
+  const [mode, setMode] = useState<ImportMode>("merge");
+  const [importCategories, setImportCategories] = useState<ConfigTransferCategory[] | null>(null);
+  const [resolutions, setResolutions] = useState<Resolution[]>([]);
   const [resealing, setResealing] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [applied, setApplied] = useState<string | null>(null);
@@ -109,13 +129,10 @@ export default function ConfigTransferPage() {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(data?.error ?? "Export failed.");
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `config-transfer-${new Date().toISOString().slice(0, 10)}.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(
+        await res.blob(),
+        `config-transfer-${new Date().toISOString().slice(0, 10)}.zip`,
+      );
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "Export failed.");
     } finally {
@@ -123,8 +140,17 @@ export default function ConfigTransferPage() {
     }
   }
 
-  async function runPreview(previewMode: "merge" | "overwrite" = mode) {
+  /** The dry-run is mode/selection/resolution-aware: re-preview on any change. */
+  async function runPreview(overrides?: {
+    mode?: ImportMode;
+    categories?: ConfigTransferCategory[] | null;
+    resolutions?: Resolution[];
+  }) {
     if (!file) return;
+    const useMode = overrides?.mode ?? mode;
+    const useCategories =
+      overrides?.categories !== undefined ? overrides.categories : importCategories;
+    const useResolutions = overrides?.resolutions ?? resolutions;
     setPlanning(true);
     setImportError(null);
     setApplied(null);
@@ -132,9 +158,11 @@ export default function ConfigTransferPage() {
     try {
       const form = new FormData();
       form.append("bundle", file);
-      // The plan is mode-aware (what changes differs by mode), so preview in the
-      // selected mode.
-      form.append("mode", previewMode);
+      form.append("mode", useMode);
+      if (useCategories) form.append("categories", JSON.stringify(useCategories));
+      if (useResolutions.length > 0) {
+        form.append("resolutions", JSON.stringify(useResolutions));
+      }
       const res = await fetch("/api/admin/config-transfer/plan", {
         method: "POST",
         body: form,
@@ -153,6 +181,29 @@ export default function ConfigTransferPage() {
     }
   }
 
+  function selectMode(next: ImportMode) {
+    setMode(next);
+    void runPreview({ mode: next });
+  }
+
+  function toggleImportCategory(category: ConfigTransferCategory) {
+    if (!plan) return;
+    const base = importCategories ?? plan.selectedCategories;
+    const next = base.includes(category)
+      ? base.filter((c) => c !== category)
+      : [...base, category];
+    setImportCategories(next);
+    void runPreview({ categories: next });
+  }
+
+  function resolveMatch(entity: string, key: string, matchId: string) {
+    const next = resolutions
+      .filter((r) => !(r.entity === entity && r.key === key))
+      .concat(matchId ? [{ entity, key, matchId }] : []);
+    setResolutions(next);
+    void runPreview({ resolutions: next });
+  }
+
   async function runReseal() {
     if (!file) return;
     setResealing(true);
@@ -168,13 +219,10 @@ export default function ConfigTransferPage() {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(data?.error ?? "Reseal failed.");
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `config-transfer-resealed-${new Date().toISOString().slice(0, 10)}.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(
+        await res.blob(),
+        `config-transfer-resealed-${new Date().toISOString().slice(0, 10)}.zip`,
+      );
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Reseal failed.");
     } finally {
@@ -191,6 +239,8 @@ export default function ConfigTransferPage() {
       form.append("bundle", file);
       form.append("expectedFingerprint", plan.fingerprint);
       form.append("mode", mode);
+      if (importCategories) form.append("categories", JSON.stringify(importCategories));
+      if (resolutions.length > 0) form.append("resolutions", JSON.stringify(resolutions));
       const res = await fetch("/api/admin/config-transfer/apply", {
         method: "POST",
         body: form,
@@ -206,12 +256,16 @@ export default function ConfigTransferPage() {
         `Applied: ${t.created} created, ${t.updated} updated, ${t.unchanged} unchanged.`,
       );
       setPlan(null);
+      setResolutions([]);
+      setImportCategories(null);
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Apply failed.");
     } finally {
       setApplying(false);
     }
   }
+
+  const hasErrors = (plan?.errors.length ?? 0) > 0;
 
   return (
     <div className="space-y-6">
@@ -297,6 +351,8 @@ export default function ConfigTransferPage() {
               setPlan(null);
               setApplied(null);
               setImportError(null);
+              setResolutions([]);
+              setImportCategories(null);
             }}
           />
           <div className="flex items-center gap-3">
@@ -309,7 +365,8 @@ export default function ConfigTransferPage() {
             </Button>
             <Button
               onClick={() => void runApply()}
-              disabled={!plan || applying}
+              disabled={!plan || applying || hasErrors}
+              title={hasErrors ? "Fix the bundle errors, reseal, and re-preview first" : undefined}
             >
               {applying ? "Applying…" : "Apply import"}
             </Button>
@@ -329,45 +386,103 @@ export default function ConfigTransferPage() {
                 Plan: {plan.summary.create} new, {plan.summary.update} updated,{" "}
                 {plan.summary.unchanged} unchanged.
               </p>
+
+              {plan.errors.length > 0 && (
+                <div className="rounded-md bg-red-50 p-2">
+                  <p className="font-medium text-red-700">
+                    {plan.errors.length} error(s) — the import is blocked until the
+                    bundle is fixed (edit, reseal, then re-preview):
+                  </p>
+                  <ul className="ml-6 list-disc text-red-700">
+                    {plan.errors.slice(0, 25).map((e) => (
+                      <li key={e}>{e}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <fieldset className="rounded-md border p-3" disabled={planning}>
                 <legend className="px-1 text-xs font-medium text-muted-foreground">
                   How to apply to existing records (changing this re-previews)
                 </legend>
-                <label className="flex items-start gap-2" htmlFor="mode-merge">
-                  <input
-                    id="mode-merge"
-                    type="radio"
-                    name="import-mode"
-                    className="mt-1"
-                    checked={mode === "merge"}
-                    onChange={() => { setMode("merge"); void runPreview("merge"); }}
-                  />
-                  <span>
-                    <span className="font-medium">Merge</span> (recommended) — only
-                    fields with a value in the bundle are written; blank fields keep
-                    the existing value.
-                  </span>
-                </label>
-                <label className="mt-2 flex items-start gap-2" htmlFor="mode-overwrite">
-                  <input
-                    id="mode-overwrite"
-                    type="radio"
-                    name="import-mode"
-                    className="mt-1"
-                    checked={mode === "overwrite"}
-                    onChange={() => { setMode("overwrite"); void runPreview("overwrite"); }}
-                  />
-                  <span>
-                    <span className="font-medium">Overwrite</span> — the bundle fully
-                    defines each record; blank fields clear the existing value.
-                  </span>
-                </label>
+                {(
+                  [
+                    {
+                      value: "merge" as const,
+                      title: "Merge",
+                      blurb:
+                        " (recommended) — only fields with a value in the bundle are written; blank fields keep the existing value.",
+                    },
+                    {
+                      value: "overwrite" as const,
+                      title: "Overwrite",
+                      blurb:
+                        " — the bundle fully defines each record; blank fields clear the existing value.",
+                    },
+                  ]
+                ).map((option) => (
+                  <label
+                    key={option.value}
+                    className="mt-1 flex items-start gap-2 first:mt-0"
+                    htmlFor={`mode-${option.value}`}
+                  >
+                    <input
+                      id={`mode-${option.value}`}
+                      type="radio"
+                      name="import-mode"
+                      className="mt-1"
+                      checked={mode === option.value}
+                      onChange={() => selectMode(option.value)}
+                    />
+                    <span>
+                      <span className="font-medium">{option.title}</span>
+                      {option.blurb}
+                    </span>
+                  </label>
+                ))}
               </fieldset>
-              {plan.doorCodesIncluded && (
-                <p className="text-amber-800">
-                  This bundle includes door codes.
+
+              <fieldset className="rounded-md border p-3" disabled={planning}>
+                <legend className="px-1 text-xs font-medium text-muted-foreground">
+                  Categories to import (changing this re-previews)
+                </legend>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {CONFIG_TRANSFER_CATEGORIES.filter(
+                    (c) =>
+                      plan.selectedCategories.includes(c) ||
+                      (importCategories ?? []).includes(c) ||
+                      plan.categories.some((p) => p.category === c),
+                  ).map((category) => {
+                    const active = (importCategories ?? plan.selectedCategories).includes(category);
+                    return (
+                      <label
+                        key={category}
+                        className="flex items-center gap-2 text-sm"
+                        htmlFor={`import-cat-${category}`}
+                      >
+                        <Checkbox
+                          id={`import-cat-${category}`}
+                          checked={active}
+                          onCheckedChange={() => toggleImportCategory(category)}
+                        />
+                        {CATEGORY_LABELS[category]}
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
+
+              {plan.doorCodeChanges.length > 0 && (
+                <p className="flex items-center gap-2 rounded-md bg-amber-50 p-2 font-medium text-amber-900">
+                  <ShieldAlert className="h-4 w-4 shrink-0" />
+                  This import will set or change the door code for:{" "}
+                  {plan.doorCodeChanges.join(", ")}.
                 </p>
               )}
+              {plan.doorCodesIncluded && (
+                <p className="text-amber-800">This bundle includes door codes.</p>
+              )}
+
               {plan.integrityWarnings.length > 0 && (
                 <div className="rounded-md bg-amber-50 p-2">
                   <p className="flex items-center gap-2 font-medium text-amber-800">
@@ -385,13 +500,15 @@ export default function ConfigTransferPage() {
                   </p>
                 </div>
               )}
+
               {plan.xero.mismatch && (
                 <p className="flex items-center gap-2 text-amber-800">
                   <AlertTriangle className="h-4 w-4" />
                   Xero config came from a different connected org — verify before
-                  applying.
+                  applying (or untick the Xero category above).
                 </p>
               )}
+
               {plan.categories.map((cat) => (
                 <div key={cat.category}>
                   <p className="font-medium">{CATEGORY_LABELS[cat.category]}</p>
@@ -402,6 +519,29 @@ export default function ConfigTransferPage() {
                         {item.changedFields?.length
                           ? ` (${item.changedFields.join(", ")})`
                           : ""}
+                        {item.candidates?.length ? (
+                          <span className="ml-2">
+                            <select
+                              className="rounded border px-1 py-0.5 text-xs"
+                              disabled={planning}
+                              value={
+                                resolutions.find(
+                                  (r) => r.entity === item.entity && r.key === item.key,
+                                )?.matchId ?? ""
+                              }
+                              onChange={(e) =>
+                                resolveMatch(item.entity, item.key, e.target.value)
+                              }
+                            >
+                              <option value="">create new</option>
+                              {item.candidates.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  match: {c.label}
+                                </option>
+                              ))}
+                            </select>
+                          </span>
+                        ) : null}
                       </li>
                     ))}
                   </ul>

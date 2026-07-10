@@ -7,10 +7,11 @@ import type { BundleEntry } from "../bundle";
 
 // Re-exported for tests and other categories that rewrite image references.
 export { remapImageRefs };
-import { serialiseCsv, parseCsv } from "../csv";
-import { registerEntity, type EntityDescriptor } from "../registry";
+import { serialiseCsv } from "../csv";
+import { registerEntity } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
+  applyRow,
   changedFields,
   hashRow,
   planActionFor,
@@ -21,7 +22,9 @@ import {
   type PlanContext,
   type ApplyContext,
   type PlanItem,
+  type ReadDb,
 } from "../import-types";
+import { RowValidator, nz, readCsvRows } from "../values";
 
 // site-content category: CMS pages, keyed site content, and the club theme.
 // See docs/config-transfer/decisions/ADR-001.
@@ -59,7 +62,7 @@ export const CLUB_THEME_FIELDS = [
   "rawCss",
 ] as const;
 
-export const pageContentDescriptor: EntityDescriptor = registerEntity({
+registerEntity({
   entity: "page-content",
   category: "site-content",
   tier: "key-strong",
@@ -70,7 +73,7 @@ export const pageContentDescriptor: EntityDescriptor = registerEntity({
   fields: [...PAGE_CONTENT_FIELDS],
 });
 
-export const siteContentDescriptor: EntityDescriptor = registerEntity({
+registerEntity({
   entity: "site-content",
   category: "site-content",
   tier: "key-strong",
@@ -81,7 +84,7 @@ export const siteContentDescriptor: EntityDescriptor = registerEntity({
   fields: [...SITE_CONTENT_FIELDS],
 });
 
-export const clubThemeDescriptor: EntityDescriptor = registerEntity({
+registerEntity({
   entity: "club-theme",
   category: "site-content",
   tier: "key-strong",
@@ -140,11 +143,6 @@ export function serialiseTheme(
 
 export const siteContentExporter: CategoryExporter = {
   category: "site-content",
-  descriptors: [
-    pageContentDescriptor,
-    siteContentDescriptor,
-    clubThemeDescriptor,
-  ],
   async export(ctx: ExportContext): Promise<BundleEntry[]> {
     const pages = await ctx.db.pageContent.findMany({
       orderBy: [{ sortOrder: "asc" }, { slug: "asc" }],
@@ -204,146 +202,211 @@ export const siteContentExporter: CategoryExporter = {
 };
 
 // ---------------------------------------------------------------------------
-// Import side (plan + apply). Upsert-only, never delete (ADR-002).
+// Import side (plan + apply). Upsert-only, never delete (ADR-002). Row
+// validation is strict (errors block apply); pages and site content are
+// batch-loaded, and the same parsed rows feed plan and apply.
 // ---------------------------------------------------------------------------
 
-type TypedPage = {
+interface ParsedPageRow {
+  raw: Record<string, string>;
   slug: string;
-  path: string;
-  caption: string;
-  menuTitle: string;
-  title: string;
-  headerText: string;
-  sortOrder: number;
-  contentHtml: string;
-  published: boolean;
-};
-
-function coerceInt(value: string | undefined, fallback: number): number {
-  const n = Number.parseInt((value ?? "").trim(), 10);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function coerceBool(value: string | undefined): boolean {
-  return (value ?? "").trim().toLowerCase() === "true";
-}
-
-function coercePage(row: Record<string, string>): TypedPage {
-  return {
-    slug: row.slug ?? "",
-    path: row.path ?? "",
-    caption: row.caption ?? "",
-    menuTitle: row.menuTitle ?? "",
-    title: row.title ?? "",
-    headerText: row.headerText ?? "",
-    sortOrder: coerceInt(row.sortOrder, 100),
-    contentHtml: row.contentHtml ?? "",
-    published: coerceBool(row.published),
+  data: {
+    path: string;
+    caption: string;
+    menuTitle: string;
+    title: string;
+    headerText: string;
+    sortOrder: number;
+    contentHtml: string;
+    published: boolean;
   };
 }
 
-function readCsvFile(
-  files: Map<string, Uint8Array>,
-  path: string,
-): Record<string, string>[] {
-  const bytes = files.get(path);
-  if (!bytes) return [];
-  return parseCsv(strFromU8(bytes)).rows;
+/** Validate + build a page row; blanks legal only where merge keeps existing. */
+function parsePageRow(
+  index: number,
+  raw: Record<string, string>,
+  blankOk: boolean,
+  errors: string[],
+): ParsedPageRow | null {
+  const v = new RowValidator(PAGE_FILE, index, errors);
+  const slug = v.required("slug", raw.slug);
+  const sortOrder =
+    nz(raw.sortOrder) === null
+      ? blankOk
+        ? 100
+        : v.int("sortOrder", raw.sortOrder ?? "")
+      : v.int("sortOrder", raw.sortOrder);
+  const published =
+    nz(raw.published) === null
+      ? blankOk
+        ? false
+        : v.bool("published", raw.published ?? "")
+      : v.bool("published", raw.published);
+  if (!v.ok) return null;
+  return {
+    raw,
+    slug,
+    data: {
+      path: raw.path ?? "",
+      caption: raw.caption ?? "",
+      menuTitle: raw.menuTitle ?? "",
+      title: raw.title ?? "",
+      headerText: raw.headerText ?? "",
+      sortOrder,
+      contentHtml: raw.contentHtml ?? "",
+      published,
+    },
+  };
 }
 
-function readJsonFile<T>(
+function readThemeFile(
   files: Map<string, Uint8Array>,
-  path: string,
-): T | null {
-  const bytes = files.get(path);
+  errors: string[],
+): Record<string, unknown> | null {
+  const bytes = files.get(THEME_FILE);
   if (!bytes) return null;
-  return JSON.parse(strFromU8(bytes)) as T;
+  let json: unknown;
+  try {
+    json = JSON.parse(strFromU8(bytes));
+  } catch (error) {
+    errors.push(
+      `${THEME_FILE}: not valid JSON (${error instanceof Error ? error.message : "parse error"})`,
+    );
+    return null;
+  }
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    errors.push(`${THEME_FILE}: must be a JSON object`);
+    return null;
+  }
+  const record = json as Record<string, unknown>;
+  let ok = true;
+  for (const field of CLUB_THEME_FIELDS) {
+    if (!(field in record)) continue;
+    const value = record[field];
+    if (value !== null && typeof value !== "string") {
+      errors.push(`${THEME_FILE}: ${field} — must be a string (or null)`);
+      ok = false;
+    }
+  }
+  return ok ? record : null;
 }
 
+interface SiteContentBatch {
+  pages: Map<string, Record<string, unknown> & { id?: string }>;
+  siteContent: Map<string, { id: string; key: string; contentHtml: string }>;
+  theme: Record<string, unknown> | null;
+}
 
-async function planSiteContent(ctx: PlanContext): Promise<CategoryPlanResult> {
-  const items: PlanItem[] = [];
-  const warnings: string[] = [];
-  const fingerprintParts: string[] = [];
-
-  // Pages (by slug).
-  const incomingPages = readCsvFile(ctx.files, PAGE_FILE).map(coercePage);
-  if (incomingPages.length > 0) {
-    const existing = await ctx.db.pageContent.findMany({
-      where: { slug: { in: incomingPages.map((p) => p.slug) } },
-      select: {
-        slug: true,
-        path: true,
-        caption: true,
-        menuTitle: true,
-        title: true,
-        headerText: true,
-        sortOrder: true,
-        contentHtml: true,
-        published: true,
-      },
-    });
-    const byslug = new Map(existing.map((row) => [row.slug, row]));
-    // Iterate the raw CSV rows so merge can detect blank cells (a coerced page
-    // would turn a blank into a value). contentHtml is sanitised but not remapped
-    // here (imageRemap is apply-time) — accurate for non-image pages, and merely
-    // conservative (shows "changed") for image-embedding ones.
-    for (const raw of readCsvFile(ctx.files, PAGE_FILE)) {
-      const page = coercePage(raw);
-      const current = byslug.get(page.slug) ?? null;
-      fingerprintParts.push(
-        `page-content:${page.slug}:${current ? hashRow([...PAGE_CONTENT_FIELDS], current) : "absent"}`,
-      );
-      const write = updateDataForMode(ctx.mode, raw, {
-        path: page.path,
-        caption: page.caption,
-        menuTitle: page.menuTitle,
-        title: page.title,
-        headerText: page.headerText,
-        sortOrder: page.sortOrder,
-        contentHtml: sanitizePageContentHtml(page.contentHtml),
-        published: page.published,
-      });
-      const changed = changedFields(write, current);
-      items.push({ entity: "page-content", key: page.slug, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
-    }
-  }
-
-  // Site content (by key).
-  const incomingSite = readCsvFile(ctx.files, SITE_CONTENT_FILE);
-  if (incomingSite.length > 0) {
-    for (const row of incomingSite) {
-      const key = row.key ?? "";
-      const current = await ctx.db.siteContent.findUnique({
-        where: { key: key as never },
-        select: { key: true, contentHtml: true },
-      });
-      fingerprintParts.push(
-        `site-content:${key}:${
-          current ? hashRow([...SITE_CONTENT_FIELDS], current) : "absent"
-        }`,
-      );
-      const write = updateDataForMode(ctx.mode, row, {
-        contentHtml: sanitizePageContentHtml(row.contentHtml ?? ""),
-      });
-      const changed = changedFields(write, current);
-      items.push({ entity: "site-content", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
-    }
-  }
-
-  // Theme (singleton).
-  const theme = readJsonFile<Record<string, unknown>>(ctx.files, THEME_FILE);
-  if (theme) {
-    const current = await ctx.db.clubTheme.findUnique({
+async function loadSiteContentBatch(
+  db: ReadDb,
+  slugs: string[],
+  keys: string[],
+): Promise<SiteContentBatch> {
+  const [pageRows, siteRows, theme] = await Promise.all([
+    slugs.length
+      ? db.pageContent.findMany({
+          where: { slug: { in: slugs } },
+          select: {
+            id: true,
+            slug: true,
+            path: true,
+            caption: true,
+            menuTitle: true,
+            title: true,
+            headerText: true,
+            sortOrder: true,
+            contentHtml: true,
+            published: true,
+          },
+        })
+      : Promise.resolve([]),
+    keys.length
+      ? db.siteContent.findMany({
+          where: { key: { in: keys as never[] } },
+          select: { id: true, key: true, contentHtml: true },
+        })
+      : Promise.resolve([]),
+    db.clubTheme.findUnique({
       where: { id: "default" },
       select: Object.fromEntries(
         CLUB_THEME_FIELDS.map((f) => [f, true]),
       ) as Record<string, true>,
-    });
+    }),
+  ]);
+  return {
+    pages: new Map(pageRows.map((r) => [r.slug, r])),
+    siteContent: new Map(siteRows.map((r) => [String(r.key), r])),
+    theme,
+  };
+}
+
+async function planSiteContent(ctx: PlanContext): Promise<CategoryPlanResult> {
+  const items: PlanItem[] = [];
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  const fingerprintParts: string[] = [];
+
+  const rawPages = readCsvRows(ctx.files, PAGE_FILE);
+  const rawSite = readCsvRows(ctx.files, SITE_CONTENT_FILE);
+  const batch = await loadSiteContentBatch(
+    ctx.db,
+    rawPages.map((r) => r.slug?.trim() ?? "").filter(Boolean),
+    rawSite.map((r) => r.key?.trim() ?? "").filter(Boolean),
+  );
+
+  // Pages (by slug).
+  let anyEmbeddedImages = false;
+  rawPages.forEach((raw, i) => {
+    const current = batch.pages.get(raw.slug?.trim() ?? "") ?? null;
+    const parsed = parsePageRow(i, raw, ctx.mode === "merge" && !!current, errors);
+    if (!parsed) return;
+    if (/\/api\/images\//.test(parsed.data.contentHtml)) anyEmbeddedImages = true;
     fingerprintParts.push(
-      `club-theme:default:${
-        current ? hashRow([...CLUB_THEME_FIELDS], current) : "absent"
-      }`,
+      `page-content:${parsed.slug}:${current ? hashRow([...PAGE_CONTENT_FIELDS], current) : "absent"}`,
+    );
+    // contentHtml diffs against the sanitised form (imageRemap is apply-time;
+    // for image-embedding pages this is conservative — may say "changed").
+    const write = updateDataForMode(ctx.mode, raw, {
+      ...parsed.data,
+      contentHtml: sanitizePageContentHtml(parsed.data.contentHtml),
+    });
+    const changed = changedFields(write, current);
+    items.push({
+      entity: "page-content",
+      key: parsed.slug,
+      action: planActionFor(current, changed),
+      changedFields: changed.length ? changed : undefined,
+    });
+  });
+
+  // Site content (by key).
+  rawSite.forEach((raw, i) => {
+    const v = new RowValidator(SITE_CONTENT_FILE, i, errors);
+    const key = v.required("key", raw.key);
+    if (!v.ok) return;
+    const current = batch.siteContent.get(key) ?? null;
+    fingerprintParts.push(
+      `site-content:${key}:${current ? hashRow([...SITE_CONTENT_FIELDS], current) : "absent"}`,
+    );
+    const write = updateDataForMode(ctx.mode, raw, {
+      contentHtml: sanitizePageContentHtml(raw.contentHtml ?? ""),
+    });
+    const changed = changedFields(write, current);
+    items.push({
+      entity: "site-content",
+      key,
+      action: planActionFor(current, changed),
+      changedFields: changed.length ? changed : undefined,
+    });
+  });
+
+  // Theme (singleton).
+  const theme = readThemeFile(ctx.files, errors);
+  if (theme) {
+    const current = batch.theme;
+    fingerprintParts.push(
+      `club-theme:default:${current ? hashRow([...CLUB_THEME_FIELDS], current) : "absent"}`,
     );
     const data: Record<string, unknown> = {};
     for (const f of CLUB_THEME_FIELDS) if (f in theme) data[f] = theme[f];
@@ -357,95 +420,99 @@ async function planSiteContent(ctx: PlanContext): Promise<CategoryPlanResult> {
     });
   }
 
-  if (incomingPages.some((p) => /\/api\/images\//.test(p.contentHtml))) {
+  if (anyEmbeddedImages) {
     warnings.push(
       "Some pages embed images; their bytes are re-imported and references remapped.",
     );
   }
 
-  return { items, warnings, fingerprintParts };
+  return { items, warnings, errors, fingerprintParts };
 }
 
-async function applySiteContent(
-  ctx: ApplyContext,
-): Promise<CategoryApplyResult> {
-  const result: CategoryApplyResult = {
-    created: 0,
-    updated: 0,
-    unchanged: 0,
-    skipped: 0,
-  };
+async function applySiteContent(ctx: ApplyContext): Promise<CategoryApplyResult> {
+  const result: CategoryApplyResult = { created: 0, updated: 0, unchanged: 0, skipped: 0 };
+  const errors: string[] = []; // plan blocked all errors; defensive only
   const oldToNew = ctx.imageRemap;
 
+  const rawPages = readCsvRows(ctx.files, PAGE_FILE);
+  const rawSite = readCsvRows(ctx.files, SITE_CONTENT_FILE);
+  const batch = await loadSiteContentBatch(
+    ctx.tx,
+    rawPages.map((r) => r.slug?.trim() ?? "").filter(Boolean),
+    rawSite.map((r) => r.key?.trim() ?? "").filter(Boolean),
+  );
+
   // Pages.
-  for (const raw of readCsvFile(ctx.files, PAGE_FILE)) {
-    const page = coercePage(raw);
+  for (const [i, raw] of rawPages.entries()) {
+    const current = batch.pages.get(raw.slug?.trim() ?? "") ?? null;
+    const parsed = parsePageRow(i, raw, ctx.mode === "merge" && !!current, errors);
+    if (!parsed) { result.skipped += 1; continue; }
     const html = sanitizePageContentHtml(
-      remapImageRefs(page.contentHtml, oldToNew),
+      remapImageRefs(parsed.data.contentHtml, oldToNew),
     );
-    const existing = await ctx.tx.pageContent.findUnique({
-      where: { slug: page.slug },
-      select: { id: true },
+    await applyRow({
+      mode: ctx.mode,
+      raw,
+      data: { ...parsed.data, contentHtml: html },
+      current,
+      create: (data) =>
+        ctx.tx.pageContent.create({ data: { slug: parsed.slug, ...data } }),
+      update: (write) =>
+        ctx.tx.pageContent.update({
+          where: { slug: parsed.slug },
+          data: write,
+        }),
+      result,
     });
-    const data = {
-      path: page.path,
-      caption: page.caption,
-      menuTitle: page.menuTitle,
-      title: page.title,
-      headerText: page.headerText,
-      sortOrder: page.sortOrder,
-      contentHtml: html,
-      published: page.published,
-    };
-    await ctx.tx.pageContent.upsert({
-      where: { slug: page.slug },
-      create: { slug: page.slug, ...data },
-      update: updateDataForMode(ctx.mode, raw, data),
-    });
-    if (existing) result.updated += 1;
-    else result.created += 1;
   }
 
   // Site content.
-  for (const row of readCsvFile(ctx.files, SITE_CONTENT_FILE)) {
-    const key = row.key ?? "";
+  for (const [i, raw] of rawSite.entries()) {
+    const v = new RowValidator(SITE_CONTENT_FILE, i, errors);
+    const key = v.required("key", raw.key);
+    if (!v.ok) { result.skipped += 1; continue; }
+    const current = batch.siteContent.get(key) ?? null;
     const html = sanitizePageContentHtml(
-      remapImageRefs(row.contentHtml ?? "", oldToNew),
+      remapImageRefs(raw.contentHtml ?? "", oldToNew),
     );
-    const existing = await ctx.tx.siteContent.findUnique({
-      where: { key: key as never },
-      select: { id: true },
+    await applyRow({
+      mode: ctx.mode,
+      raw,
+      data: { contentHtml: html },
+      current,
+      create: (data) =>
+        ctx.tx.siteContent.create({ data: { key: key as never, ...data } }),
+      update: (write) =>
+        ctx.tx.siteContent.update({ where: { key: key as never }, data: write }),
+      result,
     });
-    await ctx.tx.siteContent.upsert({
-      where: { key: key as never },
-      create: { key: key as never, contentHtml: html },
-      update: updateDataForMode(ctx.mode, row, { contentHtml: html }),
-    });
-    if (existing) result.updated += 1;
-    else result.created += 1;
   }
 
   // Theme (singleton, replace-present of allowlisted fields).
-  const theme = readJsonFile<Record<string, unknown>>(ctx.files, THEME_FILE);
+  const theme = readThemeFile(ctx.files, errors);
   if (theme) {
     const data: Record<string, unknown> = {};
     for (const field of CLUB_THEME_FIELDS) {
       if (field in theme) data[field] = theme[field];
     }
-    const existing = await ctx.tx.clubTheme.findUnique({
-      where: { id: "default" },
-      select: { id: true },
-    });
-    // The theme row has required columns with no DB defaults; a create relies on
-    // the bundle carrying them (validated by Prisma at runtime). Cast the dynamic
-    // projection to the create input.
-    await ctx.tx.clubTheme.upsert({
-      where: { id: "default" },
-      create: { id: "default", ...data } as Prisma.ClubThemeUncheckedCreateInput,
-      update: updateDataForMode(ctx.mode, theme, data),
-    });
-    if (existing) result.updated += 1;
-    else result.created += 1;
+    const current = batch.theme;
+    if (!current) {
+      // The theme row has required columns with no DB defaults; a create relies
+      // on the bundle carrying them (validated by Prisma at runtime).
+      await ctx.tx.clubTheme.create({
+        data: { id: "default", ...data } as Prisma.ClubThemeUncheckedCreateInput,
+      });
+      result.created += 1;
+    } else {
+      const write = updateDataForMode(ctx.mode, theme, data);
+      const changed = changedFields(write, current);
+      if (changed.length === 0) {
+        result.unchanged += 1;
+      } else {
+        await ctx.tx.clubTheme.update({ where: { id: "default" }, data: write });
+        result.updated += 1;
+      }
+    }
   }
 
   return result;

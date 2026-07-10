@@ -9,8 +9,17 @@ import {
   getRegisteredEntities,
   type EntityDescriptor,
 } from "@/lib/config-transfer/registry";
-// Importing a category module registers its descriptors as a side effect.
+// Importing the category modules registers their descriptors as a side effect
+// (and runs assertDescriptorValid at load). ALL seven modules are imported so
+// the forbidden-field sweep below covers every category's allowlist — not just
+// site-content's.
 import "@/lib/config-transfer/categories/site-content";
+import "@/lib/config-transfer/categories/club-settings";
+import "@/lib/config-transfer/categories/lodge-config";
+import "@/lib/config-transfer/categories/lodge-ops";
+import "@/lib/config-transfer/categories/committee";
+import "@/lib/config-transfer/categories/induction";
+import "@/lib/config-transfer/categories/xero-config";
 
 function descriptor(overrides: Partial<EntityDescriptor> = {}): EntityDescriptor {
   return {
@@ -106,10 +115,28 @@ describe("config-transfer registry — assertDescriptorValid", () => {
 });
 
 describe("config-transfer registry — registered descriptors", () => {
-  it("registers site-content descriptors and they are all valid", () => {
+  it("every category's descriptors are registered and pass the security sweep", () => {
     const entities = getRegisteredEntities();
+    // One representative entity per category module proves each registered.
     expect(entities.map((e) => e.entity)).toEqual(
-      expect.arrayContaining(["page-content", "site-content", "club-theme"]),
+      expect.arrayContaining([
+        "page-content",
+        "site-content",
+        "club-theme",
+        "club-module-settings",
+        "email-message-setting",
+        "lodge",
+        "lodge-room",
+        "lodge-bed",
+        "season",
+        "season-rate",
+        "lodge-instruction",
+        "chore-template",
+        "committee-role",
+        "induction-template",
+        "xero-account-mapping",
+        "xero-item-code-mapping",
+      ]),
     );
     // Every registered descriptor must satisfy the security/shape rules.
     for (const descriptor of entities) {

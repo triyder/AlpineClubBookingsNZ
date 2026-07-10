@@ -1,7 +1,8 @@
 import { strToU8, strFromU8 } from "fflate";
+import { Prisma } from "@prisma/client";
 
 import type { BundleEntry } from "../bundle";
-import { registerEntity, type EntityDescriptor } from "../registry";
+import { registerEntity } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
   changedFields,
@@ -123,7 +124,7 @@ function fileFor(entity: string): string {
   return `club-settings/${entity}.json`;
 }
 
-export const clubSettingsDescriptors: EntityDescriptor[] = SINGLETONS.map((s) =>
+for (const s of SINGLETONS) {
   registerEntity({
     entity: s.entity,
     category: "club-settings",
@@ -134,8 +135,65 @@ export const clubSettingsDescriptors: EntityDescriptor[] = SINGLETONS.map((s) =>
     singleton: true,
     fields: s.fields,
     optInFields: s.optInFields,
-  }),
-);
+  });
+}
+
+/**
+ * Parse a singleton JSON file and type-check every allowlisted field against
+ * the REAL Prisma model column types (via dmmf) — a hand-edited value of the
+ * wrong shape fails the dry-run as an error instead of a write-time Prisma
+ * exception mid-transaction. Returns null (with errors pushed) on failure.
+ */
+function parseSingleton(
+  spec: SingletonSpec,
+  bytes: Uint8Array,
+  errors: string[],
+): Record<string, unknown> | null {
+  const file = fileFor(spec.entity);
+  let incoming: unknown;
+  try {
+    incoming = JSON.parse(strFromU8(bytes));
+  } catch (error) {
+    errors.push(
+      `${file}: not valid JSON (${error instanceof Error ? error.message : "parse error"})`,
+    );
+    return null;
+  }
+  if (typeof incoming !== "object" || incoming === null || Array.isArray(incoming)) {
+    errors.push(`${file}: must be a JSON object`);
+    return null;
+  }
+  const record = incoming as Record<string, unknown>;
+  const modelName = spec.delegate[0].toUpperCase() + spec.delegate.slice(1);
+  const model = Prisma.dmmf.datamodel.models.find((m) => m.name === modelName);
+  let ok = true;
+  for (const field of spec.fields) {
+    if (!(field in record)) continue;
+    const value = record[field];
+    const column = model?.fields.find((f) => f.name === field);
+    if (!column) continue; // guarded separately by the schema-drift test
+    if (value === null) {
+      if (column.isRequired) {
+        errors.push(`${file}: ${field} — null is not allowed (required setting)`);
+        ok = false;
+      }
+      continue;
+    }
+    const fails =
+      (column.type === "Boolean" && typeof value !== "boolean") ||
+      (column.type === "Int" && (typeof value !== "number" || !Number.isInteger(value))) ||
+      (column.type === "String" && typeof value !== "string") ||
+      (column.type === "DateTime" &&
+        (typeof value !== "string" || Number.isNaN(new Date(value).getTime())));
+    if (fails) {
+      errors.push(
+        `${file}: ${field} — ${JSON.stringify(value)} is not a valid ${column.type}`,
+      );
+      ok = false;
+    }
+  }
+  return ok ? record : null;
+}
 
 function delegateOf(db: ReadDb | TxDb, name: string): SingletonDelegate {
   return (db as unknown as Record<string, SingletonDelegate>)[name];
@@ -159,7 +217,6 @@ function project(
 
 export const clubSettingsExporter: CategoryExporter = {
   category: "club-settings",
-  descriptors: clubSettingsDescriptors,
   async export(ctx: ExportContext): Promise<BundleEntry[]> {
     const entries: BundleEntry[] = [];
     for (const spec of SINGLETONS) {
@@ -183,11 +240,13 @@ async function planClubSettings(
   ctx: PlanContext,
 ): Promise<CategoryPlanResult> {
   const items: PlanItem[] = [];
+  const errors: string[] = [];
   const fingerprintParts: string[] = [];
   for (const spec of SINGLETONS) {
     const bytes = ctx.files.get(fileFor(spec.entity));
     if (!bytes) continue;
-    const incoming = JSON.parse(strFromU8(bytes)) as Record<string, unknown>;
+    const incoming = parseSingleton(spec, bytes, errors);
+    if (!incoming) continue;
     const current = await delegateOf(ctx.db, spec.delegate).findUnique({
       where: { id: "default" },
     });
@@ -208,17 +267,19 @@ async function planClubSettings(
       changedFields: changed.length ? changed : undefined,
     });
   }
-  return { items, warnings: [], fingerprintParts };
+  return { items, warnings: [], errors, fingerprintParts };
 }
 
 async function applyClubSettings(
   ctx: ApplyContext,
 ): Promise<CategoryApplyResult> {
   const result: CategoryApplyResult = { created: 0, updated: 0, unchanged: 0, skipped: 0 };
+  const errors: string[] = []; // plan blocked all errors; defensive only
   for (const spec of SINGLETONS) {
     const bytes = ctx.files.get(fileFor(spec.entity));
     if (!bytes) continue;
-    const incoming = JSON.parse(strFromU8(bytes)) as Record<string, unknown>;
+    const incoming = parseSingleton(spec, bytes, errors);
+    if (!incoming) { result.skipped += 1; continue; }
     // Replace-present: only allowlisted fields actually present in the bundle.
     const data: Record<string, unknown> = {};
     for (const f of spec.fields) {
@@ -226,13 +287,27 @@ async function applyClubSettings(
     }
     const delegate = delegateOf(ctx.tx, spec.delegate);
     const existing = await delegate.findUnique({ where: { id: "default" } });
+    if (!existing) {
+      await delegate.upsert({
+        where: { id: "default" },
+        create: { id: "default", ...data },
+        update: {},
+      });
+      result.created += 1;
+      continue;
+    }
+    const write = updateDataForMode(ctx.mode, incoming, data);
+    const changed = changedFields(write, existing);
+    if (changed.length === 0) {
+      result.unchanged += 1;
+      continue;
+    }
     await delegate.upsert({
       where: { id: "default" },
       create: { id: "default", ...data },
-      update: updateDataForMode(ctx.mode, incoming, data),
+      update: write,
     });
-    if (existing) result.updated += 1;
-    else result.created += 1;
+    result.updated += 1;
   }
   return result;
 }

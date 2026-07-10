@@ -89,7 +89,7 @@ describe("config-transfer club-settings", () => {
     const target = stubDb({
       clubModuleSettings: { ...MODULES, multiLodge: false },
     });
-    const plan = await buildImportPlan(target, zip);
+    const plan = await buildImportPlan(target, zip, { mode: "merge" });
     const items = plan.categories[0].items;
     const modules = items.find((i) => i.entity === "club-module-settings");
     const email = items.find((i) => i.entity === "email-message-setting");

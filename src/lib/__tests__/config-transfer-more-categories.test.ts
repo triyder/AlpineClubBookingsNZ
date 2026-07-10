@@ -33,9 +33,9 @@ function sourceDb(): ReadDb {
 
 function emptyTargetDb(): ReadDb {
   return {
-    committeeRole: { findUnique: vi.fn().mockResolvedValue(null) },
-    xeroAccountMapping: { findUnique: vi.fn().mockResolvedValue(null) },
-    xeroItemCodeMapping: { findUnique: vi.fn().mockResolvedValue(null) },
+    committeeRole: { findMany: vi.fn().mockResolvedValue([]) },
+    xeroAccountMapping: { findMany: vi.fn().mockResolvedValue([]) },
+    xeroItemCodeMapping: { findMany: vi.fn().mockResolvedValue([]) },
     xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
   } as unknown as ReadDb;
 }
@@ -76,7 +76,7 @@ describe("config-transfer committee + xero-config", () => {
 
   it("plans all-create against an empty target and warns on Xero", async () => {
     const { zip } = await exportCats();
-    const plan = await buildImportPlan(emptyTargetDb(), zip);
+    const plan = await buildImportPlan(emptyTargetDb(), zip, { mode: "merge" });
     const committee = plan.categories.find((c) => c.category === "committee")!;
     const xero = plan.categories.find((c) => c.category === "xero-config")!;
     expect(committee.items.every((i) => i.action === "create")).toBe(true);

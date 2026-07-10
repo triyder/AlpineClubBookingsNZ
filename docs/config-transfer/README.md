@@ -14,11 +14,30 @@ admins at **Admin → Setup & Configuration → Export & Import**
   `.zip` bundle.
 - **Import:** upload a bundle → a mandatory **dry-run** shows exactly what will
   be created/updated per entity (plus door-code, Xero-org, and any bundle
-  integrity warnings) → choose a **write mode** → confirm to apply. The server
-  takes a `pg_dump` backup first, applies inside one transaction under a
-  single-flight advisory lock, and audits the result. Import **never deletes**,
-  so a "restore" won't remove anything added since the export; the pre-apply
-  backup is the true rollback.
+  integrity warnings) → choose a **write mode** and (optionally) untick
+  categories or resolve renames → confirm to apply. The server takes a
+  `pg_dump` backup first, then in ONE transaction takes the single-flight
+  advisory lock, re-plans against in-lock state, refuses on any drift, and
+  applies; success and refused/failed attempts are both audited. Import
+  **never deletes**, so a "restore" won't remove anything added since the
+  export; the pre-apply backup is the true rollback.
+- **Validation blocks apply:** every row is strictly validated at plan time —
+  malformed dates, unknown enum values, and non-integer/negative money are
+  **errors** (named by file, row, and field) that disable Apply until the
+  bundle is fixed (edit → reseal → re-preview). Blank cells are legal only
+  where merge mode keeps an existing value. The import never quietly writes
+  less, or different data, than the file says.
+- **Door codes:** the dry-run prominently names each lodge whose door code the
+  import would set or change, and the audit records which lodges' codes were
+  actually written (never the values). Reseal recomputes the bundle's
+  door-code flag from the actual files.
+- **Renames (match picker):** an unmatched season, chore template, or induction
+  template offers a picker — *create new* (default) or *match an existing row*
+  (declaring it renamed). Resolutions re-preview and are bound into the
+  fingerprint.
+- **Import category selection:** untick any of the bundle's categories at
+  preview to import a subset (e.g. skip Xero config after a cross-org
+  warning); the selection re-previews and is fingerprint-bound.
 - **Write mode (per import, default Merge):** *Merge* writes only the fields
   that carry a value in the bundle — blank/omitted fields keep the record's
   existing value, so a partial or skeleton bundle patches rather than wipes.
@@ -32,8 +51,12 @@ admins at **Admin → Setup & Configuration → Export & Import**
   rejection, and the import reads the files actually present (files-first).
   "Reseal edited bundle" regenerates the manifest so an edited bundle validates
   clean again. Only structural/safety problems (not a zip, missing/invalid
-  manifest, a newer format version, size/count caps, or unsafe entry paths) are
-  hard-refused.
+  manifest, a newer format version, resource caps — enforced BEFORE inflation —
+  or unsafe entry paths) are hard-refused. Re-zip mistakes are forgiven (a
+  single wrapper folder is stripped, macOS cruft ignored) and anything
+  discarded or uncovered warns loudly: a file outside the wrapper, or files
+  present for a category the manifest doesn't include, can't be silently
+  believed imported.
 
 ## Implemented categories
 

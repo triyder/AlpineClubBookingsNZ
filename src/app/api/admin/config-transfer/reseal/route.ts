@@ -1,45 +1,27 @@
 import { NextResponse } from "next/server";
 
-import { requireAdmin } from "@/lib/session-guards";
-import { isFullAdmin } from "@/lib/access-roles";
-import { MAX_BUNDLE_BYTES, resealBundle } from "@/lib/config-transfer/bundle";
+import { resealBundle } from "@/lib/config-transfer/bundle";
+import {
+  readBundleUpload,
+  requireFullAdminForConfigTransfer,
+} from "@/lib/config-transfer/route-helpers";
 import { configTransferErrorResponse } from "@/lib/config-transfer/route-error";
 
 // POST /api/admin/config-transfer/reseal — full-admin only.
 // Accepts a hand-edited bundle (multipart 'bundle' file) and returns a copy with
-// its manifest regenerated (fresh checksums + row counts), so it imports without
-// integrity warnings. Read-only; no DB mutation. See ADR-001 "hand-edit".
+// its manifest regenerated (fresh checksums, row counts, includedCategories,
+// and a doorCodesIncluded flag recomputed from the actual files), so it imports
+// without integrity warnings. Read-only; no DB mutation. ADR-001 "hand-edit".
 
 export async function POST(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireFullAdminForConfigTransfer();
   if (!guard.ok) return guard.response;
-  if (!isFullAdmin({ accessRoles: guard.session.user.accessRoles })) {
-    return NextResponse.json(
-      { error: "Full admin access is required." },
-      { status: 403 },
-    );
-  }
 
-  let bytes: Uint8Array;
-  try {
-    const form = await request.formData();
-    const file = form.get("bundle");
-    if (!(file instanceof File)) {
-      return NextResponse.json({ error: "Missing 'bundle' file." }, { status: 400 });
-    }
-    if (file.size > MAX_BUNDLE_BYTES) {
-      return NextResponse.json({ error: "Bundle is too large." }, { status: 413 });
-    }
-    bytes = new Uint8Array(await file.arrayBuffer());
-  } catch {
-    return NextResponse.json(
-      { error: "Could not read the uploaded bundle." },
-      { status: 400 },
-    );
-  }
+  const uploaded = await readBundleUpload(request);
+  if (!uploaded.ok) return uploaded.response;
 
   try {
-    const zip = resealBundle(bytes);
+    const zip = resealBundle(uploaded.upload.bytes);
     const stamp = new Date().toISOString().slice(0, 10);
     return new NextResponse(new Uint8Array(zip), {
       status: 200,

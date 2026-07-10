@@ -1,8 +1,8 @@
-import { strToU8, strFromU8 } from "fflate";
+import { strToU8 } from "fflate";
 
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
 import type { BundleEntry } from "../bundle";
-import { serialiseCsv, parseCsv } from "../csv";
+import { serialiseCsv } from "../csv";
 import { registerEntity } from "../registry";
 import { remapImageRefs } from "../media";
 import type { CategoryExporter, ExportContext } from "../export-types";
@@ -10,13 +10,16 @@ import { extractImageIds } from "./site-content";
 import {
   LODGES_PREFIX,
   folderLodgeSlug,
+  folderSegment,
   lodgeFolderFiles,
   lodgeFolderSegments,
 } from "./lodge-config";
 import {
+  applyRow,
   changedFields,
   hashRow,
   planActionFor,
+  resolutionKey,
   updateDataForMode,
   type ApplyContext,
   type CategoryApplyResult,
@@ -25,21 +28,19 @@ import {
   type PlanContext,
   type PlanItem,
   type ReadDb,
-  type TxDb,
 } from "../import-types";
+import { RowValidator, nz, readCsvRows } from "../values";
 
 // lodge-config category (part 2): lodge instructions and chore templates, laid
 // out to match the per-lodge folders from lodge-config (part 1):
 //   lodge-config/lodges/<slug>/instructions.csv     key, contentHtml
 //   lodge-config/lodges/<slug>/chore-templates.csv  name, description, ...
 //   lodge-config/instructions.csv                   key, contentHtml  ← club-wide
-// Instructions may be club-wide (lodgeId null) — those live in the top-level
-// file, not a lodge folder. Chore templates are always lodge-scoped. Instruction
-// content may embed images (remapped on apply).
-//
-// Booking/cancellation/min-stay policies are intentionally deferred — their
-// replace-the-whole-tier-set semantics conflict with the upsert-only model and
-// touch refund maths, so getting them subtly wrong is unsafe. See ADR-001/002.
+// Instructions are two-level: club-wide (lodgeId null) rows are the base shown
+// for every lodge; a lodge folder's rows override the same keys for that lodge.
+// Chore templates are always lodge-scoped. Instruction content may embed images
+// (remapped on apply). Booking/cancellation/min-stay policies are intentionally
+// deferred (replace-set semantics + refund maths). See ADR-001/002.
 
 /** Club-wide (lodgeId null) instructions live here, outside any lodge folder. */
 const CLUB_INSTRUCTION_FILE = "lodge-config/instructions.csv";
@@ -72,59 +73,132 @@ registerEntity({
   fields: [...CHORE_FIELDS],
 });
 
-const coerceInt = (v: string | undefined, d: number) =>
-  Number.isFinite(Number.parseInt((v ?? "").trim(), 10)) ? Number.parseInt(v as string, 10) : d;
-const coerceBool = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "true";
-const nz = (v: string | undefined) => (v && v.trim() !== "" ? v.trim() : null);
-const nzInt = (v: string | undefined) => {
-  const s = nz(v);
-  return s === null ? null : Number.parseInt(s, 10);
-};
-const readCsv = (files: Map<string, Uint8Array>, path: string) => {
-  const b = files.get(path);
-  return b ? parseCsv(strFromU8(b)).rows : [];
-};
+// ---- Shared parsing/building (plan + apply) ---------------------------------
 
-async function slugToId(db: ReadDb | TxDb): Promise<Map<string, string>> {
-  const lodges = await db.lodge.findMany({ select: { id: true, slug: true } });
-  return new Map(lodges.map((l) => [l.slug, l.id]));
-}
-
-/** Write-data for a chore-template row, shared by plan (diff) and apply (write). */
-function buildChoreData(raw: Record<string, string>) {
-  return {
-    description: nz(raw.description),
-    recommendedPeopleMin: coerceInt(raw.recommendedPeopleMin, 1),
-    recommendedPeopleMax: coerceInt(raw.recommendedPeopleMax, 2),
-    isEssential: coerceBool(raw.isEssential),
-    ageRestriction: (raw.ageRestriction || "ANY") as never,
-    conditionalNote: nz(raw.conditionalNote),
-    minAge: coerceInt(raw.minAge, 0),
-    sortOrder: coerceInt(raw.sortOrder, 0),
-    timeOfDay: (raw.timeOfDay || "ANYTIME") as never,
-    frequencyMode: (raw.frequencyMode || "DAILY") as never,
-    frequencyDays: nzInt(raw.frequencyDays),
-    active: coerceBool(raw.active),
-  };
+interface ChoreCurrent {
+  id: string;
+  lodgeId: string;
+  name: string;
+  description: string | null;
+  recommendedPeopleMin: number;
+  recommendedPeopleMax: number;
+  isEssential: boolean;
+  ageRestriction: string;
+  conditionalNote: string | null;
+  minAge: number;
+  sortOrder: number;
+  timeOfDay: string;
+  frequencyMode: string;
+  frequencyDays: number | null;
+  active: boolean;
 }
 const CHORE_SELECT = {
-  description: true, recommendedPeopleMin: true, recommendedPeopleMax: true,
-  isEssential: true, ageRestriction: true, conditionalNote: true, minAge: true,
-  sortOrder: true, timeOfDay: true, frequencyMode: true, frequencyDays: true, active: true,
+  id: true, lodgeId: true, name: true, description: true,
+  recommendedPeopleMin: true, recommendedPeopleMax: true, isEssential: true,
+  ageRestriction: true, conditionalNote: true, minAge: true, sortOrder: true,
+  timeOfDay: true, frequencyMode: true, frequencyDays: true, active: true,
 } as const;
+const CHORE_HASH_FIELDS = [
+  "description", "recommendedPeopleMin", "recommendedPeopleMax", "isEssential",
+  "ageRestriction", "conditionalNote", "minAge", "sortOrder", "timeOfDay",
+  "frequencyMode", "frequencyDays", "active",
+];
 
-/** Plan a single instruction row (club-wide or per-lodge) with a content diff. */
-function instructionWrite(ctx: PlanContext, raw: Record<string, string>) {
-  return updateDataForMode(
-    ctx.mode,
-    { contentHtml: raw.contentHtml ?? "" },
-    { contentHtml: sanitizePageContentHtml(raw.contentHtml ?? "") },
-  );
+interface OpsBatch {
+  lodgeIdBySlug: Map<string, string>;
+  clubInstructions: Map<string, { id: string; contentHtml: string }>; // by key
+  lodgeInstructions: Map<string, { id: string; contentHtml: string }>; // lodgeId/key
+  chores: Map<string, ChoreCurrent>; // lodgeId/name
+  choresById: Map<string, ChoreCurrent>;
+  choresByLodge: Map<string, ChoreCurrent[]>;
 }
+
+async function loadOpsBatch(db: ReadDb, slugs: string[]): Promise<OpsBatch> {
+  const lodges = await db.lodge.findMany({
+    where: { slug: { in: slugs } },
+    select: { id: true, slug: true },
+  });
+  const lodgeIdBySlug = new Map(lodges.map((l) => [l.slug, l.id]));
+  const lodgeIds = lodges.map((l) => l.id);
+
+  const [instructionRows, choreRows] = await Promise.all([
+    db.lodgeInstruction.findMany({
+      where: { OR: [{ lodgeId: null }, { lodgeId: { in: lodgeIds } }] },
+      select: { id: true, lodgeId: true, key: true, contentHtml: true },
+    }),
+    db.choreTemplate.findMany({
+      where: { lodgeId: { in: lodgeIds } },
+      select: CHORE_SELECT,
+    }),
+  ]);
+
+  const clubInstructions = new Map<string, { id: string; contentHtml: string }>();
+  const lodgeInstructions = new Map<string, { id: string; contentHtml: string }>();
+  for (const row of instructionRows) {
+    if (row.lodgeId === null) clubInstructions.set(String(row.key), row);
+    else lodgeInstructions.set(`${row.lodgeId}/${row.key}`, row);
+  }
+  const chores = new Map<string, ChoreCurrent>();
+  const choresById = new Map<string, ChoreCurrent>();
+  const choresByLodge = new Map<string, ChoreCurrent[]>();
+  for (const row of choreRows) {
+    const key = `${row.lodgeId}/${row.name}`;
+    if (!chores.has(key)) chores.set(key, row); // key-weak: first match
+    choresById.set(row.id, row);
+    const list = choresByLodge.get(row.lodgeId) ?? [];
+    list.push(row);
+    choresByLodge.set(row.lodgeId, list);
+  }
+  return { lodgeIdBySlug, clubInstructions, lodgeInstructions, chores, choresById, choresByLodge };
+}
+
+/** Validate + build an instruction row; blank content is legal only in merge mode on an existing row. */
+function parseInstructionRow(
+  file: string,
+  index: number,
+  raw: Record<string, string>,
+  errors: string[],
+): { key: string } | null {
+  const v = new RowValidator(file, index, errors);
+  v.enum("key", "LodgeInstructionKey", raw.key);
+  if (!v.ok) return null;
+  return { key: raw.key.trim() };
+}
+
+/** Validate + build a chore row (mode-aware blanks). */
+function parseChoreRow(
+  file: string,
+  index: number,
+  raw: Record<string, string>,
+  blankOk: boolean,
+  errors: string[],
+): { name: string; data: Record<string, unknown> } | null {
+  const v = new RowValidator(file, index, errors);
+  const name = v.required("name", raw.name);
+  const opt = <T>(cell: unknown, strict: () => T, fallback: T): T =>
+    blankOk && nz(cell) === null ? fallback : strict();
+  const data = {
+    description: nz(raw.description),
+    recommendedPeopleMin: opt(raw.recommendedPeopleMin, () => v.int("recommendedPeopleMin", raw.recommendedPeopleMin), 1),
+    recommendedPeopleMax: opt(raw.recommendedPeopleMax, () => v.int("recommendedPeopleMax", raw.recommendedPeopleMax), 2),
+    isEssential: opt(raw.isEssential, () => v.bool("isEssential", raw.isEssential), false),
+    ageRestriction: opt(raw.ageRestriction, () => v.enum("ageRestriction", "AgeRestriction", raw.ageRestriction), "ANY") as never,
+    conditionalNote: nz(raw.conditionalNote),
+    minAge: opt(raw.minAge, () => v.int("minAge", raw.minAge), 0),
+    sortOrder: opt(raw.sortOrder, () => v.int("sortOrder", raw.sortOrder), 0),
+    timeOfDay: opt(raw.timeOfDay, () => v.enum("timeOfDay", "ChoreTimeOfDay", raw.timeOfDay), "ANYTIME") as never,
+    frequencyMode: opt(raw.frequencyMode, () => v.enum("frequencyMode", "ChoreFrequencyMode", raw.frequencyMode), "DAILY") as never,
+    frequencyDays: nz(raw.frequencyDays) === null ? null : v.int("frequencyDays", raw.frequencyDays),
+    active: opt(raw.active, () => v.bool("active", raw.active), true),
+  };
+  if (!v.ok) return null;
+  return { name, data };
+}
+
+// ---- Export ----------------------------------------------------------------
 
 export const lodgeOpsExporter: CategoryExporter = {
   category: "lodge-config",
-  descriptors: [],
   async export(ctx: ExportContext): Promise<BundleEntry[]> {
     const instructions = await ctx.db.lodgeInstruction.findMany({
       orderBy: { key: "asc" },
@@ -145,7 +219,6 @@ export const lodgeOpsExporter: CategoryExporter = {
       for (const id of extractImageIds(i.contentHtml ?? "")) ctx.media.reference(id);
     }
 
-    // Group instructions: club-wide (no lodge) vs per-lodge.
     const clubInstructions: Record<string, unknown>[] = [];
     const instructionsByLodge = new Map<string, Record<string, unknown>[]>();
     for (const i of instructions) {
@@ -177,13 +250,10 @@ export const lodgeOpsExporter: CategoryExporter = {
       { path: CLUB_INSTRUCTION_FILE, category: "lodge-config", rowCount: clubInstructions.length, bytes: strToU8(serialiseCsv([...INSTRUCTION_FIELDS], clubInstructions)) },
     ];
 
-    // Emit the per-lodge instructions + chore-template skeletons for EVERY
-    // lodge (header-only when empty), so each lodge folder captures the full
-    // config and its per-lodge instruction-override slot is visible.
+    // Emit the per-lodge skeletons for EVERY lodge (header-only when empty).
     const lodges = await ctx.db.lodge.findMany({ orderBy: { slug: "asc" }, select: { slug: true } });
-    const segmentFor = (slug: string) => slug.replace(/[^A-Za-z0-9._-]/g, "_");
     for (const { slug } of lodges) {
-      const paths = lodgeFolderFiles(segmentFor(slug));
+      const paths = lodgeFolderFiles(folderSegment(slug));
       const ins = instructionsByLodge.get(slug) ?? [];
       const ch = choresByLodge.get(slug) ?? [];
       entries.push({ path: paths.instructions, category: "lodge-config", rowCount: ins.length, bytes: strToU8(serialiseCsv([...INSTRUCTION_FIELDS], ins)) });
@@ -193,111 +263,188 @@ export const lodgeOpsExporter: CategoryExporter = {
   },
 };
 
+// ---- Plan ------------------------------------------------------------------
+
 async function planLodgeOps(ctx: PlanContext): Promise<CategoryPlanResult> {
   const items: PlanItem[] = [];
+  const warnings: string[] = [];
+  const errors: string[] = [];
   const fingerprintParts: string[] = [];
-  const map = await slugToId(ctx.db);
+
+  const segments = lodgeFolderSegments(ctx.files);
+  const slugs = segments
+    .map((seg) => folderLodgeSlug(ctx.files, seg))
+    .filter((s): s is string => s !== null);
+  const batch = await loadOpsBatch(ctx.db, slugs);
+
+  const planInstruction = (
+    key: string,
+    displayKey: string,
+    raw: Record<string, string>,
+    current: { contentHtml: string } | null,
+  ) => {
+    fingerprintParts.push(
+      `lodge-instruction:${displayKey}:${current ? hashRow(["contentHtml"], current) : "absent"}`,
+    );
+    const write = updateDataForMode(
+      ctx.mode,
+      { contentHtml: raw.contentHtml ?? "" },
+      { contentHtml: sanitizePageContentHtml(raw.contentHtml ?? "") },
+    );
+    const changed = changedFields(write, current);
+    items.push({ entity: "lodge-instruction", key: displayKey, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
+  };
 
   // Club-wide instructions (lodgeId null).
-  for (const raw of readCsv(ctx.files, CLUB_INSTRUCTION_FILE)) {
-    const key = `club/${raw.key}`;
-    const current = await ctx.db.lodgeInstruction.findFirst({
-      where: { lodgeId: null, key: (raw.key ?? "") as never },
-      select: { contentHtml: true },
-    });
-    fingerprintParts.push(`lodge-instruction:${key}:${current ? hashRow(["contentHtml"], current) : "absent"}`);
-    const changed = changedFields(instructionWrite(ctx, raw), current);
-    items.push({ entity: "lodge-instruction", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
-  }
+  readCsvRows(ctx.files, CLUB_INSTRUCTION_FILE).forEach((raw, i) => {
+    const parsed = parseInstructionRow(CLUB_INSTRUCTION_FILE, i, raw, errors);
+    if (!parsed) return;
+    planInstruction(parsed.key, `club/${parsed.key}`, raw, batch.clubInstructions.get(parsed.key) ?? null);
+  });
 
   // Per-lodge instructions + chore templates.
-  for (const segment of lodgeFolderSegments(ctx.files)) {
+  for (const segment of segments) {
     const slug = folderLodgeSlug(ctx.files, segment);
-    if (!slug) continue;
+    if (!slug) continue; // lodge-config part 1 reports the descriptor error
     const paths = lodgeFolderFiles(segment);
-    const lodgeId = map.get(slug) ?? null;
+    const lodgeId = batch.lodgeIdBySlug.get(slug) ?? null;
 
-    for (const raw of readCsv(ctx.files, paths.instructions)) {
-      const key = `${slug}/${raw.key}`;
-      const current = lodgeId
-        ? await ctx.db.lodgeInstruction.findFirst({ where: { lodgeId, key: (raw.key ?? "") as never }, select: { contentHtml: true } })
-        : null;
-      fingerprintParts.push(`lodge-instruction:${key}:${current ? hashRow(["contentHtml"], current) : "absent"}`);
-      const changed = changedFields(instructionWrite(ctx, raw), current);
-      items.push({ entity: "lodge-instruction", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
-    }
+    readCsvRows(ctx.files, paths.instructions).forEach((raw, i) => {
+      const parsed = parseInstructionRow(paths.instructions, i, raw, errors);
+      if (!parsed) return;
+      const current = lodgeId ? batch.lodgeInstructions.get(`${lodgeId}/${parsed.key}`) ?? null : null;
+      planInstruction(parsed.key, `${slug}/${parsed.key}`, raw, current);
+    });
 
-    for (const raw of readCsv(ctx.files, paths.choreTemplates)) {
-      const key = `${slug}/${raw.name}`;
-      const current = lodgeId
-        ? await ctx.db.choreTemplate.findFirst({ where: { lodgeId, name: raw.name ?? "" }, select: CHORE_SELECT })
-        : null;
-      fingerprintParts.push(`chore-template:${key}:${current ? hashRow(["sortOrder", "active", "description"], current) : "absent"}`);
-      const write = updateDataForMode(ctx.mode, raw, buildChoreData(raw));
+    const bundleChoreNames = new Set<string>();
+    const choreRows = readCsvRows(ctx.files, paths.choreTemplates);
+    for (const raw of choreRows) if (nz(raw.name)) bundleChoreNames.add(raw.name.trim());
+    choreRows.forEach((raw, i) => {
+      const key = `${slug}/${raw.name?.trim() ?? ""}`;
+      const resolvedId = ctx.resolutions.get(resolutionKey("chore-template", key));
+      const exactMatch = lodgeId ? batch.chores.get(`${lodgeId}/${raw.name?.trim() ?? ""}`) ?? null : null;
+      let current: ChoreCurrent | null = exactMatch;
+      let candidates: PlanItem["candidates"];
+      if (!exactMatch && lodgeId) {
+        // Kept on RESOLVED rows too, so the admin can change or undo the match.
+        const options = (batch.choresByLodge.get(lodgeId) ?? []).filter(
+          (c) => !bundleChoreNames.has(c.name),
+        );
+        if (options.length > 0) {
+          candidates = options.map((c) => ({ id: c.id, label: c.name }));
+        }
+      }
+      if (resolvedId) {
+        const target = batch.choresById.get(resolvedId);
+        if (!target || target.lodgeId !== lodgeId) {
+          errors.push(`Chore template "${key}": the matched template no longer exists on this lodge — re-run the preview.`);
+          return;
+        }
+        current = target;
+      }
+      const parsed = parseChoreRow(paths.choreTemplates, i, raw, ctx.mode === "merge" && !!current, errors);
+      if (!parsed) return;
+      fingerprintParts.push(
+        `chore-template:${key}:${current ? hashRow(CHORE_HASH_FIELDS, current) : "absent"}`,
+      );
+      const data = resolvedId ? { name: parsed.name, ...parsed.data } : parsed.data;
+      const write = updateDataForMode(ctx.mode, { ...raw, name: parsed.name }, data);
       const changed = changedFields(write, current);
-      items.push({ entity: "chore-template", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
-    }
+      items.push({
+        entity: "chore-template",
+        key,
+        action: planActionFor(current, changed),
+        changedFields: changed.length ? changed : undefined,
+        ...(candidates ? { candidates } : {}),
+      });
+    });
   }
 
-  return { items, warnings: [], fingerprintParts };
+  return { items, warnings, errors, fingerprintParts };
 }
+
+// ---- Apply -----------------------------------------------------------------
 
 async function applyLodgeOps(ctx: ApplyContext): Promise<CategoryApplyResult> {
   const result: CategoryApplyResult = { created: 0, updated: 0, unchanged: 0, skipped: 0 };
-  const map = await slugToId(ctx.tx);
+  const errors: string[] = []; // plan blocked all errors; defensive only
 
-  const upsertInstruction = async (
+  const segments = lodgeFolderSegments(ctx.files);
+  const slugs = segments
+    .map((seg) => folderLodgeSlug(ctx.files, seg))
+    .filter((s): s is string => s !== null);
+  const batch = await loadOpsBatch(ctx.tx, slugs);
+
+  const applyInstruction = async (
     lodgeId: string | null,
     key: string,
-    contentHtml: string | undefined,
+    raw: Record<string, string>,
+    current: { id: string; contentHtml: string } | null,
   ) => {
-    const html = sanitizePageContentHtml(remapImageRefs(contentHtml ?? "", ctx.imageRemap));
-    const existing = await ctx.tx.lodgeInstruction.findFirst({
-      where: { lodgeId, key: (key ?? "") as never },
-      select: { id: true },
+    const html = sanitizePageContentHtml(
+      remapImageRefs(raw.contentHtml ?? "", ctx.imageRemap),
+    );
+    await applyRow({
+      mode: ctx.mode,
+      raw: { contentHtml: raw.contentHtml ?? "" },
+      data: { contentHtml: html },
+      current,
+      create: (data) =>
+        ctx.tx.lodgeInstruction.create({ data: { lodgeId, key: key as never, ...data } }),
+      update: (write) =>
+        ctx.tx.lodgeInstruction.update({ where: { id: current!.id }, data: write }),
+      result,
     });
-    if (existing) {
-      // Merge: a blank instruction body keeps the existing content.
-      await ctx.tx.lodgeInstruction.update({
-        where: { id: existing.id },
-        data: updateDataForMode(ctx.mode, { contentHtml: contentHtml ?? "" }, { contentHtml: html }),
-      });
-      result.updated += 1;
-    } else {
-      await ctx.tx.lodgeInstruction.create({ data: { lodgeId, key: (key ?? "") as never, contentHtml: html } });
-      result.created += 1;
-    }
   };
 
   // Club-wide instructions.
-  for (const raw of readCsv(ctx.files, CLUB_INSTRUCTION_FILE)) {
-    await upsertInstruction(null, raw.key ?? "", raw.contentHtml);
+  for (const [i, raw] of readCsvRows(ctx.files, CLUB_INSTRUCTION_FILE).entries()) {
+    const parsed = parseInstructionRow(CLUB_INSTRUCTION_FILE, i, raw, errors);
+    if (!parsed) { result.skipped += 1; continue; }
+    await applyInstruction(null, parsed.key, raw, batch.clubInstructions.get(parsed.key) ?? null);
   }
 
-  // Per-lodge instructions + chore templates.
-  for (const segment of lodgeFolderSegments(ctx.files)) {
+  // Per-lodge instructions + chore templates. NB: lodges are created by the
+  // lodge-config (part 1) apply, which runs earlier in the same transaction —
+  // re-resolve slugs that were missing from the pre-batch.
+  for (const segment of segments) {
     const slug = folderLodgeSlug(ctx.files, segment);
     const paths = lodgeFolderFiles(segment);
-    const lodgeId = slug ? map.get(slug) ?? null : null;
-
-    for (const raw of readCsv(ctx.files, paths.instructions)) {
-      if (!lodgeId) { result.skipped += 1; continue; }
-      await upsertInstruction(lodgeId, raw.key ?? "", raw.contentHtml);
+    let lodgeId = slug ? batch.lodgeIdBySlug.get(slug) ?? null : null;
+    if (slug && !lodgeId) {
+      const lodge = await ctx.tx.lodge.findUnique({ where: { slug }, select: { id: true } });
+      lodgeId = lodge?.id ?? null;
     }
 
-    for (const raw of readCsv(ctx.files, paths.choreTemplates)) {
+    for (const [i, raw] of readCsvRows(ctx.files, paths.instructions).entries()) {
+      const parsed = parseInstructionRow(paths.instructions, i, raw, errors);
+      if (!parsed || !lodgeId) { result.skipped += 1; continue; }
+      const current = batch.lodgeInstructions.get(`${lodgeId}/${parsed.key}`) ?? null;
+      await applyInstruction(lodgeId, parsed.key, raw, current);
+    }
+
+    for (const [i, raw] of readCsvRows(ctx.files, paths.choreTemplates).entries()) {
       if (!lodgeId) { result.skipped += 1; continue; }
-      const name = raw.name ?? "";
-      if (!name) { result.skipped += 1; continue; }
-      const data = buildChoreData(raw);
-      const existing = await ctx.tx.choreTemplate.findFirst({ where: { lodgeId, name }, select: { id: true } });
-      if (existing) {
-        await ctx.tx.choreTemplate.update({ where: { id: existing.id }, data: updateDataForMode(ctx.mode, raw, data) });
-        result.updated += 1;
-      } else {
-        await ctx.tx.choreTemplate.create({ data: { lodgeId, name, ...data } });
-        result.created += 1;
-      }
+      const key = `${slug}/${raw.name?.trim() ?? ""}`;
+      const resolvedId = ctx.resolutions.get(resolutionKey("chore-template", key));
+      const current = resolvedId
+        ? batch.choresById.get(resolvedId) ?? null
+        : batch.chores.get(`${lodgeId}/${raw.name?.trim() ?? ""}`) ?? null;
+      if (resolvedId && !current) { result.skipped += 1; continue; }
+      const parsed = parseChoreRow(paths.choreTemplates, i, raw, ctx.mode === "merge" && !!current, errors);
+      if (!parsed) { result.skipped += 1; continue; }
+      const data = resolvedId ? { name: parsed.name, ...parsed.data } : parsed.data;
+      await applyRow({
+        mode: ctx.mode,
+        raw: { ...raw, name: parsed.name },
+        data,
+        current,
+        create: (d) =>
+          ctx.tx.choreTemplate.create({ data: { lodgeId, name: parsed.name, ...(d as object) } as never }),
+        update: (write) =>
+          ctx.tx.choreTemplate.update({ where: { id: current!.id }, data: write }),
+        result,
+      });
     }
   }
 

@@ -1,13 +1,15 @@
 import { strToU8, strFromU8 } from "fflate";
 
 import type { BundleEntry } from "../bundle";
-import { serialiseCsv, parseCsv } from "../csv";
+import { serialiseCsv } from "../csv";
 import { registerEntity } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
+  applyRow,
   changedFields,
   hashRow,
   planActionFor,
+  resolutionKey,
   updateDataForMode,
   type ApplyContext,
   type CategoryApplyResult,
@@ -15,23 +17,26 @@ import {
   type CategoryPlanResult,
   type PlanContext,
   type PlanItem,
+  type ReadDb,
 } from "../import-types";
+import { RowValidator, asStr, coerceBool, nz, readCsvRows } from "../values";
 
 // lodge-config category (part 1): lodges + their rooms + beds + seasons + rates
 // — the structural "multi-lodge" core. Each lodge is a self-contained folder,
 //   lodge-config/lodges/<slug>/
-//     lodge.json          { slug, name, active, travelNote, doorCode? }
+//     lodge.json          { slug, name, active, travelNote, isDefault, doorCode? }
 //     rooms.csv           name, sortOrder, active, notes
 //     beds.csv            roomName, name, sortOrder, active
 //     seasons.csv         name, type, startDate, endDate, active
 //     season-rates.csv    seasonName, ageTier, isMember, pricePerNightCents
-// so the lodge a row belongs to is implied by the folder (not a CSV column),
-// making a whole lodge easy to add/curate/spot as a unit. The authoritative
-// slug is lodge.json's `slug` — the folder name is just a container.
+// so the lodge a row belongs to is implied by the folder (not a CSV column).
+// The authoritative slug is lodge.json's `slug` — the folder name is just a
+// container.
 //
-// Per-lodge capacity/settings stay out of scope (their id="default"-vs-lodgeId
-// storage duality makes cross-instance round-tripping unsafe; set them on the
-// lodge page). See ADR-001/002.
+// Row validation is strict and BLOCKS apply (plan errors): malformed dates,
+// enums, and money never reach a write; blank cells are only legal where merge
+// mode would keep the existing value. Per-lodge capacity/settings stay out of
+// scope (id="default"-vs-lodgeId duality; set on the lodge page). ADR-001/002.
 
 /** Every per-lodge folder lives under this prefix. */
 export const LODGES_PREFIX = "lodge-config/lodges/";
@@ -49,7 +54,7 @@ const SEASON_FIELDS = ["name", "type", "startDate", "endDate", "active"] as cons
 const RATE_FIELDS = ["seasonName", "ageTier", "isMember", "pricePerNightCents"] as const;
 
 /** Folder-name segment for a lodge slug (slugs are url-safe; guard anyway). */
-function folderSegment(slug: string): string {
+export function folderSegment(slug: string): string {
   return slug.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
@@ -78,6 +83,23 @@ export function lodgeFolderSegments(files: Map<string, Uint8Array>): string[] {
   return [...set].sort();
 }
 
+/** Read a lodge.json descriptor as a loose record (tolerant for hand-editing). */
+function readLodgeJson(
+  files: Map<string, Uint8Array>,
+  path: string,
+): Record<string, unknown> | null {
+  const bytes = files.get(path);
+  if (!bytes) return null;
+  try {
+    const value = JSON.parse(strFromU8(bytes));
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The authoritative lodge slug for a folder segment, from its lodge.json. */
 export function folderLodgeSlug(
   files: Map<string, Uint8Array>,
@@ -88,12 +110,14 @@ export function folderLodgeSlug(
   return slug || null;
 }
 
-/** date-only (@db.Date) helpers: serialise as YYYY-MM-DD, parse to UTC midnight. */
+/** date-only (@db.Date): serialise as YYYY-MM-DD. */
 function toDateStr(value: Date | null | undefined): string {
   return value ? new Date(value).toISOString().slice(0, 10) : "";
 }
-function fromDateStr(value: unknown): Date {
-  return new Date(`${asStr(value).trim()}T00:00:00.000Z`);
+
+function asNullableStr(value: unknown): string | null {
+  const s = asStr(value);
+  return s === "" ? null : s;
 }
 
 registerEntity({
@@ -148,44 +172,12 @@ registerEntity({
   fields: [...RATE_FIELDS],
 });
 
-function asStr(value: unknown): string {
-  return value === null || value === undefined ? "" : String(value);
-}
-function asNullableStr(value: unknown): string | null {
-  const s = asStr(value);
-  return s === "" ? null : s;
-}
-function coerceInt(value: unknown, fallback: number): number {
-  const n = Number.parseInt(asStr(value).trim(), 10);
-  return Number.isFinite(n) ? n : fallback;
-}
-function coerceBool(value: unknown): boolean {
-  if (typeof value === "boolean") return value;
-  return asStr(value).trim().toLowerCase() === "true";
-}
-function readCsv(files: Map<string, Uint8Array>, path: string) {
-  const bytes = files.get(path);
-  return bytes ? parseCsv(strFromU8(bytes)).rows : [];
-}
-/** Read a lodge.json descriptor as a loose record (tolerant for hand-editing). */
-function readLodgeJson(
-  files: Map<string, Uint8Array>,
-  path: string,
-): Record<string, unknown> | null {
-  const bytes = files.get(path);
-  if (!bytes) return null;
-  try {
-    const value = JSON.parse(strFromU8(bytes));
-    return value && typeof value === "object"
-      ? (value as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}
+// ---- Shared write-data builders + batched current-state loading -------------
+//
+// Plan (for the change diff) and apply (for the write) share the SAME builders
+// and the SAME batched lookups, so the dry-run cannot drift from what apply
+// does, and neither side issues per-row queries.
 
-// Write-data builders shared by plan (for the change diff) and apply (for the
-// write), so the dry-run cannot drift from what apply actually does.
 function buildLodgeData(descriptor: Record<string, unknown>, slug: string): Record<string, unknown> {
   const data: Record<string, unknown> = {
     name: asStr(descriptor.name) || slug,
@@ -195,28 +187,106 @@ function buildLodgeData(descriptor: Record<string, unknown>, slug: string): Reco
   if ("doorCode" in descriptor) data.doorCode = asNullableStr(descriptor.doorCode);
   return data;
 }
-function buildRoomData(raw: Record<string, unknown>) {
-  return { sortOrder: coerceInt(raw.sortOrder, 0), active: coerceBool(raw.active), notes: asNullableStr(raw.notes) };
+
+interface LodgeCurrent {
+  id: string;
+  slug: string;
+  name: string;
+  active: boolean;
+  travelNote: string | null;
+  doorCode: string | null;
+  isDefault: boolean;
 }
-function buildBedData(raw: Record<string, unknown>) {
-  return { sortOrder: coerceInt(raw.sortOrder, 0), active: coerceBool(raw.active) };
+interface SeasonCurrent {
+  id: string;
+  lodgeId: string;
+  name: string;
+  type: string;
+  startDate: Date;
+  endDate: Date;
+  active: boolean;
 }
-function buildSeasonData(raw: Record<string, unknown>) {
-  return { type: raw.type as never, startDate: fromDateStr(raw.startDate), endDate: fromDateStr(raw.endDate), active: coerceBool(raw.active) };
+interface LodgeBatch {
+  lodges: Map<string, LodgeCurrent>; // by slug
+  rooms: Map<string, { id: string; sortOrder: number; active: boolean; notes: string | null }>; // lodgeId/name
+  beds: Map<string, { id: string; sortOrder: number; active: boolean }>; // lodgeId/roomName/name
+  seasons: Map<string, SeasonCurrent>; // lodgeId/name (first match)
+  seasonsById: Map<string, SeasonCurrent>;
+  seasonsByLodge: Map<string, Array<{ id: string; name: string; startDate: Date; endDate: Date }>>;
+  rates: Map<string, { id: string; pricePerNightCents: number }>; // lodgeId/seasonName/ageTier/isMember
+  currentDefaultSlug: string | null;
 }
-function buildRateData(raw: Record<string, unknown>) {
-  return { pricePerNightCents: coerceInt(raw.pricePerNightCents, 0) };
+
+/** One findMany per entity for every lodge the bundle touches. */
+async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> {
+  const lodgeRows = await db.lodge.findMany({
+    where: { slug: { in: slugs } },
+    select: { id: true, slug: true, name: true, active: true, travelNote: true, doorCode: true, isDefault: true },
+  });
+  const lodges = new Map(lodgeRows.map((l) => [l.slug, l]));
+  const lodgeIds = lodgeRows.map((l) => l.id);
+
+  const [roomRows, bedRows, seasonRows, rateRows, currentDefault] = await Promise.all([
+    db.lodgeRoom.findMany({
+      where: { lodgeId: { in: lodgeIds } },
+      select: { id: true, lodgeId: true, name: true, sortOrder: true, active: true, notes: true },
+    }),
+    db.lodgeBed.findMany({
+      where: { room: { lodgeId: { in: lodgeIds } } },
+      select: { id: true, name: true, sortOrder: true, active: true, room: { select: { lodgeId: true, name: true } } },
+    }),
+    db.season.findMany({
+      where: { lodgeId: { in: lodgeIds } },
+      orderBy: [{ startDate: "asc" }, { id: "asc" }],
+      select: { id: true, lodgeId: true, name: true, type: true, startDate: true, endDate: true, active: true },
+    }),
+    db.seasonRate.findMany({
+      where: { season: { lodgeId: { in: lodgeIds } } },
+      select: { id: true, ageTier: true, isMember: true, pricePerNightCents: true, season: { select: { lodgeId: true, name: true } } },
+    }),
+    db.lodge.findFirst({ where: { isDefault: true }, select: { slug: true } }),
+  ]);
+
+  const rooms = new Map(roomRows.map((r) => [`${r.lodgeId}/${r.name}`, r]));
+  const beds = new Map(bedRows.map((b) => [`${b.room.lodgeId}/${b.room.name}/${b.name}`, b]));
+  const seasons = new Map<string, SeasonCurrent>();
+  const seasonsById = new Map<string, SeasonCurrent>();
+  const seasonsByLodge = new Map<string, Array<{ id: string; name: string; startDate: Date; endDate: Date }>>();
+  for (const s of seasonRows) {
+    const key = `${s.lodgeId}/${s.name}`;
+    if (!seasons.has(key)) seasons.set(key, s); // key-weak: first match wins
+    seasonsById.set(s.id, s);
+    const list = seasonsByLodge.get(s.lodgeId) ?? [];
+    list.push({ id: s.id, name: s.name, startDate: s.startDate, endDate: s.endDate });
+    seasonsByLodge.set(s.lodgeId, list);
+  }
+  const rates = new Map(
+    rateRows.map((r) => [
+      `${r.season.lodgeId}/${r.season.name}/${r.ageTier}/${r.isMember}`,
+      { id: r.id, pricePerNightCents: r.pricePerNightCents },
+    ]),
+  );
+
+  return {
+    lodges,
+    rooms,
+    beds,
+    seasons,
+    seasonsById,
+    seasonsByLodge,
+    rates,
+    currentDefaultSlug: currentDefault?.slug ?? null,
+  };
 }
 
 // The slug the bundle designates as the default lodge (first lodge.json with
-// isDefault=true), or null if none. isDefault is handled by a dedicated
-// clear-then-set pass (never the per-lodge upsert) because at most one lodge may
-// be flagged (partial unique index Lodge_isDefault_key); a two-default state
-// mid-write would trip it. We only ever SET a default, never clear to none.
+// isDefault=true), or null. isDefault is applied by a dedicated clear-then-set
+// pass (never the per-lodge upsert): at most one lodge may be flagged
+// (Lodge_isDefault_key). We only ever SET a default, never clear to none.
 function bundleDesignatedDefaultSlug(files: Map<string, Uint8Array>): string | null {
   for (const segment of lodgeFolderSegments(files)) {
     const descriptor = readLodgeJson(files, lodgeFolderFiles(segment).lodge);
-    if (descriptor && asStr(descriptor.slug) && "isDefault" in descriptor && coerceBool(descriptor.isDefault)) {
+    if (descriptor && asStr(descriptor.slug) && coerceBool(descriptor.isDefault)) {
       return asStr(descriptor.slug);
     }
   }
@@ -227,7 +297,6 @@ function bundleDesignatedDefaultSlug(files: Map<string, Uint8Array>): string | n
 
 export const lodgeConfigExporter: CategoryExporter = {
   category: "lodge-config",
-  descriptors: [],
   async export(ctx: ExportContext): Promise<BundleEntry[]> {
     const lodges = await ctx.db.lodge.findMany({
       orderBy: { slug: "asc" },
@@ -250,7 +319,6 @@ export const lodgeConfigExporter: CategoryExporter = {
       select: { ageTier: true, isMember: true, pricePerNightCents: true, season: { select: { name: true, lodge: { select: { slug: true } } } } },
     });
 
-    // Group the collections by lodge slug.
     const bySlug = <T>() => new Map<string, T[]>();
     const roomsBy = bySlug<Record<string, unknown>>();
     const bedsBy = bySlug<Record<string, unknown>>();
@@ -299,205 +367,386 @@ export const lodgeConfigExporter: CategoryExporter = {
   },
 };
 
+// ---- Row parsing (shared by plan + apply; validation errors block apply) ----
+
+interface ParsedLodgeRows {
+  slug: string;
+  descriptor: Record<string, unknown>;
+  rooms: Array<{ raw: Record<string, string>; name: string; data: Record<string, unknown> }>;
+  beds: Array<{ raw: Record<string, string>; roomName: string; name: string; data: Record<string, unknown> }>;
+  seasons: Array<{ raw: Record<string, string>; name: string; data: Record<string, unknown> }>;
+  rates: Array<{ raw: Record<string, string>; seasonName: string; ageTier: string; isMember: boolean; data: Record<string, unknown> }>;
+}
+
+/**
+ * Parse + strictly validate one lodge folder's rows. `blankOk(current)` cells:
+ * a blank enum/date/bool/int/money cell is legal only when merge mode will keep
+ * an existing row's value; on a create (or in overwrite mode) it is an error.
+ * Malformed non-blank values are always errors. Invalid rows are EXCLUDED from
+ * the returned sets (and, because errors block apply, never written).
+ */
+function parseLodgeFolder(
+  files: Map<string, Uint8Array>,
+  segment: string,
+  ctxMode: "merge" | "overwrite",
+  batch: LodgeBatch,
+  errors: string[],
+): ParsedLodgeRows | null {
+  const paths = lodgeFolderFiles(segment);
+  const descriptor = readLodgeJson(files, paths.lodge);
+  if (!descriptor || !asStr(descriptor.slug)) {
+    errors.push(
+      `${paths.lodge}: missing or unreadable lodge.json (a valid {"slug": ...} descriptor is required)`,
+    );
+    return null;
+  }
+  const slug = asStr(descriptor.slug);
+  const lodge = batch.lodges.get(slug) ?? null;
+  const lodgeId = lodge?.id ?? null;
+
+  const out: ParsedLodgeRows = { slug, descriptor, rooms: [], beds: [], seasons: [], rates: [] };
+
+  readCsvRows(files, paths.rooms).forEach((raw, i) => {
+    const v = new RowValidator(paths.rooms, i, errors);
+    const name = v.required("name", raw.name);
+    const current = lodgeId ? batch.rooms.get(`${lodgeId}/${name}`) : null;
+    const blankOk = ctxMode === "merge" && !!current;
+    const sortOrder = blankOk && nz(raw.sortOrder) === null ? 0 : v.int("sortOrder", raw.sortOrder);
+    const active = blankOk && nz(raw.active) === null ? false : v.bool("active", raw.active);
+    if (!v.ok) return;
+    out.rooms.push({ raw, name, data: { sortOrder, active, notes: nz(raw.notes) } });
+  });
+
+  readCsvRows(files, paths.beds).forEach((raw, i) => {
+    const v = new RowValidator(paths.beds, i, errors);
+    const roomName = v.required("roomName", raw.roomName);
+    const name = v.required("name", raw.name);
+    const current = lodgeId ? batch.beds.get(`${lodgeId}/${roomName}/${name}`) : null;
+    const blankOk = ctxMode === "merge" && !!current;
+    const sortOrder = blankOk && nz(raw.sortOrder) === null ? 0 : v.int("sortOrder", raw.sortOrder);
+    const active = blankOk && nz(raw.active) === null ? false : v.bool("active", raw.active);
+    if (!v.ok) return;
+    out.beds.push({ raw, roomName, name, data: { sortOrder, active } });
+  });
+
+  readCsvRows(files, paths.seasons).forEach((raw, i) => {
+    const v = new RowValidator(paths.seasons, i, errors);
+    const name = v.required("name", raw.name);
+    const current = lodgeId ? batch.seasons.get(`${lodgeId}/${name}`) : null;
+    const blankOk = ctxMode === "merge" && !!current;
+    const type = blankOk && nz(raw.type) === null ? "" : v.enum("type", "SeasonType", raw.type);
+    const startDate = blankOk && nz(raw.startDate) === null ? new Date(0) : v.date("startDate", raw.startDate);
+    const endDate = blankOk && nz(raw.endDate) === null ? new Date(0) : v.date("endDate", raw.endDate);
+    const active = blankOk && nz(raw.active) === null ? false : v.bool("active", raw.active);
+    if (!v.ok) return;
+    out.seasons.push({ raw, name, data: { type: type as never, startDate, endDate, active } });
+  });
+
+  readCsvRows(files, paths.rates).forEach((raw, i) => {
+    const v = new RowValidator(paths.rates, i, errors);
+    const seasonName = v.required("seasonName", raw.seasonName);
+    const ageTier = v.enum("ageTier", "AgeTier", raw.ageTier);
+    const isMember = v.bool("isMember", raw.isMember);
+    const current =
+      lodgeId ? batch.rates.get(`${lodgeId}/${seasonName}/${ageTier}/${isMember}`) : null;
+    const blankOk = ctxMode === "merge" && !!current;
+    const pricePerNightCents =
+      blankOk && nz(raw.pricePerNightCents) === null
+        ? 0
+        : v.moneyCents("pricePerNightCents", raw.pricePerNightCents);
+    if (!v.ok) return;
+    out.rates.push({ raw, seasonName, ageTier, isMember, data: { pricePerNightCents } });
+  });
+
+  return out;
+}
+
 // ---- Plan ------------------------------------------------------------------
 
 async function planLodgeConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
   const items: PlanItem[] = [];
   const warnings: string[] = [];
+  const errors: string[] = [];
   const fingerprintParts: string[] = [];
+  const doorCodeChanges: string[] = [];
 
-  for (const segment of lodgeFolderSegments(ctx.files)) {
-    const paths = lodgeFolderFiles(segment);
-    const descriptor = readLodgeJson(ctx.files, paths.lodge);
-    if (!descriptor || !asStr(descriptor.slug)) {
-      warnings.push(`Lodge folder "${segment}" has no readable lodge.json; its rooms/beds will be skipped.`);
-      continue;
-    }
-    const slug = asStr(descriptor.slug);
+  const segments = lodgeFolderSegments(ctx.files);
+  const slugs = segments
+    .map((seg) => folderLodgeSlug(ctx.files, seg))
+    .filter((s): s is string => s !== null);
+  const batch = await loadLodgeBatch(ctx.db, slugs);
 
-    // Lodge.
-    const currentLodge = await ctx.db.lodge.findUnique({
-      where: { slug },
-      select: { id: true, slug: true, name: true, active: true, travelNote: true, doorCode: true },
-    });
-    fingerprintParts.push(`lodge:${slug}:${currentLodge ? hashRow([...LODGE_FIELDS], currentLodge) : "absent"}`);
-    {
-      const write = updateDataForMode(ctx.mode, descriptor, buildLodgeData(descriptor, slug));
-      const changed = changedFields(write, currentLodge);
-      items.push({ entity: "lodge", key: slug, action: planActionFor(currentLodge, changed), changedFields: changed.length ? changed : undefined });
-    }
+  // The default-lodge designation is applied by a dedicated pass; fingerprint
+  // the CURRENT default so a concurrent default change trips the drift guard.
+  fingerprintParts.push(`default-lodge:${batch.currentDefaultSlug ?? "none"}`);
+
+  for (const segment of segments) {
+    const parsed = parseLodgeFolder(ctx.files, segment, ctx.mode, batch, errors);
+    if (!parsed) continue;
+    const { slug, descriptor } = parsed;
+    const currentLodge = batch.lodges.get(slug) ?? null;
     const lodgeId = currentLodge?.id ?? null;
 
+    // Lodge.
+    fingerprintParts.push(
+      `lodge:${slug}:${currentLodge ? hashRow([...LODGE_FIELDS], currentLodge) : "absent"}`,
+    );
+    {
+      const data = buildLodgeData(descriptor, slug);
+      const write = updateDataForMode(ctx.mode, descriptor, data);
+      const changed = changedFields(write, currentLodge);
+      items.push({ entity: "lodge", key: slug, action: planActionFor(currentLodge, changed), changedFields: changed.length ? changed : undefined });
+      // Door-code disclosure: creating with a code, or changing one.
+      const writesCode =
+        "doorCode" in write &&
+        (!currentLodge || changed.includes("doorCode"));
+      if (writesCode && nz(descriptor.doorCode) !== null) {
+        doorCodeChanges.push(slug);
+        warnings.push(`Door code for lodge "${slug}" will be ${currentLodge?.doorCode ? "changed" : "set"}.`);
+      }
+    }
+
     // Rooms.
-    for (const raw of readCsv(ctx.files, paths.rooms)) {
-      const key = `${slug}/${raw.name}`;
-      const current = lodgeId
-        ? await ctx.db.lodgeRoom.findUnique({ where: { lodgeId_name: { lodgeId, name: raw.name ?? "" } }, select: { sortOrder: true, active: true, notes: true } })
-        : null;
+    for (const row of parsed.rooms) {
+      const key = `${slug}/${row.name}`;
+      const current = lodgeId ? batch.rooms.get(`${lodgeId}/${row.name}`) ?? null : null;
       fingerprintParts.push(`lodge-room:${key}:${current ? hashRow(["sortOrder", "active", "notes"], current) : "absent"}`);
-      const write = updateDataForMode(ctx.mode, raw, buildRoomData(raw));
+      const write = updateDataForMode(ctx.mode, row.raw, row.data);
       const changed = changedFields(write, current);
       items.push({ entity: "lodge-room", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
     }
 
     // Beds.
-    for (const raw of readCsv(ctx.files, paths.beds)) {
-      const key = `${slug}/${raw.roomName}/${raw.name}`;
-      const room = lodgeId
-        ? await ctx.db.lodgeRoom.findUnique({ where: { lodgeId_name: { lodgeId, name: raw.roomName ?? "" } }, select: { id: true } })
-        : null;
-      const current = room
-        ? await ctx.db.lodgeBed.findUnique({ where: { roomId_name: { roomId: room.id, name: raw.name ?? "" } }, select: { sortOrder: true, active: true } })
-        : null;
+    for (const row of parsed.beds) {
+      const key = `${slug}/${row.roomName}/${row.name}`;
+      const current = lodgeId ? batch.beds.get(`${lodgeId}/${row.roomName}/${row.name}`) ?? null : null;
       fingerprintParts.push(`lodge-bed:${key}:${current ? hashRow(["sortOrder", "active"], current) : "absent"}`);
-      const write = updateDataForMode(ctx.mode, raw, buildBedData(raw));
+      const write = updateDataForMode(ctx.mode, row.raw, row.data);
       const changed = changedFields(write, current);
       items.push({ entity: "lodge-bed", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
     }
 
-    // Seasons (key-weak: match by lodge + name).
-    for (const raw of readCsv(ctx.files, paths.seasons)) {
-      const key = `${slug}/${raw.name}`;
-      const current = lodgeId
-        ? await ctx.db.season.findFirst({ where: { lodgeId, name: raw.name ?? "" }, select: { type: true, startDate: true, endDate: true, active: true } })
-        : null;
-      fingerprintParts.push(`season:${key}:${current ? hashRow(["type", "active"], current) : "absent"}`);
-      const write = updateDataForMode(ctx.mode, raw, buildSeasonData(raw));
+    // Seasons (key-weak: name match; unmatched rows may be resolved to an
+    // existing season via the picker — a resolution means "renamed").
+    const bundleSeasonNames = new Set(parsed.seasons.map((s) => s.name));
+    for (const row of parsed.seasons) {
+      const key = `${slug}/${row.name}`;
+      const resolvedId = ctx.resolutions.get(resolutionKey("season", key));
+      const exactMatch = lodgeId ? batch.seasons.get(`${lodgeId}/${row.name}`) ?? null : null;
+      let current: SeasonCurrent | null = exactMatch;
+      let candidates: PlanItem["candidates"];
+      if (!exactMatch && lodgeId) {
+        // Offer rename candidates: this lodge's seasons not named by the bundle.
+        // Kept on RESOLVED rows too, so the admin can change or undo the match.
+        const options = (batch.seasonsByLodge.get(lodgeId) ?? []).filter(
+          (s) => !bundleSeasonNames.has(s.name),
+        );
+        if (options.length > 0) {
+          candidates = options.map((s) => ({
+            id: s.id,
+            label: `${s.name} (${toDateStr(s.startDate)} – ${toDateStr(s.endDate)})`,
+          }));
+        }
+      }
+      if (resolvedId) {
+        const target = batch.seasonsById.get(resolvedId);
+        if (!target || target.lodgeId !== lodgeId) {
+          errors.push(`Season "${key}": the matched season no longer exists on this lodge — re-run the preview.`);
+          continue;
+        }
+        current = target;
+      }
+      fingerprintParts.push(`season:${key}:${current ? hashRow(["name", "type", "startDate", "endDate", "active"], current) : "absent"}`);
+      // A resolved (renamed) season also writes the bundle's name.
+      const data = resolvedId ? { name: row.name, ...row.data } : row.data;
+      const write = updateDataForMode(ctx.mode, { ...row.raw, name: row.name }, data);
       const changed = changedFields(write, current);
-      items.push({ entity: "season", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
+      items.push({
+        entity: "season",
+        key,
+        action: planActionFor(current, changed),
+        changedFields: changed.length ? changed : undefined,
+        ...(candidates ? { candidates } : {}),
+      });
     }
 
     // Season rates.
-    for (const raw of readCsv(ctx.files, paths.rates)) {
-      const key = `${slug}/${raw.seasonName}/${raw.ageTier}/${raw.isMember}`;
-      const season = lodgeId
-        ? await ctx.db.season.findFirst({ where: { lodgeId, name: raw.seasonName ?? "" }, select: { id: true } })
-        : null;
-      const current = season
-        ? await ctx.db.seasonRate.findUnique({ where: { seasonId_ageTier_isMember: { seasonId: season.id, ageTier: raw.ageTier as never, isMember: coerceBool(raw.isMember) } }, select: { pricePerNightCents: true } })
+    for (const row of parsed.rates) {
+      const key = `${slug}/${row.seasonName}/${row.ageTier}/${row.isMember}`;
+      const current = lodgeId
+        ? batch.rates.get(`${lodgeId}/${row.seasonName}/${row.ageTier}/${row.isMember}`) ?? null
         : null;
       fingerprintParts.push(`season-rate:${key}:${current ? String(current.pricePerNightCents) : "absent"}`);
-      const write = updateDataForMode(ctx.mode, raw, buildRateData(raw));
+      const write = updateDataForMode(ctx.mode, row.raw, row.data);
       const changed = changedFields(write, current);
       items.push({ entity: "season-rate", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
     }
   }
 
-  // Default-lodge marker (isDefault) is applied by a dedicated pass; surface a
-  // change in the dry-run when the designated default differs from the current.
+  // Default-lodge change disclosure.
   const desiredDefault = bundleDesignatedDefaultSlug(ctx.files);
-  if (desiredDefault) {
-    const currentDefault = await ctx.db.lodge.findFirst({ where: { isDefault: true }, select: { slug: true } });
-    if (currentDefault?.slug !== desiredDefault) {
-      warnings.push(`The default lodge will be set to "${desiredDefault}".`);
-    }
+  if (desiredDefault && desiredDefault !== batch.currentDefaultSlug) {
+    warnings.push(`The default lodge will be set to "${desiredDefault}".`);
   }
 
-  return { items, warnings, fingerprintParts };
+  return { items, warnings, errors, fingerprintParts, doorCodeChanges };
 }
 
 // ---- Apply -----------------------------------------------------------------
 
 async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult> {
   const result: CategoryApplyResult = { created: 0, updated: 0, unchanged: 0, skipped: 0 };
+  const errors: string[] = []; // plan blocked all errors; defensive collection only
 
-  // Process lodges folder-by-folder in deterministic (segment) order, each a
-  // self-contained unit: lodge → rooms → beds → seasons → season rates.
-  for (const segment of lodgeFolderSegments(ctx.files)) {
-    const paths = lodgeFolderFiles(segment);
-    const descriptor = readLodgeJson(ctx.files, paths.lodge);
-    const slug = asStr(descriptor?.slug);
-    if (!descriptor || !slug) {
-      // Orphan folder (no lodge.json): cannot attach its rows to a lodge.
-      result.skipped +=
-        readCsv(ctx.files, paths.rooms).length +
-        readCsv(ctx.files, paths.beds).length +
-        readCsv(ctx.files, paths.seasons).length +
-        readCsv(ctx.files, paths.rates).length;
+  const segments = lodgeFolderSegments(ctx.files);
+  const slugs = segments
+    .map((seg) => folderLodgeSlug(ctx.files, seg))
+    .filter((s): s is string => s !== null);
+  const batch = await loadLodgeBatch(ctx.tx, slugs);
+
+  for (const segment of segments) {
+    const parsed = parseLodgeFolder(ctx.files, segment, ctx.mode, batch, errors);
+    if (!parsed) {
+      result.skipped += 1;
       continue;
     }
+    const { slug, descriptor } = parsed;
 
     // 1) Lodge (by slug).
+    const currentLodge = batch.lodges.get(slug) ?? null;
     const lodgeData = buildLodgeData(descriptor, slug);
-    const existingLodge = await ctx.tx.lodge.findUnique({ where: { slug }, select: { id: true } });
-    const lodge = await ctx.tx.lodge.upsert({
-      where: { slug },
-      create: { slug, ...(lodgeData as { name: string }) },
-      update: updateDataForMode(ctx.mode, descriptor, lodgeData),
-      select: { id: true },
-    });
-    if (existingLodge) result.updated += 1;
-    else result.created += 1;
-    const lodgeId = lodge.id;
-
-    // 2) Rooms (by lodgeId + name).
-    for (const raw of readCsv(ctx.files, paths.rooms)) {
-      const name = raw.name ?? "";
-      if (!name) { result.skipped += 1; continue; }
-      const data = buildRoomData(raw);
-      const existing = await ctx.tx.lodgeRoom.findUnique({ where: { lodgeId_name: { lodgeId, name } }, select: { id: true } });
-      await ctx.tx.lodgeRoom.upsert({ where: { lodgeId_name: { lodgeId, name } }, create: { lodgeId, name, ...data }, update: updateDataForMode(ctx.mode, raw, data) });
-      if (existing) result.updated += 1;
-      else result.created += 1;
-    }
-
-    // 3) Beds (by roomId + name).
-    for (const raw of readCsv(ctx.files, paths.beds)) {
-      const room = await ctx.tx.lodgeRoom.findUnique({ where: { lodgeId_name: { lodgeId, name: raw.roomName ?? "" } }, select: { id: true } });
-      if (!room) { result.skipped += 1; continue; }
-      const name = raw.name ?? "";
-      if (!name) { result.skipped += 1; continue; }
-      const data = buildBedData(raw);
-      const existing = await ctx.tx.lodgeBed.findUnique({ where: { roomId_name: { roomId: room.id, name } }, select: { id: true } });
-      await ctx.tx.lodgeBed.upsert({ where: { roomId_name: { roomId: room.id, name } }, create: { roomId: room.id, name, ...data }, update: updateDataForMode(ctx.mode, raw, data) });
-      if (existing) result.updated += 1;
-      else result.created += 1;
-    }
-
-    // 4) Seasons (key-weak: match/create by lodge + name).
-    const seasonIdByName = new Map<string, string>();
-    for (const raw of readCsv(ctx.files, paths.seasons)) {
-      const name = raw.name ?? "";
-      if (!name) { result.skipped += 1; continue; }
-      const data = buildSeasonData(raw);
-      const existing = await ctx.tx.season.findFirst({ where: { lodgeId, name }, select: { id: true } });
-      if (existing) {
-        await ctx.tx.season.update({ where: { id: existing.id }, data: updateDataForMode(ctx.mode, raw, data) });
-        seasonIdByName.set(name, existing.id);
+    let lodgeId: string;
+    if (currentLodge) {
+      const write = updateDataForMode(ctx.mode, descriptor, lodgeData);
+      const changed = changedFields(write, currentLodge);
+      if (changed.length > 0) {
+        await ctx.tx.lodge.update({ where: { id: currentLodge.id }, data: write });
         result.updated += 1;
+        if (changed.includes("doorCode")) ctx.notes.doorCodesWritten.push(slug);
       } else {
-        const created = await ctx.tx.season.create({ data: { lodgeId, name, ...data }, select: { id: true } });
-        seasonIdByName.set(name, created.id);
-        result.created += 1;
+        result.unchanged += 1;
       }
+      lodgeId = currentLodge.id;
+    } else {
+      const created = await ctx.tx.lodge.create({
+        data: { slug, ...(lodgeData as { name: string }) },
+        select: { id: true },
+      });
+      result.created += 1;
+      if (nz(descriptor.doorCode) !== null) ctx.notes.doorCodesWritten.push(slug);
+      lodgeId = created.id;
+    }
+
+    // 2) Rooms (by lodgeId + name); keep an id map for beds.
+    const roomIdByName = new Map<string, string>();
+    for (const [key, room] of batch.rooms) {
+      if (key.startsWith(`${lodgeId}/`)) roomIdByName.set(key.slice(lodgeId.length + 1), room.id);
+    }
+    for (const row of parsed.rooms) {
+      const current = batch.rooms.get(`${lodgeId}/${row.name}`) ?? null;
+      await applyRow({
+        mode: ctx.mode,
+        raw: row.raw,
+        data: row.data,
+        current,
+        create: async (data) => {
+          const created = await ctx.tx.lodgeRoom.create({
+            data: { lodgeId, name: row.name, ...(data as object) },
+            select: { id: true },
+          });
+          roomIdByName.set(row.name, created.id);
+        },
+        update: (write) => ctx.tx.lodgeRoom.update({ where: { id: current!.id }, data: write }),
+        result,
+      });
+    }
+
+    // 3) Beds (by roomId + name) — room ids come from the map, no re-query.
+    for (const row of parsed.beds) {
+      const roomId = roomIdByName.get(row.roomName);
+      if (!roomId) {
+        result.skipped += 1;
+        continue;
+      }
+      const current = batch.beds.get(`${lodgeId}/${row.roomName}/${row.name}`) ?? null;
+      await applyRow({
+        mode: ctx.mode,
+        raw: row.raw,
+        data: row.data,
+        current,
+        create: (data) => ctx.tx.lodgeBed.create({ data: { roomId, name: row.name, ...(data as object) } }),
+        update: (write) => ctx.tx.lodgeBed.update({ where: { id: current!.id }, data: write }),
+        result,
+      });
+    }
+
+    // 4) Seasons (key-weak; resolutions = renames); keep name → id for rates.
+    const seasonIdByName = new Map<string, string>();
+    for (const [key, season] of batch.seasons) {
+      if (key.startsWith(`${lodgeId}/`)) seasonIdByName.set(key.slice(lodgeId.length + 1), season.id);
+    }
+    for (const row of parsed.seasons) {
+      const resolvedId = ctx.resolutions.get(resolutionKey("season", `${slug}/${row.name}`));
+      const current = resolvedId
+        ? batch.seasonsById.get(resolvedId) ?? null
+        : batch.seasons.get(`${lodgeId}/${row.name}`) ?? null;
+      if (resolvedId && !current) {
+        result.skipped += 1; // replan validates this; defensive
+        continue;
+      }
+      const data = resolvedId ? { name: row.name, ...row.data } : row.data;
+      await applyRow({
+        mode: ctx.mode,
+        raw: { ...row.raw, name: row.name },
+        data,
+        current,
+        create: async (d) => {
+          const created = await ctx.tx.season.create({
+            data: { lodgeId, name: row.name, ...(d as object) } as never,
+            select: { id: true },
+          });
+          seasonIdByName.set(row.name, created.id);
+        },
+        update: async (write) => {
+          await ctx.tx.season.update({ where: { id: current!.id as string }, data: write });
+          seasonIdByName.set(row.name, current!.id as string);
+        },
+        result,
+      });
+      if (current) seasonIdByName.set(row.name, current.id as string);
     }
 
     // 5) Season rates (by seasonId + ageTier + isMember).
-    for (const raw of readCsv(ctx.files, paths.rates)) {
-      let seasonId = seasonIdByName.get(raw.seasonName ?? "");
+    for (const row of parsed.rates) {
+      const seasonId = seasonIdByName.get(row.seasonName);
       if (!seasonId) {
-        const season = await ctx.tx.season.findFirst({ where: { lodgeId, name: raw.seasonName ?? "" }, select: { id: true } });
-        seasonId = season?.id;
+        result.skipped += 1;
+        continue;
       }
-      if (!seasonId) { result.skipped += 1; continue; }
-      const ageTier = raw.ageTier as never;
-      const isMember = coerceBool(raw.isMember);
-      const data = buildRateData(raw);
-      const existing = await ctx.tx.seasonRate.findUnique({ where: { seasonId_ageTier_isMember: { seasonId, ageTier, isMember } }, select: { id: true } });
-      await ctx.tx.seasonRate.upsert({ where: { seasonId_ageTier_isMember: { seasonId, ageTier, isMember } }, create: { seasonId, ageTier, isMember, ...data }, update: updateDataForMode(ctx.mode, raw, data) });
-      if (existing) result.updated += 1;
-      else result.created += 1;
+      const current = batch.rates.get(`${lodgeId}/${row.seasonName}/${row.ageTier}/${row.isMember}`) ?? null;
+      await applyRow({
+        mode: ctx.mode,
+        raw: row.raw,
+        data: row.data,
+        current,
+        create: (data) =>
+          ctx.tx.seasonRate.create({
+            data: { seasonId, ageTier: row.ageTier as never, isMember: row.isMember, ...(data as object) } as never,
+          }),
+        update: (write) => ctx.tx.seasonRate.update({ where: { id: current!.id }, data: write }),
+        result,
+      });
     }
   }
 
   // Default-lodge marker: at most one lodge may be flagged (Lodge_isDefault_key),
-  // so set it clear-then-set in this one transaction to avoid a transient
-  // two-default state. Only ever SET a designated default; never clear to none.
+  // so change it clear-then-set inside this transaction. Scoped to the current
+  // holder (never a blanket updateMany), and only ever SET, never clear to none.
   const desiredDefault = bundleDesignatedDefaultSlug(ctx.files);
   if (desiredDefault) {
     const target = await ctx.tx.lodge.findUnique({ where: { slug: desiredDefault }, select: { isDefault: true } });
     if (target && !target.isDefault) {
-      await ctx.tx.lodge.updateMany({ data: { isDefault: false } });
+      await ctx.tx.lodge.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
       await ctx.tx.lodge.update({ where: { slug: desiredDefault }, data: { isDefault: true } });
     }
   }

@@ -1,84 +1,85 @@
 import { NextResponse } from "next/server";
 
-import { requireAdmin } from "@/lib/session-guards";
-import { isFullAdmin } from "@/lib/access-roles";
+import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import {
   applyConfigImport,
-  ConfigImportDriftError,
   ConfigImportBackupError,
+  ConfigImportDriftError,
+  ConfigImportValidationError,
 } from "@/lib/config-transfer/apply";
-import { MAX_BUNDLE_BYTES } from "@/lib/config-transfer/bundle";
+import { ConfigTransferBundleError } from "@/lib/config-transfer/bundle";
+import {
+  readBundleUpload,
+  requireFullAdminForConfigTransfer,
+} from "@/lib/config-transfer/route-helpers";
 import { configTransferErrorResponse } from "@/lib/config-transfer/route-error";
 
 // POST /api/admin/config-transfer/apply — full-admin only.
-// Applies a previewed bundle: re-plans, refuses on fingerprint drift, backs up,
-// then upserts within one transaction. Multipart: 'bundle' file +
-// 'expectedFingerprint' from the dry-run. See ADR-002.
+// Applies a previewed bundle: backup → one transaction { advisory lock →
+// re-plan → refuse on validation errors or fingerprint drift → upsert }.
+// Multipart: 'bundle' file + 'expectedFingerprint' + mode/categories/resolutions
+// from the dry-run. Failed/refused applies are audit-logged too (ADR-002).
 
 export async function POST(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireFullAdminForConfigTransfer();
   if (!guard.ok) return guard.response;
-  if (!isFullAdmin({ accessRoles: guard.session.user.accessRoles })) {
-    return NextResponse.json(
-      { error: "Full admin access is required." },
-      { status: 403 },
-    );
-  }
 
-  let bytes: Uint8Array;
-  let expectedFingerprint: string;
-  let mode: "merge" | "overwrite" = "merge";
-  try {
-    const form = await request.formData();
-    const file = form.get("bundle");
-    const fingerprint = form.get("expectedFingerprint");
-    // Default to the safe "merge" mode unless the admin explicitly overwrites.
-    if (form.get("mode") === "overwrite") mode = "overwrite";
-    if (!(file instanceof File)) {
-      return NextResponse.json(
-        { error: "Missing 'bundle' file." },
-        { status: 400 },
-      );
-    }
-    if (typeof fingerprint !== "string" || fingerprint.length === 0) {
-      return NextResponse.json(
-        { error: "Missing 'expectedFingerprint' (run the dry-run first)." },
-        { status: 400 },
-      );
-    }
-    if (file.size > MAX_BUNDLE_BYTES) {
-      return NextResponse.json(
-        { error: "Bundle is too large." },
-        { status: 413 },
-      );
-    }
-    bytes = new Uint8Array(await file.arrayBuffer());
-    expectedFingerprint = fingerprint;
-  } catch {
+  const uploaded = await readBundleUpload(request);
+  if (!uploaded.ok) return uploaded.response;
+  const { bytes, mode, selectedCategories, resolutions, expectedFingerprint } =
+    uploaded.upload;
+  if (!expectedFingerprint) {
     return NextResponse.json(
-      { error: "Could not read the uploaded bundle." },
+      { error: "Missing 'expectedFingerprint' (run the dry-run first)." },
       { status: 400 },
     );
   }
+
+  const auditFailure = async (reason: string, detail?: string) => {
+    await createAuditLog({
+      action: "configuration.import_refused",
+      memberId: guard.memberId,
+      category: "admin",
+      severity: "important",
+      outcome: "failure",
+      summary: `Configuration import refused (${reason})`,
+      metadata: { reason, ...(detail ? { detail: detail.slice(0, 500) } : {}), mode },
+    });
+  };
 
   try {
     const result = await applyConfigImport({
       prisma,
       bundleBytes: bytes,
-      actorMemberId: guard.session.user.id,
+      actorMemberId: guard.memberId,
       expectedFingerprint,
       mode,
+      selectedCategories,
+      resolutions,
     });
     return NextResponse.json({ result });
   } catch (error) {
     if (error instanceof ConfigImportDriftError) {
+      await auditFailure("fingerprint drift");
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    if (error instanceof ConfigImportValidationError) {
+      await auditFailure("validation errors", error.errors.join("; "));
+      return NextResponse.json(
+        { error: error.message, errors: error.errors },
+        { status: 422 },
+      );
+    }
     if (error instanceof ConfigImportBackupError) {
+      await auditFailure("backup failed", error.message);
       return NextResponse.json({ error: error.message }, { status: 503 });
     }
-    // Bad bundle → 400; anything else is logged server-side + sanitised 500.
+    if (error instanceof ConfigTransferBundleError) {
+      await auditFailure("invalid bundle", error.message);
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    await auditFailure("unexpected error");
     return configTransferErrorResponse("Apply", error);
   }
 }

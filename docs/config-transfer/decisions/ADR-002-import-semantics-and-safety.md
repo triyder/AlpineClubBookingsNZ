@@ -36,16 +36,27 @@ database backup, not this tool.
 ### Plan → resolve → apply
 
 1. **Plan (dry-run, mandatory).** Parse and validate the bundle; compute a plan:
-   every action (create / update / unchanged) and any warning, plus a
-   **fingerprint of current DB state** for the touched rows. The plan is
-   **stateless** — returned to the client, not persisted. (An earlier draft
-   persisted the plan in a new table; the implementation instead re-derives it
-   at apply time and guards with the fingerprint, which meets the same safety
-   goals without a schema migration. A persisted plan can be added later if
-   cross-session resumability is wanted.)
+   every action (create / update / unchanged), any warning, and any **blocking
+   validation error** — every row is strictly validated (dates, enum values
+   against the generated Prisma enums, money as non-negative integer cents;
+   blank cells only where merge keeps an existing value) and failures are named
+   by file/row/field. **Errors disable apply** until the bundle is fixed
+   (edit → reseal → re-preview); the import never writes less or different data
+   than the file says. The plan also carries a **fingerprint** binding the
+   touched rows' current DB state PLUS the bundle bytes (sha256), the write
+   mode, the category selection, and any match resolutions — so apply refuses
+   not just DB drift but a substituted bundle, a switched mode, or unpreviewed
+   resolutions. The plan is **stateless** — returned to the client, not
+   persisted. (An earlier draft persisted the plan in a new table; re-deriving
+   under the fingerprint meets the same safety goals without a schema
+   migration.)
 2. **Resolve.** The admin answers the open questions in the UI:
-   - ambiguous candidate match → *match to existing X* or *create new*
-     (this is also the rename path);
+   - unmatched key-weak row (season, chore template, induction template) → a
+     **match picker**: *create new* (default) or *match to existing X*,
+     declaring the bundle row a rename of that row (the match then updates it,
+     including the name). Resolutions re-run the preview and are bound into
+     the fingerprint; key-strong renames (slugs, role keys) deliberately stay
+     creates;
    - **write mode** (applies to every entity, chosen in the UI, default
      **merge**): in *merge*, only fields whose bundle value is present +
      non-empty are written onto an existing row, so blank/omitted fields keep
@@ -61,18 +72,24 @@ database backup, not this tool.
      Changing the mode re-runs the preview;
    - Xero category → if the bundle's source tenant id (from
      `xero-config/source.json`, not the manifest) differs from the connected
-     org (or none is connected), a prominent warning with *apply anyway* /
-     *skip category*.
-   - Bundle integrity → any advisory checksum/row-count/file-set drift from a
+     org (or none is connected), a prominent warning; the category checkboxes
+     let the admin skip Xero (or any category) for this import, re-previewed
+     and fingerprint-bound;
+   - door codes → the dry-run prominently names each lodge whose door code
+     would be set or changed (the manifest's export-time flag alone cannot be
+     trusted for a hand-edited bundle);
+   - bundle integrity → any advisory checksum/row-count/file-set drift from a
      hand-edited bundle is listed (never blocks); the admin can apply as-is or
      "reseal" to regenerate the manifest first.
-3. **Apply.** Take the automatic DB backup, re-verify the DB fingerprint
-   (**drift → refuse and re-plan**, never apply a stale plan), execute the
-   fully-resolved plan inside a transaction in dependency order (lodges →
-   rooms → beds → per-lodge config; singletons independently), then write
-   the plan + outcomes to the audit log. Confident, non-destructive changes
-   are not individually prompted — they are visible in the preview and
-   covered by the single final confirm.
+3. **Apply.** Take the automatic DB backup, then in ONE transaction: take the
+   single-flight advisory lock, **re-plan against in-lock state**, refuse on
+   validation errors or ANY fingerprint mismatch (never apply a stale or
+   substituted plan — a second import queued behind the lock re-plans against
+   the winner's committed writes), then execute in dependency order (lodges →
+   rooms → beds → per-lodge config; singletons independently). Any failure
+   rolls back the entire import. Confident, non-destructive changes are not
+   individually prompted — they are visible in the preview and covered by the
+   single final confirm.
 
 ### Concurrency and access
 
@@ -119,10 +136,19 @@ item-level tick lists.
 - **Behaviour-change warnings:** the preview explicitly flags settings whose
   change alters live booking behaviour (module toggles, capacities,
   policies) so an admin cannot apply them unknowingly on an active site.
-- **Auditability:** every apply records who, when, the bundle checksum, the
-  per-category diff, and each resolution choice; failed/refused applies
-  (fingerprint drift, validation failure) are also audit-logged.
+- **Auditability:** every apply records who, when, the bundle sha256, the mode
+  and category selection, each resolution choice, a bounded per-item diff of
+  what changed, and — for door codes — the lodges whose codes were ACTUALLY
+  written (slugs only, never values). Failed/refused applies (fingerprint
+  drift, validation errors, backup failure, invalid bundle, unexpected error)
+  are audit-logged as `configuration.import_refused`.
 - **Door codes:** absent by default; when the exporting admin opts in, the
-  export UI labels the bundle as carrying physical-access information.
-- **Denial-of-service:** size caps, streaming parse, and row-count limits
-  per category protect the server from hostile bundles.
+  export UI labels the bundle as carrying physical-access information. On
+  import the dry-run names each lodge whose code would change, and reseal
+  recomputes the bundle's door-code flag from the actual files, so a hand-added
+  code can neither apply silently nor hide behind a stale flag.
+- **Denial-of-service:** entry-count, per-file, and total-uncompressed caps are
+  enforced BEFORE inflation via the unzip filter (junk entries are never
+  inflated), on top of the compressed upload cap — a high-ratio or many-entry
+  zip cannot exhaust memory; media imports additionally enforce the library's
+  2MB per-image cap and image-type sniffing at plan time.

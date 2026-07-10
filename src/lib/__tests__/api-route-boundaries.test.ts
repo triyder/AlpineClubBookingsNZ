@@ -44,10 +44,24 @@ const issue675MalformedJsonRoutes = [
   "src/app/api/promo-codes/validate/route.ts",
 ] as const;
 
+// Shared cross-file wrappers that perform requireAdmin internally. Adding a
+// wrapper here requires its defining module to call requireAdmin (asserted in
+// the method-reachability test below), so the allowlist cannot rot into a
+// bypass.
+const sharedAdminGuardWrappers: Record<string, string> = {
+  requireBedAllocationAdmin: "src/lib/admin-bed-allocation-routes.ts",
+  requireFullAdminForConfigTransfer: "src/lib/config-transfer/route-helpers.ts",
+};
+
 function hasAdminGuard(contents: string) {
-  // Admin routes must use the shared requireAdmin helper; inline
-  // auth()/role-check/requireActiveSessionUser sequences are not accepted.
-  return /\brequireAdmin\s*\(/.test(contents);
+  // Admin routes must use the shared requireAdmin helper (directly or via an
+  // allowlisted wrapper); inline auth()/role-check sequences are not accepted.
+  return (
+    /\brequireAdmin\s*\(/.test(contents) ||
+    Object.keys(sharedAdminGuardWrappers).some((wrapper) =>
+      new RegExp(`\\b${wrapper}\\s*\\(`).test(contents),
+    )
+  );
 }
 
 function hasMemberGuard(contents: string) {
@@ -296,12 +310,9 @@ describe("API route boundary metadata", () => {
   // helper that does, or call a shared wrapper from the allowlist below.
   // -------------------------------------------------------------------------
 
-  // Shared cross-file wrappers that perform requireAdmin internally. Adding a
-  // wrapper here requires its defining module to call requireAdmin (asserted
-  // in the test), so the allowlist cannot rot into a bypass.
-  const sharedAdminGuardWrappers: Record<string, string> = {
-    requireBedAllocationAdmin: "src/lib/admin-bed-allocation-routes.ts",
-  };
+  // (The shared wrapper allowlist is hoisted to module scope above so the
+  // boundary-marker check uses the same list; its defining-module assertion
+  // below keeps it from rotting into a bypass.)
 
   // Slice every top-level function in a file (declarations and const
   // arrow/function assignments) so a method body can be traced through local
