@@ -73,6 +73,7 @@ type BatchModificationTransactionResult =
     choreWarnings: string[];
     datesChanged: boolean;
     adminOverride: boolean;
+    notifyMember: boolean;
     capacityOverridden: boolean;
     oldCheckIn: Date;
     oldCheckOut: Date;
@@ -158,6 +159,10 @@ export async function modifyBookingBatch({
     throw new ApiError("Admin override is not available for this account", 403);
   }
   const adminOverride = Boolean(input.adminOverride) && actor.role === "ADMIN";
+  // Owner decision (#1668 review): under an override the admin chooses whether
+  // the member is emailed; absent means notify. Non-override edits always
+  // notify (unchanged).
+  const notifyMember = !adminOverride || input.notifyMember !== false;
   if (adminOverride) {
     // Date-only contract: an override edit may change ONLY the dates. Any guest
     // or promo input is rejected so preview/apply mirroring stays tractable.
@@ -510,6 +515,7 @@ export async function modifyBookingBatch({
       choreWarnings,
       datesChanged: dates.datesChanged,
       adminOverride,
+      notifyMember,
       capacityOverridden: pricing.capacityOverridden,
       oldCheckIn: booking.checkIn,
       oldCheckOut: booking.checkOut,
@@ -640,6 +646,7 @@ async function dispatchBatchPostTransactionSideEffects({
           adminOverride: true,
           pricingMode: "recalculate" as const,
           confirmOverCapacity: result.capacityOverridden,
+          notifyMember: result.notifyMember,
           capacityOverridden: result.capacityOverridden,
           oldCheckIn: new Date(result.oldCheckIn).toISOString().split("T")[0],
           oldCheckOut: new Date(result.oldCheckOut).toISOString().split("T")[0],
@@ -714,6 +721,12 @@ async function dispatchBatchPostTransactionSideEffects({
   }
 
   if (result.identityOnlyModification) {
+    return;
+  }
+
+  // Owner decision (#1668 review): an override admin may choose not to email
+  // the member; the choice is recorded in the audit fields above.
+  if (!result.notifyMember) {
     return;
   }
 

@@ -59,7 +59,6 @@ import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
-  getTodayDateOnly,
   normalizeDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
@@ -100,6 +99,9 @@ export type ModifyBookingDatesInput = {
   // "recalculate" flows through here.
   adminOverride?: boolean;
   confirmOverCapacity?: boolean;
+  // Owner decision (#1668 review): the admin chooses per override edit whether
+  // the member receives the change-notification email. Absent = notify.
+  notifyMember?: boolean;
 };
 
 type ModifiedBooking = Booking & {
@@ -120,6 +122,7 @@ type DateModificationTransactionResult =
     choreWarnings: string[];
     datesChanged: boolean;
     adminOverride: boolean;
+    notifyMember: boolean;
     capacityOverridden: boolean;
     oldCheckIn: Date;
     oldCheckOut: Date;
@@ -213,6 +216,10 @@ export async function modifyBookingDates({
   } = input;
   // Issue #1668: only an admin drives the recalculate override on this route.
   const adminOverride = Boolean(input.adminOverride) && actor.role === "ADMIN";
+  // Owner decision (#1668 review): under an override the admin chooses whether
+  // the member is emailed; absent means notify. Non-override edits always
+  // notify (unchanged).
+  const notifyMember = !adminOverride || input.notifyMember !== false;
 
   const result = await prisma.$transaction(async (tx) => {
     // Pre-lock read: only the lock key. lodgeId is immutable, so keying the
@@ -753,6 +760,7 @@ export async function modifyBookingDates({
       choreWarnings,
       datesChanged,
       adminOverride,
+      notifyMember,
       capacityOverridden,
       oldCheckIn,
       oldCheckOut,
@@ -851,6 +859,7 @@ async function dispatchDatePostTransactionSideEffects({
         adminOverride: true,
         pricingMode: "recalculate",
         confirmOverCapacity: result.capacityOverridden,
+        notifyMember: result.notifyMember,
         capacityOverridden: result.capacityOverridden,
         linkedChangeRequestId,
       }
@@ -922,9 +931,13 @@ async function dispatchDatePostTransactionSideEffects({
     logger.error({ err, bookingId }, "Failed to queue Xero settlement for date modification"),
   );
 
-  const member = await prisma.member.findUnique({
-    where: { id: result.booking.memberId },
-  });
+  // Owner decision (#1668 review): an override admin may choose not to email
+  // the member; the choice is recorded in the audit fields above.
+  const member = result.notifyMember
+    ? await prisma.member.findUnique({
+        where: { id: result.booking.memberId },
+      })
+    : null;
   if (member) {
     sendBookingModifiedEmail({
       email: member.email,
@@ -992,12 +1005,20 @@ export async function adminShiftBookingDates({
 }: {
   bookingId: string;
   actor: { id: string; role: Role };
-  input: { checkIn?: string; checkOut?: string; confirmOverCapacity?: boolean };
+  input: {
+    checkIn?: string;
+    checkOut?: string;
+    confirmOverCapacity?: boolean;
+    notifyMember?: boolean;
+  };
   ipAddress: string;
 }): Promise<DateModificationResponse> {
   if (actor.role !== "ADMIN") {
     throw new ApiError("Admin override is not available for this account", 403);
   }
+  // Owner decision (#1668 review): the admin chooses whether the member is
+  // emailed about the change; absent means notify (no silent default).
+  const notifyMember = input.notifyMember !== false;
 
   const result = await prisma.$transaction(async (tx) => {
     // Pre-lock read of only the lock key; lodgeId is immutable.
@@ -1305,6 +1326,7 @@ export async function adminShiftBookingDates({
   const overrideAuditPayload = {
     pricingMode: "shift",
     confirmOverCapacity: Boolean(input.confirmOverCapacity),
+    notifyMember,
     capacityOverridden: result.capacityOverridden,
     linkedChangeRequestId,
     oldCheckIn: formatDateOnly(result.oldCheckIn),
@@ -1327,9 +1349,9 @@ export async function adminShiftBookingDates({
     ipAddress,
   });
 
-  // A fully-past record fix must not email the member; only notify when the new
-  // stay still has a future check-out.
-  if (normalizeDateOnlyForTimeZone(result.newCheckOut) > getTodayDateOnly()) {
+  // Owner decision (#1668 review): the admin explicitly chose in the override
+  // dialog whether to send the change email; the choice is audited above.
+  if (notifyMember) {
     sendBookingModifiedEmail({
       email: result.memberEmail,
       firstName: result.memberFirstName,

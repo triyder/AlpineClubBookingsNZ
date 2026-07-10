@@ -8,6 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatCents } from "@/lib/utils";
 import { getAgeTierLabel, useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { GuestNightGrid } from "@/components/guest-night-grid";
@@ -262,6 +270,9 @@ export function EditBookingPanel({
   const [saveOverCapacityNights, setSaveOverCapacityNights] = useState<
     { date: string; availableBeds: number }[] | null
   >(null);
+  // Owner decision (#1668 review): every override save asks the admin whether
+  // the member should receive the change-notification email.
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
   const originalNights = useMemo(
     () => eachNightKey(booking.checkIn, booking.checkOut).length,
     [booking.checkIn, booking.checkOut],
@@ -791,7 +802,17 @@ export function EditBookingPanel({
     setNewPromoInput("");
   }
 
-  async function handleSave() {
+  // An override save goes through the notify dialog first; the dialog's two
+  // actions call handleSave with the admin's explicit email choice.
+  function handleSaveClick() {
+    if (overrideEnabled) {
+      setNotifyDialogOpen(true);
+      return;
+    }
+    void handleSave();
+  }
+
+  async function handleSave(notifyMemberChoice?: boolean) {
     setSaveError("");
     if (quote?.settlementOptions?.requiresSettlementMethod && !settlementMethod) {
       setSaveError("Choose a refund or account credit before saving");
@@ -803,6 +824,9 @@ export function EditBookingPanel({
       const body = buildModificationPayload();
       if (settlementMethod) {
         body.settlementMethod = settlementMethod;
+      }
+      if (overrideEnabled && notifyMemberChoice !== undefined) {
+        body.notifyMember = notifyMemberChoice;
       }
 
       const res = await fetch(`/api/bookings/${booking.id}/modify`, {
@@ -1773,7 +1797,7 @@ export function EditBookingPanel({
           Cancel
         </Button>
         <Button
-          onClick={handleSave}
+          onClick={handleSaveClick}
           disabled={
             !hasChanges ||
             saving ||
@@ -1790,6 +1814,46 @@ export function EditBookingPanel({
       {saveError && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{saveError}</div>
       )}
+
+      {/* Owner decision (#1668 review): the admin explicitly chooses, per
+          override edit, whether the member is emailed. Both choices save the
+          booking; the choice itself is recorded in the audit log. */}
+      <Dialog
+        open={notifyDialogOpen}
+        onOpenChange={(open) => !saving && setNotifyDialogOpen(open)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Email the member about this change?</DialogTitle>
+            <DialogDescription>
+              The booking&apos;s dates will be updated either way. Choose
+              whether the member receives the standard change-notification
+              email — your choice is recorded in the audit log.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              disabled={saving}
+              onClick={() => {
+                setNotifyDialogOpen(false);
+                void handleSave(false);
+              }}
+            >
+              Save without emailing
+            </Button>
+            <Button
+              disabled={saving}
+              onClick={() => {
+                setNotifyDialogOpen(false);
+                void handleSave(true);
+              }}
+            >
+              Save and email member
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

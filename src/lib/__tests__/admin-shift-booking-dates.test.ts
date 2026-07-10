@@ -393,7 +393,7 @@ describe("adminShiftBookingDates (issue #1668 — pure translation)", () => {
     expect(h.txBookingUpdate).toHaveBeenCalled();
   });
 
-  it("does not email the member when the shifted stay is fully in the past", async () => {
+  it("emails the member by default, even for a fully-past record fix (owner decision)", async () => {
     vi.setSystemTime(D("2026-09-20"));
     // Booking was 09-10..09-13; shift earlier so checkout stays past.
     const booking = makeBooking();
@@ -406,9 +406,27 @@ describe("adminShiftBookingDates (issue #1668 — pure translation)", () => {
       ipAddress: "1.1.1.1",
     });
 
-    expect(h.sendBookingModifiedEmail).not.toHaveBeenCalled();
-    // The move itself still happened.
+    // Members are always notified unless the admin explicitly opted out.
+    expect(h.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
     expect(h.txBookingUpdate).toHaveBeenCalled();
+  });
+
+  it("does not email the member when the admin explicitly chose notifyMember: false", async () => {
+    const booking = makeBooking();
+    primeTx(booking);
+
+    await adminShiftBookingDates({
+      bookingId: "b1",
+      actor: { id: "admin1", role: "ADMIN" },
+      input: { checkIn: "2026-09-12", notifyMember: false },
+      ipAddress: "1.1.1.1",
+    });
+
+    expect(h.sendBookingModifiedEmail).not.toHaveBeenCalled();
+    // The move itself still happened, and the opt-out is audited.
+    expect(h.txBookingUpdate).toHaveBeenCalled();
+    const auditArgs = h.logAudit.mock.calls[0][0];
+    expect(auditArgs.metadata.notifyMember).toBe(false);
   });
 
   it("emails the member when the shifted stay still has a future check-out", async () => {

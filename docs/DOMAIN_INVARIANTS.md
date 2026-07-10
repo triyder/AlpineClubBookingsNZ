@@ -557,8 +557,13 @@ override requires an explicit `pricingMode`:
   activity. The `BookingModification` row is `ADMIN_DATE_SHIFT` with
   `priceDiffCents`/`changeFeeCents` = 0. All date math is date-only
   (`addDaysDateOnly` on UTC-midnight-normalised bounds), so the delta is
-  DST-safe. A fully-past shift does not email the member; a shift whose new
-  check-out is still future does.
+  DST-safe. On every override save the admin explicitly chooses whether the
+  member receives the change-notification email ("Save and email member" /
+  "Save without emailing"); the choice is recorded in the audit metadata
+  (`notifyMember`) and API callers that omit the flag default to notifying.
+  Non-override edits always notify (unchanged), and a recalculate override that
+  moves money still respects the admin's choice — the amounts remain visible on
+  the booking and in Xero regardless.
 - **recalculate** — the existing full-reprice machinery with the locked-period
   clamps lifted, so locked-night pricing semantics are otherwise preserved
   (a night the guest already bought keeps its stored `BookingGuestNight` price).
