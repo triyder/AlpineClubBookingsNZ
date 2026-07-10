@@ -5,11 +5,13 @@ import type { ComponentProps, ReactNode } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AllocationChip } from "@/app/(admin)/admin/bed-allocation/_components/allocation-chip";
+import { getBookingAccent } from "@/app/(admin)/admin/bed-allocation/_components/booking-accent";
 import type {
   BedOption,
   BedOptionGroup,
   DashboardAllocation,
 } from "@/app/(admin)/admin/bed-allocation/_components/types";
+import { AGE_TIER_COLORS } from "@/lib/admin-family-group-ui-helpers";
 
 vi.mock("@dnd-kit/core", () => ({
   useDraggable: () => ({
@@ -260,6 +262,29 @@ describe("AllocationChip held vs provisional state (#1251)", () => {
     expect(provisionalCard.className).not.toContain("bg-white");
     expect(heldCard.className).toContain("bg-card");
     expect(provisionalCard.className).toContain("bg-muted");
+  });
+
+  it("renders a deterministic booking accent and age-tier badge", () => {
+    const allocation = buildAllocation({
+      bookingId: "booking-colour-1",
+      guestAgeTier: "YOUTH",
+    });
+    const { container } = renderChip({ allocation });
+    const card = container.firstElementChild as HTMLElement;
+    const accentStrip = card.querySelector('[aria-hidden="true"]') as HTMLElement;
+
+    expect(card).toHaveAttribute("title", "Booking booking-colour-1");
+    expect(accentStrip.className).toContain(
+      getBookingAccent("booking-colour-1").stripClassName,
+    );
+    expect(card.className).toContain(
+      getBookingAccent("booking-colour-1").ringClassName,
+    );
+    const badge = screen.getByText("YOUTH");
+    expect(badge).toBeInTheDocument();
+    for (const className of AGE_TIER_COLORS.YOUTH.split(" ")) {
+      expect(badge.className).toContain(className);
+    }
   });
 
   it("disables drag and manage controls for view-only booking access", () => {

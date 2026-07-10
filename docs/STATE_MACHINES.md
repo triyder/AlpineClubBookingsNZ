@@ -262,7 +262,8 @@ raises `OverCapacityConfirmationRequiredError` (409,
 `confirmOverCapacity: true`, recording `capacityOverridden`. Every override move
 is audited as `booking.modify.admin_override` (including the admin's explicit
 member-notification choice, `notifyMember`) and linked, best-effort, to the
-booking's most recent APPROVED-but-unlinked change request.
+booking's most recent APPROVED-but-unlinked change request that the move
+fulfils (date-only request whose named dates equal the applied values).
 
 To verify: failed post-transaction refund recovery, Xero credit-note creation,
 additional-payment cleanup, and bed-allocation reconciliation.
@@ -562,13 +563,45 @@ admin approves -> approved allocation metadata set
 booking modified/cancelled/completed/deleted -> allocation reconciliation
 ```
 
+Auto-allocation plans booking-first and whole-stay-first (issue #1677). Per
+booking (capacity-holding first on the lifecycle path, then createdAt/id), the
+planner runs three phases after an adult-coverage carve-out (Phase 0: a
+minor-night without a party adult that night or an existing adult allocation is
+reported `NO_BOOKING_ADULT` and removed from demand):
+
+1. **Whole-stay in free space** — the first candidate room (rooms already
+   holding the booking's allocations, then the requested room, then sort
+   order) with enough free beds on EVERY night of the stay takes the whole
+   party, with best-effort per-guest bed stability (one bed across the stay
+   when possible, within-room bed switches otherwise).
+2. **Whole-stay via displacement** (capacity-holding bookings on the lifecycle
+   path only; #1387 preserved) — a room is feasible when free beds plus beds
+   held by wholly-displaceable provisional bookings cover every night. The
+   displacement UNIT is a provisional booking's entire visible stay: evicted
+   bookings (newest first) are relocated whole to ONE other room (`MOVE`) or
+   wholly unallocated (`UNALLOCATE`) — never night-split, never a MOVE/
+   UNALLOCATE mix. A booking with an admin-approved night anywhere, or a stay
+   extending beyond the load envelope, is never displaced.
+3. **Per-night split fallback** — the legacy whole-night/split logic for
+   bookings no single room can host, reported in
+   `BedAllocationPlan.roomContinuityFallbackBookingIds`; held-booking
+   displacement here still uses the whole-booking primitive.
+
+Reconciliation widens its loads to the envelope of every booking overlapping
+the reconcile range (`min(checkIn) .. max(checkOut)` union the range) so the
+planner sees whole stays, while the set of bookings planned stays restricted
+to those overlapping the original range (no cascade).
+
 On the admin allocation board, dragging or menu-moving the first visible
 allocated night for a guest reassigns that guest's visible allocated nights to
 the target bed while preserving each date-only lodge night. Later-night moves
-remain single-night adjustments.
+remain single-night adjustments. The board's "Run Auto Allocation" uses the
+same whole-stay planner without displacement, and the board raises a
+stay-level `ROOM_SWITCH` warning when a booking's rooms change between nights.
 
 To verify: approval status representation, conflict handling, per-night guest
-uniqueness, and module-disabled behavior.
+uniqueness, room continuity and whole-booking displacement behavior, and
+module-disabled behavior.
 
 ## Membership Application Lifecycle
 

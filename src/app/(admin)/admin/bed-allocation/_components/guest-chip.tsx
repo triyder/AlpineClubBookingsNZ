@@ -3,6 +3,7 @@
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
+import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
@@ -16,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { getBookingAccent } from "./booking-accent";
 import {
   type BedOption,
   type BedOptionGroup,
@@ -74,18 +76,27 @@ export function GuestChip({
           return groups;
         }, []);
   const selectedBed = bedOptions.find((bed) => bed.id === selectedBedId);
+  const accent = getBookingAccent(group.bookingId);
+  const bookingTitle = `Booking ${group.bookingId}`;
 
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform) }}
+      title={bookingTitle}
       className={cn(
-        "flex flex-col gap-2 rounded-md border bg-white p-2 shadow-sm sm:flex-row sm:items-center sm:justify-between",
+        "relative flex flex-col gap-2 overflow-hidden rounded-md border bg-card p-2 pl-3 text-card-foreground shadow-sm ring-1 ring-inset sm:flex-row sm:items-center sm:justify-between",
+        accent.ringClassName,
+        accent.tintClassName,
         isDragging && "opacity-50",
-        highlighted && "border-amber-300 bg-amber-50",
+        highlighted && "border-amber-300 bg-amber-50 dark:bg-amber-950/30",
       )}
     >
-      <div className="flex items-start gap-2">
+      <span
+        aria-hidden="true"
+        className={cn("absolute inset-y-0 left-0 w-1", accent.stripClassName)}
+      />
+      <div className="flex min-w-0 flex-1 items-start gap-2">
         <button
           type="button"
           aria-label={`Drag ${group.guestName} to a bed`}
@@ -97,17 +108,24 @@ export function GuestChip({
         >
           <GripVertical className="h-4 w-4" />
         </button>
-        <div>
-          <div className="text-sm font-medium">{group.guestName}</div>
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-1 text-sm font-medium">
+            <span className="min-w-0 truncate" title={group.guestName}>
+              {group.guestName}
+            </span>
+            <span className="shrink-0">
+              <AgeTierBadge tier={group.guestAgeTier} />
+            </span>
+          </div>
           <div className="text-xs text-muted-foreground">
-            {group.guestAgeTier} · {group.memberName}
+            {group.memberName}
           </div>
           <div className="font-mono text-xs text-muted-foreground">
             {nightsLabel}
           </div>
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <Select
           value={selectedBedId || "none"}
           onValueChange={onSelectBed}

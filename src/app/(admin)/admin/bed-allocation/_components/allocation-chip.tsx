@@ -3,6 +3,7 @@
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { CircleDashed, GripVertical, Lock, X } from "lucide-react";
+import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
@@ -18,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { getBookingAccent } from "./booking-accent";
 import {
   type BedOption,
   type BedOptionGroup,
@@ -83,13 +85,17 @@ export function AllocationChip({
   // colour-only — border style, icon, and label all differ — so it survives in
   // either theme and for colour-blind staff.
   const holdsCapacity = allocation.holdsCapacity;
+  const accent = getBookingAccent(allocation.bookingId);
+  const bookingTitle = `Booking ${allocation.bookingId}`;
 
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform) }}
+      title={bookingTitle}
       className={cn(
-        "flex w-full max-w-full items-start gap-1 rounded-md border p-1.5 text-xs shadow-sm",
+        "relative flex w-full max-w-full items-start gap-1 overflow-hidden rounded-md border p-1.5 pl-2.5 text-xs shadow-sm ring-1 ring-inset",
+        accent.ringClassName,
         holdsCapacity
           ? "border-border bg-card text-card-foreground"
           : "border-dashed border-muted-foreground/50 bg-muted/40 text-foreground",
@@ -97,6 +103,10 @@ export function AllocationChip({
         pending && "opacity-60",
       )}
     >
+      <span
+        aria-hidden="true"
+        className={cn("absolute inset-y-0 left-0 w-1", accent.stripClassName)}
+      />
       <button
         type="button"
         aria-label={`Drag ${allocation.guestName} to another bed or night`}
@@ -109,7 +119,17 @@ export function AllocationChip({
         <GripVertical className="h-3.5 w-3.5" />
       </button>
       <div className="min-w-0 flex-1">
-        <div className="truncate font-medium">{allocation.guestName}</div>
+        <div className="flex min-w-0 items-center gap-1">
+          <span
+            className="min-w-0 flex-1 truncate font-medium"
+            title={allocation.guestName}
+          >
+            {allocation.guestName}
+          </span>
+          <span className="shrink-0">
+            <AgeTierBadge tier={allocation.guestAgeTier} />
+          </span>
+        </div>
         <div className="truncate font-mono text-[10px] text-muted-foreground">
           {allocation.bookingId}
         </div>

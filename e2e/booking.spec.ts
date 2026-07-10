@@ -60,24 +60,53 @@ test("the same member cannot hold the same lodge night twice", async ({
   await selectCalendarDay(page, window.checkIn);
   await selectCalendarDay(page, window.checkOut);
 
-  // "Add Guests" matches both the "2. Add Guests" step breadcrumb and the
-  // guests-step card title, so gate on the unambiguous self-add button instead.
-  const addSelf = page.getByRole("button", {
-    name: `+ ${personas.booker.firstName} ${personas.booker.lastName} (You)`,
+  // #1680: the booker is pre-selected, so self is already in the party in its
+  // added state (✓). Gate on that button (unambiguous vs. the "Add Guests"
+  // breadcrumb/card title) then continue — the member-night lock must refuse a
+  // second live booking on the same nights with a conflict message, not a quote.
+  const addedSelf = page.getByRole("button", {
+    name: `✓ ${personas.booker.firstName} ${personas.booker.lastName} (You)`,
   });
-  await expect(addSelf).toBeVisible();
+  await expect(addedSelf).toBeVisible();
 
-  // The wizard must refuse to carry the member into a second live booking on
-  // the same nights: either the quick-add is blocked outright or continuing
-  // surfaces a conflict message instead of a quote.
-  if (await addSelf.isEnabled().catch(() => false)) {
-    await addSelf.click();
-    await page.getByRole("button", { name: "Continue", exact: true }).click();
-    await expect(
-      page.getByText(/already (booked|has a booking|have a booking|part of)/i).first(),
-    ).toBeVisible();
-    await expect(page.getByText("Booking Summary")).not.toBeVisible();
-  } else {
-    await expect(addSelf).toBeDisabled();
-  }
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(
+    page.getByText(/already (booked|has a booking|have a booking|part of)/i).first(),
+  ).toBeVisible();
+  await expect(page.getByText("Booking Summary")).not.toBeVisible();
+});
+
+test("the booker can remove themselves and continue with another guest", async ({
+  page,
+}) => {
+  // #1680: self is pre-selected but opt-out. Removing the booker and booking on
+  // behalf of a non-member guest must still reach a priced review, and the
+  // seed-once guard must not re-add self after the explicit removal.
+  await page.goto("/book");
+
+  await expect(page.getByText("Select Your Dates")).toBeVisible();
+  await selectCalendarDay(page, window.checkIn);
+  await selectCalendarDay(page, window.checkOut);
+
+  const addedSelf = page.getByRole("button", {
+    name: `✓ ${personas.booker.firstName} ${personas.booker.lastName} (You)`,
+  });
+  await expect(addedSelf).toBeVisible();
+
+  // X the booker out. The self quick-add returns to its un-added (+) state,
+  // proving the seed-once guard did not re-add them.
+  await page.getByRole("button", { name: "Remove" }).first().click();
+  await expect(
+    page.getByRole("button", {
+      name: `+ ${personas.booker.firstName} ${personas.booker.lastName} (You)`,
+    }),
+  ).toBeVisible();
+
+  // Add someone else (a non-member guest) and price the booking.
+  await page.getByRole("button", { name: "+ Add Non-Member Guest" }).click();
+  await page.getByPlaceholder("First name").fill("Casey");
+  await page.getByPlaceholder("Last name").fill("Visitor");
+
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByText("Booking Summary")).toBeVisible();
 });

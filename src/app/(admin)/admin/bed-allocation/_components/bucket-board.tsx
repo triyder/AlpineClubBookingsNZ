@@ -3,6 +3,7 @@
 import { useDroppable } from "@dnd-kit/core";
 import { CircleDashed, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getBookingAccent } from "./booking-accent";
 import { GuestChip } from "./guest-chip";
 import {
   BUCKET_DROPPABLE_ID,
@@ -77,14 +78,24 @@ export function BucketBoard({
           // precomputes it (bookingHoldsCapacity) because an accepted-but-unpaid
           // quote is PENDING but holds (#1254).
           const holdsCapacity = booking.holdsCapacity;
+          const accent = getBookingAccent(booking.id);
+          const bookingTitle = `Booking ${booking.id}`;
           return (
             <div
               key={booking.id}
+              title={bookingTitle}
               className={cn(
-                "rounded-md border bg-slate-50 p-2",
-                booking.id === highlightedBookingId && "border-amber-300 bg-amber-50",
+                "relative overflow-hidden rounded-md border bg-card p-2 pl-3 text-card-foreground ring-1 ring-inset",
+                accent.ringClassName,
+                accent.tintClassName,
+                booking.id === highlightedBookingId &&
+                  "border-amber-300 bg-amber-50 dark:bg-amber-950/30",
               )}
             >
+              <span
+                aria-hidden="true"
+                className={cn("absolute inset-y-0 left-0 w-1", accent.stripClassName)}
+              />
               <div className="mb-2 flex flex-wrap items-baseline gap-2 px-1">
                 <span className="text-sm font-semibold">{booking.memberName}</span>
                 <span className="font-mono text-xs text-muted-foreground">

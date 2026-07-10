@@ -268,7 +268,7 @@ async function autoAllocateMissingBedNights({
     return 0;
   }
 
-  const [rooms, bookings, existingAllocations] = await Promise.all([
+  const [rooms, bookings] = await Promise.all([
     db.lodgeRoom.findMany({
       where: lodgeId ? lodgeNullTolerantScope(lodgeId) : undefined,
       include: { beds: true },
@@ -292,15 +292,19 @@ async function autoAllocateMissingBedNights({
         id: true,
         createdAt: true,
         requestedRoomId: true,
+        // #1677 envelope widening: the overlapping bookings' own stay windows
+        // widen the loads below so the planner sees WHOLE stays.
+        checkIn: true,
+        checkOut: true,
         // #1387: classify each booking Held vs Provisional so the planner can
         // give capacity-holding bookings first claim on beds.
         status: true,
         originBookingRequest: { select: { id: true } },
+        // Whole-stay planning (issue #1677): load every guest of an
+        // overlapping booking, not just the reconcile-range slice — guest
+        // stays sit inside the booking envelope, which is inside the widened
+        // load envelope by construction.
         guests: {
-          where: {
-            stayStart: { lt: range.checkOut },
-            stayEnd: { gt: range.checkIn },
-          },
           select: {
             id: true,
             bookingId: true,
@@ -314,38 +318,65 @@ async function autoAllocateMissingBedNights({
       },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
-    db.bedAllocation.findMany({
-      where: {
-        stayDate: {
-          gte: range.checkIn,
-          lt: range.checkOut,
-        },
-        ...(lodgeId ? { room: lodgeNullTolerantScope(lodgeId) } : {}),
-      },
-      select: {
-        bedId: true,
-        bookingId: true,
-        bookingGuestId: true,
-        roomId: true,
-        stayDate: true,
-        // #1387: an admin-approved allocation (#776 lock) is never displaced.
-        approvedAt: true,
-        // #1387: classify each occupied bed-night Held vs Provisional so the
-        // planner never displaces a capacity-holding occupant.
-        booking: {
-          select: {
-            status: true,
-            originBookingRequest: { select: { id: true } },
-          },
-        },
-        bookingGuest: {
-          select: {
-            ageTier: true,
-          },
-        },
-      },
-    }),
   ]);
+
+  // Envelope widening (issue #1677): clip loads to [min(checkIn), max(checkOut)]
+  // of the bookings overlapping the reconcile range, union the range itself.
+  // The planner then plans whole stays instead of range slices, while the
+  // planner bookings SET stays restricted to bookings overlapping the original
+  // range (no cascade to neighbours-of-neighbours).
+  let envelopeCheckIn = range.checkIn;
+  let envelopeCheckOut = range.checkOut;
+  for (const booking of bookings) {
+    if (booking.checkIn && booking.checkIn < envelopeCheckIn) {
+      envelopeCheckIn = booking.checkIn;
+    }
+    if (booking.checkOut && booking.checkOut > envelopeCheckOut) {
+      envelopeCheckOut = booking.checkOut;
+    }
+  }
+  const envelope: BedAllocationLifecycleRange = {
+    checkIn: envelopeCheckIn,
+    checkOut: envelopeCheckOut,
+  };
+
+  const existingAllocations = await db.bedAllocation.findMany({
+    where: {
+      stayDate: {
+        gte: envelope.checkIn,
+        lt: envelope.checkOut,
+      },
+      ...(lodgeId ? { room: lodgeNullTolerantScope(lodgeId) } : {}),
+    },
+    select: {
+      bedId: true,
+      bookingId: true,
+      bookingGuestId: true,
+      roomId: true,
+      stayDate: true,
+      // #1387: an admin-approved allocation (#776 lock) is never displaced —
+      // and (#1677) one approved night pins its whole booking.
+      approvedAt: true,
+      // #1387: classify each occupied bed-night Held vs Provisional so the
+      // planner never displaces a capacity-holding occupant. createdAt orders
+      // newest-first eviction and checkIn/checkOut flag stays that extend past
+      // the envelope as non-displaceable (#1677).
+      booking: {
+        select: {
+          status: true,
+          createdAt: true,
+          checkIn: true,
+          checkOut: true,
+          originBookingRequest: { select: { id: true } },
+        },
+      },
+      bookingGuest: {
+        select: {
+          ageTier: true,
+        },
+      },
+    },
+  });
 
   const allocatedGuestNights = new Set(
     existingAllocations.map(
@@ -361,8 +392,9 @@ async function autoAllocateMissingBedNights({
       for (const guest of booking.guests) {
         // Allocate only the nights the guest actually stays (issue #713):
         // a non-contiguous stay gets beds on its included nights, not the
-        // whole envelope.
-        for (const stayDate of getGuestNightDatesInRange(guest, range)) {
+        // whole envelope. The widened load envelope (#1677) exposes the
+        // guest's WHOLE stay so the planner can keep it in one room.
+        for (const stayDate of getGuestNightDatesInRange(guest, envelope)) {
           const stayDateKey = formatDateOnly(stayDate);
           if (allocatedGuestNights.has(`${guest.id}:${stayDateKey}`)) {
             continue;
@@ -427,6 +459,19 @@ async function autoAllocateMissingBedNights({
       stayDate: allocation.stayDate,
       ageTier: allocation.bookingGuest.ageTier,
       approvedAt: allocation.approvedAt,
+      // #1677: newest provisional bookings are evicted first when a held
+      // booking needs a whole room.
+      bookingCreatedAt: allocation.booking?.createdAt ?? null,
+      // #1677: a stay extending past the loaded envelope is only partially
+      // visible, so a whole-stay move is impossible — treat it as
+      // non-displaceable (mirrors the holdsCapacity-undefined default).
+      stayExtendsBeyondWindow: Boolean(
+        allocation.booking &&
+          ((allocation.booking.checkIn &&
+            allocation.booking.checkIn < envelope.checkIn) ||
+            (allocation.booking.checkOut &&
+              allocation.booking.checkOut > envelope.checkOut)),
+      ),
       holdsCapacity: allocation.booking
         ? bookingHoldsCapacity({
             status: allocation.booking.status,

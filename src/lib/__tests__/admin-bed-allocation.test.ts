@@ -23,6 +23,7 @@ import {
   buildBedAllocationWarnings,
   createBedAllocationRoom,
   createBedAllocationRoomsBulk,
+  deleteBedAllocationRoom,
   approveBedAllocations,
   getBedAllocationDashboard,
   getRoomsAndBedsConfiguration,
@@ -33,6 +34,7 @@ import {
 } from "@/lib/admin-bed-allocation";
 import { getLodgeCapacityStatus } from "@/lib/lodge-capacity";
 import { parseDateOnly } from "@/lib/date-only";
+import { prisma } from "@/lib/prisma";
 
 function readRepoFile(relativePath: string) {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
@@ -111,6 +113,77 @@ describe("admin bed allocation", () => {
       "BOOKING_SPLIT",
       "MINOR_WITHOUT_BOOKING_ADULT",
     ]);
+  });
+
+  it("warns once, stay-level, when a booking's rooms change between nights (ROOM_SWITCH, #1677)", () => {
+    const allocation = (overrides: {
+      bookingId: string;
+      bookingGuestId: string;
+      roomId: string;
+      bedId: string;
+      stayDate: string;
+    }) => ({
+      id: `${overrides.bookingGuestId}:${overrides.stayDate}`,
+      guestName: "Guest",
+      guestAgeTier: "ADULT" as const,
+      roomName: overrides.roomId,
+      bedName: overrides.bedId,
+      source: "MANUAL" as const,
+      approvedAt: null,
+      approvedByName: null,
+      bookingStatus: "CONFIRMED",
+      holdsCapacity: true,
+      ...overrides,
+    });
+
+    const warnings = buildBedAllocationWarnings({
+      allocations: [
+        // booking-switch: room A night 1, room B night 2 → ROOM_SWITCH.
+        allocation({
+          bookingId: "booking-switch",
+          bookingGuestId: "guest-1",
+          roomId: "room-a",
+          bedId: "bed-a1",
+          stayDate: "2026-07-01",
+        }),
+        allocation({
+          bookingId: "booking-switch",
+          bookingGuestId: "guest-1",
+          roomId: "room-b",
+          bedId: "bed-b1",
+          stayDate: "2026-07-02",
+        }),
+        // booking-stable: same room both nights → no ROOM_SWITCH.
+        allocation({
+          bookingId: "booking-stable",
+          bookingGuestId: "guest-2",
+          roomId: "room-a",
+          bedId: "bed-a2",
+          stayDate: "2026-07-01",
+        }),
+        allocation({
+          bookingId: "booking-stable",
+          bookingGuestId: "guest-2",
+          roomId: "room-a",
+          bedId: "bed-a2",
+          stayDate: "2026-07-02",
+        }),
+      ],
+    });
+
+    const roomSwitchWarnings = warnings.filter(
+      (warning) => warning.type === "ROOM_SWITCH",
+    );
+    expect(roomSwitchWarnings).toHaveLength(1);
+    expect(roomSwitchWarnings[0]).toMatchObject({
+      id: "ROOM_SWITCH:booking-switch",
+      bookingId: "booking-switch",
+      stayDate: "2026-07-02",
+    });
+    // No same-night split here, so BOOKING_SPLIT stays quiet.
+    expect(
+      warnings.filter((warning) => warning.type === "BOOKING_SPLIT"),
+    ).toHaveLength(0);
   });
 
   it("keeps bed allocation routes feature gated", () => {
@@ -842,5 +915,230 @@ describe("getBedAllocationDashboard focused booking (#1302)", () => {
 
     expect(findFirst).not.toHaveBeenCalled();
     expect(dashboard.focusedBooking).toBeNull();
+  });
+});
+
+describe("deleteBedAllocationRoom (#1674 guarded hard delete)", () => {
+  function buildDeleteDb(overrides: {
+    room?: { id: string; lodgeId?: string } | null;
+    allocation?: { id: string } | null;
+    deleteRejects?: unknown;
+  } = {}) {
+    const roomFindFirst = vi
+      .fn()
+      .mockResolvedValue(
+        overrides.room === undefined ? { id: "room-1" } : overrides.room,
+      );
+    const allocationFindFirst = vi
+      .fn()
+      .mockResolvedValue(overrides.allocation ?? null);
+    const bedDeleteMany = vi.fn().mockResolvedValue({ count: 2 });
+    const roomDelete =
+      overrides.deleteRejects !== undefined
+        ? vi.fn().mockRejectedValue(overrides.deleteRejects)
+        : vi.fn().mockResolvedValue({ id: "room-1", name: "Bunkroom" });
+    return {
+      db: {
+        lodgeRoom: { findFirst: roomFindFirst, delete: roomDelete },
+        bedAllocation: { findFirst: allocationFindFirst },
+        lodgeBed: { deleteMany: bedDeleteMany },
+      },
+      roomFindFirst,
+      allocationFindFirst,
+      bedDeleteMany,
+      roomDelete,
+    };
+  }
+
+  it("deletes the room and its beds when there is no allocation history", async () => {
+    const { db, allocationFindFirst, bedDeleteMany, roomDelete } =
+      buildDeleteDb();
+
+    const result = await deleteBedAllocationRoom({
+      id: "room-1",
+      db: db as never,
+    });
+
+    // Guard checks any allocation for the room, with no date filter, so any
+    // history (past or future) blocks the delete.
+    expect(allocationFindFirst).toHaveBeenCalledWith({
+      where: { roomId: "room-1" },
+      select: { id: true },
+    });
+    expect(bedDeleteMany).toHaveBeenCalledWith({
+      where: { roomId: "room-1" },
+    });
+    expect(roomDelete).toHaveBeenCalledWith({ where: { id: "room-1" } });
+    expect(result).toEqual({ id: "room-1", name: "Bunkroom" });
+  });
+
+  it("blocks deletion when the room has past allocation history", async () => {
+    const { db, bedDeleteMany, roomDelete } = buildDeleteDb({
+      allocation: { id: "allocation-past" },
+    });
+
+    await expect(
+      deleteBedAllocationRoom({ id: "room-1", db: db as never }),
+    ).rejects.toThrow(
+      "This room has allocation history and cannot be deleted. Deactivate it instead.",
+    );
+    expect(bedDeleteMany).not.toHaveBeenCalled();
+    expect(roomDelete).not.toHaveBeenCalled();
+  });
+
+  it("blocks deletion when the room has only future allocations", async () => {
+    // Same guard as the past-only case: the history check is date-agnostic, so
+    // a future-dated allocation blocks a hard delete just the same.
+    const { db, roomDelete } = buildDeleteDb({
+      allocation: { id: "allocation-future" },
+    });
+
+    await expect(
+      deleteBedAllocationRoom({ id: "room-1", db: db as never }),
+    ).rejects.toThrow(BedAllocationAdminError);
+    expect(roomDelete).not.toHaveBeenCalled();
+  });
+
+  it("throws a 404 for an unknown room", async () => {
+    const { db, allocationFindFirst } = buildDeleteDb({ room: null });
+
+    await expect(
+      deleteBedAllocationRoom({ id: "missing", db: db as never }),
+    ).rejects.toMatchObject({ message: "Room not found", status: 404 });
+    expect(allocationFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("scopes the lookup to the given lodge and 404s on a mismatch", async () => {
+    const { db, roomFindFirst } = buildDeleteDb({ room: null });
+
+    await expect(
+      deleteBedAllocationRoom({
+        id: "room-1",
+        lodgeId: "lodge-2",
+        db: db as never,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(roomFindFirst).toHaveBeenCalledWith({
+      where: { id: "room-1", lodgeId: "lodge-2" },
+      select: { id: true },
+    });
+  });
+
+  it("wraps in a transaction and runs the guard + deletes on the tx client when no db is passed", async () => {
+    // Without an injected db the function must self-wrap in prisma.$transaction
+    // and run the guard AND deletes on the tx client the callback receives, so
+    // the guard cannot be hoisted out of the transaction (or the wrap dropped)
+    // without failing this test. The tx client is a distinct object from the
+    // top-level prisma singleton, which has no room/bed methods here.
+    const tx = {
+      lodgeRoom: {
+        findFirst: vi.fn().mockResolvedValue({ id: "room-1" }),
+        delete: vi.fn().mockResolvedValue({ id: "room-1", name: "Bunkroom" }),
+      },
+      bedAllocation: { findFirst: vi.fn().mockResolvedValue(null) },
+      lodgeBed: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    };
+    const txnMock = vi.fn(async (cb: (client: typeof tx) => unknown) => cb(tx));
+    const prismaMock = prisma as unknown as { $transaction?: unknown };
+    prismaMock.$transaction = txnMock;
+    try {
+      const result = await deleteBedAllocationRoom({ id: "room-1" });
+
+      expect(txnMock).toHaveBeenCalledTimes(1);
+      expect(tx.bedAllocation.findFirst).toHaveBeenCalledWith({
+        where: { roomId: "room-1" },
+        select: { id: true },
+      });
+      expect(tx.lodgeBed.deleteMany).toHaveBeenCalledWith({
+        where: { roomId: "room-1" },
+      });
+      expect(tx.lodgeRoom.delete).toHaveBeenCalledWith({
+        where: { id: "room-1" },
+      });
+      expect(result).toEqual({ id: "room-1", name: "Bunkroom" });
+    } finally {
+      delete prismaMock.$transaction;
+    }
+  });
+
+  it("maps an ambiguous P2003 (no constraint metadata) to the allocation-history message", async () => {
+    // The pg adapter can drop the constraint field; with nothing to classify
+    // on, fall back to the allocation-history steer (the common case).
+    const { db, roomDelete } = buildDeleteDb({
+      deleteRejects: new Prisma.PrismaClientKnownRequestError("FK", {
+        code: "P2003",
+        clientVersion: "test",
+      }),
+    });
+
+    await expect(
+      deleteBedAllocationRoom({ id: "room-1", db: db as never }),
+    ).rejects.toThrow(
+      "This room has allocation history and cannot be deleted. Deactivate it instead.",
+    );
+    expect(roomDelete).toHaveBeenCalled();
+  });
+
+  it("maps a BedAllocation FK violation to the allocation-history message", async () => {
+    const { db } = buildDeleteDb({
+      deleteRejects: new Prisma.PrismaClientKnownRequestError(
+        "Foreign key constraint violated",
+        {
+          code: "P2003",
+          clientVersion: "test",
+          meta: { field_name: "BedAllocation_bedId_roomId_fkey (index)" },
+        },
+      ),
+    });
+
+    await expect(
+      deleteBedAllocationRoom({ id: "room-1", db: db as never }),
+    ).rejects.toThrow(
+      "This room has allocation history and cannot be deleted. Deactivate it instead.",
+    );
+  });
+
+  it("maps a concurrent bed-creation FK (LodgeBed->room) to a retry message, not history", async () => {
+    // A bed added by another admin between the guard and the room delete trips
+    // the LodgeBed->room Restrict FK — not allocation history, so steer to a
+    // retry rather than to Deactivate.
+    const { db, roomDelete } = buildDeleteDb({
+      deleteRejects: new Prisma.PrismaClientKnownRequestError(
+        "Foreign key constraint violated",
+        {
+          code: "P2003",
+          clientVersion: "test",
+          meta: { field_name: "LodgeBed_roomId_fkey (index)" },
+        },
+      ),
+    });
+
+    await expect(
+      deleteBedAllocationRoom({ id: "room-1", db: db as never }),
+    ).rejects.toThrow(
+      "Room changed while deleting (a bed was just added). Refresh and try again.",
+    );
+    expect(roomDelete).toHaveBeenCalled();
+  });
+
+  it("rethrows a non-FK Prisma error (P2025) unmapped", async () => {
+    const notFound = new Prisma.PrismaClientKnownRequestError("Record not found", {
+      code: "P2025",
+      clientVersion: "test",
+    });
+    const { db } = buildDeleteDb({ deleteRejects: notFound });
+
+    await expect(
+      deleteBedAllocationRoom({ id: "room-1", db: db as never }),
+    ).rejects.toBe(notFound);
+  });
+
+  it("rethrows a non-Prisma error unmapped", async () => {
+    const boom = new Error("boom");
+    const { db } = buildDeleteDb({ deleteRejects: boom });
+
+    await expect(
+      deleteBedAllocationRoom({ id: "room-1", db: db as never }),
+    ).rejects.toBe(boom);
   });
 });
