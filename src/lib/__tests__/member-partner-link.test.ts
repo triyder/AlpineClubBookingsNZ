@@ -47,6 +47,7 @@ import {
 } from "@/lib/email";
 import {
   canonicalPartnerPair,
+  PARTNER_REQUEST_SENT_GENERIC_MESSAGE,
   requestPartnerLink,
   respondToPartnerLink,
   removeOwnPartnerLink,
@@ -186,7 +187,7 @@ describe("requestPartnerLink", () => {
     expect(result).toMatchObject({ ok: false, status: 422 });
   });
 
-  it("fails fast when either side already has a confirmed partner", async () => {
+  it("fails fast when the initiator already has a confirmed partner", async () => {
     mockMemberLookup([adultA]);
     vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
     vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
@@ -199,6 +200,69 @@ describe("requestPartnerLink", () => {
     });
 
     expect(result).toMatchObject({ ok: false, status: 409 });
+    expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+  });
+
+  it("suppresses a by-email request to an already-partnered target into the generic reply (D9)", async () => {
+    mockMemberLookup([adultA]);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
+    // findFirst order: initiator confirmed → outstanding outgoing → target confirmed.
+    vi.mocked(prisma.memberPartnerLink.findFirst)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ id: "existing-confirmed" } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultB.email,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      linkId: null,
+      suppressed: true,
+      message: PARTNER_REQUEST_SENT_GENERIC_MESSAGE,
+    });
+    expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+    expect(sendPartnerLinkRequestEmail).not.toHaveBeenCalled();
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "MEMBER_PARTNER_LINK_REQUEST_SUPPRESSED" })
+    );
+  });
+
+  it("returns the same generic message for a real by-email request as for a suppressed one (D9)", async () => {
+    mockMemberLookup([adultA]);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
+    vi.mocked(prisma.memberPartnerLink.create).mockResolvedValue({
+      id: "link-1",
+    } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultB.email,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      linkId: "link-1",
+      message: PARTNER_REQUEST_SENT_GENERIC_MESSAGE,
+    });
+  });
+
+  it("keeps the 409 when a family co-member target already has a confirmed partner", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.memberPartnerLink.findFirst)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ id: "existing-confirmed" } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetMemberId: adultB.id,
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect(result.ok === false && result.error).toMatch(/already has a confirmed partner/i);
     expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
   });
 
@@ -290,9 +354,9 @@ describe("requestPartnerLink", () => {
   it("allows only one outstanding outgoing request", async () => {
     mockMemberLookup([adultA]);
     vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
-    // invariant checks pass, then the outstanding-outgoing probe hits
+    // initiator-confirmed check passes, then the outstanding-outgoing probe
+    // hits (it runs before the target-confirmed check — see D9 ordering)
     vi.mocked(prisma.memberPartnerLink.findFirst)
-      .mockResolvedValueOnce(null as never)
       .mockResolvedValueOnce(null as never)
       .mockResolvedValueOnce({ id: "other-outgoing" } as never);
 

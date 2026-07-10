@@ -360,7 +360,9 @@ export async function POST(req: NextRequest) {
         initiatorMemberId: session.user.id,
         targetEmail: normalizedPartnerEmail,
       });
-      partnerLinkRequested = partnerLinkResult.ok;
+      // A D9-suppressed outcome (target already partnered) reads as success
+      // but created nothing — the audit flag records what actually happened.
+      partnerLinkRequested = partnerLinkResult.ok && !partnerLinkResult.suppressed;
       if (!partnerLinkResult.ok) {
         logger.warn(
           { requesterId: session.user.id, partnerMemberId: partner.id, error: partnerLinkResult.error },

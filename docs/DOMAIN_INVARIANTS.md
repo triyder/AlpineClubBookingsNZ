@@ -1307,7 +1307,15 @@ same transaction. A member may have at most one outstanding outgoing PENDING
 request. The member-facing request API accepts an arbitrary target only by
 email (mirroring the family ADULT_INVITE flow); a memberId target must share a
 family group with the requester so the endpoint cannot probe foreign member
-ids. A link claim conflict on token claim (either side already has a confirmed
+ids. A by-email request must not disclose the target's confirmed-partner
+status (D9, owner decision 2026-07-11): whether or not the target is already
+partnered, the reply is the same generic "request sent if eligible" body —
+same message, no link id or status — with the suppressed attempt audited
+(`MEMBER_PARTNER_LINK_REQUEST_SUPPRESSED`) and no email sent; the target's
+confirmed-partner check runs only after every requester-side conflict so no
+error ordering re-opens the probe. Unknown-email (404) and
+not-adult (422) feedback stays distinguishable, and the family memberId path
+keeps its specific conflict errors. A link claim conflict on token claim (either side already has a confirmed
 partner, inviter no longer eligible) skips the link without failing the
 family-group join, and the skip is audited.
 

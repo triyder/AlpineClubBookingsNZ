@@ -62,12 +62,23 @@ export interface PartnerLinkState {
 }
 
 export type PartnerLinkActionResult =
-  | { ok: true; linkId: string; status: string; message: string }
+  | { ok: true; linkId: string | null; status: string; message: string; suppressed?: true }
   | { ok: false; status: 403 | 404 | 409 | 422; error: string };
 
 function memberName(member: { firstName: string; lastName: string }) {
   return `${member.firstName} ${member.lastName}`.trim();
 }
+
+/**
+ * The one reply every by-email partner request gets, whether or not a request
+ * was actually created (D9, owner decision 2026-07-11): naming the target or
+ * reporting that they already have a confirmed partner would let any
+ * logged-in member probe another member's relationship state from an email
+ * address. Unknown-email (404) and not-adult (422) feedback stays
+ * distinguishable per the same decision.
+ */
+export const PARTNER_REQUEST_SENT_GENERIC_MESSAGE =
+  "If they're eligible, we've sent them a partner request. They can confirm or decline from their profile.";
 
 /**
  * Email both sides of a link about a confirmation/removal, once per distinct
@@ -425,9 +436,6 @@ export async function requestPartnerLink(params: {
     if (await memberHasConfirmedPartner(tx, initiator.id)) {
       return { outcome: "confirmed_exists", mine: true };
     }
-    if (await memberHasConfirmedPartner(tx, target.id)) {
-      return { outcome: "confirmed_exists", mine: false };
-    }
 
     const existingPair = await tx.memberPartnerLink.findUnique({
       where: { memberAId_memberBId: pair },
@@ -450,6 +458,15 @@ export async function requestPartnerLink(params: {
       return { outcome: "outgoing_exists" };
     }
 
+    // The target's confirmed-partner state is checked only after every
+    // requester-side conflict has answered: were it checked earlier, a
+    // requester with, say, an outstanding outgoing request would get the
+    // suppressed "request sent" reply for a partnered target but a 422 for a
+    // free one, re-opening exactly the probe D9 closes.
+    if (await memberHasConfirmedPartner(tx, target.id)) {
+      return { outcome: "confirmed_exists", mine: false };
+    }
+
     const link = await tx.memberPartnerLink.create({
       data: {
         ...pair,
@@ -467,6 +484,37 @@ export async function requestPartnerLink(params: {
   });
 
   if (result.outcome === "confirmed_exists") {
+    if (!result.mine && params.targetEmail) {
+      // D9: a by-email requester must not learn that the target already has
+      // a confirmed partner. Nothing is created and nobody is emailed, but
+      // the reply is the same one a real request gets; the attempt is
+      // audited so support can explain the missing pending row.
+      logAudit({
+        action: "MEMBER_PARTNER_LINK_REQUEST_SUPPRESSED",
+        memberId: initiator.id,
+        targetId: target.id,
+        subjectMemberId: target.id,
+        entityType: "MemberPartnerLink",
+        category: "family",
+        outcome: "blocked",
+        summary: "Partner link request suppressed: target already has a confirmed partner",
+        metadata: {
+          initiatorMemberId: initiator.id,
+          targetMemberId: target.id,
+        },
+      });
+      logger.info(
+        { initiatorId: initiator.id, targetId: target.id },
+        "Partner link request suppressed: target already has a confirmed partner"
+      );
+      return {
+        ok: true,
+        linkId: null,
+        status: PARTNER_LINK_PENDING,
+        suppressed: true,
+        message: PARTNER_REQUEST_SENT_GENERIC_MESSAGE,
+      };
+    }
     return {
       ok: false,
       status: 409,
@@ -546,9 +594,15 @@ export async function requestPartnerLink(params: {
     ok: true,
     linkId: result.linkId,
     status: oneStep ? PARTNER_LINK_CONFIRMED : PARTNER_LINK_PENDING,
+    // A by-email success carries the same generic message as a suppressed
+    // one (D9) — even the target's name would confirm the email resolves to
+    // an eligible member. Family memberId targets get the specific wording:
+    // that path is fenced to the requester's own family group.
     message: oneStep
       ? `${memberName(target)} has been recorded as your partner.`
-      : `Partner request sent to ${memberName(target)}. They can confirm or decline from their profile.`,
+      : params.targetEmail
+        ? PARTNER_REQUEST_SENT_GENERIC_MESSAGE
+        : `Partner request sent to ${memberName(target)}. They can confirm or decline from their profile.`,
   };
 }
 

@@ -100,6 +100,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
+  // By-email replies are deliberately sparse (D9): no linkId or link status,
+  // and the service returns the same generic message whether or not a request
+  // was created, so a target who already has a confirmed partner reads
+  // identically to an eligible one. The Partner card refetches state rather
+  // than reading this body. Family memberId targets keep the richer body —
+  // that path is fenced to the requester's own family group above.
+  if (parsed.data.email) {
+    return NextResponse.json({ message: result.message }, { status: 201 });
+  }
+
   return NextResponse.json(
     { message: result.message, linkId: result.linkId, status: result.status },
     { status: 201 }

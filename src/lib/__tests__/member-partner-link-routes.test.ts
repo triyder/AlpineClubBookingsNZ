@@ -145,11 +145,58 @@ describe("POST /api/members/partner-link", () => {
     vi.mocked(requestPartnerLink).mockResolvedValue({
       ok: false,
       status: 409,
-      error: "already partnered",
+      error: "a request between you two is already pending",
     });
 
     const res = await postPartnerLink(makeRequest("POST", { email: "b@x.nz" }));
     expect(res.status).toBe(409);
+  });
+
+  it("returns byte-identical by-email bodies for a real and a D9-suppressed request", async () => {
+    const genericMessage =
+      "If they're eligible, we've sent them a partner request. They can confirm or decline from their profile.";
+    vi.mocked(requestPartnerLink).mockResolvedValueOnce({
+      ok: true,
+      linkId: "link-1",
+      status: "PENDING",
+      message: genericMessage,
+    });
+    const real = await postPartnerLink(makeRequest("POST", { email: "free@x.nz" }));
+
+    vi.mocked(requestPartnerLink).mockResolvedValueOnce({
+      ok: true,
+      linkId: null,
+      status: "PENDING",
+      suppressed: true,
+      message: genericMessage,
+    });
+    const suppressed = await postPartnerLink(makeRequest("POST", { email: "taken@x.nz" }));
+
+    expect(real.status).toBe(201);
+    expect(suppressed.status).toBe(201);
+    const realBody = await real.text();
+    const suppressedBody = await suppressed.text();
+    expect(realBody).toBe(suppressedBody);
+    // Neither the created link's id nor its status may leak into the reply.
+    expect(realBody).not.toContain("link-1");
+    expect(realBody).not.toContain("PENDING");
+  });
+
+  it("keeps the richer body for the family memberId path", async () => {
+    vi.mocked(prisma.familyGroupMember.findFirst).mockResolvedValue({
+      familyGroupId: "group-1",
+    } as never);
+    vi.mocked(requestPartnerLink).mockResolvedValue({
+      ok: true,
+      linkId: "link-2",
+      status: "CONFIRMED",
+      message: "Cora Ash has been recorded as your partner.",
+    });
+
+    const res = await postPartnerLink(makeRequest("POST", { memberId: "member-c" }));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body).toMatchObject({ linkId: "link-2", status: "CONFIRMED" });
   });
 });
 
