@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AgeTier } from "@prisma/client";
+import { Prisma, type AgeTier } from "@prisma/client";
 import { randomBytes } from "crypto";
 import { hash } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
@@ -481,12 +481,26 @@ export async function reviewAdminFamilyGroupRequest(params: {
       // no memberships until the group creation request itself is approved.
       // Approving the child first would attach a dependant to a group with no
       // adult admin, so the group creation request must be approved first.
+      // A legacy group emptied by removals gets the same 422 but actionable
+      // copy (there is no group creation request to approve).
       const groupMembershipCount = await prisma.familyGroupMember.count({
         where: { familyGroupId: request.familyGroupId },
       });
       if (groupMembershipCount === 0) {
+        const pendingGroupCreate = await prisma.familyGroupJoinRequest.findFirst({
+          where: {
+            familyGroupId: request.familyGroupId,
+            type: "GROUP_CREATE",
+            status: "PENDING",
+          },
+          select: { id: true },
+        });
         return jsonResult(
-          { error: "Approve the group creation request for this family group first." },
+          {
+            error: pendingGroupCreate
+              ? "Approve the group creation request for this family group first."
+              : "This family group has no members; reject this request or re-establish the group first.",
+          },
           { status: 422 }
         );
       }
@@ -1033,41 +1047,61 @@ async function reviewGroupCreateRequest(params: {
     }
 
     let invitationId: string | null = null;
-    await prisma.$transaction(async (tx) => {
-      // GROUP_CREATE approval must create the requester's membership with
-      // role ADMIN — do NOT route this through the generic member upsert used
-      // by the other request types, which creates role MEMBER and would leave
-      // the new group without a group admin.
-      await tx.familyGroupMember.create({
-        data: {
-          familyGroupId: request.familyGroupId,
-          memberId: request.requesterId,
-          role: "ADMIN",
-        },
-      });
-
-      await tx.familyGroupJoinRequest.update({
-        where: { id: requestId },
-        data: {
-          status: "APPROVED",
-          reviewedAt: new Date(),
-          reviewedBy: adminMemberId,
-        },
-      });
-
-      if (partner) {
-        const invitation = await tx.familyGroupJoinRequest.create({
+    try {
+      await prisma.$transaction(async (tx) => {
+        // GROUP_CREATE approval must create the requester's membership with
+        // role ADMIN — do NOT route this through the generic member upsert
+        // used by the other request types, which creates role MEMBER and
+        // would leave the new group without a group admin.
+        await tx.familyGroupMember.create({
           data: {
             familyGroupId: request.familyGroupId,
-            requesterId: request.requesterId,
-            type: "ADULT_INVITE",
-            invitedMemberId: partner.id,
+            memberId: request.requesterId,
+            role: "ADMIN",
           },
-          select: { id: true },
         });
-        invitationId = invitation.id;
+
+        await tx.familyGroupJoinRequest.update({
+          where: { id: requestId },
+          data: {
+            status: "APPROVED",
+            reviewedAt: new Date(),
+            reviewedBy: adminMemberId,
+          },
+        });
+
+        if (partner) {
+          const invitation = await tx.familyGroupJoinRequest.create({
+            data: {
+              familyGroupId: request.familyGroupId,
+              requesterId: request.requesterId,
+              type: "ADULT_INVITE",
+              invitedMemberId: partner.id,
+            },
+            select: { id: true },
+          });
+          invitationId = invitation.id;
+        }
+      });
+    } catch (error) {
+      // Concurrent double-approve: a second admin's membership create hits
+      // the (familyGroupId, memberId) unique constraint after the first
+      // admin's transaction committed. State is already correct (first admin
+      // won), so surface a normal review error instead of a 500.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        return jsonResult(
+          {
+            error:
+              "The requester already has a membership in this family group — this request has likely just been approved by another admin.",
+          },
+          { status: 422 }
+        );
       }
-    });
+      throw error;
+    }
 
     logAudit({
       action: "FAMILY_GROUP_CREATE_APPROVED",

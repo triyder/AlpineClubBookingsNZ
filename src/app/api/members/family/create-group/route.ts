@@ -224,6 +224,26 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Reject duplicate child rows within the submission (case-insensitive
+  // name + DOB, mirroring request-child's duplicate-pending check).
+  const seenChildKeys = new Set<string>();
+  for (const child of parsedChildren) {
+    const childKey = [
+      child.firstName.toLowerCase(),
+      child.lastName.toLowerCase(),
+      child.dateOfBirth.toISOString(),
+    ].join("|");
+    if (seenChildKeys.has(childKey)) {
+      return NextResponse.json(
+        {
+          error: `A request for ${child.firstName} ${child.lastName} is already included in this submission. Remove the duplicate row.`,
+        },
+        { status: 422 }
+      );
+    }
+    seenChildKeys.add(childKey);
+  }
+
   const groupName = parsed.data.groupName?.trim() || `${requester.lastName} Family`;
 
   // One transaction: memberless FamilyGroup + GROUP_CREATE + N CHILD_REQUESTs.

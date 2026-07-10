@@ -51,6 +51,7 @@ vi.mock("@/lib/email", () => ({
   sendGroupCreateRejectedEmail: vi.fn().mockResolvedValue(undefined),
 }));
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import {
@@ -343,6 +344,49 @@ describe("reviewAdminFamilyGroupRequest — GROUP_CREATE", () => {
     expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it("converts a concurrent double-approve P2002 into a 422 instead of a 500", async () => {
+    mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue(
+      groupCreateRequest() as any
+    );
+    mockedPrisma.familyGroupMember.findFirst.mockResolvedValue(null);
+    // Second admin's transaction hits the (familyGroupId, memberId) unique
+    // constraint because the first admin's approval already committed.
+    mockedPrisma.$transaction.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "0.0.0",
+      })
+    );
+
+    const result = await reviewAdminFamilyGroupRequest({
+      adminMemberId: ADMIN_ID,
+      data: { requestId: "req-gc", action: "approve" },
+    });
+
+    expect(result.init?.status).toBe(422);
+    expect((result.body as { error: string }).error).toMatch(
+      /already has a membership in this family group/i
+    );
+    // No approval side effects fire for the losing admin.
+    expect(sendGroupCreateApprovedEmail).not.toHaveBeenCalled();
+    expect(logAudit).not.toHaveBeenCalled();
+  });
+
+  it("still rethrows non-P2002 transaction failures", async () => {
+    mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue(
+      groupCreateRequest() as any
+    );
+    mockedPrisma.familyGroupMember.findFirst.mockResolvedValue(null);
+    mockedPrisma.$transaction.mockRejectedValue(new Error("connection lost"));
+
+    await expect(
+      reviewAdminFamilyGroupRequest({
+        adminMemberId: ADMIN_ID,
+        data: { requestId: "req-gc", action: "approve" },
+      })
+    ).rejects.toThrow("connection lost");
+  });
+
   it("reject cascade-rejects sibling pending child requests and keeps the memberless group", async () => {
     mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue(
       groupCreateRequest() as any
@@ -434,11 +478,15 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
     };
   }
 
-  it("422s while the family group has zero memberships", async () => {
+  it("422s while the family group has zero memberships and a pending GROUP_CREATE", async () => {
     mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue(
       childRequest() as any
     );
     mockedPrisma.familyGroupMember.count.mockResolvedValue(0);
+    // The bundled case: the group's GROUP_CREATE request is still pending.
+    mockedPrisma.familyGroupJoinRequest.findFirst.mockResolvedValue({
+      id: "req-gc",
+    } as any);
 
     const result = await reviewAdminFamilyGroupRequest({
       adminMemberId: ADMIN_ID,
@@ -448,6 +496,36 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
     expect(result.init?.status).toBe(422);
     expect((result.body as { error: string }).error).toBe(
       "Approve the group creation request for this family group first."
+    );
+    expect(mockedPrisma.familyGroupJoinRequest.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          familyGroupId: "fg-new",
+          type: "GROUP_CREATE",
+          status: "PENDING",
+        },
+      })
+    );
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("422s a legacy empty group (no pending GROUP_CREATE) with actionable copy", async () => {
+    mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue(
+      childRequest() as any
+    );
+    mockedPrisma.familyGroupMember.count.mockResolvedValue(0);
+    // Legacy case: a group emptied by removals with no creation request —
+    // "approve the group creation request first" would be un-followable.
+    mockedPrisma.familyGroupJoinRequest.findFirst.mockResolvedValue(null);
+
+    const result = await reviewAdminFamilyGroupRequest({
+      adminMemberId: ADMIN_ID,
+      data: { requestId: "req-child", action: "approve", linkedMemberId: "child-1" },
+    });
+
+    expect(result.init?.status).toBe(422);
+    expect((result.body as { error: string }).error).toBe(
+      "This family group has no members; reject this request or re-establish the group first."
     );
     expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
   });

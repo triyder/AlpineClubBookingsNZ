@@ -61,15 +61,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Only members with login accounts can request to join a family group" }, { status: 403 });
   }
 
-  // Check for existing pending request from this requester
+  // Check for an existing pending request from this requester — a member
+  // cannot have a second join request in flight, nor both a join request and
+  // a group creation request (#1681, mirrors the create-group route's guard).
   const existingRequest = await prisma.familyGroupJoinRequest.findFirst({
     where: {
       requesterId: session.user.id,
-      type: "JOIN_REQUEST",
+      type: { in: ["JOIN_REQUEST", "GROUP_CREATE"] },
       status: "PENDING",
     },
+    select: { id: true, type: true },
   });
 
+  if (existingRequest?.type === "GROUP_CREATE") {
+    return NextResponse.json(
+      {
+        error:
+          "You already have a pending family group creation request. Please wait for it to be reviewed.",
+      },
+      { status: 422 }
+    );
+  }
   if (existingRequest) {
     return NextResponse.json(
       { error: "You already have a pending join request. Please wait for it to be reviewed." },

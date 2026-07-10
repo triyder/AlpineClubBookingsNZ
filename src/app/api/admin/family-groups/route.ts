@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { REVIEWED_REQUEST_TYPES } from "@/lib/admin-family-group-requests-service";
 
 const createFamilyGroupSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
@@ -42,7 +43,10 @@ export async function GET() {
           joinRequests: {
             where: {
               status: "PENDING",
-              type: { in: ["JOIN_REQUEST", "CHILD_REQUEST", "ADULT_REQUEST", "REMOVAL_REQUEST"] },
+              // Shared with the admin review queue so every admin-reviewed
+              // request type (including GROUP_CREATE, #1681) counts toward
+              // the group's "pending" badge and has-pending filter.
+              type: { in: [...REVIEWED_REQUEST_TYPES] },
             },
           },
         },

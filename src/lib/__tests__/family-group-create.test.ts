@@ -293,6 +293,25 @@ describe("POST /api/members/family/create-group", () => {
     expect(body.error).toMatch(/validation/i);
   });
 
+  it("rejects duplicate child rows within one submission (case-insensitive)", async () => {
+    mockedAuth.mockResolvedValue(adultSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(groupLessRequester() as any);
+    vi.mocked(prisma.familyGroupJoinRequest.findFirst).mockResolvedValue(null);
+
+    const res = await createGroup(
+      makeRequest({
+        children: [
+          { firstName: "Sam", lastName: "Smith", dateOfBirth: CHILD_DOB },
+          { firstName: "sam", lastName: "SMITH", dateOfBirth: CHILD_DOB },
+        ],
+      })
+    );
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toMatch(/already included in this submission/i);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it("creates memberless group + GROUP_CREATE + child requests in one transaction", async () => {
     mockedAuth.mockResolvedValue(adultSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue(groupLessRequester() as any);

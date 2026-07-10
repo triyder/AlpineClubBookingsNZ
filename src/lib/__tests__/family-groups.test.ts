@@ -174,6 +174,57 @@ describe("Admin Family Groups API", () => {
       expect(body.familyGroups[0].name).toBe("Smith Family");
       expect(body.familyGroups[0].memberCount).toBe(1);
     });
+
+    it("counts a pending GROUP_CREATE toward the group's pending badge (#1681)", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      // A memberless group awaiting GROUP_CREATE approval: no memberships,
+      // but one pending reviewed-type request — must NOT look like an inert
+      // ghost group with no pending badge.
+      mockedPrisma.familyGroup.findMany.mockResolvedValue([
+        {
+          id: "fg-pending-create",
+          name: "Pending Family",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          memberships: [],
+          _count: { joinRequests: 1 },
+        },
+      ] as any);
+
+      const { GET } = await import("@/app/api/admin/family-groups/route");
+      const res = await GET();
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.familyGroups[0].memberCount).toBe(0);
+      expect(body.familyGroups[0].pendingRequests).toBe(1);
+
+      // The pending count filter includes every admin-reviewed request type,
+      // GROUP_CREATE included (shared REVIEWED_REQUEST_TYPES list).
+      expect(mockedPrisma.familyGroup.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            _count: {
+              select: {
+                joinRequests: {
+                  where: {
+                    status: "PENDING",
+                    type: {
+                      in: [
+                        "JOIN_REQUEST",
+                        "CHILD_REQUEST",
+                        "ADULT_REQUEST",
+                        "REMOVAL_REQUEST",
+                        "GROUP_CREATE",
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          }),
+        })
+      );
+    });
   });
 
   describe("POST /api/admin/family-groups", () => {
@@ -915,6 +966,37 @@ describe("POST /api/members/family/request-join", () => {
     expect(res.status).toBe(422);
     const body = await res.json();
     expect(body.error).toContain("pending join request");
+  });
+
+  it("rejects a join request while a group creation request is pending (#1681)", async () => {
+    mockedAuth.mockResolvedValue(memberSession);
+    mockedPrisma.member.findUnique.mockResolvedValue({
+      id: "member-1",
+      firstName: "John",
+      lastName: "Smith",
+      canLogin: true,
+      active: true,
+    } as any);
+    // A member cannot both create and join a group at once — the pending
+    // check now spans JOIN_REQUEST and GROUP_CREATE.
+    mockedPrisma.familyGroupJoinRequest.findFirst.mockResolvedValue({
+      id: "req-gc",
+      type: "GROUP_CREATE",
+      status: "PENDING",
+    } as any);
+
+    const { POST } = await import("@/app/api/members/family/request-join/route");
+    const res = await POST(makeReq("/api/members/family/request-join", "POST", { targetEmail: "jane@test.com" }));
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toMatch(/pending family group creation request/i);
+    expect(mockedPrisma.familyGroupJoinRequest.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          type: { in: ["JOIN_REQUEST", "GROUP_CREATE"] },
+        }),
+      })
+    );
   });
 });
 
