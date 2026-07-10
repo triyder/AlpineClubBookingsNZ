@@ -3,16 +3,13 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
 import { resolveTextTokens } from "@/lib/page-content-embeds";
+import { SITE_CONTENT_KEYS } from "@/lib/page-content";
 import { starterSiteContent } from "../../prisma/starter-site-content";
 
 // Canonical display order for the keyed site content sections (currently the
-// three public footer columns; future chrome sections extend this list).
-export const SITE_CONTENT_KEYS = [
-  "FOOTER_BLURB",
-  "FOOTER_QUICK_LINKS",
-  "FOOTER_AFFILIATIONS",
-] as const;
-
+// three public footer columns). The key allowlist itself lives in the
+// prisma-free @/lib/page-content so the config-transfer importer can validate
+// bundle keys against it without dragging server-only/prisma into its graph.
 type SiteContentKeyValue = (typeof SITE_CONTENT_KEYS)[number];
 
 const SITE_CONTENT_LABELS: Record<

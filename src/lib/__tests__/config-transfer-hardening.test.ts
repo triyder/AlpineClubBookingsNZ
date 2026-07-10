@@ -16,6 +16,8 @@ import {
   SITE_CONTENT_FIELDS,
   siteContentImporter,
 } from "@/lib/config-transfer/categories/site-content";
+import { SITE_CONTENT_KEYS } from "@/lib/page-content";
+import { SiteContentKey } from "@prisma/client";
 import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
 
 // Hardening behaviours: plan-time validation errors that BLOCK apply, the
@@ -509,13 +511,130 @@ describe("site-content keyed cap (admin route parity)", () => {
   });
 });
 
+// ---- site-content keyed key validation (admin route parity) -----------------
+// The admin keyed site-content route validates key with
+// z.enum(SITE_CONTENT_KEYS) (src/app/api/admin/site-content/route.ts); the DB
+// key column is a Prisma enum, so a hand-edited bundle with an unknown key must
+// fail as a clean row error rather than letting the batch findMany throw a
+// PrismaClientValidationError against the enum column (issue #1736).
+
+/**
+ * A ReadDb whose siteContent.findMany mimics the real Prisma enum column: it
+ * throws (like PrismaClientValidationError) if asked to filter by any key
+ * outside SITE_CONTENT_KEYS. This pins that the importer never passes an
+ * unrecognised bundle key into the batch query — the fix's whole point.
+ */
+function enumStrictSiteDb(): { db: ReadDb; siteFindMany: ReturnType<typeof vi.fn> } {
+  const valid = new Set<string>(SITE_CONTENT_KEYS);
+  const siteFindMany = vi.fn(
+    async (args?: { where?: { key?: { in?: string[] } } }) => {
+      for (const k of args?.where?.key?.in ?? []) {
+        if (!valid.has(k)) {
+          throw new Error(`PrismaClientValidationError: invalid enum key ${k}`);
+        }
+      }
+      return [];
+    },
+  );
+  const db = {
+    pageContent: { findMany: vi.fn().mockResolvedValue([]) },
+    siteContent: { findMany: siteFindMany },
+    clubTheme: { findUnique: vi.fn().mockResolvedValue(null) },
+    xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
+  } as unknown as ReadDb;
+  return { db, siteFindMany };
+}
+
+describe("site-content keyed key validation (admin route parity)", () => {
+  it("flags an unrecognised key as a clean row error and never queries it", async () => {
+    const { db, siteFindMany } = enumStrictSiteDb();
+    // Resolves (no throw) even though the enum-strict mock would throw if the
+    // bogus key reached findMany.
+    const plan = await buildImportPlan(
+      db,
+      siteContentBundle([{ key: "BOGUS", contentHtml: "nope" }]),
+      { mode: "merge" },
+    );
+    expect(plan.errors.join(" ")).toMatch(
+      /site-content\.csv row 2: key — "BOGUS" is not a recognised site-content key/,
+    );
+    // No valid keys remain, so the batch query is skipped entirely, and the
+    // bogus row is excluded from the plan items.
+    expect(siteFindMany).not.toHaveBeenCalled();
+    expect(
+      plan.categories
+        .flatMap((c) => c.items)
+        .some((i) => i.entity === "site-content"),
+    ).toBe(false);
+  });
+
+  it("plans the valid row and errors only the bogus one in a mixed bundle", async () => {
+    const { db, siteFindMany } = enumStrictSiteDb();
+    const plan = await buildImportPlan(
+      db,
+      siteContentBundle([
+        { key: "BOGUS", contentHtml: "nope" },
+        { key: "FOOTER_BLURB", contentHtml: "hello" },
+      ]),
+      { mode: "merge" },
+    );
+    // Bogus row (data row 1 → file row 2) errors; the run does not throw.
+    expect(plan.errors.join(" ")).toMatch(
+      /site-content\.csv row 2: key — "BOGUS" is not a recognised site-content key/,
+    );
+    // The batch query saw only the recognised key — never "BOGUS".
+    expect(siteFindMany).toHaveBeenCalledTimes(1);
+    expect(siteFindMany.mock.calls[0][0]).toMatchObject({
+      where: { key: { in: ["FOOTER_BLURB"] } },
+    });
+    // The valid FOOTER_BLURB row still plans as a create alongside the reject.
+    const items = plan.categories
+      .flatMap((c) => c.items)
+      .filter((i) => i.entity === "site-content");
+    expect(items).toHaveLength(1);
+    expect(items[0].key).toBe("FOOTER_BLURB");
+    expect(items[0].action).toBe("create");
+  });
+
+  it("does not write an unrecognised keyed row at apply", async () => {
+    const zip = siteContentBundle([{ key: "BOGUS", contentHtml: "nope" }]);
+    const { site, ctx } = siteContentApplyHarness(zip);
+    await siteContentImporter.apply(ctx);
+    expect(site.size).toBe(0);
+  });
+
+  it("keeps SITE_CONTENT_KEYS in lockstep with the Prisma SiteContentKey enum", () => {
+    // A schema-enum key missing from the tuple would make the importer reject
+    // a legitimate exported row from a newer instance.
+    expect([...SITE_CONTENT_KEYS].sort()).toEqual(
+      Object.values(SiteContentKey).sort(),
+    );
+  });
+});
+
 /** In-memory siteContent store + apply context for the keyed-cap apply test. */
 function siteContentApplyHarness(bundle: Uint8Array) {
   const site = new Map<string, Record<string, unknown>>();
+  const validKeys = new Set<string>(SITE_CONTENT_KEYS);
   const tx = {
     pageContent: { findMany: async () => [] },
     siteContent: {
-      findMany: async () => [...site.values()],
+      // Enum-strict like the real column: throw if the batch key list carries
+      // an unrecognised key, so dropping the apply-side filter fails tests.
+      findMany: async ({
+        where,
+      }: {
+        where?: { key?: { in?: string[] } };
+      } = {}) => {
+        for (const key of where?.key?.in ?? []) {
+          if (!validKeys.has(key)) {
+            throw new Error(
+              `PrismaClientValidationError: invalid SiteContentKey ${key}`,
+            );
+          }
+        }
+        return [...site.values()];
+      },
       create: async ({ data }: { data: Record<string, unknown> }) => {
         site.set(String(data.key), { ...data });
       },

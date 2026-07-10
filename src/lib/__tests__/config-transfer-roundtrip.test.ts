@@ -71,7 +71,9 @@ function sourceDb(): ReadDb {
         { slug: "faq", path: "/faq", caption: "", menuTitle: "FAQ", title: "FAQ", headerText: "", sortOrder: 2, contentHtml: "<p>Questions and answers</p>", published: true },
       ]),
     },
-    siteContent: { findMany: vi.fn().mockResolvedValue([{ key: "FOOTER_ABOUT", contentHtml: "<p>Footer</p>" }]) },
+    // A recognised SiteContentKey enum value — a real export can only carry
+    // keys the DB enum allows, and the importer now rejects unknown keys (#1736).
+    siteContent: { findMany: vi.fn().mockResolvedValue([{ key: "FOOTER_BLURB", contentHtml: "<p>Footer</p>" }]) },
     clubTheme: {
       findUnique: vi.fn().mockResolvedValue({
         brandGold: "#e0a800", brandCharcoal: "#222", brandDeep: "#111", brandRidge: "#333",

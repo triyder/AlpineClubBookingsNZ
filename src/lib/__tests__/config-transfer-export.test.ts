@@ -27,7 +27,7 @@ function stubDb(): ReadDb {
     },
     siteContent: {
       findMany: vi.fn().mockResolvedValue([
-        { key: "FOOTER_ABOUT", contentHtml: "<p>Footer</p>" },
+        { key: "FOOTER_BLURB", contentHtml: "<p>Footer</p>" },
       ]),
     },
     clubTheme: {

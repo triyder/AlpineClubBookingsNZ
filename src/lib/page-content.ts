@@ -46,6 +46,23 @@ export const SITE_CONTENT_LIMITS = {
 } as const;
 
 /**
+ * Canonical keys for the admin-editable keyed SiteContent rows (currently the
+ * three public footer columns; future chrome sections extend this list). Single
+ * source of truth for the admin site-content route's zod enum
+ * (src/app/api/admin/site-content/route.ts), the @/lib/site-content display
+ * helpers, and the config-transfer importer
+ * (src/lib/config-transfer/categories/site-content.ts). Lives here alongside
+ * SITE_CONTENT_LIMITS — again to keep the config-transfer importer graph free
+ * of the prisma-loading @/lib/site-content — so the importer can validate a
+ * bundle's keys against the same allowlist the admin route enforces.
+ */
+export const SITE_CONTENT_KEYS = [
+  "FOOTER_BLURB",
+  "FOOTER_QUICK_LINKS",
+  "FOOTER_AFFILIATIONS",
+] as const;
+
+/**
  * Slugs for built-in system pages that must always exist.
  * Their slugs and sort orders are fixed and cannot be changed by admins.
  */

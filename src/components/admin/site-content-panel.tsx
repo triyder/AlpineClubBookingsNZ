@@ -16,8 +16,8 @@ import {
   type WysiwygEditorHandle,
 } from "@/components/admin/page-content-panel";
 
-// Mirrors SITE_CONTENT_KEYS / SITE_CONTENT_LABELS in
-// src/lib/site-content.ts (that module is server-only).
+// Mirrors SITE_CONTENT_KEYS (src/lib/page-content.ts) and
+// SITE_CONTENT_LABELS (src/lib/site-content.ts, server-only).
 const SECTIONS = [
   {
     key: "FOOTER_BLURB",
