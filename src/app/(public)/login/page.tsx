@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
 import { isValidAuthBounceRef, resolvePostLoginPath } from "@/lib/auth-redirect";
 import { LoginForm } from "./login-form";
 
@@ -27,6 +29,26 @@ export default async function LoginPage({
   const redirectTo = resolvePostLoginPath(singleSearchParam(params.callbackUrl));
   const refCandidate = singleSearchParam(params.ref);
   const authBounceRef = isValidAuthBounceRef(refCandidate) ? refCandidate : undefined;
+
+  // An already-authenticated visitor must never be shown the sign-in form —
+  // a bounced tab would otherwise strand on /login with no error and no way
+  // to self-heal. Mirror login/verify's session-aware gates so the redirect
+  // still honours a forced password change and the two-factor funnel.
+  const session = await auth();
+  if (session?.user) {
+    if (session.user.forcePasswordChange) {
+      redirect("/change-password");
+    }
+    if (session.user.twoFactorRequired && !session.user.twoFactorVerified) {
+      const query = new URLSearchParams({ callbackUrl: redirectTo });
+      redirect(
+        session.user.twoFactorEnrolled && session.user.twoFactorMethod
+          ? `/login/verify?${query.toString()}`
+          : `/login/enroll?${query.toString()}`,
+      );
+    }
+    redirect(redirectTo);
+  }
 
   return (
     <LoginForm

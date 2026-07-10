@@ -818,6 +818,20 @@ operators: rotating `AUTH_SECRET` turns every live session cookie into a
 row-per-bounce burst in the audit trail and at most one Sentry event per
 cooldown per container is expected then, not a regression.
 
+Two front-of-house guarantees close the loop the diagnostics observe. The
+login page is session-aware: an already-authenticated visit to `/login`
+never renders the sign-in form — it redirects through the same gates as
+`login/verify` (forced password change, then the two-factor funnel, then the
+sanitised `callbackUrl`), so a tab bounced to `/login` while actually
+holding a live session self-heals on its next load instead of stranding on
+the form with no error. And a successful password sign-in leaves `/login`
+with a full document navigation rather than a client-router push: the soft
+push could replay the router's cached logged-out entry for the destination
+(the very bounce that produced the `/login` visit), which resurfaced as the
+silent login loop investigated in #1669 — the bounced replay carries no
+session cookie, so it lands in the deliberately quiet `no-cookie` bucket
+above.
+
 ## Security and Privacy Boundaries
 
 - Auth uses credentials sessions with explicit admin, admin-area, and finance

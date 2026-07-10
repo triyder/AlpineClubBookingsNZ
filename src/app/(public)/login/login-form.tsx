@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { Button } from "@/components/ui/button";
@@ -32,7 +31,6 @@ export function LoginForm({
   authBounceRef?: string;
 }) {
   const club = useClubIdentity();
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -89,12 +87,19 @@ export function LoginForm({
         } else {
           setError("Invalid email or password. Please try again.");
         }
+        setLoading(false);
       } else {
-        router.push((await resolveTwoFactorPath()) ?? redirectTo);
+        // Full document navigation, never router.push: the client router's
+        // cache can hold the logged-out RSC entry for the destination (the
+        // very bounce that brought us here), and replaying it returns the
+        // user to /login with no error — the silent login loop (#1669).
+        // A hard load always sends the fresh session cookie and starts the
+        // authenticated app from a clean router state. `loading` stays true
+        // so the button cannot be re-submitted while the page unloads.
+        window.location.assign((await resolveTwoFactorPath()) ?? redirectTo);
       }
     } catch {
       setError("Something went wrong. Please try again.");
-    } finally {
       setLoading(false);
     }
   }

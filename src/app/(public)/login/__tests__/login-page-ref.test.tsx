@@ -18,10 +18,19 @@ vi.mock("next/link", () => ({
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  redirect: (path: string) => {
+    throw new Error(`redirect:${path}`);
+  },
 }));
 
 vi.mock("next-auth/react", () => ({
   signIn: vi.fn(),
+}));
+
+// These specs cover the anonymous form render; the authenticated self-heal
+// redirect is covered in login-page-session-redirect.test.tsx.
+vi.mock("@/lib/auth", () => ({
+  auth: vi.fn(async () => null),
 }));
 
 vi.mock("@/components/club-identity-provider", () => ({

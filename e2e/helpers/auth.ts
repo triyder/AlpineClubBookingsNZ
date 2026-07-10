@@ -79,6 +79,10 @@ export async function submitLoginForm(
   password: string = DEMO_PASSWORD,
 ): Promise<void> {
   await page.setExtraHTTPHeaders({ "x-forwarded-for": syntheticClientIp(email) });
+  // /login now redirects authenticated visitors straight to their
+  // destination, so a persona re-login in a warm context would never see the
+  // form. Start every password sign-in from an anonymous state.
+  await page.context().clearCookies();
   await page.goto("/login");
   // The login form transiently duplicates its inputs during hydration: #email
   // briefly resolves to TWO nodes right after a single-node settle. First seen
