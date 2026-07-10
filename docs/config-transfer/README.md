@@ -39,6 +39,8 @@ admins at **Admin → Setup & Configuration → Export & Import**
   cross-instance transfer therefore errors on a system page (e.g. `home`) whose
   bundled sort order is neither the fixed order nor the target's current
   order — normalise the system pages' sort order on both instances first.
+  Keyed site-content rows (the footer sections) enforce the same content-HTML
+  size cap as their admin route (the shared `SITE_CONTENT_LIMITS`).
 - **Door codes:** the dry-run prominently names each lodge whose door code the
   import would set or change, and the audit records which lodges' codes were
   actually written (never the values). Reseal recomputes the bundle's

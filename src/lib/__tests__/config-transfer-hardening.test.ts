@@ -13,6 +13,7 @@ import { buildImportPlan } from "@/lib/config-transfer/import";
 import { serialiseCsv } from "@/lib/config-transfer/csv";
 import {
   PAGE_CONTENT_FIELDS,
+  SITE_CONTENT_FIELDS,
   siteContentImporter,
 } from "@/lib/config-transfer/categories/site-content";
 import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
@@ -188,6 +189,20 @@ function pagesBundle(rows: Array<Record<string, unknown>>): Uint8Array {
         category: "site-content",
         rowCount: rows.length,
         bytes: strToU8(serialiseCsv([...PAGE_CONTENT_FIELDS], rows)),
+      },
+    ],
+    ["site-content"],
+  );
+}
+
+function siteContentBundle(rows: Array<Record<string, unknown>>): Uint8Array {
+  return bundleOf(
+    [
+      {
+        path: "site-content/site-content.csv",
+        category: "site-content",
+        rowCount: rows.length,
+        bytes: strToU8(serialiseCsv([...SITE_CONTENT_FIELDS], rows)),
       },
     ],
     ["site-content"],
@@ -477,6 +492,97 @@ describe("site-content page caps + system-page protections (admin route parity)"
     expect(converged.categories[0].items[0].action).toBe("unchanged");
   });
 });
+
+// ---- site-content keyed cap (admin route parity) ----------------------------
+// The keyed site-content route caps contentHtml at 200000 chars
+// (src/app/api/admin/site-content/route.ts, the shared SITE_CONTENT_LIMITS);
+// the importer must reject an over-cap keyed row the same way (issue #1727).
+
+describe("site-content keyed cap (admin route parity)", () => {
+  it("flags over-length keyed site content as a row error and excludes the row", async () => {
+    const plan = await buildImportPlan(
+      pagesDb([]),
+      siteContentBundle([
+        { key: "FOOTER_BLURB", contentHtml: "y".repeat(200001) },
+      ]),
+      { mode: "merge" },
+    );
+    expect(plan.errors.join(" ")).toMatch(
+      /site-content\.csv row 2: contentHtml — must be at most 200000 characters/,
+    );
+    expect(
+      plan.categories
+        .flatMap((c) => c.items)
+        .some((i) => i.entity === "site-content"),
+    ).toBe(false);
+  });
+
+  it("allows keyed site content right at the cap", async () => {
+    const plan = await buildImportPlan(
+      pagesDb([]),
+      siteContentBundle([
+        { key: "FOOTER_BLURB", contentHtml: "y".repeat(200000) },
+      ]),
+      { mode: "merge" },
+    );
+    expect(plan.errors).toEqual([]);
+    const item = plan.categories
+      .flatMap((c) => c.items)
+      .find((i) => i.entity === "site-content");
+    expect(item?.action).toBe("create");
+  });
+
+  it("enforces the cap at apply even when the plan gate is bypassed", async () => {
+    // applyConfigImport re-plans in-transaction, so in production the plan
+    // check is the gate; this pins the importer's own defensive apply check
+    // for direct apply() callers.
+    const zip = siteContentBundle([
+      { key: "FOOTER_BLURB", contentHtml: "y".repeat(200001) },
+    ]);
+    const { site, ctx } = siteContentApplyHarness(zip);
+    await siteContentImporter.apply(ctx);
+    expect(site.size).toBe(0);
+  });
+});
+
+/** In-memory siteContent store + apply context for the keyed-cap apply test. */
+function siteContentApplyHarness(bundle: Uint8Array) {
+  const site = new Map<string, Record<string, unknown>>();
+  const tx = {
+    pageContent: { findMany: async () => [] },
+    siteContent: {
+      findMany: async () => [...site.values()],
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        site.set(String(data.key), { ...data });
+      },
+      update: async ({
+        where,
+        data,
+      }: {
+        where: Record<string, unknown>;
+        data: Record<string, unknown>;
+      }) => {
+        const key = String(where.key);
+        site.set(key, { ...(site.get(key) ?? {}), ...data });
+      },
+    },
+    clubTheme: { findUnique: async () => null },
+  } as unknown as TxDb;
+  const { manifest, files } = readBundle(bundle);
+  return {
+    site,
+    ctx: {
+      tx,
+      files,
+      manifest,
+      mode: "overwrite" as const,
+      resolutions: new Map<string, string>(),
+      actorMemberId: "admin-1",
+      imageRemap: new Map<string, string>(),
+      notes: { doorCodesWritten: [] as string[] },
+    },
+  };
+}
 
 describe("fingerprint binding", () => {
   it("differs by mode, bundle bytes, and selection", async () => {
