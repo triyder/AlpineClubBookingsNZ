@@ -21,8 +21,20 @@ import {
 
 type TransactionClient = Prisma.TransactionClient;
 
-export const PARTNER_LINK_PENDING = "PENDING";
-export const PARTNER_LINK_CONFIRMED = "CONFIRMED";
+// Pure pair-ordering + status vocabulary live in the leaf module so modules
+// outside this service graph (double-bed-sharing.ts) can import them without
+// dragging in "server-only"/email/audit (#1744); re-exported here so existing
+// importers keep working.
+export {
+  PARTNER_LINK_PENDING,
+  PARTNER_LINK_CONFIRMED,
+  canonicalPartnerPair,
+} from "@/lib/member-partner-link-shared";
+import {
+  PARTNER_LINK_PENDING,
+  PARTNER_LINK_CONFIRMED,
+  canonicalPartnerPair,
+} from "@/lib/member-partner-link-shared";
 
 const PARTNER_MEMBER_SELECT = {
   id: true,
@@ -91,13 +103,6 @@ function notifyBothPartners(
       logger.error({ err, linkId }, failureMessage);
     });
   }
-}
-
-/** Canonical pair ordering: the lower member id is always memberAId. */
-export function canonicalPartnerPair(memberOneId: string, memberTwoId: string) {
-  return memberOneId < memberTwoId
-    ? { memberAId: memberOneId, memberBId: memberTwoId }
-    : { memberAId: memberTwoId, memberBId: memberOneId };
 }
 
 /**

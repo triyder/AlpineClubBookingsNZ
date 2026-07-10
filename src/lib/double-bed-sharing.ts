@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import {
   canonicalPartnerPair,
   PARTNER_LINK_CONFIRMED,
-} from "@/lib/member-partner-link";
+} from "@/lib/member-partner-link-shared";
 
 type DoubleBedSharingDb = typeof prisma | Prisma.TransactionClient;
 
@@ -18,12 +18,15 @@ type DoubleBedSharingDb = typeof prisma | Prisma.TransactionClient;
  * both go through here, so the eligibility signal changes only in this
  * function body — not in the placement/UI/capacity code around it.
  *
- * Deliberately strict: both ids must resolve to real members, be distinct,
- * and be ageTier ADULT (links are ADULT-only at creation; re-checked here so
- * a later tier correction immediately revokes sharing), and the pair must
- * hold a CONFIRMED link — a PENDING request grants nothing. Anything else
- * returns false so the caller can reject the placement with a clear domain
- * error.
+ * Deliberately strict: both ids must resolve to real, ACTIVE members, be
+ * distinct, and be ageTier ADULT (links are ADULT-only and active-only at
+ * creation; both re-checked here so a later tier correction or deactivation
+ * blocks new placements even while a stale link row survives), and the pair
+ * must hold a CONFIRMED link — a PENDING request grants nothing. Anything
+ * else returns false so the caller can reject the placement with a clear
+ * domain error. This gates NEW placements only: already-placed second
+ * occupants are not swept when a link dissolves or a member is deactivated
+ * (#1756).
  */
 export async function mayShareDoubleBed(
   memberIdA: string,
@@ -34,14 +37,16 @@ export async function mayShareDoubleBed(
 
   const members = await db.member.findMany({
     where: { id: { in: [memberIdA, memberIdB] } },
-    select: { id: true, ageTier: true },
+    select: { ageTier: true, active: true },
   });
 
   // Both ids must resolve to distinct, existing members.
   if (members.length !== 2) return false;
 
-  // Only two adults may share a double.
-  if (!members.every((member) => member.ageTier === "ADULT")) return false;
+  // Only two active adults may share a double.
+  if (!members.every((member) => member.ageTier === "ADULT" && member.active)) {
+    return false;
+  }
 
   // The link row is a canonical ordered pair (memberAId < memberBId), so one
   // indexed unique lookup covers both argument orders.

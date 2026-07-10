@@ -1,13 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-
-vi.mock("server-only", () => ({}));
-
 import { mayShareDoubleBed } from "@/lib/double-bed-sharing";
-import { canonicalPartnerPair } from "@/lib/member-partner-link";
+import { canonicalPartnerPair } from "@/lib/member-partner-link-shared";
 
 type FakeMember = {
   id: string;
   ageTier: string;
+  active: boolean;
 };
 
 type FakePartnerLink = {
@@ -50,7 +48,7 @@ function fakeDb(members: FakeMember[], links: FakePartnerLink[] = []) {
   } as unknown as NonNullable<Parameters<typeof mayShareDoubleBed>[2]>;
 }
 
-const adult = (id: string): FakeMember => ({ id, ageTier: "ADULT" });
+const adult = (id: string): FakeMember => ({ id, ageTier: "ADULT", active: true });
 
 // Seed a link the way the service stores it: as the canonical ordered pair.
 const link = (
@@ -63,7 +61,7 @@ const link = (
 });
 
 describe("mayShareDoubleBed", () => {
-  it("allows two adults with a CONFIRMED partner link", async () => {
+  it("allows two active adults with a CONFIRMED partner link", async () => {
     const db = fakeDb([adult("a"), adult("b")], [link("a", "b", "CONFIRMED")]);
     await expect(mayShareDoubleBed("a", "b", db)).resolves.toBe(true);
   });
@@ -85,7 +83,15 @@ describe("mayShareDoubleBed", () => {
 
   it("rejects when either member is a minor, even with a CONFIRMED link", async () => {
     const db = fakeDb(
-      [adult("a"), { id: "b", ageTier: "YOUTH" }],
+      [adult("a"), { id: "b", ageTier: "YOUTH", active: true }],
+      [link("a", "b", "CONFIRMED")],
+    );
+    await expect(mayShareDoubleBed("a", "b", db)).resolves.toBe(false);
+  });
+
+  it("rejects when either member is inactive, even with a CONFIRMED link", async () => {
+    const db = fakeDb(
+      [adult("a"), { id: "b", ageTier: "ADULT", active: false }],
       [link("a", "b", "CONFIRMED")],
     );
     await expect(mayShareDoubleBed("a", "b", db)).resolves.toBe(false);
@@ -97,7 +103,7 @@ describe("mayShareDoubleBed", () => {
   });
 
   it("rejects when a member id does not resolve", async () => {
-    const db = fakeDb([adult("a")], [link("a", "ghost", "CONFIRMED")]);
+    const db = fakeDb([adult("a")]);
     await expect(mayShareDoubleBed("a", "ghost", db)).resolves.toBe(false);
   });
 

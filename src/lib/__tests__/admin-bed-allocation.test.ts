@@ -2,17 +2,13 @@ import { readFileSync } from "fs";
 import path from "path";
 import { Prisma } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
-
-vi.mock("server-only", () => ({}));
+import { canonicalPartnerPair } from "@/lib/member-partner-link-shared";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {},
 }));
 
 vi.mock("@/lib/lodge-capacity", () => ({
-  // #1744: the email-message registry (pulled in via member-partner-link →
-  // double-bed-sharing) reads this at module scope.
-  FALLBACK_LODGE_CAPACITY: 29,
   getLodgeCapacityStatus: vi.fn().mockResolvedValue({
     capacity: 29,
     source: "club_config",
@@ -302,6 +298,7 @@ describe("manuallyAllocateBedForNights", () => {
     members?: Array<{
       id: string;
       ageTier: string;
+      active: boolean;
     }>;
     partnerLinks?: Array<{
       memberAId: string;
@@ -507,16 +504,11 @@ describe("manuallyAllocateBedForNights", () => {
   });
 
   // #1701 double-bed shared occupancy (#1744: eligibility = CONFIRMED partner link).
-  const adultMember = (id: string) => ({ id, ageTier: "ADULT" });
+  const adultMember = (id: string) => ({ id, ageTier: "ADULT", active: true });
 
   // Seed a link the way the service stores it: as the canonical ordered pair.
   const confirmedPartners = (memberOneId: string, memberTwoId: string) => [
-    {
-      ...(memberOneId < memberTwoId
-        ? { memberAId: memberOneId, memberBId: memberTwoId }
-        : { memberAId: memberTwoId, memberBId: memberOneId }),
-      status: "CONFIRMED",
-    },
+    { ...canonicalPartnerPair(memberOneId, memberTwoId), status: "CONFIRMED" },
   ];
 
   function primaryOccupant(overrides: Partial<{
