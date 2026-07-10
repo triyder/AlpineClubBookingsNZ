@@ -101,9 +101,13 @@ Future reviews and issues should cite this file when proposing changes.
   partial index cannot join to `LodgeBed`). Capacity is unchanged — a shared
   double is still ONE bed of nightly capacity and each occupant is a full
   person-night (pricing/settlement untouched). A DOUBLE holding a second occupant
-  cannot be retyped to a non-double until that occupant is removed; a lone second
-  occupant left after the primary is cancelled is harmless (no DB violation) and
-  surfaced on the board to re-pair or remove.
+  cannot be retyped to a non-double until that occupant is removed. Removing the
+  primary of a shared double on the board **auto-promotes** the remaining partner
+  to primary in the same transaction (#1743), so the bed-night is immediately
+  re-pairable. A lone second occupant can still be left when the primary leaves
+  by another path (board move of the primary to a different bed, or a
+  cross-booking cancellation/reconcile prune) — that state is harmless (no DB
+  violation) and surfaced on the board to re-pair or remove.
 - Waitlisted and offered bookings do not consume capacity until confirmed.
 - A waitlist offer reprices the booking at current season rates,
   membership-type policy, group discount, and promo validity at the moment the

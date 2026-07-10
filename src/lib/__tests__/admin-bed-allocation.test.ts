@@ -24,6 +24,7 @@ import {
   createBedAllocationBed,
   createBedAllocationRoom,
   createBedAllocationRoomsBulk,
+  deleteBedAllocation,
   deleteBedAllocationRoom,
   approveBedAllocations,
   getBedAllocationDashboard,
@@ -1931,5 +1932,115 @@ describe("deleteBedAllocationRoom (#1674 guarded hard delete)", () => {
     await expect(
       deleteBedAllocationRoom({ id: "room-1", db: db as never }),
     ).rejects.toBe(boom);
+  });
+});
+
+describe("deleteBedAllocation orphan auto-promote (#1743)", () => {
+  function allocationRow(overrides: Partial<{
+    id: string;
+    bedId: string;
+    stayDate: Date;
+    isSecondOccupant: boolean;
+    bedType: string;
+  }> = {}) {
+    return {
+      id: overrides.id ?? "alloc-1",
+      bookingId: "booking-1",
+      bookingGuestId: "guest-1",
+      roomId: "room-1",
+      bedId: overrides.bedId ?? "bed-1",
+      stayDate: overrides.stayDate ?? parseDateOnly("2026-07-02"),
+      isSecondOccupant: overrides.isSecondOccupant ?? false,
+      bedType: overrides.bedType ?? "DOUBLE",
+    };
+  }
+
+  function buildDeleteDb(deleted: ReturnType<typeof allocationRow>) {
+    return {
+      bedAllocation: {
+        delete: vi.fn().mockResolvedValue(deleted),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+  }
+
+  it("promotes the surviving partner when the primary of a shared double is removed", async () => {
+    const deleted = allocationRow();
+    const db = buildDeleteDb(deleted);
+
+    const result = await deleteBedAllocation({ id: "alloc-1", db: db as never });
+
+    expect(result).toBe(deleted);
+    expect(db.bedAllocation.delete).toHaveBeenCalledWith({
+      where: { id: "alloc-1" },
+    });
+    // The flip is pinned to the deleted row's own bed-night.
+    expect(db.bedAllocation.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.bedAllocation.updateMany).toHaveBeenCalledWith({
+      where: {
+        bedId: "bed-1",
+        stayDate: parseDateOnly("2026-07-02"),
+        isSecondOccupant: true,
+      },
+      data: { isSecondOccupant: false },
+    });
+  });
+
+  it("leaves the primary untouched when the second occupant is removed", async () => {
+    const db = buildDeleteDb(allocationRow({ isSecondOccupant: true }));
+
+    await deleteBedAllocation({ id: "alloc-1", db: db as never });
+
+    expect(db.bedAllocation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not promote on a non-double bed", async () => {
+    const db = buildDeleteDb(allocationRow({ bedType: "SINGLE" }));
+
+    await deleteBedAllocation({ id: "alloc-1", db: db as never });
+
+    expect(db.bedAllocation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("applies promotion per night: each delete flips only its own bed-night", async () => {
+    const night1 = allocationRow({ id: "alloc-1", stayDate: parseDateOnly("2026-07-01") });
+    const night2 = allocationRow({ id: "alloc-2", stayDate: parseDateOnly("2026-07-02") });
+    const db = {
+      bedAllocation: {
+        delete: vi
+          .fn()
+          .mockResolvedValueOnce(night1)
+          .mockResolvedValueOnce(night2),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+
+    await deleteBedAllocation({ id: "alloc-1", db: db as never });
+    await deleteBedAllocation({ id: "alloc-2", db: db as never });
+
+    expect(db.bedAllocation.updateMany.mock.calls.map((call) => call[0].where.stayDate)).toEqual([
+      parseDateOnly("2026-07-01"),
+      parseDateOnly("2026-07-02"),
+    ]);
+  });
+
+  it("self-wraps delete + promotion in one transaction when no db is injected", async () => {
+    // The mocked prisma singleton is otherwise `{}` (see the #1675 self-wrap
+    // suite): a path that skips the wrap and reaches for prisma.bedAllocation
+    // would throw here rather than silently pass.
+    const prismaMock = prisma as unknown as { $transaction?: unknown };
+    const tx = buildDeleteDb(allocationRow());
+    const txnMock = vi.fn(async (cb: (client: typeof tx) => unknown) => cb(tx));
+    prismaMock.$transaction = txnMock;
+    try {
+      await deleteBedAllocation({ id: "alloc-1" });
+
+      expect(txnMock).toHaveBeenCalledTimes(1);
+      // Both writes ran on the tx client.
+      expect(tx.bedAllocation.delete).toHaveBeenCalledTimes(1);
+      expect(tx.bedAllocation.updateMany).toHaveBeenCalledTimes(1);
+    } finally {
+      delete prismaMock.$transaction;
+    }
   });
 });

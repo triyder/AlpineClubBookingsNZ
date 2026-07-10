@@ -2001,10 +2001,44 @@ export async function manuallyAllocateBedForNights(input: {
 export async function deleteBedAllocation(input: {
   id: string;
   db?: BedAllocationDb;
-}) {
-  return (input.db ?? prisma).bedAllocation.delete({
+  // Explicit return type: the function references itself in the $transaction
+  // branch, which TS cannot infer through (TS7023), matching the annotation on
+  // the other self-recursive transaction helpers here.
+}): Promise<BedAllocation> {
+  // Delete + orphan auto-promotion must be atomic so a failure between the two
+  // writes cannot strand a lone isSecondOccupant=true row (#1743). A
+  // caller-supplied client is assumed to already be transactional.
+  if (!input.db) {
+    return prisma.$transaction((tx) =>
+      deleteBedAllocation({ ...input, db: tx }),
+    );
+  }
+  const db = input.db;
+
+  const deleted = await db.bedAllocation.delete({
     where: { id: input.id },
   });
+
+  // Orphan auto-promote (#1743, owner-locked): removing the PRIMARY of a shared
+  // DOUBLE flips the surviving partner row to primary on that bed-night, so the
+  // bed is immediately re-pairable instead of dead-ending behind the
+  // orphaned-second-occupant guard in resolveSecondOccupant. Per-night by
+  // construction — one allocation row is one bed-night, and the WHERE pins the
+  // deleted row's own (bedId, stayDate). The delete removed the bed-night's
+  // only isSecondOccupant=false row, so the flip cannot collide with
+  // @@unique([bedId, stayDate, isSecondOccupant]).
+  if (!deleted.isSecondOccupant && deleted.bedType === "DOUBLE") {
+    await db.bedAllocation.updateMany({
+      where: {
+        bedId: deleted.bedId,
+        stayDate: deleted.stayDate,
+        isSecondOccupant: true,
+      },
+      data: { isSecondOccupant: false },
+    });
+  }
+
+  return deleted;
 }
 
 /**
