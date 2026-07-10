@@ -117,16 +117,16 @@ export async function bookSelfToReviewStep(
   await selectCalendarDay(page, window.checkIn);
   await selectCalendarDay(page, window.checkOut);
 
-  // "Add Guests" appears twice on the guests step — the "2. Add Guests" step
-  // breadcrumb (always in the DOM) and the guests-step card title — so the bare
-  // substring locator races the card mount and intermittently trips strict mode
-  // (seen on CI for the Stripe declined spec). Gate on the unambiguous self-add
-  // button the step renders instead.
-  const addSelf = page.getByRole("button", {
-    name: `+ ${persona.firstName} ${persona.lastName} (You)`,
+  // The booker is pre-selected by default (#1680): the self quick-add renders
+  // in its added state (✓, disabled) once the family list loads — no manual
+  // click. Gating on the added-state button is unambiguous (avoids the "Add
+  // Guests" breadcrumb/card-title strict-mode race) and auto-waits out the
+  // family-load seed flip.
+  const addedSelf = page.getByRole("button", {
+    name: `✓ ${persona.firstName} ${persona.lastName} (You)`,
   });
-  await expect(addSelf).toBeVisible();
-  await addSelf.click();
+  await expect(addedSelf).toBeVisible();
+  await expect(addedSelf).toBeDisabled();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
 
   await expect(page.getByText("Booking Summary")).toBeVisible();
