@@ -372,9 +372,14 @@ export function BookingChangeRequestsPanel({
                         Marking a request approved only acknowledges the review.
                         The booking is not edited automatically; open the
                         booking from the link above and apply the change there
-                        if it is still feasible. If you have already applied
-                        the change, paste the booking modification id below to
-                        link the audit trail.
+                        if it is still feasible. Locked or fully-past date
+                        changes are applied from the booking page using the
+                        admin override control; when the dates you apply match
+                        a date-only request, the override links its modification
+                        back to this approved request automatically. If you
+                        applied the change another way (or the request also
+                        asked for guest changes), paste the booking modification
+                        id below to link the audit trail.
                       </p>
                       <div className="space-y-1">
                         <Label htmlFor={`admin-notes-${request.id}`}>Admin notes</Label>
@@ -453,7 +458,10 @@ export function BookingChangeRequestsPanel({
                       ) : request.status === "APPROVED" ? (
                         <p className="mt-2 text-amber-700">
                           No booking modification linked. The booking edit may
-                          still be outstanding.
+                          still be outstanding — apply it from the booking page
+                          (using the admin override control for locked or
+                          fully-past dates); a date-only request links back here
+                          automatically when the applied dates match.
                         </p>
                       ) : null}
                     </div>

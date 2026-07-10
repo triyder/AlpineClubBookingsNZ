@@ -14,7 +14,9 @@ import { E2E_ADMIN } from "./helpers/fixtures";
 // BedAllocationSettings row, so it defaults ON, and approval's
 // reconcileBedAllocationsForBooking would otherwise auto-place Ken (removing him
 // from the "awaiting allocation" bucket the manual path drives). The setting is
-// restored afterwards; no other spec touches bed allocation.
+// restored afterwards. admin-override-dates.spec.ts toggles the same setting
+// around its cross-month date shifts and restores it before this spec runs;
+// no other spec touches bed allocation.
 test.describe.configure({ mode: "serial" });
 
 let adminContext: BrowserContext;
@@ -83,11 +85,12 @@ test("an admin approves a review-flagged booking then allocates a bed to its gue
     .last();
   await expect(kenChip).toBeVisible({ timeout: 30_000 });
 
-  // Open the bed Select (Radix combobox, placeholder "Select bed") and choose a
-  // free bed by its "<room> / <bed>" option label, then Allocate.
+  // Open the grouped bed Select (Radix combobox, room label + bed option) and
+  // choose a free bed, then Allocate.
   await kenChip.getByRole("combobox").click();
   await page
-    .getByRole("option", { name: "Bunk Room A / A1", exact: true })
+    .getByRole("group", { name: "Bunk Room A" })
+    .getByRole("option", { name: "A1", exact: true })
     .click();
   await kenChip.getByRole("button", { name: "Allocate" }).click();
   await expect(page.getByText("Allocation saved")).toBeVisible();

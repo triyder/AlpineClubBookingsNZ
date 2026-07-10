@@ -75,6 +75,13 @@ declare module "next-auth" {
       forcePasswordChange: boolean;
       isEmailVerified: boolean;
       sessionInvalidated?: boolean;
+      /**
+       * Epoch ms the JWT session was first issued (#1669). Present so the
+       * auth-bounce diagnostics can record how far a revoking password
+       * change post-dates the session; absent when the token carries no
+       * issuance claim.
+       */
+      sessionIssuedAt?: number;
       twoFactorRequired: boolean;
       twoFactorVerified: boolean;
       twoFactorEnrolled: boolean;
@@ -296,6 +303,9 @@ export const authConfig = {
       session.user.forcePasswordChange = token.forcePasswordChange as boolean;
       session.user.isEmailVerified = token.isEmailVerified as boolean;
       session.user.sessionInvalidated = Boolean(token.sessionInvalidated);
+      if (typeof token.sessionIssuedAt === "number") {
+        session.user.sessionIssuedAt = token.sessionIssuedAt;
+      }
       session.user.twoFactorRequired = Boolean(token.twoFactorRequired);
       session.user.twoFactorVerified = Boolean(token.twoFactorVerified);
       session.user.twoFactorEnrolled = Boolean(token.twoFactorEnrolled);
@@ -328,4 +338,16 @@ export async function auth() {
   }
 
   return session;
+}
+
+/**
+ * Diagnostics-only raw session probe (#1669). Returns the UNWRAPPED
+ * next-auth session, bypassing the sessionInvalidated null-gate that the
+ * public auth() above applies. NEVER use this for authorization decisions —
+ * its sole caller is the auth-bounce classifier, which needs to tell "no
+ * decodable session at all" apart from "session revoked by a password
+ * change" after auth() has already returned null.
+ */
+export async function getSessionForAuthDiagnostics() {
+  return nextAuth.auth();
 }

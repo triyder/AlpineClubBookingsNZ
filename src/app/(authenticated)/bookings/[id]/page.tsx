@@ -368,6 +368,22 @@ export default async function BookingDetailPage({
   // in viewerAuthorizationRole above, so editPolicy is the admin-on-behalf policy
   // and this predicate admits them exactly as the widened modify route does.
   const canModify = (canManageBooking || canAdminEditBookings) && !isDeleted && editPolicy.canModify;
+  // Issue #1668: admins (Full Admin or Booking Officer) get an explicit override
+  // path that can move a booking's dates regardless of the edit-policy window
+  // (in-progress and fully-past). Quote-priced bookings are blocked server-side,
+  // so no precompute is needed here. The override policy lifts only the date
+  // gates — status eligibility is still enforced.
+  const overridePolicy = getBookingEditPolicy({
+    status: booking.status,
+    role: viewerAuthorizationRole,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    adminOverride: true,
+  });
+  const canAdminOverride =
+    viewerAuthorizationRole === "ADMIN" &&
+    !isDeleted &&
+    overridePolicy.canModify;
   const canEditRequestedRoom = isDeleted
     ? false
     : isAdmin
@@ -482,10 +498,13 @@ export default async function BookingDetailPage({
     canEditNonMemberGuestNames,
     canFixNonMemberGuestNameTypos,
     editPolicy: {
-      mode: editPolicy.mode,
+      // This is the member (non-override) policy, so mode is never
+      // "admin-override" here; the ternary only narrows the widened union.
+      mode: editPolicy.mode === "admin-override" ? null : editPolicy.mode,
       today: editPolicy.today.toISOString().slice(0, 10),
       editableFrom: editPolicy.editableFrom?.toISOString().slice(0, 10) ?? null,
       checkInEditable: editPolicy.checkInEditable,
+      adminOverrideAvailable: canAdminOverride,
     },
   };
   const backHref = resolveInternalReturnPath(
@@ -846,7 +865,11 @@ export default async function BookingDetailPage({
         </div>
       ) : null}
 
-      <BookingEditor booking={editorData} canModify={canModify} />
+      <BookingEditor
+        booking={editorData}
+        canModify={canModify}
+        canAdminOverride={canAdminOverride}
+      />
 
       {showGroupSection && (
         <OrganiserGroupBookingCard

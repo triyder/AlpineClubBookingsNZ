@@ -33,6 +33,10 @@ import {
 import { calculateChangeFee } from "@/lib/change-fee";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
+  OverCapacityConfirmationRequiredError,
+  overCapacityNights,
+} from "@/lib/over-capacity-confirmation";
+import {
   type SeasonRateData,
 } from "@/lib/pricing";
 import {
@@ -578,6 +582,10 @@ export async function loadActiveSeasonRates(
 
 export type PricingResult = {
   inProgressPlan: BookingEditGuestRangePlan | null;
+  // Admin override (issue #1668): true when the target nights were over lodge
+  // capacity and the admin confirmed the overbooking. Always false on the
+  // normal (hard-blocked) path.
+  capacityOverridden: boolean;
   newTotalPriceCents: number;
   priceBreakdown: {
     totalPriceCents: number;
@@ -633,6 +641,8 @@ export async function calculateModifiedPricing(
     guestsForPricing,
     skipBookingLifecycleRules,
     seasonRateData,
+    adminOverride = false,
+    confirmOverCapacity = false,
   }: {
     booking: LoadedBookingForModify;
     bookingId: string;
@@ -657,6 +667,11 @@ export async function calculateModifiedPricing(
     }>;
     skipBookingLifecycleRules: boolean;
     seasonRateData: SeasonRateData[];
+    // Admin override (issue #1668): under adminOverride, an over-capacity target
+    // warns instead of hard-blocking — the write proceeds only when
+    // confirmOverCapacity is set, and capacityOverridden is reported back.
+    adminOverride?: boolean;
+    confirmOverCapacity?: boolean;
   },
 ): Promise<PricingResult> {
   const seasonYear = getSeasonYear(newCheckIn);
@@ -724,8 +739,17 @@ export async function calculateModifiedPricing(
           bookingId,
           tx,
         );
+  let capacityOverridden = false;
   if (!capacity.available) {
-    throw new ApiError("Not enough beds available for these changes", 400);
+    if (!adminOverride) {
+      throw new ApiError("Not enough beds available for these changes", 400);
+    }
+    if (!confirmOverCapacity) {
+      throw new OverCapacityConfirmationRequiredError(overCapacityNights(capacity));
+    }
+    // Admin explicitly confirmed the overbooking; proceed and report it so the
+    // caller can audit capacityOverridden.
+    capacityOverridden = true;
   }
 
   let priceBreakdown: PricingResult["priceBreakdown"];
@@ -780,6 +804,7 @@ export async function calculateModifiedPricing(
 
   return {
     inProgressPlan,
+    capacityOverridden,
     newTotalPriceCents,
     priceBreakdown,
     guestNightRates,

@@ -78,7 +78,7 @@ Use these ownership boundaries when adding new code:
 | Route-private page UI | `src/app/(admin)/admin/xero/_components`, `src/app/(admin)/admin/xero/_hooks`, `src/app/(admin)/admin/members/**/_components`, `src/app/(admin)/admin/members/**/_hooks`, `src/app/(authenticated)/book/_components` | Large routes should be route shells plus local components/hooks before moving anything to shared UI. |
 | Shared UI | `src/components/` | Reusable view pieces live here; route-specific view state can stay beside the page until it is reused. |
 | Booking lifecycle | `src/lib/booking-create.ts`, `src/lib/booking-create-types.ts`, `src/lib/booking-create-promo.ts`, `src/lib/booking-create-guests.ts`, `src/lib/booking-modify.ts` (barrel over `booking-modify-validation` / `booking-modify-plan` / `booking-modify-settlement`), `src/lib/booking-payment-cleanup.ts`, `src/lib/payment-recovery.ts` | Keep route handlers thin; booking orchestration and durable payment recovery live behind these services. |
-| Bed allocation | `src/lib/bed-allocation.ts`, `src/lib/bed-allocation-lifecycle.ts`, `src/lib/admin-bed-allocation.ts` | Room/bed inventory, family-aware allocation planning, lifecycle reconciliation, manual admin allocation, and approval state live behind focused services. Beds may be pre-assigned on provisional statuses (`BED_ALLOCATABLE_BOOKING_STATUSES`) before a booking holds capacity, so the admin board tags each bed **Held** vs **Provisional** (#1251). The state is a server-computed flag from `bookingHoldsCapacity` (booking-status.ts) — not a per-row status check — because holding is no longer purely status-based: an accepted-but-unpaid quote is `PENDING` but holds (#1254). In the AUTOMATIC on-payment/confirmation reconcile (`bed-allocation-lifecycle.ts` → the planner's `prioritizeCapacityHolding` mode), **capacity-holding bookings get first claim**: they are allocated before provisional ones, and a held booking blocked only by a **Provisional** allocation moves that provisional aside (to a free bed) — or, if the night is otherwise full, unallocates it back to the awaiting-allocation queue — then takes the freed bed. A **Held** or admin-**approved** (#776 lock) allocation is never displaced, and displacement never strands a same-booking minor; each displacement is applied atomically and writes a `lodge` audit row on the displaced provisional booking (#1387). The manual board **Run auto-allocation** button (`runAutoBedAllocation`) runs pure first-fit and does NOT displace — only the automatic reconcile does. |
+| Bed allocation | `src/lib/bed-allocation.ts`, `src/lib/bed-allocation-lifecycle.ts`, `src/lib/admin-bed-allocation.ts` | Room/bed inventory, family-aware allocation planning, lifecycle reconciliation, manual admin allocation, and approval state live behind focused services. Each `LodgeBed` carries a descriptive **bed type** (`SINGLE` / `BUNK_TOP` / `BUNK_BOTTOM` / `DOUBLE`) and an optional `bunkGroup` label; a group holds at most two beds — one top and one bottom — enforced in `admin-bed-allocation.ts` (serialised by a room-row lock, no partial index) and shown as an icon on the setup list and allocation board (#1675). Bed type is display-only in v1: capacity stays one person per bed per night (`@@unique([bedId, stayDate])` unchanged). Beds may be pre-assigned on provisional statuses (`BED_ALLOCATABLE_BOOKING_STATUSES`) before a booking holds capacity, so the admin board tags each bed **Held** vs **Provisional** (#1251). The state is a server-computed flag from `bookingHoldsCapacity` (booking-status.ts) — not a per-row status check — because holding is no longer purely status-based: an accepted-but-unpaid quote is `PENDING` but holds (#1254). In the AUTOMATIC on-payment/confirmation reconcile (`bed-allocation-lifecycle.ts` → the planner's `prioritizeCapacityHolding` mode), **capacity-holding bookings get first claim**: they are allocated before provisional ones, and a held booking blocked only by a **Provisional** allocation moves that provisional aside (to a free bed) — or, if the night is otherwise full, unallocates it back to the awaiting-allocation queue — then takes the freed bed. A **Held** or admin-**approved** (#776 lock) allocation is never displaced, and displacement never strands a same-booking minor; each displacement is applied atomically and writes a `lodge` audit row on the displaced provisional booking (#1387). The manual board **Run auto-allocation** button (`runAutoBedAllocation`) runs pure first-fit and does NOT displace — only the automatic reconcile does. |
 | Policy rules | `src/lib/policies/` | Pricing, age-tier, cancellation, change-fee, minimum-stay, member-credit, and booking-route decisions live as testable policy helpers. |
 | Operational Xero | `src/lib/xero-*.ts`, `src/lib/xero.ts` | `src/lib/xero.ts` is a compatibility facade. New code should import from the focused module that owns the behavior, not from the facade. |
 | Admin/member services | `src/lib/admin-member-xero-actions.ts`, `src/lib/member-serialization.ts`, `src/lib/member-lifecycle-actions.ts`, `src/lib/membership-cancellation-*.ts` | Shared admin/member request wrappers, DTO shape, lifecycle actions, and cancellation workflows live outside page files. |
@@ -771,6 +771,45 @@ fingerprint stops a stuck cron/webhook from emitting one Sentry event per tick;
 the Sentry fingerprint dedups grouping across processes. Cross-instance
 exact-once alerting remains future work (#1211), and which fingerprints page
 whom is operator-side Sentry alert-rule configuration.
+
+### Auth-bounce diagnostics (#1669)
+
+When the `(authenticated)` or `(admin)` layout guard is about to redirect to
+`/login` because the wrapped `auth()` returned null, `recordAuthBounce()` in
+`src/lib/auth-diagnostics.ts` classifies why before the redirect:
+
+- **`no-cookie`** — normal anonymous visit: a `debug`-level pino line only.
+  No `AuditLog` row, no Sentry event, no reference code.
+- **`session-invalidated`** — the session decoded but the password-change
+  revocation gate nulled it: pino `info` plus a durable `AuditLog` row
+  (`action=auth.bounce`, `category=auth`, retention
+  `diagnostic_high_volume`) capturing `memberId`, session issuance, the
+  revoking change time, and their delta. No Sentry.
+- **`cookie-present-no-session`** — a session cookie was sent but no server
+  session emerged (the real anomaly): pino `warn`, the `AuditLog` row, and
+  **one** Sentry event deduped by an in-process cooldown (same
+  `OBSERVABILITY_SENTRY_DEDUP_COOLDOWN_MS` knob) under the stable
+  fingerprint `["auth-bounce", "cookie-present-no-session"]`.
+
+The Sentry path is deliberately **not** part of `observability-bridge.ts` —
+that bridge's contract stays cron/webhook-only; this is a second provably
+scoped emitter with exactly one fingerprint. Durable bounces mint a random
+8-hex reference code, appended to the login URL as `ref` and shown on the
+login page ("Trouble signing in? Reference: …"); the `AuditLog` row is keyed
+by it via `requestId`. Token values and raw cookie contents are never read
+into any sink (only cookie-name matches, chunk counts, and byte lengths),
+the durable record carries `memberId` rather than an email address, and the
+whole path is exception-guarded so a logging/DB failure can never turn the
+307 redirect into a 500. The audit write runs post-response via `after()`
+and is capped per process-minute (`AUTH_BOUNCE_AUDIT_MAX_WRITES_PER_MINUTE`,
+default 10) so an unauthenticated junk cookie cannot be spammed into
+unbounded `AuditLog` inserts — suppressed rows are tallied onto the next
+written row's `suppressedSinceLastWrite`, and the pino line stays
+unthrottled so raw bounce volume remains visible in logs. Note for
+operators: rotating `AUTH_SECRET` turns every live session cookie into a
+`cookie-present-no-session` bounce until those cookies expire (≤8h) — a
+row-per-bounce burst in the audit trail and at most one Sentry event per
+cooldown per container is expected then, not a regression.
 
 ## Security and Privacy Boundaries
 

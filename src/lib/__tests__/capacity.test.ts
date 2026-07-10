@@ -32,6 +32,10 @@ import {
   getMonthAvailability,
 } from "@/lib/capacity";
 import {
+  overCapacityNights,
+  OverCapacityConfirmationRequiredError,
+} from "@/lib/over-capacity-confirmation";
+import {
   FALLBACK_LODGE_CAPACITY,
   getLodgeCapacityStatus,
 } from "@/lib/lodge-capacity";
@@ -619,5 +623,44 @@ describe("multi-lodge capacity scoping", () => {
     );
     expect(lockFn).toContain("$executeRaw");
     expect(lockFn).not.toContain("$queryRaw");
+  });
+});
+
+describe("overCapacityNights (issue #1668 admin override)", () => {
+  it("returns only the nights whose availableBeds went negative, as YYYY-MM-DD", () => {
+    const nights = overCapacityNights({
+      nightDetails: [
+        { date: parseDateOnly("2026-09-01"), occupiedBeds: 10, availableBeds: 2 },
+        { date: parseDateOnly("2026-09-02"), occupiedBeds: 30, availableBeds: -1 },
+        { date: parseDateOnly("2026-09-03"), occupiedBeds: 31, availableBeds: -2 },
+        { date: parseDateOnly("2026-09-04"), occupiedBeds: 29, availableBeds: 0 },
+      ],
+    });
+
+    expect(nights).toEqual([
+      { date: "2026-09-02", availableBeds: -1 },
+      { date: "2026-09-03", availableBeds: -2 },
+    ]);
+  });
+
+  it("returns an empty list when nothing is over capacity", () => {
+    expect(
+      overCapacityNights({
+        nightDetails: [
+          { date: parseDateOnly("2026-09-01"), occupiedBeds: 1, availableBeds: 5 },
+        ],
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("OverCapacityConfirmationRequiredError (issue #1668)", () => {
+  it("is a 409 carrying the OVER_CAPACITY_CONFIRM_REQUIRED code and the night list", () => {
+    const nightDetails = [{ date: "2026-09-02", availableBeds: -1 }];
+    const err = new OverCapacityConfirmationRequiredError(nightDetails);
+
+    expect(err.status).toBe(409);
+    expect(err.code).toBe("OVER_CAPACITY_CONFIRM_REQUIRED");
+    expect(err.nightDetails).toEqual(nightDetails);
   });
 });

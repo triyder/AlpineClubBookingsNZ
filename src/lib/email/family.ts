@@ -5,6 +5,9 @@ import {
   childRequestApprovedTemplate,
   childRequestRejectedTemplate,
   joinRequestConfirmationTemplate,
+  groupCreateRequestConfirmationTemplate,
+  groupCreateApprovedTemplate,
+  groupCreateRejectedTemplate,
 } from "../email-templates";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { sendEmail } from "./core";
@@ -99,5 +102,50 @@ export async function sendJoinRequestConfirmationEmail(
     html: joinRequestConfirmationTemplate(requesterName, groupName),
     templateName: "join-request-confirmation",
     templateData: { requesterName, groupName },
+  });
+}
+
+// ---- Member-initiated "create group from scratch" flow (#1681) ----
+
+export async function sendGroupCreateRequestConfirmationEmail(
+  email: string,
+  requesterName: string,
+  groupName: string,
+) {
+  await sendEmail({
+    to: email,
+    subject: `Family group request submitted — ${CLUB_BOOKINGS_NAME}`,
+    html: groupCreateRequestConfirmationTemplate(requesterName, groupName),
+    templateName: "family-group-create-request-confirmation",
+    templateData: { requesterName, groupName },
+  });
+}
+
+export async function sendGroupCreateApprovedEmail(
+  email: string,
+  requesterName: string,
+  groupName: string,
+) {
+  await sendEmail({
+    to: email,
+    subject: `Your family group ${groupName} has been created — ${CLUB_BOOKINGS_NAME}`,
+    html: groupCreateApprovedTemplate(requesterName, groupName),
+    templateName: "family-group-create-approved",
+    templateData: { requesterName, groupName },
+  });
+}
+
+export async function sendGroupCreateRejectedEmail(
+  email: string,
+  requesterName: string,
+  groupName: string,
+  reason?: string,
+) {
+  await sendEmail({
+    to: email,
+    subject: `Family group request update — ${CLUB_BOOKINGS_NAME}`,
+    html: groupCreateRejectedTemplate(requesterName, groupName, reason),
+    templateName: "family-group-create-rejected",
+    templateData: { requesterName, groupName, reason: reason ?? "" },
   });
 }

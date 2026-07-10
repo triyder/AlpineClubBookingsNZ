@@ -24,6 +24,10 @@ export interface NightAvailability {
   availableBeds: number;
 }
 
+// The admin-override over-capacity error/helpers (issue #1668) live in
+// @/lib/over-capacity-confirmation, NOT here: many test files blanket-mock
+// this module, and the routes' instanceof checks need the real class.
+
 // Capacity queries scope to one lodge with a plain `lodgeId` field alongside
 // the capacity-holding filter: Booking.lodgeId is NOT NULL (no null-lodge rows
 // to tolerate), so the per-lodge match is exact.

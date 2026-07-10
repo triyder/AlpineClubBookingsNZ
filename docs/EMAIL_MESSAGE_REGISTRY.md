@@ -987,6 +987,9 @@ If you weren't expecting this invitation, you can safely ignore it.
 Triggers and frequency:
 
 - Member invites another registered member to a family group.
+- Admin approves a group creation request (`GROUP_CREATE`) that names a
+  partner: the `ADULT_INVITE` is auto-filed and this same invitation email is
+  sent to the partner (#1681).
 - One email per invitation.
 
 ### family-group-invite-accepted
@@ -1157,6 +1160,92 @@ Triggers and frequency:
 
 - Member submits a family-group join request.
 - Sent to the requester once per request.
+
+### family-group-create-request-confirmation
+
+Subject:
+
+```text
+Family group request submitted — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Family Group Request Submitted
+
+Hi {{requesterName}},
+
+Your request to create the family group {{groupName}} has been submitted.
+
+An administrator will review your request. You'll be notified once it's been processed.
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Group-less member submits a "create family group" request (#1681).
+- Sent to the requester once per request.
+
+### family-group-create-approved
+
+Subject:
+
+```text
+Your family group {{groupName}} has been created — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Family Group Created
+
+Hi {{requesterName}},
+
+Your family group {{groupName}} has been approved and created. You are the group admin.
+
+Any partner invitation has been sent for them to accept from their profile, and any infant/child/youth requests you included are reviewed separately by an administrator.
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Admin approves a group creation request (`GROUP_CREATE`).
+- Sent to the requester once per approval. When the request named a partner,
+  the auto-filed invite reuses the `family-group-invitation` template.
+
+### family-group-create-rejected
+
+Subject:
+
+```text
+Family group request update — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Family Group Request Update
+
+Hi {{requesterName}},
+
+Your request to create the family group {{groupName}} was not approved.
+
+Admin note: {{reason}} [only when reason exists]
+
+If you have questions, please contact the club.
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Admin rejects a group creation request (`GROUP_CREATE`); bundled pending
+  infant/child/youth requests are cascade-rejected in the same review without
+  separate child-rejection emails.
+- Sent to the requester once per rejection.
 
 ### membership-cancellation-submitted
 

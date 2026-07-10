@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { BedType } from "@prisma/client";
 import { z } from "zod";
 import {
   deleteBedAllocationBed,
@@ -17,6 +18,10 @@ const bedPatchSchema = z
     name: z.string().trim().min(1).max(100).optional(),
     sortOrder: z.coerce.number().int().min(0).max(10000).optional(),
     active: z.boolean().optional(),
+    // Descriptive bed type (#1675); mirrors the Prisma BedType enum.
+    bedType: z.nativeEnum(BedType).optional(),
+    // Bunk-pairing label; validated server-side in updateBedAllocationBed.
+    bunkGroup: z.string().trim().max(50).nullable().optional(),
   })
   .strict();
 
@@ -76,7 +81,13 @@ export async function DELETE(
       category: "admin",
       outcome: "success",
       summary: "Bed allocation bed deleted",
-      metadata: { bedId: bed.id, roomId: bed.roomId, name: bed.name },
+      metadata: {
+        bedId: bed.id,
+        roomId: bed.roomId,
+        name: bed.name,
+        bedType: bed.bedType,
+        bunkGroup: bed.bunkGroup,
+      },
     });
 
     return NextResponse.json({ bed });

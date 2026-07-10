@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { AllocationChip } from "./allocation-chip";
 import {
   type BedOption,
+  type BedOptionGroup,
   type DashboardAllocation,
   cellDroppableId,
 } from "./types";
@@ -19,10 +20,12 @@ interface BoardCellProps {
   stayDate: string;
   allocation: DashboardAllocation | undefined;
   bedOptions: BedOption[];
+  bedOptionGroups?: BedOptionGroup[];
   onReassignBed: (allocation: DashboardAllocation, bedId: string) => void;
   onRemove: (allocation: DashboardAllocation) => void;
   pending: boolean;
   highlighted?: boolean;
+  activeDragLane?: boolean;
   canEdit?: boolean;
 }
 
@@ -32,10 +35,12 @@ export function BoardCell({
   stayDate,
   allocation,
   bedOptions,
+  bedOptionGroups = [],
   onReassignBed,
   onRemove,
   pending,
   highlighted,
+  activeDragLane,
   canEdit = true,
 }: BoardCellProps) {
   const { setNodeRef, isOver } = useDroppable({
@@ -47,17 +52,21 @@ export function BoardCell({
   return (
     <td
       ref={setNodeRef}
+      data-stay-date={stayDate}
+      data-active-drag-lane={activeDragLane ? "true" : undefined}
       className={cn(
         BED_ALLOCATION_COLUMN_WIDTH_CLASS,
         "overflow-hidden border p-1 align-top",
-        isOver && "bg-blue-50 ring-2 ring-blue-300",
+        activeDragLane && "bg-accent/40",
         highlighted && !isOver && "bg-amber-50",
+        isOver && "bg-blue-50 ring-2 ring-blue-300",
       )}
     >
       {allocation ? (
         <AllocationChip
           allocation={allocation}
           bedOptions={bedOptions}
+          bedOptionGroups={bedOptionGroups}
           onReassignBed={(targetBedId) => onReassignBed(allocation, targetBedId)}
           onRemove={() => onRemove(allocation)}
           pending={pending}

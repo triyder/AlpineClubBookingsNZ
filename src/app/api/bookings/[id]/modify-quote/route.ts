@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { overCapacityNights } from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
@@ -61,7 +62,13 @@ import {
   buildInProgressGuestRangePlan,
   type BookingEditGuestRangePlan,
 } from "@/lib/booking-edit-guest-ranges";
-import { formatDateOnly, normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
+import {
+  addDaysDateOnly,
+  eachDateOnlyInRange,
+  formatDateOnly,
+  normalizeDateOnlyForTimeZone,
+  parseDateOnly,
+} from "@/lib/date-only";
 import { getSeasonYear } from "@/lib/utils";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import {
@@ -108,7 +115,20 @@ const modifyQuoteSchema = z.object({
     .optional(),
   promoCode: z.string().optional(),
   removePromoCode: z.boolean().optional(),
+  // Admin-only date override (issue #1668). The preview mirrors apply exactly.
+  adminOverride: z.boolean().optional(),
+  pricingMode: z.enum(["shift", "recalculate"]).optional(),
+  confirmOverCapacity: z.boolean().optional(),
 });
+
+const OVERRIDE_DATE_ONLY_QUOTE_FIELDS = [
+  "addGuests",
+  "removeGuestIds",
+  "guestStayRanges",
+  "guestUpdates",
+  "promoCode",
+  "removePromoCode",
+] as const;
 
 type StayRangeInput = {
   stayStart?: string | null;
@@ -243,19 +263,6 @@ export async function POST(
     );
   }
 
-  const editPolicy = getBookingEditPolicy({
-    status: booking.status,
-    role: actorRole,
-    checkIn: booking.checkIn,
-    checkOut: booking.checkOut,
-  });
-  if (!editPolicy.canModify) {
-    return NextResponse.json(
-      { error: editPolicy.reason ?? "This booking cannot be modified" },
-      { status: 400 }
-    );
-  }
-
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
 
@@ -276,7 +283,91 @@ export async function POST(
     guestUpdates,
     promoCode: newPromoCode,
     removePromoCode,
+    pricingMode,
+    confirmOverCapacity,
   } = parsed.data;
+
+  // Issue #1668: admin-only date override. Gate the flags, then compute the
+  // edit policy WITH the override so its mode is "admin-override" and every
+  // downstream guard (in-progress clamp, "NZ today locked", change-fee gate)
+  // falls out on its own — the same code path the apply services take, so the
+  // preview mirrors apply without a parallel branch.
+  const overrideFlagsPresent =
+    parsed.data.adminOverride !== undefined ||
+    pricingMode !== undefined ||
+    confirmOverCapacity !== undefined;
+  if (overrideFlagsPresent && !isAdmin) {
+    return NextResponse.json(
+      { error: "Admin override is not available for this account" },
+      { status: 403 },
+    );
+  }
+  const adminOverride = isAdmin && Boolean(parsed.data.adminOverride);
+  if (adminOverride && !pricingMode) {
+    return NextResponse.json(
+      { error: "Choose a pricing mode for the admin override" },
+      { status: 400 },
+    );
+  }
+  if (
+    !adminOverride &&
+    (pricingMode !== undefined || confirmOverCapacity !== undefined)
+  ) {
+    return NextResponse.json(
+      { error: "adminOverride is required for pricingMode/confirmOverCapacity" },
+      { status: 400 },
+    );
+  }
+  if (
+    adminOverride &&
+    OVERRIDE_DATE_ONLY_QUOTE_FIELDS.some((field) => {
+      const value = parsed.data[field];
+      return Array.isArray(value) ? value.length > 0 : Boolean(value);
+    })
+  ) {
+    return NextResponse.json(
+      { error: "Admin override edits change dates only" },
+      { status: 400 },
+    );
+  }
+
+  const editPolicy = getBookingEditPolicy({
+    status: booking.status,
+    role: actorRole,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    adminOverride,
+  });
+  if (!editPolicy.canModify) {
+    return NextResponse.json(
+      { error: editPolicy.reason ?? "This booking cannot be modified" },
+      { status: 400 }
+    );
+  }
+
+  // Shift preview (issue #1668): a pure translation quote. Validate parity and
+  // derive the missing bound identically to the apply path, translate the guest
+  // ranges by the same day-delta, run the capacity check, and echo the stored
+  // money with zero deltas so the UI's preview matches what apply will write.
+  if (adminOverride && pricingMode === "shift") {
+    // Quote-priced bookings are blocked here too (#1032): the shift apply path
+    // refuses them (assertBookingNotQuotePriced), so the preview must not show
+    // a clean $0 quote it cannot deliver.
+    if (await isQuotePricedBooking(prisma, bookingId)) {
+      return NextResponse.json(
+        { error: QUOTE_PRICED_EDIT_BLOCK_MESSAGE },
+        { status: 400 },
+      );
+    }
+    return buildShiftPreviewResponse({
+      booking,
+      bookingId,
+      actorMemberId: session.user.id,
+      actorRole,
+      newCheckInStr,
+      newCheckOutStr,
+    });
+  }
   // Quote-priced bookings are blocked at preview time too (#1032) — except
   // for identity-only requests (#1099), which never touch the pricing engine
   // and therefore cannot disturb the negotiated basis.
@@ -1115,6 +1206,11 @@ export async function POST(
     promoStillValid,
     promoValidation,
     itemizedChanges,
+    // Issue #1668: under an admin override an over-capacity target does not hard
+    // block — the UI keys its explicit confirm control off this flag.
+    ...(adminOverride && !capacity.available
+      ? { overCapacityConfirmRequired: true }
+      : {}),
     ...(capacity.available
       ? {}
       : {
@@ -1122,6 +1218,171 @@ export async function POST(
             date: n.date.toISOString().split("T")[0],
             availableBeds: n.availableBeds,
           })),
+        }),
+  });
+}
+
+/**
+ * Shift-mode admin override preview (issue #1668): a pure-translation quote that
+ * must match {@link adminShiftBookingDates} exactly for the same input. Every
+ * money field echoes the stored booking; the only thing that can vary is
+ * whether the shifted nights are over capacity, which the UI surfaces as an
+ * explicit confirm rather than a hard error.
+ */
+async function buildShiftPreviewResponse({
+  booking,
+  bookingId,
+  actorMemberId,
+  actorRole,
+  newCheckInStr,
+  newCheckOutStr,
+}: {
+  booking: {
+    status: string;
+    checkIn: Date;
+    checkOut: Date;
+    lodgeId: string | null;
+    totalPriceCents: number;
+    discountCents: number;
+    promoAdjustmentCents: number;
+    finalPriceCents: number;
+    guests: Array<{
+      memberId?: string | null;
+      stayStart: Date;
+      stayEnd: Date;
+      nights: Array<{ stayDate: Date }>;
+    }>;
+  };
+  bookingId: string;
+  actorMemberId: string;
+  actorRole: "ADMIN" | "USER";
+  newCheckInStr?: string;
+  newCheckOutStr?: string;
+}): Promise<NextResponse> {
+  const oldCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
+  const oldCheckOut = normalizeDateOnlyForTimeZone(booking.checkOut);
+  const originalNightCount = eachDateOnlyInRange(oldCheckIn, oldCheckOut).length;
+
+  const providedCheckIn = newCheckInStr ? parseDateOnly(newCheckInStr) : null;
+  const providedCheckOut = newCheckOutStr ? parseDateOnly(newCheckOutStr) : null;
+  if (
+    (providedCheckIn && Number.isNaN(providedCheckIn.getTime())) ||
+    (providedCheckOut && Number.isNaN(providedCheckOut.getTime()))
+  ) {
+    return NextResponse.json({ error: "Invalid booking dates" }, { status: 400 });
+  }
+
+  let newCheckIn: Date;
+  let newCheckOut: Date;
+  if (providedCheckIn && providedCheckOut) {
+    newCheckIn = providedCheckIn;
+    newCheckOut = providedCheckOut;
+  } else if (providedCheckIn) {
+    newCheckIn = providedCheckIn;
+    newCheckOut = addDaysDateOnly(providedCheckIn, originalNightCount);
+  } else if (providedCheckOut) {
+    newCheckOut = providedCheckOut;
+    newCheckIn = addDaysDateOnly(providedCheckOut, -originalNightCount);
+  } else {
+    return NextResponse.json(
+      { error: "Provide a new check-in or check-out date" },
+      { status: 400 },
+    );
+  }
+
+  if (newCheckOut <= newCheckIn) {
+    return NextResponse.json(
+      { error: "Check-out must be after check-in" },
+      { status: 400 },
+    );
+  }
+  const newNightCount = eachDateOnlyInRange(newCheckIn, newCheckOut).length;
+  if (newNightCount !== originalNightCount) {
+    return NextResponse.json(
+      {
+        error:
+          'Shift dates only moves the stay without changing its length — use "Recalculate price" to change the number of nights',
+      },
+      { status: 400 },
+    );
+  }
+
+  // Whole-day delta between two UTC-midnight date-only values (DST-safe).
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const deltaDays = Math.round(
+    (newCheckIn.getTime() - oldCheckIn.getTime()) / MS_PER_DAY,
+  );
+
+  const translatedRanges = booking.guests.map((guest) => ({
+    memberId: guest.memberId ?? null,
+    stayStart: addDaysDateOnly(
+      normalizeDateOnlyForTimeZone(guest.stayStart),
+      deltaDays,
+    ),
+    stayEnd: addDaysDateOnly(
+      normalizeDateOnlyForTimeZone(guest.stayEnd),
+      deltaDays,
+    ),
+    nights: guest.nights.map((night) =>
+      addDaysDateOnly(normalizeDateOnlyForTimeZone(night.stayDate), deltaDays),
+    ),
+  }));
+
+  // Member-night conflicts hard-block the shift the same way apply does, so the
+  // preview never shows a clean $0 quote for a move that would 409 on save.
+  const memberNightConflicts = await findBookingMemberNightConflicts(prisma, {
+    actorMemberId,
+    actorRole,
+    checkIn: newCheckIn,
+    checkOut: newCheckOut,
+    guests: translatedRanges,
+    excludeBookingId: bookingId,
+  });
+  if (memberNightConflicts.length > 0) {
+    return NextResponse.json(
+      getBookingMemberNightConflictResponse(memberNightConflicts),
+      { status: 409 },
+    );
+  }
+
+  const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(prisma));
+  // Non-lifecycle statuses hold no capacity, so a shift cannot overbook — skip
+  // the check exactly like adminShiftBookingDates does so preview matches apply.
+  const capacity = usesActiveBookingEditLifecycle(booking.status)
+    ? await checkCapacityForGuestRanges(
+        bookingLodgeId,
+        newCheckIn,
+        newCheckOut,
+        translatedRanges,
+        bookingId,
+      )
+    : { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] };
+
+  return NextResponse.json({
+    newTotalPriceCents: booking.totalPriceCents,
+    newDiscountCents: booking.discountCents,
+    newPromoAdjustmentCents: booking.promoAdjustmentCents,
+    newFinalPriceCents: booking.finalPriceCents,
+    priceDiffCents: 0,
+    changeFeeCents: 0,
+    netChargeCents: 0,
+    settlementOptions: null,
+    capacityAvailable: capacity.available,
+    minimumStayValid: true,
+    minimumStayViolations: [],
+    promoStillValid: true,
+    promoValidation: null,
+    itemizedChanges: [
+      {
+        label: `Dates shifted by ${Math.abs(deltaDays)} night(s) — price unchanged`,
+        amountCents: 0,
+      },
+    ],
+    ...(capacity.available
+      ? {}
+      : {
+          overCapacityConfirmRequired: true,
+          nightDetails: overCapacityNights(capacity),
         }),
   });
 }

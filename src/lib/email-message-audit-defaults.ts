@@ -130,6 +130,18 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Join request submitted — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Join Request Submitted\n\nHi {{requesterName}},\n\nYour request to join the family group {{groupName}} has been submitted.\n\nAn administrator will review your request. You'll be notified once it's been processed.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
+  "family-group-create-request-confirmation": {
+    "defaultSubject": "Family group request submitted — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Family Group Request Submitted\n\nHi {{requesterName}},\n\nYour request to create the family group {{groupName}} has been submitted.\n\nAn administrator will review your request. You'll be notified once it's been processed.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
+  "family-group-create-approved": {
+    "defaultSubject": "Your family group {{groupName}} has been created — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Family Group Created\n\nHi {{requesterName}},\n\nYour family group {{groupName}} has been approved and created. You are the group admin.\n\nAny partner invitation has been sent for them to accept from their profile, and any infant/child/youth requests you included are reviewed separately by an administrator.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
+  "family-group-create-rejected": {
+    "defaultSubject": "Family group request update — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Family Group Request Update\n\nHi {{requesterName}},\n\nYour request to create the family group {{groupName}} was not approved.\n\nAdmin note: {{reason}} [only when reason exists]\n\nIf you have questions, please contact the club.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
   "membership-cancellation-submitted": {
     "defaultSubject": "Membership cancellation request submitted — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Membership Cancellation Request Submitted\n\nHi {{firstName}},\n\nYour membership cancellation request has been submitted for admin review.\n\nIncluded memberships: {{participantSummary}}\n\nReason: {{reason}} [only when reason exists]\n\nMemberships remain active until an administrator approves the request. Any included login-capable adult must confirm before an administrator can process their cancellation.\n\nView Request: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"

@@ -36,6 +36,10 @@ interface EditPolicyInfo {
   today: string;
   editableFrom: string | null;
   checkInEditable: boolean;
+  // Issue #1668: an admin may override the date-window locks for this booking.
+  // Optional so pre-existing fixtures/serialisers stay valid; the booking page
+  // always sets it.
+  adminOverrideAvailable?: boolean;
 }
 
 export interface BookingEditorData {
@@ -62,11 +66,16 @@ export interface BookingEditorData {
 export function BookingEditor({
   booking,
   canModify,
+  canAdminOverride = false,
 }: {
   booking: BookingEditorData;
   canModify: boolean;
+  // Issue #1668: admin override lets an admin open the editor even for a
+  // fully-past booking that renders no self-service editor at all.
+  canAdminOverride?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const canOpenEditor = canModify || canAdminOverride;
   // Capture "now" once at mount so the hold banner can honestly tell a future
   // deadline (future-tense auto-confirm copy) from a lapsed one (awaiting
   // processing copy). Day-scale deadlines make a single snapshot sufficient.
@@ -75,7 +84,7 @@ export function BookingEditor({
     ? new Date(booking.nonMemberHoldUntil).getTime() <= nowMs
     : false;
 
-  if (editing && canModify) {
+  if (editing && canOpenEditor) {
     return (
       <EditBookingPanel
         booking={{
@@ -93,6 +102,7 @@ export function BookingEditor({
           canFixNonMemberGuestNameTypos: booking.canFixNonMemberGuestNameTypos,
           editPolicy: booking.editPolicy,
         }}
+        canAdminOverride={canAdminOverride}
         onDone={() => setEditing(false)}
       />
     );
@@ -106,7 +116,7 @@ export function BookingEditor({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <CardTitle>Stay Details</CardTitle>
-              {canModify && (
+              {canOpenEditor && (
                 <Button variant="outline" onClick={() => setEditing(true)}>
                   Edit Booking
                 </Button>

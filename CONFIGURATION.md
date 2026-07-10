@@ -849,7 +849,8 @@ rate-limited, or temporarily unavailable.
 | `SENTRY_ORG`                              | Sentry organization slug for source map uploads.                                                                 |
 | `SENTRY_PROJECT`                          | Sentry project slug for source map uploads.                                                                      |
 | `SENTRY_AUTH_TOKEN`                       | Sentry auth token for source map uploads during build.                                                           |
-| `OBSERVABILITY_SENTRY_DEDUP_COOLDOWN_MS` | Optional in-process cooldown for cron/webhook Sentry event deduplication; defaults to 300000 ms. |
+| `OBSERVABILITY_SENTRY_DEDUP_COOLDOWN_MS` | Optional in-process cooldown for Sentry event deduplication, shared by the cron/webhook bridge and the auth-bounce anomaly alert (#1669); defaults to 300000 ms. |
+| `AUTH_BOUNCE_AUDIT_MAX_WRITES_PER_MINUTE` | Optional per-process cap on durable auth-bounce `AuditLog` rows per minute (#1669); suppressed rows are tallied onto the next written row. Defaults to 10. |
 
 ## Cron, Waitlist, And Backups
 

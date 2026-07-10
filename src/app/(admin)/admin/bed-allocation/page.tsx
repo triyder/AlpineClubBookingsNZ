@@ -51,6 +51,7 @@ import { BucketBoard } from "./_components/bucket-board";
 import { RoomTable } from "./_components/room-table";
 import {
   type BedOption,
+  type BedOptionGroup,
   type BucketGuestGroup,
   type BulkAllocationConflict,
   type DashboardAllocation,
@@ -59,6 +60,8 @@ import {
   type DragData,
   type DropData,
 } from "./_components/types";
+import { deriveActiveDragDates } from "./_components/active-drag-dates";
+import { useSyncedScroll } from "./_components/use-synced-scroll";
 
 // Mirrors MAX_BED_ALLOCATION_RANGE_NIGHTS in src/lib/admin-bed-allocation.ts.
 const MAX_RANGE_NIGHTS = 31;
@@ -278,6 +281,8 @@ export default function AdminBedAllocationPage() {
   const [selectedBeds, setSelectedBeds] = useState<Record<string, string>>({});
   const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set());
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [activeDragData, setActiveDragData] = useState<DragData | null>(null);
+  const registerBoardScroller = useSyncedScroll();
   // Tracks the focused booking id we have already snapped the date window onto,
   // so we snap exactly once (#1302) and never fight an admin who later moves the
   // window off the focused booking.
@@ -290,25 +295,47 @@ export default function AdminBedAllocationPage() {
     );
   }, [fromDate, toDate]);
 
-  const bedById = useMemo(() => {
-    const map = new Map<string, BedOption>();
-    for (const room of payload?.rooms ?? []) {
-      if (!room.active) continue;
-      for (const bed of room.beds) {
-        if (!bed.active) continue;
-        map.set(bed.id, {
-          id: bed.id,
-          roomId: room.id,
-          roomName: room.name,
-          bedName: bed.name,
-          label: `${room.name} / ${bed.name}`,
-        });
-      }
-    }
-    return map;
+  const bedOptionGroups = useMemo<BedOptionGroup[]>(() => {
+    return [...(payload?.rooms ?? [])]
+      .filter((room) => room.active)
+      .sort((left, right) => left.sortOrder - right.sortOrder)
+      .map((room) => ({
+        roomId: room.id,
+        roomName: room.name,
+        beds: [...room.beds]
+          .filter((bed) => bed.active)
+          .sort((left, right) => left.sortOrder - right.sortOrder)
+          .map((bed) => ({
+            id: bed.id,
+            roomId: room.id,
+            roomName: room.name,
+            bedName: bed.name,
+            label: `${room.name} / ${bed.name}`,
+          })),
+      }))
+      .filter((group) => group.beds.length > 0);
   }, [payload]);
 
-  const bedOptions = useMemo(() => [...bedById.values()], [bedById]);
+  const bedOptions = useMemo(
+    () => bedOptionGroups.flatMap((group) => group.beds),
+    [bedOptionGroups],
+  );
+
+  const bedById = useMemo(() => {
+    const map = new Map<string, BedOption>();
+    for (const bed of bedOptions) {
+      map.set(bed.id, bed);
+    }
+    return map;
+  }, [bedOptions]);
+
+  const activeRooms = useMemo(
+    () =>
+      [...(payload?.rooms ?? [])]
+        .filter((room) => room.active)
+        .sort((left, right) => left.sortOrder - right.sortOrder),
+    [payload],
+  );
 
   const allocationByBedAndDate = useMemo(() => {
     const map = new Map<string, DashboardAllocation>();
@@ -358,6 +385,16 @@ export default function AdminBedAllocationPage() {
     }
     return null;
   }, [activeDragId, bucketGroupsByGuest, allocationsById]);
+
+  const activeDragDates = useMemo(() => {
+    return new Set(
+      deriveActiveDragDates({
+        activeDrag: activeDragData,
+        visibleAllocations: payload?.allocations ?? [],
+        bucketGroups,
+      }),
+    );
+  }, [activeDragData, payload?.allocations, bucketGroups]);
 
   async function loadDashboard() {
     setLoading(true);
@@ -802,14 +839,17 @@ export default function AdminBedAllocationPage() {
     if (!canEditBookings) return;
 
     setActiveDragId(String(event.active.id));
+    setActiveDragData((event.active.data.current as DragData | undefined) ?? null);
   }
 
   function handleDragCancel() {
     setActiveDragId(null);
+    setActiveDragData(null);
   }
 
   function handleDragEnd(event: DragEndEvent) {
     setActiveDragId(null);
+    setActiveDragData(null);
     if (!canEditBookings) return;
 
     const { active, over } = event;
@@ -869,7 +909,6 @@ export default function AdminBedAllocationPage() {
   const unapprovedCount =
     payload?.allocations.filter((allocation) => !allocation.approvedAt).length ?? 0;
   const activeBedCount = bedOptions.length;
-  const activeRooms = payload?.rooms.filter((room) => room.active) ?? [];
 
   // A focused booking is "on the board" when it has a bucket card or a placed
   // allocation in the current range (#1302).
@@ -1095,6 +1134,7 @@ export default function AdminBedAllocationPage() {
                 bookings={payload.bookings}
                 groupsByBooking={groupsByBooking}
                 bedOptions={bedOptions}
+                bedOptionGroups={bedOptionGroups}
                 selectedBeds={selectedBeds}
                 onSelectBed={(bookingGuestId, bedId) =>
                   setSelectedBeds((current) => ({
@@ -1141,6 +1181,7 @@ export default function AdminBedAllocationPage() {
                   nights={nights}
                   allocationByBedAndDate={allocationByBedAndDate}
                   bedOptions={bedOptions}
+                  bedOptionGroups={bedOptionGroups}
                   onReassignBed={(allocation, bedId) =>
                     void moveAllocation(allocation, {
                       bedId,
@@ -1151,6 +1192,8 @@ export default function AdminBedAllocationPage() {
                   onRemove={(allocation) => void removeAllocation(allocation)}
                   pendingAllocationIds={pendingAllocationIds}
                   highlightedBookingId={highlightedBookingId}
+                  activeDragDates={activeDragDates}
+                  registerScroller={registerBoardScroller}
                   canEdit={canEditBookings}
                 />
               ))}

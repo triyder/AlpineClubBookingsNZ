@@ -21,7 +21,7 @@ const IN_PROGRESS_EDIT_STATUSES = new Set<string>([
   BookingStatus.COMPLETED,
 ]);
 
-type BookingEditMode = "future" | "in-progress";
+type BookingEditMode = "future" | "in-progress" | "admin-override";
 
 export interface BookingEditPolicy {
   canModify: boolean;
@@ -37,6 +37,13 @@ export interface BookingEditPolicyInput {
   role: string;
   checkIn: Date;
   checkOut: Date;
+  // Admin-only escape hatch (issue #1668): when an admin (Full Admin or Booking
+  // Officer) explicitly requests an override, the date-window locks (in-progress
+  // check-in lock, fully-past refusal) are lifted so they can move any booking's
+  // dates. Ignored for non-admin roles — they fall through to the normal
+  // branches, so member/officer-without-bookings:edit output is byte-for-byte
+  // unchanged whether or not this flag is set.
+  adminOverride?: boolean;
 }
 
 function isAdmin(role: string) {
@@ -60,6 +67,24 @@ export function getBookingEditPolicy(
   const tomorrow = addDaysDateOnly(today, 1);
   const checkIn = normalizeDateOnlyForTimeZone(input.checkIn);
   const checkOut = normalizeDateOnlyForTimeZone(input.checkOut);
+
+  // Admin override (issue #1668): lift the date-window locks entirely. Status
+  // eligibility is still enforced (canModifyBookingStatusForRole); only the
+  // in-progress/fully-past date gates are bypassed. Non-admin roles skip this
+  // branch and fall through unchanged.
+  if (input.adminOverride && isAdmin(input.role)) {
+    const canModify = canModifyBookingStatusForRole(input.status, input.role);
+    return {
+      canModify,
+      mode: canModify ? "admin-override" : null,
+      today,
+      editableFrom: null,
+      checkInEditable: canModify,
+      reason: canModify
+        ? null
+        : "This booking cannot be modified in its current status",
+    };
+  }
 
   if (checkIn > today) {
     const canModify = isFutureEditStatusAllowed(input.status, input.role);

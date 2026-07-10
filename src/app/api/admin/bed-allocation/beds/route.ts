@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { BedType } from "@prisma/client";
 import { z } from "zod";
 import { createBedAllocationBed } from "@/lib/admin-bed-allocation";
 import {
@@ -15,6 +16,10 @@ const bedSchema = z
     name: z.string().trim().min(1).max(100),
     sortOrder: z.coerce.number().int().min(0).max(10000).default(0),
     active: z.boolean().default(true),
+    // Descriptive bed type (#1675); mirrors the Prisma BedType enum.
+    bedType: z.nativeEnum(BedType).default(BedType.SINGLE),
+    // Bunk-pairing label; validated server-side in createBedAllocationBed.
+    bunkGroup: z.string().trim().max(50).nullable().optional(),
   })
   .strict();
 
@@ -43,7 +48,13 @@ export async function POST(request: Request) {
       category: "admin",
       outcome: "success",
       summary: "Bed allocation bed created",
-      metadata: { bedId: bed.id, roomId: bed.roomId, name: bed.name },
+      metadata: {
+        bedId: bed.id,
+        roomId: bed.roomId,
+        name: bed.name,
+        bedType: bed.bedType,
+        bunkGroup: bed.bunkGroup,
+      },
     });
 
     return NextResponse.json({ bed }, { status: 201 });

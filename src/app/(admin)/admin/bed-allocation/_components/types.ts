@@ -1,9 +1,17 @@
+// Mirrors the Prisma BedType enum (#1675). Kept as a local union so the board
+// components need no @prisma/client import.
+export type BedType = "SINGLE" | "BUNK_TOP" | "BUNK_BOTTOM" | "DOUBLE";
+
 interface DashboardBed {
   id: string;
   roomId: string;
   name: string;
   sortOrder: number;
   active: boolean;
+  // Descriptive bed type (#1675); does not affect capacity.
+  bedType: BedType;
+  // Pairing label within a room (one top + one bottom max); null when unpaired.
+  bunkGroup: string | null;
 }
 
 export interface DashboardRoom {
@@ -72,7 +80,8 @@ export interface DashboardBookingSummary {
 
 interface DashboardWarning {
   id: string;
-  type: "BOOKING_SPLIT" | "MINOR_WITHOUT_BOOKING_ADULT";
+  // ROOM_SWITCH (#1677) is stay-level: the booking's rooms change mid-stay.
+  type: "BOOKING_SPLIT" | "MINOR_WITHOUT_BOOKING_ADULT" | "ROOM_SWITCH";
   bookingId: string;
   bookingGuestId?: string;
   stayDate: string;
@@ -116,6 +125,12 @@ export interface BedOption {
   roomName: string;
   bedName: string;
   label: string;
+}
+
+export interface BedOptionGroup {
+  roomId: string;
+  roomName: string;
+  beds: BedOption[];
 }
 
 export interface BucketGuestGroup {
