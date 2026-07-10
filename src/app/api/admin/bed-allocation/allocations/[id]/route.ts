@@ -46,6 +46,8 @@ export async function DELETE(
           "Second occupant auto-promoted to primary after the shared double's primary was removed",
         metadata: {
           allocationId: promotedPartner.id,
+          bedId: promotedPartner.bedId,
+          stayDate: promotedPartner.stayDate,
           deletedAllocationId: allocation.id,
         },
       });

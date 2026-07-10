@@ -63,6 +63,29 @@ export async function POST(request: Request) {
       });
     }
 
+    // Moving a shared double's primary across nights auto-promotes each partner
+    // stranded on an old bed-night (#1750). A partner may belong to a different
+    // booking, so each gets its own audit entry against that booking.
+    for (const promotedPartner of result.promotedPartners) {
+      await createAuditLog({
+        action: "BED_ALLOCATION_PARTNER_PROMOTED",
+        memberId: guard.session.user.id,
+        targetId: promotedPartner.bookingId,
+        entityType: "BedAllocation",
+        entityId: promotedPartner.id,
+        category: "admin",
+        outcome: "success",
+        summary:
+          "Second occupant auto-promoted to primary after the shared double's primary was moved to another bed",
+        metadata: {
+          allocationId: promotedPartner.id,
+          bedId: promotedPartner.bedId,
+          bookingGuestId: body.data.bookingGuestId,
+          stayDate: formatDateOnly(promotedPartner.stayDate),
+        },
+      });
+    }
+
     return NextResponse.json({
       allocations: result.allocations.map((allocation) => ({
         id: allocation.id,

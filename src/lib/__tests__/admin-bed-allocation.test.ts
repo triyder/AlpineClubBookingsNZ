@@ -30,6 +30,7 @@ import {
   getBedAllocationDashboard,
   getRoomsAndBedsConfiguration,
   listBedAllocationRooms,
+  manuallyAllocateBed,
   manuallyAllocateBedForNights,
   parseBedAllocationDateRange,
   updateBedAllocationBed,
@@ -289,6 +290,10 @@ describe("manuallyAllocateBedForNights", () => {
     bed: ReturnType<typeof buildBed> | null;
     upsert: ReturnType<typeof vi.fn>;
     existingOccupants?: ReturnType<typeof vi.fn>;
+    // #1750 move-path orphan promotion seams.
+    previous?: ReturnType<typeof vi.fn>;
+    partner?: ReturnType<typeof vi.fn>;
+    update?: ReturnType<typeof vi.fn>;
     members?: Array<{
       id: string;
       ageTier: string;
@@ -315,6 +320,12 @@ describe("manuallyAllocateBedForNights", () => {
         // #1701: resolveSecondOccupant checks the target bed-night's existing
         // occupants; default to empty (a free bed-night → primary allocation).
         findMany: input.existingOccupants ?? vi.fn().mockResolvedValue([]),
+        // #1750: allocateBedNight reads the guest's pre-move row (null = fresh
+        // CREATE, so no old bed-night to repair) and the orphan-promote helper
+        // looks up + flips a surviving partner. Defaults leave promotion inert.
+        findUnique: input.previous ?? vi.fn().mockResolvedValue(null),
+        findFirst: input.partner ?? vi.fn().mockResolvedValue(null),
+        update: input.update ?? vi.fn(),
         upsert: input.upsert,
       },
     };
@@ -594,6 +605,249 @@ describe("manuallyAllocateBedForNights", () => {
     });
 
     expect(result.conflicts).toEqual([{ stayDate: "2026-07-02", reason: "BED_TAKEN" }]);
+  });
+
+  // #1750 move-path orphan promotion.
+  it("promotes the partner stranded on the old bed when a shared double's primary moves to another bed", async () => {
+    const upsert = vi.fn().mockImplementation(({ create }) => ({ id: "alloc", ...create }));
+    const db = buildDb({
+      guest: buildGuest(),
+      bed: buildBed({ id: "new-bed", roomId: "room-2" }),
+      upsert,
+      // The guest was the PRIMARY on the old bed on this night.
+      previous: vi
+        .fn()
+        .mockResolvedValue({ bedId: "old-bed", isSecondOccupant: false }),
+      // A surviving partner (a DIFFERENT booking) sits on the old bed-night.
+      partner: vi.fn().mockResolvedValue({
+        id: "alloc-partner",
+        bookingId: "booking-2",
+        bedId: "old-bed",
+        stayDate: parseDateOnly("2026-07-02"),
+        isSecondOccupant: true,
+        bedType: "DOUBLE",
+      }),
+      update: vi.fn().mockImplementation(({ where, data }) => ({
+        id: where.id,
+        bookingId: "booking-2",
+        ...data,
+      })),
+    });
+
+    const result = await manuallyAllocateBedForNights({
+      bookingGuestId: "guest-1",
+      bedId: "new-bed",
+      stayDates: ["2026-07-02"],
+      db: db as never,
+    });
+
+    expect(result.allocations).toHaveLength(1);
+    // Promotion is pinned to the OLD bed-night, not the new one.
+    expect(db.bedAllocation.findFirst).toHaveBeenCalledWith({
+      where: {
+        bedId: "old-bed",
+        stayDate: parseDateOnly("2026-07-02"),
+        isSecondOccupant: true,
+      },
+    });
+    expect(db.bedAllocation.update).toHaveBeenCalledWith({
+      where: { id: "alloc-partner" },
+      data: { isSecondOccupant: false },
+    });
+    expect(result.promotedPartners).toHaveLength(1);
+    expect(result.promotedPartners[0]).toMatchObject({
+      id: "alloc-partner",
+      isSecondOccupant: false,
+    });
+  });
+
+  it("does not promote when the moved row was itself a second occupant", async () => {
+    const upsert = vi.fn().mockImplementation(({ create }) => ({ id: "alloc", ...create }));
+    const db = buildDb({
+      guest: buildGuest(),
+      bed: buildBed({ id: "new-bed", roomId: "room-2" }),
+      upsert,
+      // Moving a second occupant leaves the old bed's primary in place.
+      previous: vi
+        .fn()
+        .mockResolvedValue({ bedId: "old-bed", isSecondOccupant: true }),
+      partner: vi.fn(),
+      update: vi.fn(),
+    });
+
+    const result = await manuallyAllocateBedForNights({
+      bookingGuestId: "guest-1",
+      bedId: "new-bed",
+      stayDates: ["2026-07-02"],
+      db: db as never,
+    });
+
+    expect(result.allocations).toHaveLength(1);
+    expect(db.bedAllocation.findFirst).not.toHaveBeenCalled();
+    expect(db.bedAllocation.update).not.toHaveBeenCalled();
+    expect(result.promotedPartners).toEqual([]);
+  });
+
+  it("does not promote on a same-bed re-upsert (bed unchanged)", async () => {
+    const upsert = vi.fn().mockImplementation(({ create }) => ({ id: "alloc", ...create }));
+    const db = buildDb({
+      guest: buildGuest(),
+      bed: buildBed({ id: "bed-1" }),
+      upsert,
+      // Re-upserting onto the SAME bed never vacates an old bed-night.
+      previous: vi
+        .fn()
+        .mockResolvedValue({ bedId: "bed-1", isSecondOccupant: false }),
+      partner: vi.fn(),
+      update: vi.fn(),
+    });
+
+    const result = await manuallyAllocateBedForNights({
+      bookingGuestId: "guest-1",
+      bedId: "bed-1",
+      stayDates: ["2026-07-02"],
+      db: db as never,
+    });
+
+    expect(result.allocations).toHaveLength(1);
+    expect(db.bedAllocation.findFirst).not.toHaveBeenCalled();
+    expect(db.bedAllocation.update).not.toHaveBeenCalled();
+    expect(result.promotedPartners).toEqual([]);
+  });
+
+  // #1750 move-path atomicity: manuallyAllocateBed (single night) self-wraps the
+  // pre-move read + upsert + partner promotion so a moved primary can't strand
+  // its partner between writes. Asserted on the tx client because every other
+  // move-path test injects `db` and so never enters the self-wrap branch.
+  it("self-wraps the move + promotion in one transaction when no db is injected (single path)", async () => {
+    // The mocked prisma singleton is otherwise `{}` (see the #1675 self-wrap
+    // suite): a path that skipped the wrap and reached for prisma.bedAllocation
+    // would throw here rather than silently pass.
+    const prismaMock = prisma as unknown as { $transaction?: unknown };
+    const upsert = vi
+      .fn()
+      .mockImplementation(({ create }) => ({ id: "alloc", ...create }));
+    const tx = buildDb({
+      guest: buildGuest(),
+      bed: buildBed({ id: "new-bed", roomId: "room-2" }),
+      upsert,
+      // The guest was the PRIMARY on the old bed on this night.
+      previous: vi
+        .fn()
+        .mockResolvedValue({ bedId: "old-bed", isSecondOccupant: false }),
+      // A surviving partner (a DIFFERENT booking) sits on the old bed-night.
+      partner: vi.fn().mockResolvedValue({
+        id: "alloc-partner",
+        bookingId: "booking-2",
+        bedId: "old-bed",
+        stayDate: parseDateOnly("2026-07-02"),
+        isSecondOccupant: true,
+        bedType: "DOUBLE",
+      }),
+      update: vi.fn().mockImplementation(({ where, data }) => ({
+        id: where.id,
+        bookingId: "booking-2",
+        ...data,
+      })),
+    });
+    const txnMock = vi.fn(async (cb: (client: typeof tx) => unknown) => cb(tx));
+    prismaMock.$transaction = txnMock;
+    try {
+      const result = await manuallyAllocateBed({
+        bookingGuestId: "guest-1",
+        bedId: "new-bed",
+        stayDate: "2026-07-02",
+      });
+
+      expect(txnMock).toHaveBeenCalledTimes(1);
+      // The move (upsert) AND the promotion (findFirst + update) all ran on the
+      // tx client — inside the wrap, not on the bare prisma singleton. The
+      // promotion is pinned to the OLD bed-night.
+      expect(tx.bedAllocation.upsert).toHaveBeenCalledTimes(1);
+      expect(tx.bedAllocation.findFirst).toHaveBeenCalledWith({
+        where: {
+          bedId: "old-bed",
+          stayDate: parseDateOnly("2026-07-02"),
+          isSecondOccupant: true,
+        },
+      });
+      expect(tx.bedAllocation.update).toHaveBeenCalledWith({
+        where: { id: "alloc-partner" },
+        data: { isSecondOccupant: false },
+      });
+      expect(result.promotedPartner).toMatchObject({
+        id: "alloc-partner",
+        isSecondOccupant: false,
+      });
+    } finally {
+      delete prismaMock.$transaction;
+    }
+  });
+
+  // #1750 bulk atomicity: manuallyAllocateBedForNights self-wraps EACH night's
+  // read + upsert + promotion in its OWN transaction (not one outer wrap), so a
+  // late night's rollback never undoes a committed earlier night. Every bulk test
+  // above injects `db` and so never enters the per-night self-wrap branch.
+  it("self-wraps each night's move + promotion in its own transaction when no db is injected (bulk path)", async () => {
+    // The pre-loop guest/bed assertion reads the bare prisma singleton; each
+    // night's write + promotion must then run inside its own $transaction on the
+    // tx client, never on the singleton (whose bedAllocation is undefined).
+    const prismaMock = prisma as unknown as {
+      $transaction?: unknown;
+      bookingGuest?: unknown;
+      lodgeBed?: unknown;
+    };
+    const guest = buildGuest();
+    const bed = buildBed({ id: "new-bed", roomId: "room-2" });
+    const upsert = vi
+      .fn()
+      .mockImplementation(({ create }) => ({ id: "alloc", ...create }));
+    const tx = buildDb({
+      guest,
+      bed,
+      upsert,
+      previous: vi
+        .fn()
+        .mockResolvedValue({ bedId: "old-bed", isSecondOccupant: false }),
+      partner: vi.fn().mockResolvedValue({
+        id: "alloc-partner",
+        bookingId: "booking-2",
+        bedId: "old-bed",
+        stayDate: parseDateOnly("2026-07-02"),
+        isSecondOccupant: true,
+        bedType: "DOUBLE",
+      }),
+      update: vi.fn().mockImplementation(({ where, data }) => ({
+        id: where.id,
+        bookingId: "booking-2",
+        ...data,
+      })),
+    });
+    prismaMock.bookingGuest = { findUnique: vi.fn().mockResolvedValue(guest) };
+    prismaMock.lodgeBed = { findUnique: vi.fn().mockResolvedValue(bed) };
+    const txnMock = vi.fn(async (cb: (client: typeof tx) => unknown) => cb(tx));
+    prismaMock.$transaction = txnMock;
+    try {
+      const result = await manuallyAllocateBedForNights({
+        bookingGuestId: "guest-1",
+        bedId: "new-bed",
+        stayDates: ["2026-07-02", "2026-07-03"],
+      });
+
+      // One transaction PER NIGHT — the per-night self-wrap, not a single outer
+      // wrap around the whole loop.
+      expect(txnMock).toHaveBeenCalledTimes(2);
+      // Every night's upsert + promotion (findFirst + update) ran on the tx
+      // client, inside the wrap.
+      expect(tx.bedAllocation.upsert).toHaveBeenCalledTimes(2);
+      expect(tx.bedAllocation.findFirst).toHaveBeenCalledTimes(2);
+      expect(tx.bedAllocation.update).toHaveBeenCalledTimes(2);
+      expect(result.promotedPartners).toHaveLength(2);
+    } finally {
+      delete prismaMock.$transaction;
+      delete prismaMock.bookingGuest;
+      delete prismaMock.lodgeBed;
+    }
   });
 });
 

@@ -1,4 +1,4 @@
-import { BookingStatus, Prisma } from "@prisma/client";
+import { BookingStatus, Prisma, type BedAllocation } from "@prisma/client";
 
 import {
   buildFirstFitBedAllocationPlan,
@@ -48,6 +48,141 @@ export interface BedAllocationLifecycleResult {
   enabled: boolean;
   deletedCount: number;
   createdCount: number;
+  // Second occupants promoted to primary because the prune removed a shared
+  // double's primary from another booking (#1750). Assertable via the reconcile
+  // return, not only via the update spy.
+  promotedCount: number;
+}
+
+export interface OrphanedBedNight {
+  bedId: string;
+  stayDate: Date;
+}
+
+/**
+ * Promote the surviving second occupant to primary on each bed-night that just
+ * lost its primary — a board delete (#1743), a board move of the primary to
+ * another bed, or a cross-booking lifecycle prune (#1750). Without this, a lone
+ * `isSecondOccupant=true` row is a safe dead-end (visible, no constraint
+ * violation) but the orphan guard in `resolveSecondOccupant` blocks every new
+ * placement on that bed-night until it is manually removed.
+ *
+ * The gate is `isSecondOccupant` only, NEVER the denormalized `bedType` of the
+ * removed primary OR the survivor: AUTO-created rows carry the default SINGLE
+ * even on a real DOUBLE (#1749), so trusting that type would skip the promotion
+ * the partner needs — the exact failure #1749's "never trust denormalized
+ * bedType" fix targeted, here in the REPAIR mechanism where declining silently
+ * dead-ends the bed-night behind the orphan guard forever. A second-occupant row
+ * can only exist on a genuine shared DOUBLE (`resolveSecondOccupant` checks the
+ * live bed + the partial index enforces it), so the `isSecondOccupant=true`
+ * lookup finds nothing on any other bed and nothing is written. The JS re-check
+ * of `partner.isSecondOccupant` (the WHERE clause is the real gate) keeps a test
+ * mock — whose `findFirst` ignores the WHERE — from fabricating a promotion.
+ *
+ * Runs on the supplied client so the caller's transaction wraps delete/move +
+ * flip atomically. The removed primary must already be gone, so the flip to
+ * `isSecondOccupant=false` cannot collide with
+ * `@@unique([bedId, stayDate, isSecondOccupant])`. Returns the promoted rows so
+ * the caller can audit them — a promoted partner may belong to a DIFFERENT
+ * booking than the row that was removed.
+ */
+export async function promoteOrphanedSecondOccupants(
+  db: BedAllocationLifecycleDb,
+  bedNights: OrphanedBedNight[],
+): Promise<BedAllocation[]> {
+  const promoted: BedAllocation[] = [];
+  const seen = new Set<string>();
+  for (const { bedId, stayDate } of bedNights) {
+    // Dedup: the same (bedId, stayDate) must never be flipped twice.
+    const key = `${bedId}:${formatDateOnly(stayDate)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const partner = await db.bedAllocation.findFirst({
+      where: { bedId, stayDate, isSecondOccupant: true },
+    });
+    if (partner && partner.isSecondOccupant) {
+      const updated = await db.bedAllocation.update({
+        where: { id: partner.id },
+        data: { isSecondOccupant: false },
+      });
+      promoted.push(updated);
+    }
+  }
+  return promoted;
+}
+
+async function recordPartnerPromotionAudit(
+  db: BedAllocationLifecycleDb,
+  promoted: BedAllocation,
+): Promise<void> {
+  // Best-effort, mirroring recordBedDisplacementAudit: an audit-write failure
+  // must never roll back a committed promotion. There is no acting member on the
+  // lifecycle path (the promotion is a system-driven consequence of a prune), so
+  // this is a "lodge" system event rather than an "admin" action, and it is
+  // recorded against the PROMOTED partner's own booking — which may differ from
+  // the booking whose prune triggered it.
+  try {
+    await createAuditLog(
+      {
+        action: "BED_ALLOCATION_PARTNER_PROMOTED",
+        category: "lodge",
+        entityType: "BedAllocation",
+        entityId: promoted.id,
+        targetId: promoted.bookingId,
+        outcome: "success",
+        summary:
+          "Second occupant auto-promoted to primary after the shared double's primary was pruned by a lifecycle change on another booking",
+        metadata: {
+          issue: 1750,
+          allocationId: promoted.id,
+          bedId: promoted.bedId,
+          stayDate: formatDateOnly(promoted.stayDate),
+        },
+      },
+      db,
+    );
+  } catch (err) {
+    logger.error(
+      { err, promoted },
+      "Failed to record partner promotion audit",
+    );
+  }
+}
+
+/**
+ * Delete allocations matching `where`, promoting any second occupant left
+ * orphaned when the sweep removes a shared double's primary (#1750). The
+ * affected bed-nights are captured BEFORE the delete (a `deleteMany` returns
+ * only a count) and the survivors are flipped AFTER, on the SAME client the
+ * sweep runs on — reconcile often already runs inside a caller's transaction, so
+ * this deliberately never opens a nested one. Delete-first/flip-after keeps the
+ * flip from colliding with `@@unique([bedId, stayDate, isSecondOccupant])`.
+ */
+async function sweepAllocationsWithPromotion(
+  db: BedAllocationLifecycleDb,
+  where: Prisma.BedAllocationWhereInput,
+): Promise<{ deletedCount: number; promotedCount: number }> {
+  // Bed-nights whose PRIMARY this sweep will delete. Only a deleted primary can
+  // orphan a partner, so the capture is scoped to isSecondOccupant=false — but
+  // NOT to bedType (#1749: an AUTO primary on a real DOUBLE carries the stale
+  // SINGLE default; filtering it out would strand its partner).
+  const doomedPrimaries = await db.bedAllocation.findMany({
+    where: { ...where, isSecondOccupant: false },
+    select: { bedId: true, stayDate: true },
+  });
+
+  const deleted = await db.bedAllocation.deleteMany({ where });
+
+  if (doomedPrimaries.length === 0) {
+    return { deletedCount: deleted.count, promotedCount: 0 };
+  }
+
+  const promoted = await promoteOrphanedSecondOccupants(db, doomedPrimaries);
+  for (const row of promoted) {
+    await recordPartnerPromotionAudit(db, row);
+  }
+  return { deletedCount: deleted.count, promotedCount: promoted.length };
 }
 
 interface ReconcileBedAllocationsForBookingInput {
@@ -163,17 +298,18 @@ async function pruneAllocationsForBooking(
   db: BedAllocationLifecycleDb,
   bookingId: string,
   booking: BookingForBedAllocation,
-): Promise<number> {
+): Promise<{ deletedCount: number; promotedCount: number }> {
   if (
     !booking ||
     booking.deletedAt ||
     !isAllocatableBookingStatus(booking.status) ||
     booking.guests.length === 0
   ) {
-    const deleted = await db.bedAllocation.deleteMany({
-      where: { bookingId },
-    });
-    return deleted.count;
+    // Whole-booking sweep (cancelled / soft-deleted / non-allocatable / no
+    // guests): cancelling the primary's booking orphans a partner sitting on
+    // ANOTHER booking (sharing eligibility is member-level), so promote after
+    // the sweep (#1750).
+    return sweepAllocationsWithPromotion(db, { bookingId });
   }
 
   const guestIds = booking.guests.map((guest) => guest.id);
@@ -205,14 +341,13 @@ async function pruneAllocationsForBooking(
     }
   }
 
-  const deleted = await db.bedAllocation.deleteMany({
-    where: {
-      bookingId,
-      OR: staleGuestNightClauses,
-    },
+  // Stale guest-night sweep (date change / night dropped / guest removed):
+  // dropping a night on which the guest was a shared double's primary orphans a
+  // partner from another booking, so promote after the sweep (#1750).
+  return sweepAllocationsWithPromotion(db, {
+    bookingId,
+    OR: staleGuestNightClauses,
   });
-
-  return deleted.count;
 }
 
 /**
@@ -602,11 +737,15 @@ export async function reconcileBedAllocationsForBooking({
   const enabled = await isEffectiveModuleEnabled("bedAllocation", db);
 
   if (!enabled) {
-    return { enabled: false, deletedCount: 0, createdCount: 0 };
+    return { enabled: false, deletedCount: 0, createdCount: 0, promotedCount: 0 };
   }
 
   const booking = await loadBookingForBedAllocation(db, bookingId);
-  const deletedCount = await pruneAllocationsForBooking(db, bookingId, booking);
+  const { deletedCount, promotedCount } = await pruneAllocationsForBooking(
+    db,
+    bookingId,
+    booking,
+  );
 
   // #1686: auto-placement is scoped to THIS booking on its CURRENT nights.
   // previousRange no longer widens the planner scan (pruning already removed
@@ -632,5 +771,5 @@ export async function reconcileBedAllocationsForBooking({
       })
     : 0;
 
-  return { enabled: true, deletedCount, createdCount };
+  return { enabled: true, deletedCount, createdCount, promotedCount };
 }

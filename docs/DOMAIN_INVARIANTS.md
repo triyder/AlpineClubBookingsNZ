@@ -101,16 +101,29 @@ Future reviews and issues should cite this file when proposing changes.
   partial index cannot join to `LodgeBed`). Capacity is unchanged — a shared
   double is still ONE bed of nightly capacity and each occupant is a full
   person-night (pricing/settlement untouched). A DOUBLE holding a second occupant
-  cannot be retyped to a non-double until that occupant is removed. Removing the
-  primary of a shared double on the board **auto-promotes** the remaining partner
-  to primary in the same transaction, with its own audit entry because the
-  partner may belong to a different booking (#1743) — the bed-night is no longer
-  blocked by an orphaned second occupant, and re-pairing follows the normal
-  sharing rules (in particular the promoted primary's booking must hold capacity
-  before a new partner may join). A lone second occupant can still be left when
-  the primary leaves by another path (board move of the primary to a different
-  bed, or a cross-booking cancellation/reconcile prune) — that state is harmless
-  (no DB violation) and surfaced on the board to re-pair or remove.
+  cannot be retyped to a non-double until that occupant is removed. Whenever a
+  shared double loses its primary — a board delete (#1743), a board move of the
+  primary onto another bed, or a cross-booking cancellation / reconcile prune
+  (#1750) — the surviving partner is **auto-promoted** to primary on the vacated
+  bed-night atomically with the removal on transactional paths, each with its own audit entry
+  (`BED_ALLOCATION_PARTNER_PROMOTED`) because the partner may belong to a
+  different booking (sharing eligibility is member-level). Promotion is gated on
+  `isSecondOccupant` alone, never the denormalized `bedType` of the removed row or
+  the survivor: an AUTO-allocated row on a real DOUBLE carries the SINGLE default,
+  so trusting that type would strand the partner it needs to promote. The
+  bed-night is
+  therefore never left dead-ended behind the orphaned-second-occupant guard in
+  `resolveSecondOccupant`, and re-pairing follows the normal sharing rules (in
+  particular the promoted primary's booking must hold capacity before a new
+  partner may join). The two atomicity shapes differ by path: the board
+  delete/move helpers self-wrap their read + write + promote in a transaction,
+  while the lifecycle prune captures-before / flips-after on the caller's own
+  client. Reconcile is usually already inside a transaction, but a few callers
+  reconcile on the bare `prisma` singleton (e.g. `cron-complete-bookings`, the
+  confirm-pending-guests route); on those a crash between the delete and the flip
+  regresses to the pre-#1750 state — a recoverable orphaned second occupant,
+  visible on the board and cleared by the next successful reconcile or a manual
+  move, never a capacity or double-booking violation.
 - Waitlisted and offered bookings do not consume capacity until confirmed.
 - A waitlist offer reprices the booking at current season rates,
   membership-type policy, group discount, and promo validity at the moment the

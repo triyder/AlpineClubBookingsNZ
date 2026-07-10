@@ -23,7 +23,10 @@ import {
   type BedAllocationRoom,
   type UnallocatedGuestNight,
 } from "@/lib/bed-allocation";
-import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
+import {
+  BED_ALLOCATABLE_BOOKING_STATUSES,
+  promoteOrphanedSecondOccupants,
+} from "@/lib/bed-allocation-lifecycle";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   bookingHoldsCapacity,
@@ -1810,24 +1813,46 @@ async function resolveSecondOccupant(input: {
   return { isSecondOccupant: true };
 }
 
-export async function manuallyAllocateBed(input: {
-  bookingGuestId: string;
-  bedId: string;
-  stayDate: string;
-  db?: BedAllocationDb;
-}) {
-  if (!isDateOnlyString(input.stayDate)) {
-    throw new BedAllocationAdminError("Invalid stay date", 400);
+// Only a genuine move of a PRIMARY off its bed can strand a partner on the OLD
+// bed-night, so promote the surviving second occupant there (#1750). Skips when:
+//   - previous == null: a fresh CREATE, no old bed-night to repair;
+//   - previous.isSecondOccupant: moving a second occupant leaves the primary in
+//     place, so nothing is orphaned;
+//   - previous.bedId === newBedId: a same-bed re-upsert can't orphan a partner.
+//     If the double is shared, resolveSecondOccupant 409s before the upsert (the
+//     partner left on the bed reads as a second occupant → "already has two
+//     occupants"), so this code is never reached; if it isn't shared there is no
+//     partner to strand. Either way the old bed-night is not vacated.
+async function promoteVacatedOldBedNight(input: {
+  previous: { bedId: string; isSecondOccupant: boolean } | null;
+  newBedId: string;
+  stayDate: Date;
+  db: BedAllocationDb;
+}): Promise<BedAllocation | null> {
+  const { previous, newBedId, stayDate, db } = input;
+  if (!previous || previous.isSecondOccupant || previous.bedId === newBedId) {
+    return null;
   }
+  const [promoted] = await promoteOrphanedSecondOccupants(db, [
+    { bedId: previous.bedId, stayDate },
+  ]);
+  return promoted ?? null;
+}
 
-  const db = input.db ?? prisma;
-  const stayDate = parseDateOnly(input.stayDate);
-  const { guest, bed } = await assertManualAllocationInput({
-    bookingGuestId: input.bookingGuestId,
-    bedId: input.bedId,
-    stayDate,
-    db,
-  });
+// Allocate one guest-night to a bed via upsert, promoting any partner stranded
+// on the guest's OLD bed-night by the move (#1750). Reads the pre-move row,
+// upserts, then repairs the old bed-night — the caller wraps this in a
+// transaction so the three writes are atomic and no transient
+// @@unique([bedId, stayDate, isSecondOccupant]) collision can occur (the move
+// vacates the old bed-night before the partner is flipped). Throws P2002 on a
+// taken bed-night for the caller to classify (409 vs bulk conflict).
+async function allocateBedNight(input: {
+  guest: { id: string; bookingId: string; memberId: string | null };
+  bed: { id: string; roomId: string; bedType: BedType };
+  stayDate: Date;
+  db: BedAllocationDb;
+}): Promise<{ allocation: BedAllocation; promotedPartner: BedAllocation | null }> {
+  const { guest, bed, stayDate, db } = input;
 
   const { isSecondOccupant } = await resolveSecondOccupant({
     bed,
@@ -1836,34 +1861,80 @@ export async function manuallyAllocateBed(input: {
     db,
   });
 
+  const previous = await db.bedAllocation.findUnique({
+    where: {
+      bookingGuestId_stayDate: { bookingGuestId: guest.id, stayDate },
+    },
+    select: { bedId: true, isSecondOccupant: true },
+  });
+
+  const allocation = await db.bedAllocation.upsert({
+    where: {
+      bookingGuestId_stayDate: { bookingGuestId: guest.id, stayDate },
+    },
+    create: {
+      bookingId: guest.bookingId,
+      bookingGuestId: guest.id,
+      roomId: bed.roomId,
+      bedId: bed.id,
+      stayDate,
+      source: "MANUAL",
+      isSecondOccupant,
+      bedType: bed.bedType,
+    },
+    update: {
+      roomId: bed.roomId,
+      bedId: bed.id,
+      source: "MANUAL",
+      approvedAt: null,
+      approvedByMemberId: null,
+      isSecondOccupant,
+      bedType: bed.bedType,
+    },
+  });
+
+  const promotedPartner = await promoteVacatedOldBedNight({
+    previous,
+    newBedId: bed.id,
+    stayDate,
+    db,
+  });
+
+  return { allocation, promotedPartner };
+}
+
+export async function manuallyAllocateBed(input: {
+  bookingGuestId: string;
+  bedId: string;
+  stayDate: string;
+  db?: BedAllocationDb;
+  // Explicit return type: the function references itself in the $transaction
+  // branch, which TS cannot infer through (TS7023).
+}): Promise<{ allocation: BedAllocation; promotedPartner: BedAllocation | null }> {
+  if (!isDateOnlyString(input.stayDate)) {
+    throw new BedAllocationAdminError("Invalid stay date", 400);
+  }
+
+  // Pre-move read + upsert + orphan promotion must be atomic so moving a shared
+  // double's primary to another bed can't strand its partner between the writes
+  // (#1750). A caller-supplied client is assumed to already be transactional.
+  if (!input.db) {
+    return prisma.$transaction((tx) =>
+      manuallyAllocateBed({ ...input, db: tx }),
+    );
+  }
+  const db = input.db;
+
+  const stayDate = parseDateOnly(input.stayDate);
+  const { guest, bed } = await assertManualAllocationInput({
+    bookingGuestId: input.bookingGuestId,
+    bedId: input.bedId,
+    stayDate,
+    db,
+  });
+
   try {
-    return await db.bedAllocation.upsert({
-      where: {
-        bookingGuestId_stayDate: {
-          bookingGuestId: input.bookingGuestId,
-          stayDate,
-        },
-      },
-      create: {
-        bookingId: guest.bookingId,
-        bookingGuestId: guest.id,
-        roomId: bed.roomId,
-        bedId: bed.id,
-        stayDate,
-        source: "MANUAL",
-        isSecondOccupant,
-        bedType: bed.bedType,
-      },
-      update: {
-        roomId: bed.roomId,
-        bedId: bed.id,
-        source: "MANUAL",
-        approvedAt: null,
-        approvedByMemberId: null,
-        isSecondOccupant,
-        bedType: bed.bedType,
-      },
-    });
+    return await allocateBedNight({ guest, bed, stayDate, db });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -1887,6 +1958,9 @@ export interface BulkAllocationResult {
   allocations: BedAllocation[];
   conflicts: BulkAllocationConflict[];
   skipped: string[];
+  // Partners promoted to primary because a moved night vacated a shared double's
+  // primary on its old bed (#1750); the route audits each one.
+  promotedPartners: BedAllocation[];
 }
 
 /**
@@ -1930,6 +2004,7 @@ export async function manuallyAllocateBedForNights(input: {
   const allocations: BedAllocation[] = [];
   const conflicts: BulkAllocationConflict[] = [];
   const skipped: string[] = [];
+  const promotedPartners: BedAllocation[] = [];
 
   for (const stayDateStr of [...new Set(input.stayDates)].sort()) {
     const stayDate = parseDateOnly(stayDateStr);
@@ -1939,40 +2014,19 @@ export async function manuallyAllocateBedForNights(input: {
     }
 
     try {
-      const { isSecondOccupant } = await resolveSecondOccupant({
-        bed,
-        guest,
-        stayDate,
-        db,
-      });
-      const allocation = await db.bedAllocation.upsert({
-        where: {
-          bookingGuestId_stayDate: {
-            bookingGuestId: input.bookingGuestId,
-            stayDate,
-          },
-        },
-        create: {
-          bookingId: guest.bookingId,
-          bookingGuestId: guest.id,
-          roomId: bed.roomId,
-          bedId: bed.id,
-          stayDate,
-          source: "MANUAL",
-          isSecondOccupant,
-          bedType: bed.bedType,
-        },
-        update: {
-          roomId: bed.roomId,
-          bedId: bed.id,
-          source: "MANUAL",
-          approvedAt: null,
-          approvedByMemberId: null,
-          isSecondOccupant,
-          bedType: bed.bedType,
-        },
-      });
+      // Each night's read + upsert + orphan promotion is atomic and independent:
+      // wrap it in its own transaction when no client is injected (so one night's
+      // rollback never undoes an already-committed night), or run inline on an
+      // injected transactional client. Mirrors the single-night self-wrap (#1750).
+      const { allocation, promotedPartner } = input.db
+        ? await allocateBedNight({ guest, bed, stayDate, db })
+        : await prisma.$transaction((tx) =>
+            allocateBedNight({ guest, bed, stayDate, db: tx }),
+          );
       allocations.push(allocation);
+      if (promotedPartner) {
+        promotedPartners.push(promotedPartner);
+      }
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -1995,7 +2049,7 @@ export async function manuallyAllocateBedForNights(input: {
     }
   }
 
-  return { allocations, conflicts, skipped };
+  return { allocations, conflicts, skipped, promotedPartners };
 }
 
 export async function deleteBedAllocation(input: {
@@ -2022,38 +2076,19 @@ export async function deleteBedAllocation(input: {
   // Orphan auto-promote (#1743, owner-locked): removing the PRIMARY of a shared
   // DOUBLE flips the surviving partner row to primary on that bed-night, so the
   // bed-night is not left blocked behind the orphaned-second-occupant guard in
-  // resolveSecondOccupant. Per-night by construction — one allocation row is
-  // one bed-night, and the WHERE pins the deleted row's own (bedId, stayDate).
-  // The delete removed the bed-night's only isSecondOccupant=false row, so the
-  // flip cannot collide with @@unique([bedId, stayDate, isSecondOccupant]).
-  //
-  // Deliberately NOT gated on deleted.bedType === "DOUBLE": AUTO-created rows
-  // never set the denormalized bedType (replaceBedAllocationsForBooking), so an
-  // auto-allocated primary on a real DOUBLE carries the default SINGLE and
-  // would skip the promotion its partner needs. A second-occupant row can only
-  // exist on a genuine shared double (resolveSecondOccupant checks the live
-  // bed), so the isSecondOccupant filter alone is the reliable gate — on every
-  // other bed the lookup finds nothing and nothing is written.
-  //
-  // The promoted row is returned so the caller can audit it: the partner may
-  // belong to a DIFFERENT booking than the deleted row, and that cross-booking
-  // state change needs its own audit entry (@@unique caps the bed-night at one
-  // second-occupant row, so findFirst is deterministic).
+  // resolveSecondOccupant. The delete removed the bed-night's only
+  // isSecondOccupant=false row, so the flip cannot collide with
+  // @@unique([bedId, stayDate, isSecondOccupant]). Gated on isSecondOccupant
+  // only (never the deleted row's stale bedType — see the helper), and the
+  // promoted row is returned so the DELETE route can audit the (possibly
+  // cross-booking) state change. The shared helper is the same promotion applied
+  // to the board-move and lifecycle-prune paths (#1750).
   let promotedPartner: BedAllocation | null = null;
   if (!deleted.isSecondOccupant) {
-    const partner = await db.bedAllocation.findFirst({
-      where: {
-        bedId: deleted.bedId,
-        stayDate: deleted.stayDate,
-        isSecondOccupant: true,
-      },
-    });
-    if (partner) {
-      promotedPartner = await db.bedAllocation.update({
-        where: { id: partner.id },
-        data: { isSecondOccupant: false },
-      });
-    }
+    const [promoted] = await promoteOrphanedSecondOccupants(db, [
+      { bedId: deleted.bedId, stayDate: deleted.stayDate },
+    ]);
+    promotedPartner = promoted ?? null;
   }
 
   return { deleted, promotedPartner };

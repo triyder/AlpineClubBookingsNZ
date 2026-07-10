@@ -33,7 +33,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const allocation = await manuallyAllocateBed(body.data);
+    const { allocation, promotedPartner } = await manuallyAllocateBed(body.data);
     await createAuditLog({
       action: "BED_ALLOCATION_MANUAL_SET",
       memberId: guard.session.user.id,
@@ -50,6 +50,28 @@ export async function POST(request: Request) {
         stayDate: allocation.stayDate,
       },
     });
+    // Moving a shared double's primary onto another bed auto-promotes the
+    // partner left on the OLD bed-night (#1750). The partner may belong to a
+    // different booking, so it gets its own audit entry against that booking.
+    if (promotedPartner) {
+      await createAuditLog({
+        action: "BED_ALLOCATION_PARTNER_PROMOTED",
+        memberId: guard.session.user.id,
+        targetId: promotedPartner.bookingId,
+        entityType: "BedAllocation",
+        entityId: promotedPartner.id,
+        category: "admin",
+        outcome: "success",
+        summary:
+          "Second occupant auto-promoted to primary after the shared double's primary was moved to another bed",
+        metadata: {
+          allocationId: promotedPartner.id,
+          bedId: promotedPartner.bedId,
+          stayDate: promotedPartner.stayDate,
+          movedAllocationId: allocation.id,
+        },
+      });
+    }
 
     return NextResponse.json({ allocation });
   } catch (error) {
