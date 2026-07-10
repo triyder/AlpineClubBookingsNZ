@@ -472,12 +472,14 @@ describe("bed allocation lifecycle", () => {
     expect(result.createdCount).toBe(0);
   });
 
-  it("re-checks the merged (union) range when a booking date range shrinks (issue #816)", async () => {
-    // Booking shrank from 07-01..07-05 to 07-01..07-03. Reconciliation must
-    // re-evaluate auto allocation across the union of the old and new ranges so
-    // beds freed on the dropped nights can be re-filled (e.g. for another
-    // booking). No other booking needs the freed nights here, so nothing is
-    // created, but the scan must cover the old wider range.
+  it("scans only the booking's current range after a date shrink, never the old wider range (issue #1686)", async () => {
+    // Booking shrank from 07-01..07-05 to 07-01..07-03. Since #1686 the
+    // reconcile no longer re-plans the union of the old and new ranges to
+    // opportunistically re-fill freed beds for OTHER bookings — pruning drops
+    // the stale nights and the planner scan is the CURRENT range only. So the
+    // occupancy and overlapping-booking scans cover 07-01..07-03, never the
+    // dropped 07-03..07-05 tail. previousRange is retained on the call for API
+    // stability but no longer widens the scan.
     const db = makeDb({
       bedAllocationSettings: {
         findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
@@ -510,14 +512,15 @@ describe("bed allocation lifecycle", () => {
       },
     });
 
-    // The existing-allocation scan and the overlapping-booking scan both use the
-    // union range 07-01..07-05, not just the new narrower 07-01..07-03.
+    // The existing-allocation scan and the overlapping-booking scan use only the
+    // new range 07-01..07-03, not the pre-#1686 union 07-01..07-05. (With no
+    // overlapping booking loaded, the #1677 load envelope equals this range.)
     expect(db.bedAllocation.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           stayDate: {
             gte: parseDateOnly("2026-07-01"),
-            lt: parseDateOnly("2026-07-05"),
+            lt: parseDateOnly("2026-07-03"),
           },
         }),
       }),
@@ -525,7 +528,7 @@ describe("bed allocation lifecycle", () => {
     expect(db.booking.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          checkIn: { lt: parseDateOnly("2026-07-05") },
+          checkIn: { lt: parseDateOnly("2026-07-03") },
           checkOut: { gt: parseDateOnly("2026-07-01") },
         }),
       }),
@@ -533,6 +536,216 @@ describe("bed allocation lifecycle", () => {
     expect(result).toEqual({
       enabled: true,
       deletedCount: 2,
+      createdCount: 0,
+    });
+  });
+
+  it("auto-places only the reconciled booking's guests, not another overlapping booking's unallocated guest (issue #1686)", async () => {
+    // Two unallocated bookings overlap the same night in a two-bed lodge:
+    // booking-a (reconciled) and booking-b (an unrelated overlapping booking).
+    // Reconciling booking-a auto-places ONLY guest-a; booking-b's guest-b is
+    // loaded into the lodge-wide occupancy/envelope scan but is NEVER drafted —
+    // that opportunistic lodge-wide fill was the #1686 bug. (On pre-#1686 code
+    // this reconcile would draft BOTH guests.)
+    const db = makeDb({
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+      },
+      lodgeRoom: {
+        findMany: vi.fn().mockResolvedValue(TWO_ROOMS_TWO_BEDS),
+      },
+    });
+    db.booking.findUnique.mockResolvedValue({
+      id: "booking-a",
+      status: BookingStatus.PAID,
+      deletedAt: null,
+      checkIn: NIGHT,
+      checkOut: NIGHT_END,
+      guests: [
+        {
+          id: "guest-a",
+          bookingId: "booking-a",
+          ageTier: "ADULT",
+          stayStart: NIGHT,
+          stayEnd: NIGHT_END,
+          nights: [],
+        },
+      ],
+    });
+    // Both bookings are returned by the lodge-wide overlap scan; only the
+    // reconciled one may be placed.
+    db.booking.findMany.mockResolvedValue([
+      {
+        id: "booking-a",
+        createdAt: new Date("2026-07-01T00:00:00.000Z"),
+        requestedRoomId: null,
+        status: BookingStatus.PAID,
+        originBookingRequest: null,
+        checkIn: NIGHT,
+        checkOut: NIGHT_END,
+        guests: [
+          {
+            id: "guest-a",
+            bookingId: "booking-a",
+            ageTier: "ADULT",
+            stayStart: NIGHT,
+            stayEnd: NIGHT_END,
+            nights: [],
+          },
+        ],
+      },
+      {
+        id: "booking-b",
+        createdAt: new Date("2026-06-01T00:00:00.000Z"),
+        requestedRoomId: null,
+        status: BookingStatus.PAID,
+        originBookingRequest: null,
+        checkIn: NIGHT,
+        checkOut: NIGHT_END,
+        guests: [
+          {
+            id: "guest-b",
+            bookingId: "booking-b",
+            ageTier: "ADULT",
+            stayStart: NIGHT,
+            stayEnd: NIGHT_END,
+            nights: [],
+          },
+        ],
+      },
+    ]);
+    db.bedAllocation.createMany.mockResolvedValue({ count: 1 });
+
+    const result = await reconcileBedAllocationsForBooking({
+      bookingId: "booking-a",
+      db: db as any,
+    });
+
+    const created = db.bedAllocation.createMany.mock.calls[0][0].data;
+    expect(created).toEqual([
+      {
+        bookingId: "booking-a",
+        bookingGuestId: "guest-a",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: NIGHT_UTC,
+        source: "AUTO",
+      },
+    ]);
+    // booking-b's guest is never drafted.
+    expect(
+      created.some((row: { bookingId: string }) => row.bookingId === "booking-b"),
+    ).toBe(false);
+    expect(result.createdCount).toBe(1);
+  });
+
+  it("prunes and skips the planner entirely when reconciling a cancelled booking (issue #1686)", async () => {
+    // A cancelled booking cannot receive allocations, so reconcile takes the
+    // fast path: pruning releases its beds, NOTHING is re-planned into them,
+    // and no planner queries run at all — cancel flows call this inside their
+    // transactions. Freed beds after a cancellation are not auto-refilled
+    // (that is the explicit board action).
+    const db = makeDb({
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+      },
+      lodgeRoom: {
+        findMany: vi.fn().mockResolvedValue(TWO_ROOMS_TWO_BEDS),
+      },
+    });
+    db.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      status: BookingStatus.CANCELLED,
+      deletedAt: null,
+      checkIn: parseDateOnly("2026-07-01"),
+      checkOut: parseDateOnly("2026-07-03"),
+      guests: [
+        {
+          id: "guest-1",
+          bookingId: "booking-1",
+          ageTier: "ADULT",
+          stayStart: parseDateOnly("2026-07-01"),
+          stayEnd: parseDateOnly("2026-07-03"),
+        },
+      ],
+    });
+    db.bedAllocation.deleteMany.mockResolvedValue({ count: 2 });
+
+    const result = await reconcileBedAllocationsForBooking({
+      bookingId: "booking-1",
+      db: db as any,
+    });
+
+    expect(db.bedAllocation.deleteMany).toHaveBeenCalledWith({
+      where: { bookingId: "booking-1" },
+    });
+    // Fast path: no rooms/bookings/occupancy queries, nothing created.
+    expect(db.lodgeRoom.findMany).not.toHaveBeenCalled();
+    expect(db.booking.findMany).not.toHaveBeenCalled();
+    expect(db.bedAllocation.findMany).not.toHaveBeenCalled();
+    expect(db.bedAllocation.createMany).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      enabled: true,
+      deletedCount: 2,
+      createdCount: 0,
+    });
+  });
+
+  it("takes the fast path for a soft-deleted booking too (issue #1686)", async () => {
+    const db = makeDb({
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+      },
+    });
+    db.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      status: BookingStatus.PAID,
+      deletedAt: parseDateOnly("2026-07-02"),
+      checkIn: parseDateOnly("2026-07-01"),
+      checkOut: parseDateOnly("2026-07-03"),
+      guests: [],
+    });
+    db.bedAllocation.deleteMany.mockResolvedValue({ count: 1 });
+
+    const result = await reconcileBedAllocationsForBooking({
+      bookingId: "booking-1",
+      db: db as any,
+    });
+
+    expect(db.booking.findMany).not.toHaveBeenCalled();
+    expect(db.bedAllocation.createMany).not.toHaveBeenCalled();
+    expect(result.createdCount).toBe(0);
+  });
+
+  it("takes the fast path for a deleted booking: prunes and runs no planner queries (issue #1686)", async () => {
+    // The booking row is gone (findUnique → null), so currentRange is null and
+    // the planner is skipped entirely: no rooms/bookings/occupancy queries run.
+    const db = makeDb({
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+      },
+      lodgeRoom: {
+        findMany: vi.fn().mockResolvedValue(TWO_ROOMS_TWO_BEDS),
+      },
+    });
+    db.booking.findUnique.mockResolvedValue(null);
+    db.bedAllocation.deleteMany.mockResolvedValue({ count: 3 });
+
+    const result = await reconcileBedAllocationsForBooking({
+      bookingId: "gone",
+      db: db as any,
+    });
+
+    expect(db.bedAllocation.deleteMany).toHaveBeenCalledWith({
+      where: { bookingId: "gone" },
+    });
+    expect(db.lodgeRoom.findMany).not.toHaveBeenCalled();
+    expect(db.booking.findMany).not.toHaveBeenCalled();
+    expect(db.bedAllocation.findMany).not.toHaveBeenCalled();
+    expect(db.bedAllocation.createMany).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      enabled: true,
+      deletedCount: 3,
       createdCount: 0,
     });
   });

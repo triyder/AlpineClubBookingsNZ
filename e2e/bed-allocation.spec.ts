@@ -14,9 +14,7 @@ import { E2E_ADMIN } from "./helpers/fixtures";
 // BedAllocationSettings row, so it defaults ON, and approval's
 // reconcileBedAllocationsForBooking would otherwise auto-place Ken (removing him
 // from the "awaiting allocation" bucket the manual path drives). The setting is
-// restored afterwards. admin-override-dates.spec.ts toggles the same setting
-// around its cross-month date shifts and restores it before this spec runs;
-// no other spec touches bed allocation.
+// restored afterwards. No other spec touches bed allocation.
 test.describe.configure({ mode: "serial" });
 
 let adminContext: BrowserContext;
