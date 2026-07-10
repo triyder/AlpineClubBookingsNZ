@@ -9,13 +9,16 @@ const DEBOUNCE_MS = 300;
 const NO_RESULTS: never[] = [];
 
 /**
- * Debounced admin member search against GET /api/admin/members — the one
+ * Debounced admin member search against GET /api/admin/members — the shared
  * implementation of the type-2-chars-wait-300ms-then-fetch pattern the admin
- * member area had grown three copies of (#1754). The trimmed query must reach
- * 2 characters (and `enabled` must hold) before anything is fetched; a
- * pending fetch is discarded when the query changes or the consumer unmounts,
- * so stale responses can never overwrite newer ones. A failed search clears
- * the results and surfaces its message via `error` ("" while healthy).
+ * member area kept re-growing (#1754; member-picker, family-group-editor, and
+ * the member-detail Partner card use it — the member-detail `_hooks`
+ * inherit-email and parent-link searches are remaining candidates). The
+ * trimmed query must reach 2 characters (and `enabled` must hold) before
+ * anything is fetched; a pending fetch is discarded when the query changes or
+ * the consumer unmounts, so stale responses can never overwrite newer ones. A
+ * failed search clears the results and surfaces its message via `error` (""
+ * while healthy).
  *
  * `TMember` is the row shape the caller expects from the endpoint's `members`
  * array for its `params` (e.g. include `role`/`accessRoles` when the caller

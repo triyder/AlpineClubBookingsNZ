@@ -166,13 +166,11 @@ async function membersWithConfirmedPartner(
     },
     select: { memberAId: true, memberBId: true },
   });
+  const candidates = new Set(memberIds);
   const partnered = new Set<string>();
   for (const link of links) {
-    for (const memberId of memberIds) {
-      if (link.memberAId === memberId || link.memberBId === memberId) {
-        partnered.add(memberId);
-      }
-    }
+    if (candidates.has(link.memberAId)) partnered.add(link.memberAId);
+    if (candidates.has(link.memberBId)) partnered.add(link.memberBId);
   }
   return partnered;
 }

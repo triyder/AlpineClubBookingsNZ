@@ -467,6 +467,19 @@ export async function listOutstandingPartnerInviteTokens(now = new Date()) {
 }
 
 /**
+ * Guarded delete shared by the admin revoke and the inviter's own cancel:
+ * only remove the row while it is still outstanding. If a concurrent claim
+ * set confirmedAt between the caller's read and here, count is 0 and we
+ * return false instead of throwing (P2025) or deleting claim history.
+ */
+async function deleteOutstandingPartnerInviteToken(tokenId: string): Promise<boolean> {
+  const deleted = await prisma.partnerInviteToken.deleteMany({
+    where: { id: tokenId, confirmedAt: null },
+  });
+  return deleted.count > 0;
+}
+
+/**
  * Admin revocation: hard-delete a single OUTSTANDING token. Returns false when
  * there is no outstanding token to revoke — the id is unknown, the token has
  * already been claimed (confirmedAt set), or it was expired-and-swept/revoked.
@@ -484,13 +497,7 @@ export async function revokePartnerInviteToken(params: {
     return false;
   }
 
-  // Guarded delete: only remove the row while it is still outstanding. If a
-  // concurrent claim set confirmedAt between the read above and here, count is
-  // 0 and we return false instead of throwing (P2025) or deleting claim history.
-  const deleted = await prisma.partnerInviteToken.deleteMany({
-    where: { id: token.id, confirmedAt: null },
-  });
-  if (deleted.count === 0) {
+  if (!(await deleteOutstandingPartnerInviteToken(token.id))) {
     return false;
   }
 
@@ -548,12 +555,7 @@ export async function cancelOwnPartnerInviteToken(params: {
     return false;
   }
 
-  // Same guarded delete as the admin revoke: only remove the row while it is
-  // still outstanding, so a concurrent claim wins and its history is kept.
-  const deleted = await prisma.partnerInviteToken.deleteMany({
-    where: { id: token.id, confirmedAt: null },
-  });
-  if (deleted.count === 0) {
+  if (!(await deleteOutstandingPartnerInviteToken(token.id))) {
     return false;
   }
 

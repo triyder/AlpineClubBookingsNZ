@@ -249,6 +249,8 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
             Waiting for <strong>{state.pendingPartnerInvite.invitedEmail}</strong> to
             join and accept your invitation — accepting will record them as your
             partner.
+            {!canManage &&
+              " Contact an admin if you need to cancel the invitation."}
           </p>
           {canManage && (
             <Button
