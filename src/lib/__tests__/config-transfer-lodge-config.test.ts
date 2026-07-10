@@ -33,7 +33,7 @@ function sourceDb(): ReadDb {
     },
     lodgeBed: {
       findMany: vi.fn().mockResolvedValue([
-        { name: "A1", sortOrder: 1, active: true, room: { name: "Bunk A", lodge: { slug: "main" } } },
+        { name: "A1", sortOrder: 1, active: true, bedType: "BUNK_TOP", bunkGroup: "A", room: { name: "Bunk A", lodge: { slug: "main" } } },
       ]),
     },
     season: {
@@ -105,7 +105,7 @@ describe("config-transfer lodge-config (per-lodge folders)", () => {
 
     const beds = parseCsv(strFromU8(files.get(BEDS)!));
     expect(beds.headers).not.toContain("lodgeSlug");
-    expect(beds.rows[0]).toMatchObject({ roomName: "Bunk A", name: "A1" });
+    expect(beds.rows[0]).toMatchObject({ roomName: "Bunk A", name: "A1", bedType: "BUNK_TOP", bunkGroup: "A" });
 
     const seasons = parseCsv(strFromU8(files.get(SEASONS)!));
     expect(seasons.rows[0]).toMatchObject({ name: "Winter", startDate: "2026-06-01" });

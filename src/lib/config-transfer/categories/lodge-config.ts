@@ -49,7 +49,7 @@ const RATES_CSV = "season-rates.csv";
 
 const LODGE_FIELDS = ["slug", "name", "active", "travelNote", "doorCode", "isDefault"] as const;
 const ROOM_FIELDS = ["name", "sortOrder", "active", "notes"] as const;
-const BED_FIELDS = ["roomName", "name", "sortOrder", "active"] as const;
+const BED_FIELDS = ["roomName", "name", "sortOrder", "active", "bedType", "bunkGroup"] as const;
 const SEASON_FIELDS = ["name", "type", "startDate", "endDate", "active"] as const;
 const RATE_FIELDS = ["seasonName", "ageTier", "isMember", "pricePerNightCents"] as const;
 
@@ -209,7 +209,7 @@ interface SeasonCurrent {
 interface LodgeBatch {
   lodges: Map<string, LodgeCurrent>; // by slug
   rooms: Map<string, { id: string; sortOrder: number; active: boolean; notes: string | null }>; // lodgeId/name
-  beds: Map<string, { id: string; sortOrder: number; active: boolean }>; // lodgeId/roomName/name
+  beds: Map<string, { id: string; sortOrder: number; active: boolean; bedType: string; bunkGroup: string | null }>; // lodgeId/roomName/name
   seasons: Map<string, SeasonCurrent>; // lodgeId/name (first match)
   seasonsById: Map<string, SeasonCurrent>;
   seasonsByLodge: Map<string, Array<{ id: string; name: string; startDate: Date; endDate: Date }>>;
@@ -233,7 +233,7 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
     }),
     db.lodgeBed.findMany({
       where: { room: { lodgeId: { in: lodgeIds } } },
-      select: { id: true, name: true, sortOrder: true, active: true, room: { select: { lodgeId: true, name: true } } },
+      select: { id: true, name: true, sortOrder: true, active: true, bedType: true, bunkGroup: true, room: { select: { lodgeId: true, name: true } } },
     }),
     db.season.findMany({
       where: { lodgeId: { in: lodgeIds } },
@@ -308,7 +308,7 @@ export const lodgeConfigExporter: CategoryExporter = {
     });
     const beds = await ctx.db.lodgeBed.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-      select: { name: true, sortOrder: true, active: true, room: { select: { name: true, lodge: { select: { slug: true } } } } },
+      select: { name: true, sortOrder: true, active: true, bedType: true, bunkGroup: true, room: { select: { name: true, lodge: { select: { slug: true } } } } },
     });
     const seasons = await ctx.db.season.findMany({
       orderBy: [{ startDate: "asc" }, { name: "asc" }],
@@ -330,7 +330,7 @@ export const lodgeConfigExporter: CategoryExporter = {
       map.set(slug, list);
     };
     for (const r of rooms) push(roomsBy, r.lodge.slug, { name: r.name, sortOrder: r.sortOrder, active: r.active, notes: r.notes });
-    for (const b of beds) push(bedsBy, b.room.lodge.slug, { roomName: b.room.name, name: b.name, sortOrder: b.sortOrder, active: b.active });
+    for (const b of beds) push(bedsBy, b.room.lodge.slug, { roomName: b.room.name, name: b.name, sortOrder: b.sortOrder, active: b.active, bedType: b.bedType, bunkGroup: b.bunkGroup });
     for (const s of seasons) push(seasonsBy, s.lodge.slug, { name: s.name, type: s.type, startDate: toDateStr(s.startDate), endDate: toDateStr(s.endDate), active: s.active });
     for (const r of rates) push(ratesBy, r.season.lodge.slug, { seasonName: r.season.name, ageTier: r.ageTier, isMember: r.isMember, pricePerNightCents: r.pricePerNightCents });
 
@@ -425,8 +425,11 @@ function parseLodgeFolder(
     const blankOk = ctxMode === "merge" && !!current;
     const sortOrder = blankOk && nz(raw.sortOrder) === null ? 0 : v.int("sortOrder", raw.sortOrder);
     const active = blankOk && nz(raw.active) === null ? false : v.bool("active", raw.active);
+    // bedType has a DB default (SINGLE): blank means the default on create/
+    // overwrite and keep-existing in merge (same treatment as the chore enums).
+    const bedType = nz(raw.bedType) === null ? "SINGLE" : v.enum("bedType", "BedType", raw.bedType);
     if (!v.ok) return;
-    out.beds.push({ raw, roomName, name, data: { sortOrder, active } });
+    out.beds.push({ raw, roomName, name, data: { sortOrder, active, bedType: bedType as never, bunkGroup: nz(raw.bunkGroup) } });
   });
 
   readCsvRows(files, paths.seasons).forEach((raw, i) => {
@@ -520,7 +523,7 @@ async function planLodgeConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
     for (const row of parsed.beds) {
       const key = `${slug}/${row.roomName}/${row.name}`;
       const current = lodgeId ? batch.beds.get(`${lodgeId}/${row.roomName}/${row.name}`) ?? null : null;
-      fingerprintParts.push(`lodge-bed:${key}:${current ? hashRow(["sortOrder", "active"], current) : "absent"}`);
+      fingerprintParts.push(`lodge-bed:${key}:${current ? hashRow(["sortOrder", "active", "bedType", "bunkGroup"], current) : "absent"}`);
       const write = updateDataForMode(ctx.mode, row.raw, row.data);
       const changed = changedFields(write, current);
       items.push({ entity: "lodge-bed", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
