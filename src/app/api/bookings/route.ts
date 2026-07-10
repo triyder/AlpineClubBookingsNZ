@@ -47,8 +47,16 @@ import {
   createConfirmedBooking,
   createDraftBooking,
   createWaitlistedBooking,
+  RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS,
   type BookingGuestInput,
 } from "@/lib/booking-create";
+import { resolveBookingDateEnvelope } from "@/lib/booking-create-guests";
+import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
+import { isXeroConnected } from "@/lib/xero";
+import {
+  getEffectiveXeroLockDate,
+  getXeroLockDates,
+} from "@/lib/xero-organisation";
 import { LodgeBookingEligibilityError } from "@/lib/lodge-access";
 import {
   BookingMemberNightConflictError,
@@ -60,7 +68,13 @@ import {
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import {
+  addDaysDateOnly,
+  formatDateOnly,
+  getTodayDateOnly,
+  isDateOnlyString,
+  parseDateOnly,
+} from "@/lib/date-only";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import {
   hasAccessRole,
@@ -115,6 +129,11 @@ const createBookingSchema = z.object({
     .enum(BOOKING_PAYMENT_METHOD_VALUES)
     .optional()
     .default(DEFAULT_BOOKING_PAYMENT_METHOD),
+  // Retroactive booking + email-choice flags (#1695). Admin-only, gated below;
+  // a caller-controlled boolean can never widen authority (mirrors #1668).
+  allowPastDates: z.boolean().optional(),
+  confirmOverCapacity: z.boolean().optional(),
+  notifyMember: z.boolean().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -148,6 +167,55 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
       { status: 400 }
+    );
+  }
+
+  // Retroactive-create + email-choice gating (issue #1695), mirroring the
+  // #1668 modify-dates override gating: any of the three flags present (even a
+  // `false` value) requires the booking-management ADMIN role, so a
+  // caller-controlled boolean can never widen the standard path's authority.
+  const {
+    allowPastDates: allowPastDatesFlag,
+    confirmOverCapacity: confirmOverCapacityFlag,
+    notifyMember: notifyMemberFlag,
+  } = parsed.data;
+  const hasOverrideFlags =
+    allowPastDatesFlag !== undefined ||
+    confirmOverCapacityFlag !== undefined ||
+    notifyMemberFlag !== undefined;
+  if (hasOverrideFlags && actorRole !== "ADMIN") {
+    return NextResponse.json(
+      { error: "Admin override is not available for this account" },
+      { status: 403 },
+    );
+  }
+  if (
+    (allowPastDatesFlag !== undefined || notifyMemberFlag !== undefined) &&
+    !parsed.data.forMemberId
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "allowPastDates and notifyMember are only available when booking on behalf of a member",
+      },
+      { status: 400 },
+    );
+  }
+  if (confirmOverCapacityFlag !== undefined && allowPastDatesFlag !== true) {
+    return NextResponse.json(
+      { error: "confirmOverCapacity requires allowPastDates" },
+      { status: 400 },
+    );
+  }
+  // Drafts do not invoice at create time, so the create-time Xero lock-date
+  // guard would be skipped; block retroactive drafts/waitlists (relaxable).
+  if (
+    allowPastDatesFlag === true &&
+    (parsed.data.draft === true || parsed.data.waitlist === true)
+  ) {
+    return NextResponse.json(
+      { error: "Retroactive bookings cannot be saved as a draft or waitlisted" },
+      { status: 400 },
     );
   }
 
@@ -292,9 +360,69 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Retroactive booking (#1695): a past check-in is allowed only for an admin
+  // on-behalf create that opted into allowPastDates, and only within the
+  // rolling lookback. Everything else keeps the original today-or-future rule.
+  const retroactiveCreate =
+    parsed.data.allowPastDates === true && isAuthorizedOnBehalf;
   const today = getTodayDateOnly();
+  // The flag is strictly retroactive: a today-or-future check-in carrying it is
+  // rejected rather than silently widening normal-create behaviour (lead-time
+  // skip, capacity warn-and-confirm belong to past stays only).
+  if (retroactiveCreate && checkIn >= today) {
+    return NextResponse.json(
+      { error: "allowPastDates requires a check-in in the past" },
+      { status: 400 },
+    );
+  }
+  // Guards run on the RESOLVED stay envelope: guest nights can expand the stay
+  // before the requested check-in (#713), and the envelope check-in is what the
+  // booking — and its Xero invoice issue date — persists.
+  const envelopeCheckIn = retroactiveCreate
+    ? resolveBookingDateEnvelope(guestInputs, checkIn, checkOut).checkIn
+    : checkIn;
   if (checkIn < today) {
-    return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
+    if (!retroactiveCreate) {
+      return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
+    }
+    if (envelopeCheckIn < addDaysDateOnly(today, -RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS)) {
+      return NextResponse.json(
+        {
+          error: `Retroactive bookings can go back at most ${RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS} days.`,
+        },
+        { status: 400 },
+      );
+    }
+    // Xero lock-date guard: the booking's invoice issue date is its check-in,
+    // so a past check-in must not fall on or before a locked accounting period.
+    // Skipped when Xero is not connected; fails closed (retryable 503) when the
+    // lock dates cannot be read. The Xero call stays outside any DB transaction.
+    if (xeroIntegrationEnabled && (await isXeroConnected())) {
+      let lockDates;
+      try {
+        lockDates = await getXeroLockDates();
+      } catch {
+        return NextResponse.json(
+          {
+            error: "Could not verify the Xero lock dates. Please try again.",
+            code: "XERO_LOCK_DATE_CHECK_FAILED",
+          },
+          { status: 503 },
+        );
+      }
+      const effectiveLock = getEffectiveXeroLockDate(lockDates);
+      if (effectiveLock && envelopeCheckIn <= effectiveLock) {
+        const lockDate = formatDateOnly(effectiveLock);
+        return NextResponse.json(
+          {
+            error: `The check-in date falls on or before the Xero lock date (${lockDate}). Unlock the period in Xero (Settings → Advanced → Financial settings → Lock dates) or choose a later check-in.`,
+            code: "XERO_PERIOD_LOCKED",
+            lockDate,
+          },
+          { status: 409 },
+        );
+      }
+    }
   }
 
   const bookingLodgeId = await resolveOptionalActiveLodgeId(
@@ -474,20 +602,25 @@ export async function POST(request: NextRequest) {
     }
 
     internetBankingSettings = await loadInternetBankingPaymentSettings();
-    const leadTime = checkInternetBankingLeadTime({
-      checkIn,
-      settings: internetBankingSettings,
-    });
-    if (!leadTime.allowed) {
-      return NextResponse.json(
-        {
-          error: leadTime.unavailableReason ?? "Internet Banking is not available for this check-in date.",
-          code: "INTERNET_BANKING_CUTOFF",
-          minimumDaysBeforeCheckIn: leadTime.minimumDaysBeforeCheckIn,
-          checkIn: leadTime.checkIn,
-        },
-        { status: 400 }
-      );
+    // The lead-time cutoff exists to collect payment before the stay; for a
+    // retroactive booking the stay already happened, so skip the rejection
+    // (the module-enabled check above still applies). (#1695)
+    if (!retroactiveCreate) {
+      const leadTime = checkInternetBankingLeadTime({
+        checkIn,
+        settings: internetBankingSettings,
+      });
+      if (!leadTime.allowed) {
+        return NextResponse.json(
+          {
+            error: leadTime.unavailableReason ?? "Internet Banking is not available for this check-in date.",
+            code: "INTERNET_BANKING_CUTOFF",
+            minimumDaysBeforeCheckIn: leadTime.minimumDaysBeforeCheckIn,
+            checkIn: leadTime.checkIn,
+          },
+          { status: 400 }
+        );
+      }
     }
   }
 
@@ -533,6 +666,9 @@ export async function POST(request: NextRequest) {
       internetBankingSettings,
       memberReviewJustification,
       lodgeId: parsed.data.lodgeId,
+      allowPastDates: retroactiveCreate,
+      confirmOverCapacity: parsed.data.confirmOverCapacity,
+      notifyMember: parsed.data.notifyMember,
     });
 
     if (outcome.type === "created") {
@@ -571,6 +707,7 @@ export async function POST(request: NextRequest) {
         memberReviewJustification,
         lodgeId: parsed.data.lodgeId,
         alternateLodgeIds: parsed.data.alternateLodgeIds,
+        notifyMember: parsed.data.notifyMember,
       });
       return NextResponse.json(waitlisted.booking, { status: 201 });
     } catch (waitlistErr) {
@@ -623,6 +760,15 @@ export async function POST(request: NextRequest) {
     if (err instanceof BookingMemberNightConflictError) {
       return NextResponse.json(
         getBookingMemberNightConflictResponse(err.conflicts),
+        { status: 409 },
+      );
+    }
+    // Retroactive over-capacity warn-and-confirm (#1695): surface the code and
+    // the over-capacity nights so the admin can confirm and resubmit. Imported
+    // from its own module so blanket @/lib/capacity mocks don't break instanceof.
+    if (err instanceof OverCapacityConfirmationRequiredError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code, nightDetails: err.nightDetails },
         { status: 409 },
       );
     }

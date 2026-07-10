@@ -18,9 +18,17 @@ interface BookingCalendarProps {
   // Lodge whose availability and seasons the calendar shows (multi-lodge
   // phase 8). Omitted/null = the club's default lodge.
   lodgeId?: string | null;
+  // Admin retroactive booking (#1695): when true, days back to 365 days before
+  // today become selectable (muted, warn-and-confirm on full nights). Default
+  // false keeps the member flow byte-identical.
+  allowPastDates?: boolean;
 }
 
-export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOut, lodgeId }: BookingCalendarProps) {
+// Retroactive bookings may reach at most this many days into the past. Kept in
+// sync with RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS on the server (#1695).
+const RETROACTIVE_LOOKBACK_DAYS = 365;
+
+export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOut, lodgeId, allowPastDates = false }: BookingCalendarProps) {
   const { lodgeCapacity } = useClubIdentity();
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
@@ -66,12 +74,18 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  // Earliest clickable day. Under the retroactive flag this drops 365 days back
+  // (local-date math, consistent with `today`); otherwise it is today.
+  const minSelectable = new Date(today);
+  if (allowPastDates) {
+    minSelectable.setDate(minSelectable.getDate() - RETROACTIVE_LOOKBACK_DAYS);
+  }
 
   function handleDayClick(day: number) {
     const date = new Date(currentMonth.year, currentMonth.month, day);
     date.setHours(0, 0, 0, 0);
 
-    if (date < today) return;
+    if (date < minSelectable) return;
 
     if (selecting === "checkIn") {
       setCheckIn(date);
@@ -91,7 +105,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     }
   }
 
-  function getDayClass(day: number, available: number, isPast: boolean, dateStr: string) {
+  function getDayClass(day: number, available: number, isPast: boolean, isRetroPast: boolean, dateStr: string) {
     const date = new Date(currentMonth.year, currentMonth.month, day);
     date.setHours(0, 0, 0, 0);
 
@@ -108,6 +122,10 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
 
     if (isPast) {
       classes += "text-gray-300 cursor-not-allowed ";
+    } else if (isRetroPast) {
+      // Muted-but-clickable tint for a past date open to retroactive booking:
+      // distinct from the availability colours and the disabled/full grey.
+      classes += "bg-slate-100 text-slate-500 italic hover:bg-slate-200 cursor-pointer ";
     } else if (available <= 0) {
       classes += "bg-gray-100 text-gray-400 cursor-not-allowed ";
     } else if (available <= 5) {
@@ -185,7 +203,10 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
           const dateStr = formatLocalDateOnly(date);
           const occupied = availability[dateStr] ?? 0;
           const available = lodgeCapacity - occupied;
-          const isPast = date < today;
+          // A day before the earliest selectable day stays disabled; a past day
+          // still inside the retroactive window is clickable but muted (#1695).
+          const isPast = date < minSelectable;
+          const isRetroPast = allowPastDates && !isPast && date < today;
           const dateLabel = date.toLocaleDateString(APP_LOCALE, {
             weekday: "long",
             day: "numeric",
@@ -210,20 +231,26 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
               : inRange
                 ? ", within your selected stay"
                 : "";
+          const retroSuffix = isRetroPast
+            ? ", past date — retroactive booking"
+            : "";
           const dayLabel =
             (isPast
               ? `${dateLabel}, unavailable`
               : available <= 0
                 ? `${dateLabel}, full`
                 : `${dateLabel}, ${available} of ${lodgeCapacity} beds free`) +
+            retroSuffix +
             selectionSuffix;
 
           return (
             <button
               key={day}
               onClick={() => handleDayClick(day)}
-              className={getDayClass(day, available, isPast, dateStr)}
-              disabled={isPast || available <= 0}
+              className={getDayClass(day, available, isPast, isRetroPast, dateStr)}
+              // Full past nights stay clickable under the retroactive flag —
+              // over-capacity is warn-and-confirm at submit, not a hard block.
+              disabled={isPast || (available <= 0 && !allowPastDates)}
               aria-label={dayLabel}
               aria-pressed={isCheckIn || isCheckOut}
             >

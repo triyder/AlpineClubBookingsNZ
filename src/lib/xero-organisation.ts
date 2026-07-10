@@ -8,6 +8,7 @@
  */
 
 import logger from "@/lib/logger";
+import { parseDateOnly } from "@/lib/date-only";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
 
 const ORG_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
@@ -58,4 +59,124 @@ export async function getXeroFinancialYearEndMonth(
     // Fall back to the last cached value if we have one, otherwise null.
     return cached?.month ?? null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Xero lock dates (#1695): the accounting period lock date and end-of-year
+// lock date. A retroactive booking whose check-in (its Xero invoice issue date)
+// falls on or before the effective lock date is rejected at create time, so the
+// invoice never has to post into a locked period. Cached with a short TTL — the
+// admin can unlock the period in Xero and retry within a few minutes.
+// ---------------------------------------------------------------------------
+
+const LOCK_DATES_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+export interface XeroLockDates {
+  periodLockDate: Date | null;
+  endOfYearLockDate: Date | null;
+}
+
+interface OrgLockDatesCacheEntry {
+  lockDates: XeroLockDates;
+  fetchedAt: number;
+}
+
+let lockDatesCache: OrgLockDatesCacheEntry | null = null;
+
+/**
+ * Parse a Xero lock-date string into a date-only Date, or null when unset or
+ * unparseable. xero-node types these as optional strings; the value may be a
+ * Microsoft-JSON `/Date(1234567890000+1300)/` timestamp or an ISO date string.
+ */
+function parseXeroLockDate(value: string | undefined | null): Date | null {
+  if (!value) return null;
+
+  const msJson = /\/Date\((\d+)/.exec(value);
+  if (msJson) {
+    const epochMs = Number(msJson[1]);
+    if (Number.isFinite(epochMs)) {
+      // Normalize to a date-only Date in UTC (lock dates are whole days).
+      const parsed = parseDateOnly(new Date(epochMs).toISOString().slice(0, 10));
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+  } else {
+    const parsed = parseDateOnly(value.slice(0, 10));
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  // A SET but unrecognisable lock date must not silently disable the guard —
+  // treat-as-unset fails open, so make the format drift loud.
+  logger.warn({ value }, "Unparseable Xero lock date; treating as unset");
+  return null;
+}
+
+/**
+ * Returns the connected Xero organisation's period and end-of-year lock dates
+ * as date-only Dates (null when unset). Cached in-process for a few minutes.
+ *
+ * Unlike getXeroFinancialYearEndMonth, this THROWS on a fetch failure when no
+ * fresh cache is available: the retroactive-booking route fails closed rather
+ * than silently skipping the lock-date guard.
+ */
+export async function getXeroLockDates(
+  forceRefresh = false,
+): Promise<XeroLockDates> {
+  if (
+    !forceRefresh &&
+    lockDatesCache &&
+    Date.now() - lockDatesCache.fetchedAt < LOCK_DATES_CACHE_TTL_MS
+  ) {
+    return lockDatesCache.lockDates;
+  }
+
+  try {
+    const { xero, tenantId } = await getAuthenticatedXeroClient();
+    const response = await callXeroApi(
+      () => xero.accountingApi.getOrganisations(tenantId),
+      {
+        operation: "getOrganisations",
+        resourceType: "ORGANISATION",
+        workflow: "retroactiveBookingLockDates",
+        context: "xero-organisation getLockDates",
+      },
+    );
+    const org = response.body.organisations?.[0];
+    const lockDates: XeroLockDates = {
+      periodLockDate: parseXeroLockDate(org?.periodLockDate),
+      endOfYearLockDate: parseXeroLockDate(org?.endOfYearLockDate),
+    };
+    lockDatesCache = { lockDates, fetchedAt: Date.now() };
+    return lockDates;
+  } catch (error) {
+    // Fail closed: a fresh cache satisfies the caller, otherwise re-throw so
+    // the route returns a retryable error instead of skipping the guard.
+    if (
+      lockDatesCache &&
+      Date.now() - lockDatesCache.fetchedAt < LOCK_DATES_CACHE_TTL_MS
+    ) {
+      return lockDatesCache.lockDates;
+    }
+    logger.warn({ err: error }, "Failed to read Xero organisation lock dates");
+    throw error;
+  }
+}
+
+/**
+ * The effective lock date is the later of the two set dates: a booking must
+ * clear whichever period is locked further into the future. Null when neither
+ * is set.
+ */
+export function getEffectiveXeroLockDate(lockDates: XeroLockDates): Date | null {
+  const { periodLockDate, endOfYearLockDate } = lockDates;
+  if (periodLockDate && endOfYearLockDate) {
+    return periodLockDate.getTime() >= endOfYearLockDate.getTime()
+      ? periodLockDate
+      : endOfYearLockDate;
+  }
+  return periodLockDate ?? endOfYearLockDate ?? null;
+}
+
+// test seam
+export function resetXeroLockDatesCacheForTests(): void {
+  lockDatesCache = null;
 }

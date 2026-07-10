@@ -33,6 +33,12 @@ recommended reading paths.
   Xero activity) or **Recalculate** (reprice at season rates). Moving onto full
   nights requires an explicit over-capacity confirmation, and every override is
   audited and linked to any approved change request
+- Retroactive booking creation for a stay that already happened: a Full Admin or
+  Booking Officer can create a booking on behalf of a member with a past
+  check-in (up to 365 days back), guarded by the Xero organisation lock dates
+  (the check-in must clear the locked period, unlock it in Xero to proceed),
+  with over-capacity nights allowed via an explicit confirmation, an explicit
+  per-create choice of whether to email the member, and full audit metadata
 - Admin-editable public website pages and footer sections with sanitised HTML
   content, embed/text tokens where supported, and a menu generated from page
   settings (see `CONFIGURATION.md`, "Website Page Content" and "Website Site

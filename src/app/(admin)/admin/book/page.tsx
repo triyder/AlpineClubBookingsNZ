@@ -7,6 +7,14 @@ import { BookingCalendar } from "@/components/booking-calendar";
 import { GuestForm, type GuestData } from "@/components/guest-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -74,6 +82,23 @@ export default function AdminBookPage() {
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<BookingPaymentMethod>("stripe");
+  // Retroactive booking (#1695): record a stay that already happened.
+  const [allowPastDates, setAllowPastDates] = useState(false);
+  // Per-create member-email choice dialog (shown for every on-behalf confirm).
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
+  // Over-capacity warn-and-confirm nights returned by the server, plus the
+  // email choice to preserve across the confirm resubmit.
+  const [overCapacityNights, setOverCapacityNights] = useState<
+    { date: string; availableBeds: number }[] | null
+  >(null);
+  const [pendingNotifyMember, setPendingNotifyMember] = useState(true);
+
+  // A retroactive booking is one whose check-in is genuinely in the past (local
+  // date), with the flag on. Drives the guest-cap relaxation and the POST body.
+  const localToday = new Date();
+  localToday.setHours(0, 0, 0, 0);
+  const isRetroactive =
+    allowPastDates && checkIn !== null && checkIn < localToday;
 
   // Fetch family members for the selected member
   useEffect(() => {
@@ -118,6 +143,8 @@ export default function AdminBookPage() {
     setExpectedArrivalTime(null);
     setUseCredit(false);
     setError("");
+    setAllowPastDates(false);
+    setOverCapacityNights(null);
   }
 
   function handleMemberClear() {
@@ -133,11 +160,15 @@ export default function AdminBookPage() {
     setUseCredit(false);
     setError("");
     setFamilyMembers([]);
+    setAllowPastDates(false);
+    setOverCapacityNights(null);
   }
 
   function addFamilyMemberAsGuest(fm: FamilyMember) {
     if (guests.some((g) => g.memberId === fm.id)) return;
-    if (guests.length >= availableBeds) return;
+    // Retroactive bookings may exceed the live availability (over-capacity is
+    // warn-and-confirm at submit), so cap by lodge capacity instead.
+    if (!isRetroactive && guests.length >= availableBeds) return;
     setGuests([
       ...guests,
       {
@@ -164,6 +195,8 @@ export default function AdminBookPage() {
     setAppliedPromo(null);
     setUseCredit(false);
     setError("");
+    setAllowPastDates(false);
+    setOverCapacityNights(null);
   }
 
   async function handleDateSelect(ci: Date, co: Date) {
@@ -200,7 +233,9 @@ export default function AdminBookPage() {
       }
     }
 
-    if (guests.length > availableBeds) {
+    // Retroactive bookings can exceed live availability — over-capacity becomes
+    // a warn-and-confirm at submit, not a hard block here (#1695).
+    if (!isRetroactive && guests.length > availableBeds) {
       setError(`Only ${availableBeds} beds available for your dates`);
       return;
     }
@@ -258,7 +293,18 @@ export default function AdminBookPage() {
       .catch(() => setInternetBankingEnabled(false));
   }, []);
 
-  async function handleSubmit() {
+  // Every on-behalf confirm asks whether the member is emailed before it posts
+  // (#1695 / #1685 pattern). The "Confirm Booking" button opens the dialog.
+  function handleConfirmClick() {
+    setError("");
+    setOverCapacityNights(null);
+    setNotifyDialogOpen(true);
+  }
+
+  async function submitBooking(opts: {
+    notifyMember: boolean;
+    confirmOverCapacity?: boolean;
+  }) {
     setSubmitting(true);
     setError("");
     const checkInStr = formatLocalDateOnly(checkIn!);
@@ -285,17 +331,35 @@ export default function AdminBookPage() {
         memberReviewJustification: requiresAdminReviewLocal
           ? memberReviewJustification.trim() || undefined
           : undefined,
+        notifyMember: opts.notifyMember,
+        // allowPastDates only when the check-in is genuinely in the past; the
+        // server rejects the flag with a future check-in.
+        ...(isRetroactive ? { allowPastDates: true } : {}),
+        ...(opts.confirmOverCapacity ? { confirmOverCapacity: true } : {}),
       }),
     });
 
     if (res.ok) {
       const data = await res.json();
       router.push(`/bookings/${data.id}`);
-    } else {
-      const data = await res.json();
-      setError(data.error || "Failed to create booking");
-      setSubmitting(false);
+      return;
     }
+
+    const data = await res.json();
+    // Over-capacity warn-and-confirm: show the shortfall and let the admin
+    // resubmit with confirmOverCapacity, preserving the email choice.
+    if (data.code === "OVER_CAPACITY_CONFIRM_REQUIRED") {
+      setOverCapacityNights(
+        Array.isArray(data.nightDetails) ? data.nightDetails : [],
+      );
+      setPendingNotifyMember(opts.notifyMember);
+      setSubmitting(false);
+      return;
+    }
+    // XERO_PERIOD_LOCKED / XERO_LOCK_DATE_CHECK_FAILED and every other error
+    // surface verbatim in the existing banner.
+    setError(data.error || "Failed to create booking");
+    setSubmitting(false);
   }
 
   async function handleSaveAsDraft() {
@@ -408,11 +472,40 @@ export default function AdminBookPage() {
                 loading={lodgesLoading}
               />
             </div>
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+              <label className="flex items-start gap-2 text-sm text-slate-800 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={allowPastDates}
+                  onChange={(e) => {
+                    setAllowPastDates(e.target.checked);
+                    setOverCapacityNights(null);
+                    // Unticking must not strand an already-selected past range
+                    // that only the server would reject at submit.
+                    if (!e.target.checked && checkIn && checkIn < localToday) {
+                      setCheckIn(null);
+                      setCheckOut(null);
+                    }
+                  }}
+                  className="mt-0.5 rounded border-slate-300"
+                />
+                <span>
+                  <span className="font-medium">
+                    Record a past stay (retroactive booking)
+                  </span>
+                  <span className="block text-xs text-slate-600">
+                    Someone already stayed — record the booking after the fact.
+                    Allowed up to 365 days back.
+                  </span>
+                </span>
+              </label>
+            </div>
             <BookingCalendar
               onDateSelect={handleDateSelect}
               selectedCheckIn={checkIn}
               selectedCheckOut={checkOut}
               lodgeId={lodgeId}
+              allowPastDates={allowPastDates}
             />
           </CardContent>
         </Card>
@@ -434,6 +527,14 @@ export default function AdminBookPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {isRetroactive && guests.length > availableBeds && (
+              <div className="rounded-md bg-orange-50 p-3 text-sm text-orange-800">
+                This retroactive booking exceeds the {availableBeds} bed
+                {availableBeds === 1 ? "" : "s"} available for these past dates.
+                You can still create it \u2014 you will confirm the over-capacity
+                override at the final step.
+              </div>
+            )}
             {familyMembers.length > 0 && (
               <div className="space-y-2">
                 <p className="text-sm font-medium text-muted-foreground">
@@ -458,7 +559,10 @@ export default function AdminBookPage() {
                               : "outline"
                         }
                         size="sm"
-                        disabled={alreadyAdded || guests.length >= availableBeds}
+                        disabled={
+                          alreadyAdded ||
+                          (!isRetroactive && guests.length >= availableBeds)
+                        }
                         onClick={() => addFamilyMemberAsGuest(fm)}
                       >
                         {alreadyAdded ? "\u2713 " : "+ "}
@@ -469,7 +573,11 @@ export default function AdminBookPage() {
                 </div>
               </div>
             )}
-            <GuestForm guests={guests} onGuestsChange={setGuests} maxGuests={availableBeds} />
+            <GuestForm
+              guests={guests}
+              onGuestsChange={setGuests}
+              maxGuests={isRetroactive ? lodgeCapacity : availableBeds}
+            />
             <div className="flex justify-between pt-4">
               <Button variant="outline" onClick={() => setStep("dates")}>
                 Back
@@ -713,6 +821,40 @@ export default function AdminBookPage() {
             </Card>
           )}
 
+          {isRetroactive && (
+            <div className="rounded-md bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700">
+              Recording a past stay ({checkIn!.toLocaleDateString("en-NZ")}). The
+              member email is optional (you choose on confirm); drafts are not
+              available for retroactive bookings.
+            </div>
+          )}
+
+          {overCapacityNights && (
+            <div className="rounded-md border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900">
+              <p className="font-medium">Some nights are over lodge capacity</p>
+              <ul className="mt-2 list-disc pl-5">
+                {overCapacityNights.map((n) => (
+                  <li key={n.date}>
+                    {n.date}: {Math.abs(n.availableBeds)} over capacity
+                  </li>
+                ))}
+              </ul>
+              <Button
+                className="mt-3"
+                variant="destructive"
+                disabled={submitting}
+                onClick={() =>
+                  void submitBooking({
+                    notifyMember: pendingNotifyMember,
+                    confirmOverCapacity: true,
+                  })
+                }
+              >
+                Confirm over-capacity and create
+              </Button>
+            </div>
+          )}
+
           <div className="flex justify-between">
             <Button variant="outline" onClick={() => setStep("guests")}>
               Back
@@ -721,12 +863,17 @@ export default function AdminBookPage() {
               <Button
                 variant="outline"
                 onClick={handleSaveAsDraft}
-                disabled={savingDraft || submitting}
+                disabled={savingDraft || submitting || isRetroactive}
+                title={
+                  isRetroactive
+                    ? "Retroactive bookings can't be saved as a draft"
+                    : undefined
+                }
               >
                 {savingDraft ? "Saving draft..." : "Save as Draft"}
               </Button>
               <Button
-                onClick={handleSubmit}
+                onClick={handleConfirmClick}
                 disabled={submitting || savingDraft}
                 size="lg"
               >
@@ -736,6 +883,47 @@ export default function AdminBookPage() {
           </div>
         </div>
       )}
+
+      {/* Per-create member-email choice (#1695 / #1685 pattern). Shown for every
+          on-behalf confirm; both choices create the booking. */}
+      <Dialog
+        open={notifyDialogOpen}
+        onOpenChange={(open) => !submitting && setNotifyDialogOpen(open)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Email the member about this booking?</DialogTitle>
+            <DialogDescription>
+              The booking will be created either way. Choose whether{" "}
+              {selectedMember?.firstName ?? "the member"} receives the standard
+              confirmation / hold email — your choice is recorded in the audit
+              log. A Xero invoice email (Internet Banking) is still sent
+              regardless of this choice.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              disabled={submitting}
+              onClick={() => {
+                setNotifyDialogOpen(false);
+                void submitBooking({ notifyMember: false });
+              }}
+            >
+              Create without emailing
+            </Button>
+            <Button
+              disabled={submitting}
+              onClick={() => {
+                setNotifyDialogOpen(false);
+                void submitBooking({ notifyMember: true });
+              }}
+            >
+              Create and email member
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

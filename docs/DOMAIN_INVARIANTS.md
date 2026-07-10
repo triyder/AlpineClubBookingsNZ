@@ -607,6 +607,45 @@ mark a different ask as applied — closing the approve → apply trail. The mod
 same input (same date resolution, capacity signal, and member-night conflict
 check), so the operator never sees a clean preview for a move that would fail.
 
+Booking **creation** is normally today-or-future: `POST /api/bookings` and the
+create service both reject a past check-in ("Cannot book in the past"). Issue
+#1695 adds an **admin-only, on-behalf-only** exception — the same
+`bookingManagementAuthorizationRole(session.user) === "ADMIN"` gate as #1668 —
+so a Full Admin or Booking Officer can record a stay that already happened. The
+opt-in `allowPastDates` flag (valid only with `forMemberId`, and only with a
+check-in strictly in the past — a today-or-future check-in carrying it is a
+400) permits a past check-in within a **365-day rolling lookback**
+(`RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS`); it is enforced at the route **and**
+re-checked in `createConfirmedBooking` against the **resolved stay envelope**
+(guest nights can expand the stay before the requested check-in, #713 — the
+route's lookback and lock-date guards also run on the envelope check-in).
+Two internal callers legitimately create a booking whose check-in is already
+past and carry the service-only `allowPastCheckIn` marker instead: group join
+(the child inherits the organiser's whole-stay dates, #1387) and cross-lodge
+waitlist confirm (a 48-hour offer accepted after NZ midnight) — the marker
+skips only the past-date rejection, never the retroactive semantics, and is
+not exposed via the API. Any of the three flags (`allowPastDates`,
+`confirmOverCapacity`, `notifyMember`) present without the ADMIN role is a
+403; the flag combination is validated (flag without `forMemberId` → 400,
+`confirmOverCapacity` without `allowPastDates` → 400, retroactive
+`draft`/`waitlist` → 400). Because a
+retroactive booking invoices at its check-in (the invoice **issue date stays =
+checkIn**, no clamp), a create-time **Xero lock-date guard** protects it: when
+Xero is connected the route reads the organisation's `periodLockDate` /
+`endOfYearLockDate` (`getXeroLockDates`) and rejects a check-in on or before the
+effective lock date (409 `XERO_PERIOD_LOCKED`, with unlock instructions). The
+guard is **skipped when Xero is not connected** and **fails closed** (retryable
+503 `XERO_LOCK_DATE_CHECK_FAILED`) when the lock dates cannot be read; the Xero
+call is made outside any DB transaction and its result is cached ~5 minutes.
+Over-capacity past nights are **warn-and-confirm** (the same
+`OverCapacityConfirmationRequiredError` → 409 `OVER_CAPACITY_CONFIRM_REQUIRED`
+contract as #1668, capacity lock still taken, `capacityOverridden` recorded).
+The member confirmation / hold email is an **explicit per-create choice**
+(`notifyMember`, honoured only for on-behalf creates) recorded in the
+`booking.created_on_behalf` audit metadata alongside `allowPastDates`,
+`confirmOverCapacity`, and `capacityOverridden`; `sendAdminNewBookingAlert` and
+the Xero invoice email are unaffected by the choice.
+
 A booking left with only non-adults (YOUTH/CHILD/INFANT) requires admin
 approval regardless of how it got there or whether it was already paid: every
 edit path — including single-guest self-removal, which is never blocked for a

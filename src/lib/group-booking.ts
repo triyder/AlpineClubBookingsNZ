@@ -717,6 +717,9 @@ export async function joinGroupBookingAsMember(
     // Roster row is written inside the booking transaction (#1039 item 2) so
     // a concurrent duplicate join rolls the booking back atomically.
     groupJoin: { groupBookingId: group.id, joinerMemberId: sessionUserId },
+    // Whole-stay unit (#1387): the child inherits the organiser's dates, which
+    // are legitimately in the past once the group stay is in progress.
+    allowPastCheckIn: true,
     // ORGANISER_PAYS: flag the child booking so the joiner is never billed and
     // cannot pay it; the organiser settles the group total. No-op for each-pays.
     organiserSettled,
