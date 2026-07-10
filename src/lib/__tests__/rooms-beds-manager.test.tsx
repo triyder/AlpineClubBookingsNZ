@@ -135,6 +135,8 @@ interface SeedBed {
   name: string;
   sortOrder: number;
   active: boolean;
+  bedType: "SINGLE" | "BUNK_TOP" | "BUNK_BOTTOM" | "DOUBLE";
+  bunkGroup: string | null;
 }
 
 interface SeedRoom {
@@ -152,7 +154,10 @@ interface SeedRoom {
 // shape needed to observe that a sibling's unsaved draft survived a save.
 function stubStatefulFetch(
   seed: SeedRoom[],
-  options: { roomDeleteFailure?: { status: number; error: string } } = {},
+  options: {
+    roomDeleteFailure?: { status: number; error: string };
+    bedCreateFailure?: { status: number; error: string };
+  } = {},
 ) {
   let rooms: SeedRoom[] = seed.map((room) => ({
     ...room,
@@ -203,6 +208,16 @@ function stubStatefulFetch(
           }));
           return respond(200, { bed });
         }
+      }
+
+      if (url.endsWith("/bed-allocation/beds") && method === "POST") {
+        if (options.bedCreateFailure) {
+          return respond(options.bedCreateFailure.status, {
+            error: options.bedCreateFailure.error,
+          });
+        }
+        // Otherwise fall through to the unhandled 404 (the create-fails path
+        // some tests rely on).
       }
 
       const roomMatch = url.match(/\/bed-allocation\/rooms\/([^/?]+)$/);
@@ -291,6 +306,8 @@ function seedBed(overrides: Partial<SeedBed> & { id: string; roomId: string }): 
     name: overrides.id,
     sortOrder: 0,
     active: true,
+    bedType: "SINGLE",
+    bunkGroup: null,
     ...overrides,
   };
 }
@@ -666,5 +683,164 @@ describe("RoomsBedsManager — room delete (#1674)", () => {
     // inline, not a transient toast.
     expect(screen.getByDisplayValue("Room 1")).toBeTruthy();
     expect(sonner.toast.error).not.toHaveBeenCalled();
+  });
+});
+
+describe("RoomsBedsManager — bed types & bunk pairing (#1675)", () => {
+  it("reveals the bunk-group input and a soft unpaired warning for a bunk type", async () => {
+    stubStatefulFetch([seedRoom({ id: "room-1", name: "Room 1" })]);
+    render(<RoomsBedsManager permissionMatrix={editorMatrix()} />);
+
+    await screen.findByDisplayValue("Room 1");
+
+    // The add-bed form exposes a Bed type select; a single bed shows no group.
+    const bedType = screen.getByLabelText("Bed type");
+    expect(screen.queryByLabelText("Bunk group")).toBeNull();
+
+    fireEvent.change(bedType, { target: { value: "BUNK_TOP" } });
+
+    // A bunk type reveals the group input plus a non-blocking unpaired hint.
+    expect(screen.getByLabelText("Bunk group")).toBeTruthy();
+    expect(screen.getByText(/Unpaired bunk/)).toBeTruthy();
+
+    // Naming the group clears the warning and shows the pairing label.
+    fireEvent.change(screen.getByLabelText("Bunk group"), {
+      target: { value: "Bunk A" },
+    });
+    expect(screen.queryByText(/Unpaired bunk/)).toBeNull();
+    expect(screen.getByText("Bunk A · top")).toBeTruthy();
+  });
+
+  it("renders the pairing labels for a fully paired bunk (both beds present)", async () => {
+    stubStatefulFetch([
+      seedRoom({
+        id: "room-1",
+        name: "Room 1",
+        beds: [
+          seedBed({
+            id: "bed-top",
+            roomId: "room-1",
+            name: "Upper",
+            bedType: "BUNK_TOP",
+            bunkGroup: "Bunk A",
+          }),
+          seedBed({
+            id: "bed-bottom",
+            roomId: "room-1",
+            name: "Lower",
+            bedType: "BUNK_BOTTOM",
+            bunkGroup: "Bunk A",
+          }),
+        ],
+      }),
+    ]);
+    render(<RoomsBedsManager permissionMatrix={editorMatrix()} />);
+
+    await screen.findByDisplayValue("Upper");
+    // A complete pair reads with its pairing labels and raises no unpaired hint.
+    expect(screen.getByText("Bunk A · top")).toBeTruthy();
+    expect(screen.getByText("Bunk A · bottom")).toBeTruthy();
+    expect(screen.queryByText(/Unpaired bunk/)).toBeNull();
+  });
+
+  it("shows the unpaired hint (not a pairing label) for a half-pair whose partner is gone", async () => {
+    // A lone bunk-top in "Bunk A" (no bottom persisted) must not imply a partner
+    // via "Bunk A · top"; it shows the plain type label and the soft hint.
+    stubStatefulFetch([
+      seedRoom({
+        id: "room-1",
+        name: "Room 1",
+        beds: [
+          seedBed({
+            id: "bed-top",
+            roomId: "room-1",
+            name: "Upper",
+            bedType: "BUNK_TOP",
+            bunkGroup: "Bunk A",
+          }),
+        ],
+      }),
+    ]);
+    render(<RoomsBedsManager permissionMatrix={editorMatrix()} />);
+
+    await screen.findByDisplayValue("Upper");
+    const row = rowOf("Upper");
+    // No pairing label (that would imply a partner); the soft hint shows instead.
+    // ("Bunk (top)" is not asserted here because the row's type <select> also
+    // carries a "Bunk (top)" <option> with the same text.)
+    expect(within(row).queryByText("Bunk A · top")).toBeNull();
+    expect(within(row).getByText(/Unpaired bunk/)).toBeTruthy();
+  });
+
+  it("marks a row Unsaved when only the bed type changes and keeps that draft across a sibling save", async () => {
+    stubStatefulFetch([
+      seedRoom({
+        id: "room-1",
+        name: "Room 1",
+        beds: [
+          seedBed({ id: "bed-a", roomId: "room-1", name: "Bed A" }),
+          seedBed({ id: "bed-b", roomId: "room-1", name: "Bed B" }),
+        ],
+      }),
+    ]);
+    render(<RoomsBedsManager permissionMatrix={editorMatrix()} />);
+
+    await screen.findByDisplayValue("Bed A");
+
+    // Change ONLY bed A's type (a non-bunk type, so no group input appears).
+    fireEvent.change(within(rowOf("Bed A")).getByLabelText("Bed type"), {
+      target: { value: "DOUBLE" },
+    });
+    expect(within(rowOf("Bed A")).getByText("Unsaved")).toBeTruthy();
+
+    // Save sibling bed B; bed A's type draft must survive the refetch.
+    fireEvent.change(screen.getByDisplayValue("Bed B"), {
+      target: { value: "Bed B edited" },
+    });
+    fireEvent.click(
+      within(rowOf("Bed B edited")).getByRole("button", { name: "Save" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Bed B edited")).toBeTruthy();
+    });
+    const selectA = within(rowOf("Bed A")).getByLabelText(
+      "Bed type",
+    ) as HTMLSelectElement;
+    expect(selectA.value).toBe("DOUBLE");
+    expect(within(rowOf("Bed A")).getByText("Unsaved")).toBeTruthy();
+  });
+
+  it("surfaces a server bunk-pairing rejection inline on the add-bed form", async () => {
+    const sonner = await import("sonner");
+    const message =
+      'Bunk group "Bunk A" already has two beds. A bunk pairs one top and one bottom.';
+    stubStatefulFetch([seedRoom({ id: "room-1", name: "Room 1" })], {
+      bedCreateFailure: { status: 409, error: message },
+    });
+    render(<RoomsBedsManager permissionMatrix={editorMatrix()} />);
+
+    await screen.findByDisplayValue("Room 1");
+    vi.mocked(sonner.toast.error).mockClear();
+
+    fireEvent.change(screen.getByPlaceholderText("Bed name"), {
+      target: { value: "Third bunk" },
+    });
+    fireEvent.change(screen.getByLabelText("Bed type"), {
+      target: { value: "BUNK_TOP" },
+    });
+    fireEvent.change(screen.getByLabelText("Bunk group"), {
+      target: { value: "Bunk A" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add Bed" }));
+
+    // The rejection surfaces inline as an alert AND toasts.
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toBe(message);
+    });
+    expect(sonner.toast.error).toHaveBeenCalled();
+    // The typed draft survives the failed create.
+    expect(screen.getByDisplayValue("Third bunk")).toBeTruthy();
+    expect(screen.getByDisplayValue("Bunk A")).toBeTruthy();
   });
 });

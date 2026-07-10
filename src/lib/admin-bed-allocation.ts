@@ -1,4 +1,10 @@
-import { Prisma, type BedAllocation, type LodgeRoom } from "@prisma/client";
+import {
+  Prisma,
+  type BedAllocation,
+  type BedType,
+  type LodgeBed,
+  type LodgeRoom,
+} from "@prisma/client";
 import { clubConfig } from "@/config/club";
 import {
   addDaysDateOnly,
@@ -77,6 +83,10 @@ interface DashboardBed {
   name: string;
   sortOrder: number;
   active: boolean;
+  // Descriptive bed type (#1675); does not change capacity (1/bed/night).
+  bedType: BedType;
+  // Pairing label; two beds max per (room, bunkGroup), one top + one bottom.
+  bunkGroup: string | null;
 }
 
 interface DashboardBooking {
@@ -571,19 +581,151 @@ export async function updateBedAllocationRoom(input: {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Bunk-pairing validation (#1675)
+//
+// A bunkGroup labels two physical beds stacked as a bunk: at most two beds may
+// share one (roomId, bunkGroup), and they must be one BUNK_TOP + one
+// BUNK_BOTTOM. A bunk type without a group is allowed (an unpaired bunk — the
+// UI surfaces it as a soft warning); a group without a bunk type is rejected.
+// These rules are enforced here rather than in the schema because a
+// "<=2 per group, one of each type" invariant cannot be a plain unique index,
+// and raw-SQL partial indexes are out of scope for this change.
+// ---------------------------------------------------------------------------
+
+function isBunkBedType(bedType: BedType): boolean {
+  return bedType === "BUNK_TOP" || bedType === "BUNK_BOTTOM";
+}
+
+function bedTypeLabel(bedType: BedType): string {
+  switch (bedType) {
+    case "BUNK_TOP":
+      return "bunk-top";
+    case "BUNK_BOTTOM":
+      return "bunk-bottom";
+    case "DOUBLE":
+      return "double";
+    default:
+      return "single";
+  }
+}
+
+function normalizeBunkGroup(value: string | null | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+function assertBunkGroupTypeConsistency(
+  bedType: BedType,
+  bunkGroup: string | null,
+) {
+  if (bunkGroup && !isBunkBedType(bedType)) {
+    throw new BedAllocationAdminError(
+      "A bunk group needs a bunk-top or bunk-bottom bed type.",
+      400,
+    );
+  }
+}
+
+// Serialise concurrent bunk-group writes for one room so two "add a bed to
+// Bunk A" requests can't both pass the membership check and create an invalid
+// three-bed (or two-top) group. The rule can't be a unique index and partial
+// indexes are out of scope (#1675), so a row lock on the owning room is the
+// serialisation point. Callers run this inside a transaction (self-wrapped when
+// no client is supplied).
+async function lockRoomForBunkGroup(roomId: string, db: BedAllocationDb) {
+  await db.$queryRaw`SELECT id FROM "LodgeRoom" WHERE id = ${roomId} FOR UPDATE`;
+}
+
+async function assertBunkGroupCanAdmit(input: {
+  roomId: string;
+  bunkGroup: string;
+  bedType: BedType;
+  // The bed being updated is excluded so re-saving it never conflicts with
+  // itself.
+  excludeBedId?: string;
+  db: BedAllocationDb;
+}) {
+  const others = await input.db.lodgeBed.findMany({
+    where: {
+      roomId: input.roomId,
+      bunkGroup: input.bunkGroup,
+      ...(input.excludeBedId ? { id: { not: input.excludeBedId } } : {}),
+    },
+    select: { id: true, bedType: true },
+  });
+
+  if (others.length >= 2) {
+    throw new BedAllocationAdminError(
+      `Bunk group "${input.bunkGroup}" already has two beds. A bunk pairs one top and one bottom.`,
+      409,
+    );
+  }
+
+  const partner = others[0];
+  if (partner && partner.bedType === input.bedType) {
+    throw new BedAllocationAdminError(
+      `Bunk group "${input.bunkGroup}" already has a ${bedTypeLabel(
+        input.bedType,
+      )} bed. Pair a top with a bottom.`,
+      409,
+    );
+  }
+}
+
 export async function createBedAllocationBed(input: {
   roomId: string;
   name: string;
   sortOrder?: number;
   active?: boolean;
+  bedType?: BedType;
+  bunkGroup?: string | null;
   db?: BedAllocationDb;
-}) {
+  // Explicit return type: the function references itself in the $transaction
+  // branch, which TS cannot infer through (TS7023), matching the other
+  // self-recursive transaction helpers here.
+}): Promise<LodgeBed> {
+  const bedType = input.bedType ?? "SINGLE";
+  const bunkGroup = normalizeBunkGroup(input.bunkGroup);
+  assertBunkGroupTypeConsistency(bedType, bunkGroup);
+
+  // Only a grouped bed needs the serialised room lock + membership check; an
+  // ungrouped bed skips the transaction entirely.
+  if (bunkGroup) {
+    if (!input.db) {
+      return prisma.$transaction((tx) =>
+        createBedAllocationBed({ ...input, db: tx }),
+      );
+    }
+    const db = input.db;
+    await lockRoomForBunkGroup(input.roomId, db);
+    await assertBunkGroupCanAdmit({
+      roomId: input.roomId,
+      bunkGroup,
+      bedType,
+      db,
+    });
+    return db.lodgeBed.create({
+      data: {
+        roomId: input.roomId,
+        name: input.name.trim(),
+        sortOrder: input.sortOrder ?? 0,
+        active: input.active ?? true,
+        bedType,
+        bunkGroup,
+      },
+    });
+  }
+
   return (input.db ?? prisma).lodgeBed.create({
     data: {
       roomId: input.roomId,
       name: input.name.trim(),
       sortOrder: input.sortOrder ?? 0,
       active: input.active ?? true,
+      bedType,
+      bunkGroup: null,
     },
   });
 }
@@ -593,8 +735,20 @@ export async function updateBedAllocationBed(input: {
   name?: string;
   sortOrder?: number;
   active?: boolean;
+  bedType?: BedType;
+  bunkGroup?: string | null;
   db?: BedAllocationDb;
-}) {
+}): Promise<LodgeBed> {
+  // A bunk-affecting edit (type or group) re-validates pairing under a room
+  // lock, so it must run in a transaction; self-wrap when no client is given.
+  const touchesBunk =
+    input.bedType !== undefined || input.bunkGroup !== undefined;
+  if (touchesBunk && !input.db) {
+    return prisma.$transaction((tx) =>
+      updateBedAllocationBed({ ...input, db: tx }),
+    );
+  }
+
   const db = input.db ?? prisma;
   if (input.active === false) {
     await assertNoFutureBedAllocations({
@@ -608,6 +762,41 @@ export async function updateBedAllocationBed(input: {
   if (input.name !== undefined) data.name = input.name.trim();
   if (input.sortOrder !== undefined) data.sortOrder = input.sortOrder;
   if (input.active !== undefined) data.active = input.active;
+
+  if (touchesBunk) {
+    const existing = await db.lodgeBed.findUnique({
+      where: { id: input.id },
+      select: { roomId: true, bedType: true, bunkGroup: true },
+    });
+    if (!existing) {
+      throw new BedAllocationAdminError("Bed not found", 404);
+    }
+
+    // Re-validate against the bed's current room so a rename/regroup keeps the
+    // pairing consistent, using the requested change layered over the stored
+    // values.
+    const nextBedType = input.bedType ?? existing.bedType;
+    const nextBunkGroup =
+      input.bunkGroup !== undefined
+        ? normalizeBunkGroup(input.bunkGroup)
+        : existing.bunkGroup;
+
+    assertBunkGroupTypeConsistency(nextBedType, nextBunkGroup);
+
+    if (nextBunkGroup) {
+      await lockRoomForBunkGroup(existing.roomId, db);
+      await assertBunkGroupCanAdmit({
+        roomId: existing.roomId,
+        bunkGroup: nextBunkGroup,
+        bedType: nextBedType,
+        excludeBedId: input.id,
+        db,
+      });
+    }
+
+    if (input.bedType !== undefined) data.bedType = input.bedType;
+    if (input.bunkGroup !== undefined) data.bunkGroup = nextBunkGroup;
+  }
 
   return db.lodgeBed.update({
     where: { id: input.id },
@@ -950,6 +1139,8 @@ function serializeRooms(rooms: Awaited<ReturnType<typeof listBedAllocationRooms>
       name: bed.name,
       sortOrder: bed.sortOrder,
       active: bed.active,
+      bedType: bed.bedType,
+      bunkGroup: bed.bunkGroup,
     })),
   }));
 }

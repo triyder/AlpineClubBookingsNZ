@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { RoomTable } from "@/app/(admin)/admin/bed-allocation/_components/room-table";
 import {
@@ -17,29 +17,33 @@ vi.mock("@dnd-kit/core", () => ({
   }),
 }));
 
-const room: DashboardRoom = {
-  id: "room-1",
-  name: "Room One",
-  sortOrder: 1,
-  active: true,
-  notes: null,
-  beds: [
-    {
-      id: "bed-1",
-      roomId: "room-1",
-      name: "Bed One",
-      sortOrder: 1,
-      active: true,
-    },
-  ],
-};
+function buildRoom(): DashboardRoom {
+  return {
+    id: "room-1",
+    name: "Example Room",
+    sortOrder: 1,
+    active: true,
+    notes: null,
+    beds: [
+      {
+        id: "bed-1",
+        roomId: "room-1",
+        name: "Bed One",
+        sortOrder: 1,
+        active: true,
+        bedType: "SINGLE",
+        bunkGroup: null,
+      },
+    ],
+  };
+}
 
 describe("RoomTable active drag lane rendering", () => {
   it("renders the active date lane tint while preserving fixed board widths", () => {
     const nights = ["2026-07-01", "2026-07-02"];
     const { container } = render(
       <RoomTable
-        room={room}
+        room={buildRoom()}
         nights={nights}
         allocationByBedAndDate={new Map()}
         bedOptions={[]}
@@ -79,5 +83,80 @@ describe("RoomTable active drag lane rendering", () => {
       (cell) => columnWidthClasses.every((className) => cell.classList.contains(className)),
     );
     expect(fixedCells).toHaveLength(nights.length * 2 + 2);
+  });
+});
+
+describe("RoomTable bed-type icon (#1675)", () => {
+  function renderRoom(room: DashboardRoom) {
+    return render(
+      <RoomTable
+        room={room}
+        nights={["2026-07-01"]}
+        allocationByBedAndDate={new Map()}
+        bedOptions={[]}
+        onReassignBed={vi.fn()}
+        onRemove={vi.fn()}
+        pendingAllocationIds={new Set()}
+        highlightedBookingId=""
+      />,
+    );
+  }
+
+  it("shows an accessible bed-type label alongside the bed name (never icon-only)", () => {
+    renderRoom(buildRoom());
+    // The single bed's icon carries a screen-reader label + tooltip.
+    expect(screen.getByText("Single bed")).toBeTruthy();
+    expect(screen.getByText("Bed One")).toBeTruthy();
+  });
+
+  it("labels a paired bunk with its group and top/bottom position", () => {
+    const room: DashboardRoom = {
+      ...buildRoom(),
+      beds: [
+        {
+          id: "bed-top",
+          roomId: "room-1",
+          name: "Top",
+          sortOrder: 1,
+          active: true,
+          bedType: "BUNK_TOP",
+          bunkGroup: "Bunk A",
+        },
+        {
+          id: "bed-bottom",
+          roomId: "room-1",
+          name: "Bottom",
+          sortOrder: 2,
+          active: true,
+          bedType: "BUNK_BOTTOM",
+          bunkGroup: "Bunk A",
+        },
+      ],
+    };
+    renderRoom(room);
+    expect(screen.getByText("Bunk A · top")).toBeTruthy();
+    expect(screen.getByText("Bunk A · bottom")).toBeTruthy();
+  });
+
+  it("does not imply a partner for a half-pair whose group holds only one bed", () => {
+    // A surviving bunk-top whose bottom was deleted must not read as "Bunk A ·
+    // top" (that implies a partner). It falls back to the plain type label.
+    const room: DashboardRoom = {
+      ...buildRoom(),
+      beds: [
+        {
+          id: "bed-top",
+          roomId: "room-1",
+          name: "Top",
+          sortOrder: 1,
+          active: true,
+          bedType: "BUNK_TOP",
+          bunkGroup: "Bunk A",
+        },
+      ],
+    };
+    renderRoom(room);
+    expect(screen.queryByText("Bunk A · top")).toBeNull();
+    expect(screen.getByText("Bunk (top)")).toBeTruthy();
   });
 });

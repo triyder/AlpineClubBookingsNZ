@@ -21,6 +21,7 @@ import {
   BedAllocationAdminError,
   MAX_BED_ALLOCATION_RANGE_NIGHTS,
   buildBedAllocationWarnings,
+  createBedAllocationBed,
   createBedAllocationRoom,
   createBedAllocationRoomsBulk,
   deleteBedAllocationRoom,
@@ -440,6 +441,451 @@ describe("manuallyAllocateBedForNights", () => {
         db: db as never,
       }),
     ).rejects.toThrow("Booking status is not allocatable");
+  });
+});
+
+describe("bed type + bunk pairing (#1675)", () => {
+  function buildBunkDb(
+    overrides: {
+      groupMembers?: Array<{ id: string; bedType: string }>;
+      existingBed?: {
+        roomId: string;
+        bedType: string;
+        bunkGroup: string | null;
+      } | null;
+    } = {},
+  ) {
+    const create = vi
+      .fn()
+      .mockImplementation(({ data }) => ({ id: "new-bed", ...data }));
+    const update = vi
+      .fn()
+      .mockImplementation(({ data }) => ({ id: "bed-1", ...data }));
+    const findMany = vi
+      .fn()
+      .mockResolvedValue(overrides.groupMembers ?? []);
+    const findUnique = vi
+      .fn()
+      .mockResolvedValue(overrides.existingBed ?? null);
+    // The room-row lock is a tagged-template $queryRaw; a plain mock suffices.
+    const queryRaw = vi.fn().mockResolvedValue([]);
+    return {
+      db: {
+        $queryRaw: queryRaw,
+        lodgeBed: { create, update, findMany, findUnique },
+        bedAllocation: { findMany: vi.fn().mockResolvedValue([]) },
+      },
+      create,
+      update,
+      findMany,
+      findUnique,
+      queryRaw,
+    };
+  }
+
+  it("creates each bed type; ungrouped beds skip the room lock", async () => {
+    for (const bedType of ["SINGLE", "DOUBLE", "BUNK_TOP", "BUNK_BOTTOM"] as const) {
+      const { db, create, findMany, queryRaw } = buildBunkDb();
+      const bed = await createBedAllocationBed({
+        roomId: "room-1",
+        name: "Bed",
+        bedType,
+        db: db as never,
+      });
+      expect(bed).toMatchObject({ bedType, bunkGroup: null });
+      // No bunkGroup => no membership check and no serialising lock.
+      expect(findMany).not.toHaveBeenCalled();
+      expect(queryRaw).not.toHaveBeenCalled();
+      expect(create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ bedType, bunkGroup: null }),
+      });
+    }
+  });
+
+  it("pairs a bunk-bottom into a group that already holds a bunk-top", async () => {
+    const { db, create, findMany, queryRaw } = buildBunkDb({
+      groupMembers: [{ id: "top", bedType: "BUNK_TOP" }],
+    });
+
+    await createBedAllocationBed({
+      roomId: "room-1",
+      name: "Lower",
+      bedType: "BUNK_BOTTOM",
+      bunkGroup: "Bunk A",
+      db: db as never,
+    });
+
+    // Serialised under the room lock, scoped to this room + group.
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          roomId: "room-1",
+          bunkGroup: "Bunk A",
+        }),
+      }),
+    );
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        bedType: "BUNK_BOTTOM",
+        bunkGroup: "Bunk A",
+      }),
+    });
+  });
+
+  it("rejects a third bed in a bunk group", async () => {
+    const { db, create } = buildBunkDb({
+      groupMembers: [
+        { id: "top", bedType: "BUNK_TOP" },
+        { id: "bottom", bedType: "BUNK_BOTTOM" },
+      ],
+    });
+
+    await expect(
+      createBedAllocationBed({
+        roomId: "room-1",
+        name: "Extra",
+        bedType: "BUNK_TOP",
+        bunkGroup: "Bunk A",
+        db: db as never,
+      }),
+    ).rejects.toThrow('Bunk group "Bunk A" already has two beds');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects two tops in the same group", async () => {
+    const { db, create } = buildBunkDb({
+      groupMembers: [{ id: "top", bedType: "BUNK_TOP" }],
+    });
+
+    await expect(
+      createBedAllocationBed({
+        roomId: "room-1",
+        name: "Another top",
+        bedType: "BUNK_TOP",
+        bunkGroup: "Bunk A",
+        db: db as never,
+      }),
+    ).rejects.toThrow('already has a bunk-top bed');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a bunk group on a non-bunk bed type", async () => {
+    const { db, create, findMany } = buildBunkDb();
+
+    await expect(
+      createBedAllocationBed({
+        roomId: "room-1",
+        name: "Single with group",
+        bedType: "SINGLE",
+        bunkGroup: "Bunk A",
+        db: db as never,
+      }),
+    ).rejects.toMatchObject({
+      message: "A bunk group needs a bunk-top or bunk-bottom bed type.",
+      status: 400,
+    });
+    // Consistency is checked before any DB work.
+    expect(findMany).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("allows an unpaired bunk (bunk type, no group) without a soft error", async () => {
+    const { db, create, findMany } = buildBunkDb();
+
+    await createBedAllocationBed({
+      roomId: "room-1",
+      name: "Lonely bunk",
+      bedType: "BUNK_TOP",
+      bunkGroup: null,
+      db: db as never,
+    });
+
+    expect(findMany).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ bedType: "BUNK_TOP", bunkGroup: null }),
+    });
+  });
+
+  it("isolates groups by room — same group name in another room does not clash", async () => {
+    // findMany is scoped to the requested room, so a full "Bunk A" in room-1
+    // is invisible when adding "Bunk A" in room-2.
+    const { db, create, findMany } = buildBunkDb({ groupMembers: [] });
+
+    await createBedAllocationBed({
+      roomId: "room-2",
+      name: "New bunk",
+      bedType: "BUNK_TOP",
+      bunkGroup: "Bunk A",
+      db: db as never,
+    });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ roomId: "room-2", bunkGroup: "Bunk A" }),
+      }),
+    );
+    expect(create).toHaveBeenCalled();
+  });
+
+  it("re-validates pairing on update and excludes the bed being edited", async () => {
+    const { db, update, findMany, findUnique } = buildBunkDb({
+      existingBed: { roomId: "room-1", bedType: "SINGLE", bunkGroup: null },
+      groupMembers: [{ id: "top", bedType: "BUNK_TOP" }],
+    });
+
+    await updateBedAllocationBed({
+      id: "bed-1",
+      bedType: "BUNK_BOTTOM",
+      bunkGroup: "Bunk A",
+      db: db as never,
+    });
+
+    expect(findUnique).toHaveBeenCalled();
+    // The edited bed must not conflict with itself in the membership check.
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          roomId: "room-1",
+          bunkGroup: "Bunk A",
+          id: { not: "bed-1" },
+        }),
+      }),
+    );
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "bed-1" },
+      data: expect.objectContaining({
+        bedType: "BUNK_BOTTOM",
+        bunkGroup: "Bunk A",
+      }),
+    });
+  });
+
+  it("rejects an update that leaves a group on a non-bunk type", async () => {
+    // Existing single bed; caller adds a group but keeps the single type.
+    const { db, update } = buildBunkDb({
+      existingBed: { roomId: "room-1", bedType: "SINGLE", bunkGroup: null },
+    });
+
+    await expect(
+      updateBedAllocationBed({
+        id: "bed-1",
+        bunkGroup: "Bunk A",
+        db: db as never,
+      }),
+    ).rejects.toThrow(
+      "A bunk group needs a bunk-top or bunk-bottom bed type.",
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("clears a group when updating with an empty bunkGroup string", async () => {
+    const { db, update, findMany } = buildBunkDb({
+      existingBed: {
+        roomId: "room-1",
+        bedType: "BUNK_TOP",
+        bunkGroup: "Bunk A",
+      },
+    });
+
+    await updateBedAllocationBed({
+      id: "bed-1",
+      bunkGroup: "   ",
+      db: db as never,
+    });
+
+    // No group => no membership check; the column is nulled.
+    expect(findMany).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "bed-1" },
+      data: expect.objectContaining({ bunkGroup: null }),
+    });
+  });
+
+  it("re-validates under the stored group when a bedType-only update omits bunkGroup", async () => {
+    // A PATCH that changes only the bedType (no bunkGroup key) must layer the
+    // change over the bed's *stored* group, not treat the group as null — so it
+    // still takes the room lock and runs the membership check against "Bunk A".
+    // If the existing.bunkGroup fallback regressed to null, nextBunkGroup would
+    // be null and neither the lock nor findMany would run, failing this test.
+    const { db, update, findMany, queryRaw } = buildBunkDb({
+      existingBed: { roomId: "room-1", bedType: "BUNK_TOP", bunkGroup: "Bunk A" },
+      // The bed being edited is excluded from the membership query, so an empty
+      // result means "no other bed in this group yet".
+      groupMembers: [],
+    });
+
+    await updateBedAllocationBed({
+      id: "bed-1",
+      bedType: "BUNK_BOTTOM",
+      db: db as never,
+    });
+
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          roomId: "room-1",
+          bunkGroup: "Bunk A",
+          id: { not: "bed-1" },
+        }),
+      }),
+    );
+    // bunkGroup was not in the patch, so the column is left untouched.
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "bed-1" },
+      data: expect.objectContaining({ bedType: "BUNK_BOTTOM" }),
+    });
+    expect(update.mock.calls[0][0].data.bunkGroup).toBeUndefined();
+  });
+});
+
+describe("bunk write transaction self-wrap (#1675)", () => {
+  // These exercise the branches that self-wrap in prisma.$transaction when no
+  // db is injected — the room-row FOR UPDATE lock is only a real serialisation
+  // point inside a transaction, so dropping the wrap (leaving the lock as a
+  // statement-scoped no-op) must fail a test. The mocked prisma singleton is
+  // otherwise `{}`, so any path that skips the wrap and reaches for
+  // prisma.lodgeBed would throw here rather than silently pass.
+  const prismaMock = prisma as unknown as {
+    $transaction?: unknown;
+    lodgeBed?: unknown;
+  };
+
+  it("self-wraps a grouped create and runs the lock, membership check, and write on the tx client", async () => {
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      lodgeBed: {
+        findMany: vi.fn().mockResolvedValue([{ id: "top", bedType: "BUNK_TOP" }]),
+        create: vi
+          .fn()
+          .mockImplementation(({ data }) => ({ id: "new-bed", ...data })),
+      },
+    };
+    const txnMock = vi.fn(async (cb: (client: typeof tx) => unknown) => cb(tx));
+    prismaMock.$transaction = txnMock;
+    try {
+      await createBedAllocationBed({
+        roomId: "room-1",
+        name: "Lower",
+        bedType: "BUNK_BOTTOM",
+        bunkGroup: "Bunk A",
+      });
+
+      expect(txnMock).toHaveBeenCalledTimes(1);
+      // Lock, membership check, and write all ran on the tx client.
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(tx.lodgeBed.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            roomId: "room-1",
+            bunkGroup: "Bunk A",
+          }),
+        }),
+      );
+      expect(tx.lodgeBed.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          bedType: "BUNK_BOTTOM",
+          bunkGroup: "Bunk A",
+        }),
+      });
+    } finally {
+      delete prismaMock.$transaction;
+    }
+  });
+
+  it("self-wraps a bunk-affecting update and runs the lock, membership check, and write on the tx client", async () => {
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      lodgeBed: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValue({ roomId: "room-1", bedType: "SINGLE", bunkGroup: null }),
+        findMany: vi.fn().mockResolvedValue([]),
+        update: vi
+          .fn()
+          .mockImplementation(({ data }) => ({ id: "bed-1", ...data })),
+      },
+    };
+    const txnMock = vi.fn(async (cb: (client: typeof tx) => unknown) => cb(tx));
+    prismaMock.$transaction = txnMock;
+    try {
+      await updateBedAllocationBed({
+        id: "bed-1",
+        bedType: "BUNK_TOP",
+        bunkGroup: "Bunk A",
+      });
+
+      expect(txnMock).toHaveBeenCalledTimes(1);
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(tx.lodgeBed.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            roomId: "room-1",
+            bunkGroup: "Bunk A",
+            id: { not: "bed-1" },
+          }),
+        }),
+      );
+      expect(tx.lodgeBed.update).toHaveBeenCalledWith({
+        where: { id: "bed-1" },
+        data: expect.objectContaining({
+          bedType: "BUNK_TOP",
+          bunkGroup: "Bunk A",
+        }),
+      });
+    } finally {
+      delete prismaMock.$transaction;
+    }
+  });
+
+  it("does NOT open a transaction for an ungrouped create without a db", async () => {
+    // No bunkGroup => nothing to serialise, so the create runs directly on the
+    // prisma singleton and never touches $transaction.
+    const create = vi
+      .fn()
+      .mockImplementation(({ data }) => ({ id: "new-bed", ...data }));
+    const txnMock = vi.fn();
+    prismaMock.$transaction = txnMock;
+    prismaMock.lodgeBed = { create };
+    try {
+      await createBedAllocationBed({
+        roomId: "room-1",
+        name: "Solo",
+        bedType: "SINGLE",
+      });
+
+      expect(txnMock).not.toHaveBeenCalled();
+      expect(create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ bedType: "SINGLE", bunkGroup: null }),
+      });
+    } finally {
+      delete prismaMock.$transaction;
+      delete prismaMock.lodgeBed;
+    }
+  });
+
+  it("does NOT open a transaction for an update that touches neither bed type nor group", async () => {
+    // A name-only PATCH is not bunk-affecting, so it skips the transaction and
+    // updates on the prisma singleton directly.
+    const update = vi
+      .fn()
+      .mockImplementation(({ data }) => ({ id: "bed-1", ...data }));
+    const txnMock = vi.fn();
+    prismaMock.$transaction = txnMock;
+    prismaMock.lodgeBed = { update };
+    try {
+      await updateBedAllocationBed({ id: "bed-1", name: "Renamed" });
+
+      expect(txnMock).not.toHaveBeenCalled();
+      expect(update).toHaveBeenCalledWith({
+        where: { id: "bed-1" },
+        data: { name: "Renamed" },
+      });
+    } finally {
+      delete prismaMock.$transaction;
+      delete prismaMock.lodgeBed;
+    }
   });
 });
 

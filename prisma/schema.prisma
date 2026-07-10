@@ -191,6 +191,16 @@ enum BedAllocationSource {
   MANUAL
 }
 
+// Descriptive/visual bed type (#1675). v1 is display-only: capacity stays 1
+// person per bed per night regardless of type (double-bed shared occupancy is
+// out of scope). BUNK_TOP / BUNK_BOTTOM pair up via LodgeBed.bunkGroup.
+enum BedType {
+  SINGLE
+  BUNK_TOP
+  BUNK_BOTTOM
+  DOUBLE
+}
+
 enum PaymentStatus {
   PENDING
   PROCESSING
@@ -1509,6 +1519,13 @@ model LodgeBed {
   name      String   @db.VarChar(100)
   sortOrder Int      @default(0)
   active    Boolean  @default(true)
+  // Descriptive bed type (#1675); does not affect capacity (still 1/bed/night).
+  bedType   BedType  @default(SINGLE)
+  // Optional pairing label within a room: at most two beds share a bunkGroup,
+  // one BUNK_TOP and one BUNK_BOTTOM. Enforced in admin-bed-allocation.ts, not
+  // by a DB constraint (a "<=2 per group, one of each type" rule can't be a
+  // plain unique index, and partial indexes are out of scope for this change).
+  bunkGroup String?  @db.VarChar(50)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
