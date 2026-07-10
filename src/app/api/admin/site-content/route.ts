@@ -7,8 +7,8 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
-import { SITE_CONTENT_LIMITS } from "@/lib/page-content";
-import { SITE_CONTENT_KEYS, getSiteContentForAdmin } from "@/lib/site-content";
+import { SITE_CONTENT_KEYS, SITE_CONTENT_LIMITS } from "@/lib/page-content";
+import { getSiteContentForAdmin } from "@/lib/site-content";
 
 const updateSchema = z
   .object({

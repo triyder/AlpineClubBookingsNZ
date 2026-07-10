@@ -7,6 +7,7 @@ import {
   isReservedPageSlug,
   isValidPageSlug,
   PAGE_CONTENT_LIMITS,
+  SITE_CONTENT_KEYS,
   SITE_CONTENT_LIMITS,
   SYSTEM_PAGE_SLUGS,
   toPagePath,
@@ -470,6 +471,30 @@ interface SiteContentBatch {
   theme: Record<string, unknown> | null;
 }
 
+/** O(1) membership for the recognised keyed site-content keys. */
+const SITE_CONTENT_KEY_SET: ReadonlySet<string> = new Set(SITE_CONTENT_KEYS);
+
+/**
+ * Strict site-content key cell: parity with the admin keyed site-content
+ * route's `z.enum(SITE_CONTENT_KEYS)` (src/app/api/admin/site-content/route.ts).
+ * We validate against that write allowlist — not the wider Prisma enum via
+ * strictEnum — because the DB `key` column is an enum: an unrecognised key from
+ * a hand-edited bundle must fail here as a clean row error, before it reaches
+ * the batch `findMany`, where Prisma would otherwise throw a validation error
+ * against the enum column instead of surfacing the row.
+ */
+function strictSiteContentKey(value: unknown): Valid<string> {
+  const s = asStr(value).trim();
+  if (s === "") return { ok: false, message: "must not be blank" };
+  if (!SITE_CONTENT_KEY_SET.has(s)) {
+    return {
+      ok: false,
+      message: `"${s}" is not a recognised site-content key`,
+    };
+  }
+  return { ok: true, value: s };
+}
+
 async function loadSiteContentBatch(
   db: ReadDb,
   slugs: string[],
@@ -524,7 +549,12 @@ async function planSiteContent(ctx: PlanContext): Promise<CategoryPlanResult> {
   const batch = await loadSiteContentBatch(
     ctx.db,
     rawPages.map((r) => r.slug?.trim() ?? "").filter(Boolean),
-    rawSite.map((r) => r.key?.trim() ?? "").filter(Boolean),
+    // Only recognised keys reach the batch findMany: the DB key column is a
+    // Prisma enum, so an unknown key would throw there instead of surfacing as
+    // a clean row error (validated below via strictSiteContentKey).
+    rawSite
+      .map((r) => r.key?.trim() ?? "")
+      .filter((k) => SITE_CONTENT_KEY_SET.has(k)),
   );
 
   // Pages (by slug).
@@ -561,7 +591,9 @@ async function planSiteContent(ctx: PlanContext): Promise<CategoryPlanResult> {
   // Site content (by key).
   rawSite.forEach((raw, i) => {
     const v = new RowValidator(SITE_CONTENT_FILE, i, errors);
-    const key = v.required("key", raw.key);
+    // Key parity with the admin route's z.enum(SITE_CONTENT_KEYS): an
+    // unrecognised key is a clean row error, never a create against the enum.
+    const key = v.custom("key", strictSiteContentKey(raw.key), "");
     // Field-cap parity with the keyed site-content route's zod schema
     // (src/app/api/admin/site-content/route.ts): the shared SITE_CONTENT_LIMITS,
     // measured untrimmed and BEFORE sanitisation, exactly like the route.
@@ -625,7 +657,11 @@ async function applySiteContent(ctx: ApplyContext): Promise<CategoryApplyResult>
   const batch = await loadSiteContentBatch(
     ctx.tx,
     rawPages.map((r) => r.slug?.trim() ?? "").filter(Boolean),
-    rawSite.map((r) => r.key?.trim() ?? "").filter(Boolean),
+    // Same enum-safe key filter as plan: an unknown key must never reach the
+    // batch findMany (plan already blocked it; defensive for direct callers).
+    rawSite
+      .map((r) => r.key?.trim() ?? "")
+      .filter((k) => SITE_CONTENT_KEY_SET.has(k)),
   );
 
   // Pages.
@@ -661,7 +697,9 @@ async function applySiteContent(ctx: ApplyContext): Promise<CategoryApplyResult>
   // Site content.
   for (const [i, raw] of rawSite.entries()) {
     const v = new RowValidator(SITE_CONTENT_FILE, i, errors);
-    const key = v.required("key", raw.key);
+    // Key parity with the admin route (plan already blocked an unknown key;
+    // defensive, mirroring the page path).
+    const key = v.custom("key", strictSiteContentKey(raw.key), "");
     // Cap parity with the keyed site-content route (plan already blocked this;
     // defensive, mirroring the page path).
     v.custom(

@@ -40,7 +40,10 @@ admins at **Admin → Setup & Configuration → Export & Import**
   bundled sort order is neither the fixed order nor the target's current
   order — normalise the system pages' sort order on both instances first.
   Keyed site-content rows (the footer sections) enforce the same content-HTML
-  size cap as their admin route (the shared `SITE_CONTENT_LIMITS`).
+  size cap as their admin route (the shared `SITE_CONTENT_LIMITS`), and their
+  key must be one of the recognised site-content keys (the shared
+  `SITE_CONTENT_KEYS`, matching the admin route's enum) — an unknown key is a
+  clean row error, never a Prisma enum exception.
 - **Door codes:** the dry-run prominently names each lodge whose door code the
   import would set or change, and the audit records which lodges' codes were
   actually written (never the values). Reseal recomputes the bundle's
