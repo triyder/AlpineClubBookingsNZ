@@ -676,10 +676,12 @@ GROUP_CREATE not yet approved (group memberless) -> claim refused (group not ava
 invitee signed in with the invited email, group approved -> ADULT_INVITE filed + accepted, token confirmedAt set (single use)
 token expired -> claim refused; daily cron sweep hard-deletes expired rows
 admin revokes -> token hard-deleted, claim link stops working
+inviter cancels own declared-partner invitation from the profile Partner card (#1754) -> token hard-deleted (own createPartnerLink tokens, unclaimed only, audited)
 ```
 
 To verify: hash-at-rest, single-use `confirmedAt` guard, email-match ownership
-check, memberless-group refusal, expiry sweep idempotency, and admin revocation.
+check, memberless-group refusal, expiry sweep idempotency, admin revocation,
+and the member-side cancel scope (own, unclaimed, `createPartnerLink` only).
 
 A token minted with `createPartnerLink` (#1742) additionally forms the
 CONFIRMED `MemberPartnerLink` between inviter and claimer inside the claim

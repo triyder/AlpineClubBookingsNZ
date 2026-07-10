@@ -11,6 +11,7 @@ import {
   respondToPartnerLink,
   removeOwnPartnerLink,
 } from "@/lib/member-partner-link";
+import { cancelOwnPartnerInviteToken } from "@/lib/partner-invite-token";
 
 /**
  * GET /api/members/partner-link (#1742)
@@ -160,14 +161,39 @@ export async function PUT(req: NextRequest) {
 
 /**
  * DELETE /api/members/partner-link?id=LINK_ID (#1742)
+ * DELETE /api/members/partner-link?inviteTokenId=TOKEN_ID (#1754)
  * Withdraw the member's own pending request, or dissolve their confirmed
- * partnership (either partner may; the other is notified).
+ * partnership (either partner may; the other is notified). With
+ * inviteTokenId instead, cancel the member's own outstanding declared-partner
+ * invitation (a createPartnerLink token they minted that nobody has claimed).
  */
 export async function DELETE(req: NextRequest) {
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
 
   const linkId = req.nextUrl.searchParams.get("id")?.trim();
+  const inviteTokenId = req.nextUrl.searchParams.get("inviteTokenId")?.trim();
+  if (linkId && inviteTokenId) {
+    return NextResponse.json(
+      { error: "Provide either a partner link id or an invite token id, not both" },
+      { status: 400 }
+    );
+  }
+
+  if (inviteTokenId) {
+    const cancelled = await cancelOwnPartnerInviteToken({
+      tokenId: inviteTokenId,
+      memberId: guard.session.user.id,
+    });
+    if (!cancelled) {
+      return NextResponse.json(
+        { error: "Partner invitation not found or already claimed." },
+        { status: 404 }
+      );
+    }
+    return NextResponse.json({ message: "Partner invitation cancelled." });
+  }
+
   if (!linkId) {
     return NextResponse.json({ error: "Partner link id required" }, { status: 400 });
   }

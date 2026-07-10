@@ -30,6 +30,7 @@ import {
   sendPartnerInviteClaimedEmail,
 } from "@/lib/email";
 import {
+  cancelOwnPartnerInviteToken,
   claimPartnerInviteToken,
   expireStalePartnerInviteTokens,
   getPartnerInviteTokenForClaim,
@@ -411,6 +412,109 @@ describe("revokePartnerInviteToken", () => {
 
     const revoked = await revokePartnerInviteToken({ tokenId: "pit1", adminMemberId: "admin1" });
     expect(revoked).toBe(false);
+    expect(logAudit).not.toHaveBeenCalled();
+  });
+});
+
+describe("cancelOwnPartnerInviteToken", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  function cancellableToken(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "pit1",
+      familyGroupId: "fg1",
+      invitedEmail: "ghost@test.com",
+      confirmedAt: null,
+      createdById: "inviter1",
+      createPartnerLink: true,
+      ...overrides,
+    };
+  }
+
+  it("guarded-deletes and audits the inviter's own outstanding token", async () => {
+    vi.mocked(prisma.partnerInviteToken.findUnique).mockResolvedValue(
+      cancellableToken() as never
+    );
+    vi.mocked(prisma.partnerInviteToken.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    const cancelled = await cancelOwnPartnerInviteToken({
+      tokenId: "pit1",
+      memberId: "inviter1",
+    });
+    expect(cancelled).toBe(true);
+    expect(prisma.partnerInviteToken.deleteMany).toHaveBeenCalledWith({
+      where: { id: "pit1", confirmedAt: null },
+    });
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "FAMILY_GROUP_PARTNER_INVITE_CANCELLED",
+        memberId: "inviter1",
+      })
+    );
+  });
+
+  it("refuses a token minted by someone else", async () => {
+    vi.mocked(prisma.partnerInviteToken.findUnique).mockResolvedValue(
+      cancellableToken({ createdById: "someone-else" }) as never
+    );
+
+    const cancelled = await cancelOwnPartnerInviteToken({
+      tokenId: "pit1",
+      memberId: "inviter1",
+    });
+    expect(cancelled).toBe(false);
+    expect(prisma.partnerInviteToken.deleteMany).not.toHaveBeenCalled();
+    expect(logAudit).not.toHaveBeenCalled();
+  });
+
+  it("refuses a token minted without the declared-partner flag", async () => {
+    vi.mocked(prisma.partnerInviteToken.findUnique).mockResolvedValue(
+      cancellableToken({ createPartnerLink: false }) as never
+    );
+
+    const cancelled = await cancelOwnPartnerInviteToken({
+      tokenId: "pit1",
+      memberId: "inviter1",
+    });
+    expect(cancelled).toBe(false);
+    expect(prisma.partnerInviteToken.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("never deletes a claimed token", async () => {
+    vi.mocked(prisma.partnerInviteToken.findUnique).mockResolvedValue(
+      cancellableToken({ confirmedAt: new Date() }) as never
+    );
+
+    const cancelled = await cancelOwnPartnerInviteToken({
+      tokenId: "pit1",
+      memberId: "inviter1",
+    });
+    expect(cancelled).toBe(false);
+    expect(prisma.partnerInviteToken.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("returns false for an unknown token id", async () => {
+    vi.mocked(prisma.partnerInviteToken.findUnique).mockResolvedValue(null as never);
+
+    const cancelled = await cancelOwnPartnerInviteToken({
+      tokenId: "gone",
+      memberId: "inviter1",
+    });
+    expect(cancelled).toBe(false);
+    expect(prisma.partnerInviteToken.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("returns false when a concurrent claim wins the delete race", async () => {
+    vi.mocked(prisma.partnerInviteToken.findUnique).mockResolvedValue(
+      cancellableToken() as never
+    );
+    vi.mocked(prisma.partnerInviteToken.deleteMany).mockResolvedValue({ count: 0 } as never);
+
+    const cancelled = await cancelOwnPartnerInviteToken({
+      tokenId: "pit1",
+      memberId: "inviter1",
+    });
+    expect(cancelled).toBe(false);
     expect(logAudit).not.toHaveBeenCalled();
   });
 });

@@ -10,22 +10,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { HeartHandshake, Trash2 } from "lucide-react"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
-
-interface PartnerLinkView {
-  id: string
-  status: string
-  partner: { id: string; firstName: string; lastName: string; canLogin: boolean }
-  initiatedByMe: boolean
-  assignedByAdmin: boolean
-  confirmedAt: string | null
-  createdAt: string
-}
-
-interface PartnerLinkState {
-  confirmed: PartnerLinkView | null
-  pendingIncoming: PartnerLinkView[]
-  pendingOutgoing: PartnerLinkView[]
-}
+import { useDebouncedMemberSearch } from "@/hooks/use-debounced-member-search"
+import type {
+  SerializedPartnerLinkState,
+  SerializedPartnerLinkView,
+} from "@/lib/partner-link-views"
 
 interface PartnerSearchResult {
   id: string
@@ -55,14 +44,25 @@ export function MemberPartnerLinkCard({
   className,
 }: MemberPartnerLinkCardProps) {
   const router = useRouter()
-  const [state, setState] = useState<PartnerLinkState | null>(null)
+  const [state, setState] = useState<SerializedPartnerLinkState | null>(null)
   const [assignOpen, setAssignOpen] = useState(false)
   const [search, setSearch] = useState("")
-  const [searching, setSearching] = useState(false)
-  const [searchResults, setSearchResults] = useState<PartnerSearchResult[]>([])
   const [saving, setSaving] = useState(false)
   const [removingId, setRemovingId] = useState<string | null>(null)
   const [error, setError] = useState("")
+
+  // partnerLinkEligibleFor filters server-side (active adults, not this
+  // member, no existing confirmed partner) so a page of results is never
+  // emptied by client-side filtering.
+  const {
+    results: searchResults,
+    searching,
+    error: searchError,
+  } = useDebouncedMemberSearch<PartnerSearchResult>({
+    query: search,
+    enabled: assignOpen,
+    params: { pageSize: "8", partnerLinkEligibleFor: memberId },
+  })
 
   async function loadState() {
     const res = await fetch(`/api/admin/members/${memberId}/partner-link`)
@@ -74,57 +74,6 @@ export function MemberPartnerLinkCard({
     loadState().catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberId])
-
-  useEffect(() => {
-    if (!assignOpen) {
-      setSearchResults([])
-      setSearching(false)
-      return
-    }
-    const query = search.trim()
-    if (query.length < 2) {
-      setSearchResults([])
-      setSearching(false)
-      return
-    }
-
-    let cancelled = false
-    setSearching(true)
-    const timer = setTimeout(async () => {
-      try {
-        // partnerLinkEligibleFor filters server-side (active adults, not this
-        // member, no existing confirmed partner) so a page of results is
-        // never emptied by client-side filtering.
-        const params = new URLSearchParams({
-          q: query,
-          pageSize: "8",
-          partnerLinkEligibleFor: memberId,
-        })
-        const res = await fetch(`/api/admin/members?${params.toString()}`)
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok) {
-          throw new Error(data.error || "Failed to search members")
-        }
-        if (!cancelled) {
-          setSearchResults((data.members ?? []) as PartnerSearchResult[])
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setSearchResults([])
-          setError(err instanceof Error ? err.message : "Failed to search members")
-        }
-      } finally {
-        if (!cancelled) {
-          setSearching(false)
-        }
-      }
-    }, 300)
-
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  }, [assignOpen, search, memberId])
 
   async function handleAssign(partnerMemberId: string) {
     setError("")
@@ -171,7 +120,7 @@ export function MemberPartnerLinkCard({
 
   const pending = [...(state?.pendingIncoming ?? []), ...(state?.pendingOutgoing ?? [])]
 
-  function renderLinkRow(link: PartnerLinkView, confirmed: boolean) {
+  function renderLinkRow(link: SerializedPartnerLinkView, confirmed: boolean) {
     return (
       <div
         key={link.id}
@@ -244,9 +193,9 @@ export function MemberPartnerLinkCard({
       </CardHeader>
       <CardContent>
         <div className="space-y-3">
-          {error && (
+          {(error || searchError) && (
             <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
-              {error}
+              {error || searchError}
             </div>
           )}
 

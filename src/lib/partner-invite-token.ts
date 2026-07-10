@@ -467,6 +467,19 @@ export async function listOutstandingPartnerInviteTokens(now = new Date()) {
 }
 
 /**
+ * Guarded delete shared by the admin revoke and the inviter's own cancel:
+ * only remove the row while it is still outstanding. If a concurrent claim
+ * set confirmedAt between the caller's read and here, count is 0 and we
+ * return false instead of throwing (P2025) or deleting claim history.
+ */
+async function deleteOutstandingPartnerInviteToken(tokenId: string): Promise<boolean> {
+  const deleted = await prisma.partnerInviteToken.deleteMany({
+    where: { id: tokenId, confirmedAt: null },
+  });
+  return deleted.count > 0;
+}
+
+/**
  * Admin revocation: hard-delete a single OUTSTANDING token. Returns false when
  * there is no outstanding token to revoke — the id is unknown, the token has
  * already been claimed (confirmedAt set), or it was expired-and-swept/revoked.
@@ -484,13 +497,7 @@ export async function revokePartnerInviteToken(params: {
     return false;
   }
 
-  // Guarded delete: only remove the row while it is still outstanding. If a
-  // concurrent claim set confirmedAt between the read above and here, count is
-  // 0 and we return false instead of throwing (P2025) or deleting claim history.
-  const deleted = await prisma.partnerInviteToken.deleteMany({
-    where: { id: token.id, confirmedAt: null },
-  });
-  if (deleted.count === 0) {
+  if (!(await deleteOutstandingPartnerInviteToken(token.id))) {
     return false;
   }
 
@@ -510,6 +517,67 @@ export async function revokePartnerInviteToken(params: {
     metadata: {
       familyGroupId: token.familyGroupId,
       invitedEmail: token.invitedEmail,
+    },
+  });
+
+  return true;
+}
+
+/**
+ * Member-side cancellation of their own declared-partner invitation (#1754):
+ * the inviter revokes an OUTSTANDING token they minted with
+ * createPartnerLink, without needing an admin. Scope is deliberately narrow —
+ * own token only (createdById), partner-declaring tokens only, unclaimed only
+ * (a claimed token's membership history stands, exactly as in the admin
+ * revoke above). Returns false when nothing matched those conditions.
+ */
+export async function cancelOwnPartnerInviteToken(params: {
+  tokenId: string;
+  memberId: string;
+}): Promise<boolean> {
+  const token = await prisma.partnerInviteToken.findUnique({
+    where: { id: params.tokenId },
+    select: {
+      id: true,
+      familyGroupId: true,
+      invitedEmail: true,
+      confirmedAt: true,
+      createdById: true,
+      createPartnerLink: true,
+    },
+  });
+  if (
+    !token ||
+    token.confirmedAt ||
+    token.createdById !== params.memberId ||
+    !token.createPartnerLink
+  ) {
+    return false;
+  }
+
+  if (!(await deleteOutstandingPartnerInviteToken(token.id))) {
+    return false;
+  }
+
+  logAudit({
+    action: "FAMILY_GROUP_PARTNER_INVITE_CANCELLED",
+    memberId: params.memberId,
+    targetId: token.familyGroupId,
+    subjectMemberId: params.memberId,
+    entityType: "PartnerInviteToken",
+    entityId: token.id,
+    category: "family",
+    outcome: "success",
+    summary: "Partner invitation cancelled by the inviter",
+    details: JSON.stringify({
+      familyGroupId: token.familyGroupId,
+      invitedEmail: token.invitedEmail,
+      cancelledByInviter: true,
+    }),
+    metadata: {
+      familyGroupId: token.familyGroupId,
+      invitedEmail: token.invitedEmail,
+      cancelledByInviter: true,
     },
   });
 
