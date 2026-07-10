@@ -216,10 +216,12 @@ export async function modifyBookingDates({
   } = input;
   // Issue #1668: only an admin drives the recalculate override on this route.
   const adminOverride = Boolean(input.adminOverride) && actor.role === "ADMIN";
-  // Owner decision (#1668 review): under an override the admin chooses whether
-  // the member is emailed; absent means notify. Non-override edits always
-  // notify (unchanged).
-  const notifyMember = !adminOverride || input.notifyMember !== false;
+  // Owner decision (#1668/#1696): an admin chooses per edit whether the member is
+  // emailed — on override AND plain edits — with absent meaning notify. A
+  // non-admin actor can never suppress (the route 403s any notify flag), so they
+  // always notify (unchanged).
+  const notifyMember =
+    actor.role !== "ADMIN" ? true : input.notifyMember !== false;
 
   const result = await prisma.$transaction(async (tx) => {
     // Pre-lock read: only the lock key. lodgeId is immutable, so keying the
@@ -855,6 +857,9 @@ async function dispatchDatePostTransactionSideEffects({
 }): Promise<void> {
   // Issue #1668: an admin override records the pricing mode, capacity decision
   // and linked change request alongside the standard date-change audit fields.
+  // Issue #1696: a non-override admin edit that suppressed the member email
+  // records notifyMember: false too (notifyMember is false only when an admin
+  // opted out — members always notify), so every suppressed edit is auditable.
   const overrideAuditFields = result.adminOverride
     ? {
         adminOverride: true,
@@ -864,7 +869,9 @@ async function dispatchDatePostTransactionSideEffects({
         capacityOverridden: result.capacityOverridden,
         linkedChangeRequestId,
       }
-    : {};
+    : result.notifyMember
+      ? {}
+      : { notifyMember: false };
   logAudit({
     action: result.adminOverride
       ? "booking.modify.admin_override"

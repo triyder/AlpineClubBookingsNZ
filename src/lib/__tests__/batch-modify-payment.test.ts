@@ -2621,4 +2621,78 @@ describe("PUT /api/bookings/[id]/modify", () => {
       })
     );
   });
+
+  // Issue #1696: the per-edit member-email choice now applies to EVERY admin
+  // edit, not just admin overrides. bookingManagementAuthorizationRole is the
+  // real function here, so a Full Admin session resolves to the ADMIN actor the
+  // service honours the choice for.
+  const FULL_ADMIN_SESSION = {
+    user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
+  };
+
+  async function runZeroNetDateChange(body: Record<string, unknown>) {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx),
+    );
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-08-24", checkOut: "2026-08-26", ...body }),
+    });
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+    // Flush the awaited post-transaction dispatch's fire-and-forget email.
+    await Promise.resolve();
+    return response;
+  }
+
+  it("suppresses the member email and audits the choice when an admin sets notifyMember: false on a plain edit (#1696)", async () => {
+    mockAuth.mockResolvedValue(FULL_ADMIN_SESSION);
+
+    const response = await runZeroNetDateChange({ notifyMember: false });
+    expect(response.status).toBe(200);
+
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(vi.mocked(sendBookingModifiedEmail)).not.toHaveBeenCalled();
+
+    const { logAudit } = await import("@/lib/audit");
+    const auditCall = vi
+      .mocked(logAudit)
+      .mock.calls.find(
+        (call) => (call[0] as { action: string }).action === "booking.modify.batch",
+      );
+    expect(auditCall).toBeDefined();
+    expect(
+      (auditCall![0] as { metadata: Record<string, unknown> }).metadata
+        .notifyMember,
+    ).toBe(false);
+  });
+
+  it("emails the member by default when an admin omits notifyMember (#1696)", async () => {
+    mockAuth.mockResolvedValue(FULL_ADMIN_SESSION);
+
+    const response = await runZeroNetDateChange({});
+    expect(response.status).toBe(200);
+
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledTimes(1);
+  });
+
+  it("always emails a member self-edit (notifyMember is not honoured for non-admins) (#1696)", async () => {
+    // Default session (a plain member owner) resolves to the USER actor, whose
+    // edits always notify regardless of any flag.
+    const response = await runZeroNetDateChange({});
+    expect(response.status).toBe(200);
+
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledTimes(1);
+  });
 });
