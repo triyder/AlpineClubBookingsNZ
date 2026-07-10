@@ -32,6 +32,20 @@ export const PAGE_CONTENT_LIMITS = {
 } as const;
 
 /**
+ * Field limits for admin-editable keyed SiteContent rows (the footer sections).
+ * A distinct cap from PAGE_CONTENT_LIMITS — the keyed site-content route owns
+ * its own limit and the two must be free to diverge — but the single source of
+ * truth for BOTH the admin site-content route's zod schema
+ * (src/app/api/admin/site-content/route.ts) and the config-transfer importer
+ * (src/lib/config-transfer/categories/site-content.ts) so those two write paths
+ * can never drift apart. Lives here alongside PAGE_CONTENT_LIMITS to keep the
+ * config-transfer importer graph free of the prisma-loading @/lib/site-content.
+ */
+export const SITE_CONTENT_LIMITS = {
+  contentHtmlMax: 200000,
+} as const;
+
+/**
  * Slugs for built-in system pages that must always exist.
  * Their slugs and sort orders are fixed and cannot be changed by admins.
  */
