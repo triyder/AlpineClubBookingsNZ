@@ -27,6 +27,10 @@ import {
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { ApiError } from "@/lib/api-error";
 import {
+  assertCheckInClearsXeroLockDate,
+  getXeroLockGuardErrorResponse,
+} from "@/lib/xero-period-lock-guard";
+import {
   validateAndCalculatePromoDiscount,
   validatePromoCodeFull,
 } from "@/lib/promo";
@@ -367,6 +371,28 @@ export async function POST(
       newCheckInStr,
       newCheckOutStr,
     });
+  }
+  // Xero lock-date guard (#1697): only the recalculate override reaches here
+  // (shift returned above), and its apply path can queue a check-in-dated
+  // primary-invoice write — so the preview rejects a locked-period check-in
+  // with the same 409 the apply services throw, instead of showing a quote
+  // that apply cannot deliver (and mirrors apply's deliberately conservative
+  // scope; see xero-period-lock-guard). Shift previews stay unguarded: a
+  // shift writes no Xero documents.
+  if (adminOverride) {
+    try {
+      await assertCheckInClearsXeroLockDate(
+        newCheckInStr ? parseDateOnly(newCheckInStr) : booking.checkIn,
+      );
+    } catch (error) {
+      const xeroLockGuardResponse = getXeroLockGuardErrorResponse(error);
+      if (xeroLockGuardResponse) {
+        return NextResponse.json(xeroLockGuardResponse.body, {
+          status: xeroLockGuardResponse.status,
+        });
+      }
+      throw error;
+    }
   }
   // Quote-priced bookings are blocked at preview time too (#1032) — except
   // for identity-only requests (#1099), which never touch the pricing engine

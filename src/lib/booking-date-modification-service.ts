@@ -84,6 +84,7 @@ import {
 } from "@/lib/policies/booking-route-decisions";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { assertProposedCheckInClearsXeroLockDate } from "@/lib/xero-period-lock-guard";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { getSeasonYear } from "@/lib/utils";
 
@@ -222,6 +223,24 @@ export async function modifyBookingDates({
   // always notify (unchanged).
   const notifyMember =
     actor.role !== "ADMIN" ? true : input.notifyMember !== false;
+
+  // Xero lock-date guard (#1697): the override on this route is always the
+  // recalculate mode (shift is dispatched to adminShiftBookingDates at the
+  // route), and a recalculate can queue a check-in-dated primary-invoice
+  // write (date/narration update on unpaid bookings; create on zero-dollar
+  // ones) — so the proposed check-in must clear the effective lock date, same
+  // semantics as the retroactive create (#1695). Deliberately conservative:
+  // fires even when the settlement would only write today-dated documents
+  // (decision on #1697). Runs before the transaction: the Xero call must stay
+  // outside it, and the pre-read is only advisory (the outbox still fails
+  // safely if the lock dates change mid-flight).
+  if (adminOverride) {
+    await assertProposedCheckInClearsXeroLockDate(
+      prisma,
+      bookingId,
+      newCheckInStr,
+    );
+  }
 
   const result = await prisma.$transaction(async (tx) => {
     // Pre-lock read: only the lock key. lodgeId is immutable, so keying the
@@ -1002,6 +1021,9 @@ const SHIFT_LENGTH_MISMATCH_MESSAGE =
  * — and the stay is moved by a whole-day delta with its night count preserved.
  * Intended for operational relocations (e.g. a road closure) where the member
  * must not be charged. No settlement, change fee, Stripe or Xero calls.
+ *
+ * Deliberately NOT behind the Xero lock-date guard (#1697): a shift writes no
+ * Xero documents, so it cannot strand an outbox operation in a locked period.
  *
  * The caller (route) guarantees the actor is an admin; this asserts it anyway.
  */

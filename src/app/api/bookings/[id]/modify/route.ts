@@ -24,6 +24,7 @@ import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { nameField } from "@/lib/zod-helpers";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
+import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
 
 const batchModifySchema = z.object({
   checkIn: z.string().optional(),
@@ -226,6 +227,14 @@ export async function PUT(
         getBookingMemberNightConflictResponse(err.conflicts),
         { status: 409 },
       );
+    }
+    // Xero lock-date guard (#1697): keep the machine-readable code + lockDate
+    // (both errors extend ApiError, so this branch must come first).
+    const xeroLockGuardResponse = getXeroLockGuardErrorResponse(err);
+    if (xeroLockGuardResponse) {
+      return NextResponse.json(xeroLockGuardResponse.body, {
+        status: xeroLockGuardResponse.status,
+      });
     }
     if (err instanceof ApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

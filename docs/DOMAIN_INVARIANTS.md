@@ -651,6 +651,21 @@ effective lock date (409 `XERO_PERIOD_LOCKED`, with unlock instructions). The
 guard is **skipped when Xero is not connected** and **fails closed** (retryable
 503 `XERO_LOCK_DATE_CHECK_FAILED`) when the lock dates cannot be read; the Xero
 call is made outside any DB transaction and its result is cached ~5 minutes.
+The same guard protects the **admin override modify paths** (#1697,
+`xero-period-lock-guard`): a **recalculate** override can queue a
+**check-in-dated primary-invoice write** — the invoice date/narration update
+on a booking whose payment is not yet settled, or the invoice create a
+zero-dollar recalculate performs — and is rejected (same 409/503 contract, at
+the modify-quote preview and at apply in both modify services, before their
+transactions) when the check-in the booking would end up with lands on or
+before the effective lock date; a check-out-only recalculate is guarded via
+the unchanged past check-in. Supplementary invoices and modification credit
+notes are dated at the day they are raised (not check-in), so on an
+already-paid booking a recalculate writes no check-in-dated document — the
+guard **still fires there by design** (deliberately conservative, recorded on
+#1697; narrowing it to the actual check-in-dated writes is tracked as a
+follow-up). **Shift overrides are exempt**: a shift writes no Xero documents.
+As at create, only past check-ins are guarded.
 Over-capacity past nights are **warn-and-confirm** (the same
 `OverCapacityConfirmationRequiredError` → 409 `OVER_CAPACITY_CONFIRM_REQUIRED`
 contract as #1668, capacity lock still taken, `capacityOverridden` recorded).

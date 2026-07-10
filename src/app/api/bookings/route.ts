@@ -52,11 +52,10 @@ import {
 } from "@/lib/booking-create";
 import { resolveBookingDateEnvelope } from "@/lib/booking-create-guests";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
-import { isXeroConnected } from "@/lib/xero";
 import {
-  getEffectiveXeroLockDate,
-  getXeroLockDates,
-} from "@/lib/xero-organisation";
+  assertCheckInClearsXeroLockDate,
+  getXeroLockGuardErrorResponse,
+} from "@/lib/xero-period-lock-guard";
 import { LodgeBookingEligibilityError } from "@/lib/lodge-access";
 import {
   BookingMemberNightConflictError,
@@ -70,7 +69,6 @@ import {
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   addDaysDateOnly,
-  formatDateOnly,
   getTodayDateOnly,
   isDateOnlyString,
   parseDateOnly,
@@ -393,35 +391,23 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    // Xero lock-date guard: the booking's invoice issue date is its check-in,
-    // so a past check-in must not fall on or before a locked accounting period.
-    // Skipped when Xero is not connected; fails closed (retryable 503) when the
-    // lock dates cannot be read. The Xero call stays outside any DB transaction.
-    if (xeroIntegrationEnabled && (await isXeroConnected())) {
-      let lockDates;
-      try {
-        lockDates = await getXeroLockDates();
-      } catch {
-        return NextResponse.json(
-          {
-            error: "Could not verify the Xero lock dates. Please try again.",
-            code: "XERO_LOCK_DATE_CHECK_FAILED",
-          },
-          { status: 503 },
-        );
+    // Xero lock-date guard (#1695; shared with the admin override modify paths
+    // via #1697): the booking's invoice issue date is its check-in, so a past
+    // check-in must not fall on or before a locked accounting period. Skipped
+    // when Xero is not connected; fails closed (retryable 503) when the lock
+    // dates cannot be read. The Xero call stays outside any DB transaction.
+    try {
+      await assertCheckInClearsXeroLockDate(envelopeCheckIn, {
+        xeroIntegrationEnabled,
+      });
+    } catch (error) {
+      const guardResponse = getXeroLockGuardErrorResponse(error);
+      if (guardResponse) {
+        return NextResponse.json(guardResponse.body, {
+          status: guardResponse.status,
+        });
       }
-      const effectiveLock = getEffectiveXeroLockDate(lockDates);
-      if (effectiveLock && envelopeCheckIn <= effectiveLock) {
-        const lockDate = formatDateOnly(effectiveLock);
-        return NextResponse.json(
-          {
-            error: `The check-in date falls on or before the Xero lock date (${lockDate}). Unlock the period in Xero (Settings → Advanced → Financial settings → Lock dates) or choose a later check-in.`,
-            code: "XERO_PERIOD_LOCKED",
-            lockDate,
-          },
-          { status: 409 },
-        );
-      }
+      throw error;
     }
   }
 

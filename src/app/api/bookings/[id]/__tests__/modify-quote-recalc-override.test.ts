@@ -24,6 +24,9 @@ const h = vi.hoisted(() => ({
   getLodgeCapacity: vi.fn(),
   priceGuests: vi.fn(),
   calculateChangeFee: vi.fn(),
+  loadModuleFlags: vi.fn(),
+  isXeroConnected: vi.fn(),
+  getXeroLockDates: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
@@ -87,6 +90,18 @@ vi.mock("@/lib/cancellation", () => ({
   daysUntilDate: vi.fn().mockReturnValue(5),
 }));
 vi.mock("@/lib/change-fee", () => ({ calculateChangeFee: h.calculateChangeFee }));
+// Xero lock-date guard chain (#1697). getEffectiveXeroLockDate stays real.
+vi.mock("@/lib/module-settings", () => ({
+  loadEffectiveModuleFlags: h.loadModuleFlags,
+}));
+vi.mock("@/lib/xero-token-store", () => ({
+  isXeroConnected: h.isXeroConnected,
+}));
+vi.mock("@/lib/xero-organisation", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/xero-organisation")>();
+  return { ...actual, getXeroLockDates: h.getXeroLockDates };
+});
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
@@ -171,6 +186,13 @@ beforeEach(() => {
     guests: [{ priceCents: 40000, perNightCents: [], nightDates: [] }],
   });
   h.calculateChangeFee.mockReturnValue({ feeCents: 0 });
+  // Guard dormant by default; the #1697 cases arm it explicitly.
+  h.loadModuleFlags.mockResolvedValue({ xeroIntegration: false });
+  h.isXeroConnected.mockResolvedValue(true);
+  h.getXeroLockDates.mockResolvedValue({
+    periodLockDate: null,
+    endOfYearLockDate: null,
+  });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -203,5 +225,108 @@ describe("POST /api/bookings/[id]/modify-quote recalc override (issue #1668)", (
     expect(body.priceDiffCents).toBe(10000);
     expect(body.newFinalPriceCents).toBe(40000);
     expect(body.capacityAvailable).toBe(true);
+  });
+});
+
+describe("POST /api/bookings/[id]/modify-quote Xero lock-date guard (issue #1697)", () => {
+  const armLock = (lockDate: string | null) => {
+    h.loadModuleFlags.mockResolvedValue({ xeroIntegration: true });
+    h.getXeroLockDates.mockResolvedValue({
+      periodLockDate: lockDate ? D(lockDate) : null,
+      endOfYearLockDate: null,
+    });
+  };
+
+  it("rejects a recalc-override preview whose new check-in is on/before the lock date (409 + code)", async () => {
+    armLock("2026-08-13");
+
+    const res = await POST(
+      req({
+        adminOverride: true,
+        pricingMode: "recalculate",
+        checkIn: "2026-08-12",
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "XERO_PERIOD_LOCKED",
+      lockDate: "2026-08-13",
+    });
+    // Rejected before pricing: the preview never shows a quote apply cannot deliver.
+    expect(h.priceGuests).not.toHaveBeenCalled();
+  });
+
+  it("guards a check-out-only recalc override via the booking's unchanged past check-in", async () => {
+    armLock("2026-08-14");
+
+    const res = await POST(
+      req({
+        adminOverride: true,
+        pricingMode: "recalculate",
+        checkOut: "2026-08-20",
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "XERO_PERIOD_LOCKED",
+    });
+  });
+
+  it("fails closed with 503 when the lock dates cannot be read", async () => {
+    h.loadModuleFlags.mockResolvedValue({ xeroIntegration: true });
+    h.getXeroLockDates.mockRejectedValue(new Error("xero down"));
+
+    const res = await POST(
+      req({
+        adminOverride: true,
+        pricingMode: "recalculate",
+        checkIn: "2026-08-12",
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "XERO_LOCK_DATE_CHECK_FAILED",
+    });
+  });
+
+  it("previews normally when the past check-in clears the lock date", async () => {
+    armLock("2026-08-10");
+
+    const res = await POST(
+      req({
+        adminOverride: true,
+        pricingMode: "recalculate",
+        checkIn: "2026-08-12",
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.priceDiffCents).toBe(10000);
+  });
+
+  it("never consults the lock dates for a shift override (shift writes no Xero documents)", async () => {
+    armLock("2026-08-13");
+
+    const res = await POST(
+      req({
+        adminOverride: true,
+        pricingMode: "shift",
+        checkIn: "2026-08-12",
+        checkOut: "2026-08-16",
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(200);
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+    expect(h.loadModuleFlags).not.toHaveBeenCalled();
   });
 });

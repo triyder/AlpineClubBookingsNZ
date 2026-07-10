@@ -30,7 +30,11 @@ recommended reading paths.
 - Admin date override for bookings the normal edit window locks (an in-progress
   or fully-past stay): a Full Admin or Booking Officer can move the dates only,
   choosing either **Shift** (keep the price and night count — no fee, refund, or
-  Xero activity) or **Recalculate** (reprice at season rates). Moving onto full
+  Xero activity) or **Recalculate** (reprice at season rates). A Recalculate
+  whose new (or unchanged past) check-in falls on or before the Xero
+  organisation lock date is rejected with unlock instructions — the same
+  lock-date guard as retroactive creation; Shift is exempt because it writes no
+  Xero documents. Moving onto full
   nights requires an explicit over-capacity confirmation, and every override is
   audited and linked to any approved change request
 - Retroactive booking creation for a stay that already happened: a Full Admin or

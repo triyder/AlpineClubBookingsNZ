@@ -21,6 +21,7 @@ import {
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
+import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
 
 const modifyDatesSchema = z
   .object({
@@ -170,6 +171,14 @@ export async function PUT(
         getBookingMemberNightConflictResponse(err.conflicts),
         { status: 409 },
       );
+    }
+    // Xero lock-date guard (#1697): keep the machine-readable code + lockDate
+    // (both errors extend ApiError, so this branch must come first).
+    const xeroLockGuardResponse = getXeroLockGuardErrorResponse(err);
+    if (xeroLockGuardResponse) {
+      return NextResponse.json(xeroLockGuardResponse.body, {
+        status: xeroLockGuardResponse.status,
+      });
     }
     if (err instanceof ApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

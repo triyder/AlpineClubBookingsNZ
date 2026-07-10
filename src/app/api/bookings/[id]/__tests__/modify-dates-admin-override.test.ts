@@ -30,6 +30,10 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { PUT } from "@/app/api/bookings/[id]/modify-dates/route";
+import {
+  XeroLockDateCheckFailedError,
+  XeroPeriodLockedError,
+} from "@/lib/xero-period-lock-guard";
 
 function req(body: unknown) {
   return new NextRequest("http://localhost/api/bookings/b1/modify-dates", {
@@ -189,5 +193,39 @@ describe("PUT /api/bookings/[id]/modify-dates notify choice on plain edits (issu
 
     expect(res.status).toBe(400);
     expect(h.modifyBookingDates).not.toHaveBeenCalled();
+  });
+});
+
+describe("PUT /api/bookings/[id]/modify-dates Xero lock-date guard mapping (issue #1697)", () => {
+  it("maps XeroPeriodLockedError to 409 with the machine-readable code and lockDate", async () => {
+    h.modifyBookingDates.mockRejectedValue(
+      new XeroPeriodLockedError("2026-06-30"),
+    );
+
+    const res = await PUT(
+      req({ adminOverride: true, pricingMode: "recalculate", checkIn: "2026-06-15" }),
+      { params },
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "XERO_PERIOD_LOCKED",
+      lockDate: "2026-06-30",
+      error: expect.stringContaining("2026-06-30"),
+    });
+  });
+
+  it("maps XeroLockDateCheckFailedError to a retryable 503 with its code", async () => {
+    h.modifyBookingDates.mockRejectedValue(new XeroLockDateCheckFailedError());
+
+    const res = await PUT(
+      req({ adminOverride: true, pricingMode: "recalculate", checkIn: "2026-06-15" }),
+      { params },
+    );
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "XERO_LOCK_DATE_CHECK_FAILED",
+    });
   });
 });

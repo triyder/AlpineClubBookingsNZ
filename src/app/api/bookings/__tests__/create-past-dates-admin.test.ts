@@ -118,7 +118,11 @@ vi.mock("@/lib/internet-banking-settings", () => ({
   checkInternetBankingLeadTime: () => ({ allowed: true }),
   loadInternetBankingPaymentSettings: vi.fn().mockResolvedValue({}),
 }));
-vi.mock("@/lib/xero", () => ({ isXeroConnected: h.isXeroConnected }));
+// The lock guard (#1697 extraction) reads connectivity from the source
+// domain module, not the @/lib/xero facade.
+vi.mock("@/lib/xero-token-store", () => ({
+  isXeroConnected: h.isXeroConnected,
+}));
 vi.mock("@/lib/xero-organisation", () => ({
   getXeroLockDates: h.getXeroLockDates,
   getEffectiveXeroLockDate: h.getEffectiveXeroLockDate,
