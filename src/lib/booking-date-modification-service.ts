@@ -255,7 +255,10 @@ export async function modifyBookingDates({
       prisma,
       bookingId,
       { checkIn: newCheckInStr, checkOut: newCheckOutStr },
-      { audience: actor.role === "ADMIN" ? "admin" : "member" },
+      {
+        audience: actor.role === "ADMIN" ? "admin" : "member",
+        actorMemberId: actor.id,
+      },
     );
   }
 

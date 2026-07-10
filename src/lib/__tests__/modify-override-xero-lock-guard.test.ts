@@ -78,12 +78,16 @@ const guardedLightBooking = (
     checkIn: Date;
     checkOut: Date;
     status: string;
+    memberId: string;
     payment: { status: string; xeroInvoiceId: string | null } | null;
   }> = {},
 ) => ({
   checkIn: daysAgo(15),
   checkOut: daysAgo(12),
   status: "CONFIRMED",
+  // Owned by the member actor: the guard defers foreign bookings to the
+  // transaction's 403 (PR #1748 review).
+  memberId: "m1",
   payment: { status: "PENDING", xeroInvoiceId: "inv-1" },
   ...overrides,
 });
@@ -192,6 +196,7 @@ describe("modifyBookingDates ordinary-edit narrow guard (issue #1729)", () => {
         checkIn: true,
         checkOut: true,
         status: true,
+        memberId: true,
         payment: { select: { status: true, xeroInvoiceId: true } },
       },
     });
@@ -360,6 +365,23 @@ describe("modifyBookingBatch ordinary-edit narrow guard (issue #1729)", () => {
       "contact an administrator",
     );
     expect(h.transaction).not.toHaveBeenCalled();
+  });
+
+  it("defers a member's edit of a booking they do not own to the transaction's 403 (no lock-date disclosure, PR #1748 review)", async () => {
+    h.bookingFindUnique.mockResolvedValue(
+      guardedLightBooking({ memberId: "someone-else" }),
+    );
+
+    await expect(
+      modifyBookingBatch({
+        bookingId: "b1",
+        actor: memberActor,
+        input: { checkOut: formatDateOnly(daysAgo(11)) },
+        ipAddress: "test",
+      }),
+    ).rejects.toThrow(TRANSACTION_SENTINEL);
+
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
   });
 
   it("never reads the booking for an identity-only edit (guest name fixes stay unguarded)", async () => {

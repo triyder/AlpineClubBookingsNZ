@@ -206,9 +206,9 @@ export type XeroLockGuardDateEditBooking = {
  *
  * The check-in asserted is the one the booking would END UP with
  * (requested ?? stored): a check-out-only edit still re-dates the invoice at
- * the unchanged past check-in. An unparseable requested date counts as a
- * change here, but the check-in assertion's NaN skip then leaves the
- * rejection to the caller's own date validation.
+ * the unchanged past check-in. Any unparseable requested date field resolves
+ * silently — malformed input is the caller's own date validation's 400 to
+ * make, never a lock-date 409.
  */
 export async function assertDateEditClearsXeroLockDate(
   booking: XeroLockGuardDateEditBooking,
@@ -221,6 +221,12 @@ export async function assertDateEditClearsXeroLockDate(
   const requestedCheckOut = requested.checkOut
     ? parseDateOnly(requested.checkOut)
     : null;
+  if (
+    (requestedCheckIn !== null && Number.isNaN(requestedCheckIn.getTime())) ||
+    (requestedCheckOut !== null && Number.isNaN(requestedCheckOut.getTime()))
+  ) {
+    return;
+  }
   const datesChanged =
     (requestedCheckIn !== null &&
       requestedCheckIn.getTime() !== booking.checkIn.getTime()) ||
@@ -247,8 +253,12 @@ export async function assertDateEditClearsXeroLockDate(
  * assertDateEditClearsXeroLockDate. Returns immediately — without even the
  * read — when the request carries no date fields (identity-only edits are
  * never guarded), and resolves silently for a missing booking (the
- * transaction path 404s). As with the override variant, the pre-read is only
- * advisory: the outbox still fails safely if the lock dates change mid-flight.
+ * transaction path 404s). Member-audience requests on a booking the actor
+ * does not own also resolve silently (PR #1748 review): the transaction path
+ * 403s them, and rejecting here first would disclose the booking's
+ * unpaid-invoice state and the organisation's lock date to a non-owner.
+ * As with the override variant, the pre-read is only advisory: the outbox
+ * still fails safely if the lock dates change mid-flight.
  */
 export async function assertProposedDateEditClearsXeroLockDate(
   db: {
@@ -259,14 +269,17 @@ export async function assertProposedDateEditClearsXeroLockDate(
           checkIn: true;
           checkOut: true;
           status: true;
+          memberId: true;
           payment: { select: { status: true; xeroInvoiceId: true } };
         };
-      }): Promise<XeroLockGuardDateEditBooking | null>;
+      }): Promise<
+        (XeroLockGuardDateEditBooking & { memberId: string }) | null
+      >;
     };
   },
   bookingId: string,
   requested: { checkIn?: string; checkOut?: string },
-  options?: { audience?: XeroLockGuardAudience },
+  options?: { audience?: XeroLockGuardAudience; actorMemberId?: string },
 ): Promise<void> {
   if (!requested.checkIn && !requested.checkOut) return;
   const booking = await db.booking.findUnique({
@@ -275,9 +288,18 @@ export async function assertProposedDateEditClearsXeroLockDate(
       checkIn: true,
       checkOut: true,
       status: true,
+      memberId: true,
       payment: { select: { status: true, xeroInvoiceId: true } },
     },
   });
   if (!booking) return;
+  // The absent-audience default is "admin", matching the assertion helpers'
+  // own default (the override callers rely on it).
+  if (
+    (options?.audience ?? "admin") === "member" &&
+    booking.memberId !== options?.actorMemberId
+  ) {
+    return;
+  }
   await assertDateEditClearsXeroLockDate(booking, requested, options);
 }

@@ -684,9 +684,14 @@ The same guard protects the **booking modify paths**
   `queueXeroBookingEditSettlement` can never drift). Error text is
   **actor-appropriate**: admins get the unlock instructions, members get a
   "contact an administrator" 409 (and a softer fail-closed 503) — same codes
-  either way. **Identity-only edits (guest name fixes) are never guarded**
+  either way; a member's request against a booking they do not own skips the
+  guard silently (the transaction's 403 answers it — no lock-date disclosure
+  to non-owners). **Identity-only edits (guest name fixes) are never guarded**
   (owner decision, #1729): the outbox backstop covers that rare strand rather
-  than blocking a typo fix.
+  than blocking a typo fix. Also outbox-backstopped, not guarded: the
+  check-in-dated invoice CREATE a $0-collapsing ordinary edit can queue for a
+  never-invoiced booking, and guest-range edits that move the stay envelope
+  without date fields in the request.
 
 **Shift overrides are exempt**: a shift writes no Xero documents.
 As at create, only past check-ins are guarded.

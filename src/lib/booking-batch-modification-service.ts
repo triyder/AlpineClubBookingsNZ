@@ -222,7 +222,10 @@ export async function modifyBookingBatch({
       prisma,
       bookingId,
       { checkIn: input.checkIn, checkOut: input.checkOut },
-      { audience: actor.role === "ADMIN" ? "admin" : "member" },
+      {
+        audience: actor.role === "ADMIN" ? "admin" : "member",
+        actorMemberId: actor.id,
+      },
     );
   }
 

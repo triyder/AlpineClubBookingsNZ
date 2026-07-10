@@ -242,7 +242,7 @@ describe("assertDateEditClearsXeroLockDate (issue #1729)", () => {
     ...overrides,
   });
 
-  it("rejects a check-in change into the locked period with the member message by default audience 'admin'", async () => {
+  it("rejects a check-in change into the locked period with the admin wording when audience is omitted (defaults to 'admin')", async () => {
     const error = await assertDateEditClearsXeroLockDate(
       guardedBooking(),
       { checkIn: formatDateOnly(daysAgo(20)) },
@@ -368,6 +368,7 @@ describe("assertProposedDateEditClearsXeroLockDate (issue #1729)", () => {
       checkIn: Date;
       checkOut: Date;
       status: string;
+      memberId: string;
       payment: { status: string; xeroInvoiceId: string | null } | null;
     } | null,
   ) => ({
@@ -377,6 +378,7 @@ describe("assertProposedDateEditClearsXeroLockDate (issue #1729)", () => {
     checkIn: daysAgo(15),
     checkOut: daysAgo(12),
     status: "CONFIRMED" as const,
+    memberId: "m1",
     payment: { status: "PENDING", xeroInvoiceId: "inv-1" },
   });
 
@@ -395,7 +397,7 @@ describe("assertProposedDateEditClearsXeroLockDate (issue #1729)", () => {
         db,
         "b1",
         { checkIn: formatDateOnly(daysAgo(20)) },
-        { audience: "member" },
+        { audience: "member", actorMemberId: "m1" },
       ),
     ).rejects.toThrow(XeroPeriodLockedError);
     expect(db.booking.findUnique).toHaveBeenCalledWith({
@@ -404,9 +406,45 @@ describe("assertProposedDateEditClearsXeroLockDate (issue #1729)", () => {
         checkIn: true,
         checkOut: true,
         status: true,
+        memberId: true,
         payment: { select: { status: true, xeroInvoiceId: true } },
       },
     });
+  });
+
+  it("resolves silently for a member editing a booking they do not own (the transaction path 403s — no lock-date disclosure)", async () => {
+    await expect(
+      assertProposedDateEditClearsXeroLockDate(
+        dbWith(storedBooking()),
+        "b1",
+        { checkIn: formatDateOnly(daysAgo(20)) },
+        { audience: "member", actorMemberId: "someone-else" },
+      ),
+    ).resolves.toBeUndefined();
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+  });
+
+  it("still guards an admin-audience actor editing another member's booking", async () => {
+    await expect(
+      assertProposedDateEditClearsXeroLockDate(
+        dbWith(storedBooking()),
+        "b1",
+        { checkIn: formatDateOnly(daysAgo(20)) },
+        { audience: "admin", actorMemberId: "admin1" },
+      ),
+    ).rejects.toThrow(XeroPeriodLockedError);
+  });
+
+  it("resolves silently for an unparseable requested check-OUT even when the stored past check-in is locked (validation owns the 400)", async () => {
+    await expect(
+      assertProposedDateEditClearsXeroLockDate(
+        dbWith(storedBooking()),
+        "b1",
+        { checkOut: "not-a-date" },
+        { audience: "member", actorMemberId: "m1" },
+      ),
+    ).resolves.toBeUndefined();
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
   });
 
   it("resolves silently for a missing booking (the transaction path 404s)", async () => {
