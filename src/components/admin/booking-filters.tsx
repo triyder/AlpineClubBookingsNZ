@@ -120,8 +120,12 @@ export function BookingFilters({
   // Mount-time snapshot of the URL-seeded filter values (#1732). While the
   // live values still equal it, an auto-apply push only renames legacy params
   // to their canonical form — the result set is unchanged — so the URL's
-  // `page` is carried over. Once any value differs, the user changed a filter
-  // and dropping `page` (back to page 1) is correct.
+  // `page` is carried over; once any value differs, it is dropped. NOTE: the
+  // server currently IGNORES `page` (the list always returns the first 100
+  // rows and no in-page pagination links exist), so today this only keeps a
+  // bookmarked URL stable. If pagination is ever added, revisit: this
+  // mount-scoped snapshot never refreshes, so change-then-revert sequences
+  // would re-attach a stale page onto a different result set.
   const initialFilterSnapshotRef = useRef<string | null>(null);
   useEffect(() => {
     const filterSnapshot = JSON.stringify([
@@ -163,8 +167,8 @@ export function BookingFilters({
       current.delete("page");
       if (next !== current.toString()) {
         // A pure legacy→canonical rewrite (e.g. a bookmarked
-        // ?from=A&to=B&page=3) keeps the user's place in the unchanged result
-        // set; a real filter change lands on page 1.
+        // ?from=A&to=B&page=3) keeps the URL's inert `page` param; a real
+        // filter change drops it (see the snapshot note above).
         if (isPureRewrite && livePage) params.set("page", livePage);
         const target = params.toString();
         router.push(target ? `/admin/bookings?${target}` : "/admin/bookings");
