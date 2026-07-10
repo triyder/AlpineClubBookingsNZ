@@ -440,6 +440,42 @@ describe("site-content page caps + system-page protections (admin route parity)"
     expect(normalised.errors).toEqual([]);
     expect(normalised.categories[0].items[0].action).toBe("update");
   });
+
+  it("stores title/caption/menuTitle trimmed and converges a legacy untrimmed row (#1732)", async () => {
+    // The admin route stores the zod-.trim()med value; a bundle cell with
+    // stray whitespace must round-trip to the same stored form.
+    const zip = pagesBundle([
+      { ...BASE_PAGE, title: "About Us  ", caption: " Caption ", menuTitle: "About " },
+    ]);
+
+    // Apply (create): the stored values are the trimmed forms.
+    const { pages, ctx } = pagesApplyHarness(zip);
+    await siteContentImporter.apply(ctx);
+    expect(pages.get("about")?.title).toBe("About Us");
+    expect(pages.get("about")?.caption).toBe("Caption");
+    expect(pages.get("about")?.menuTitle).toBe("About");
+
+    // A legacy row whose STORED title is untrimmed plans as an update ONCE
+    // (the plan diffs against the trimmed value apply would write) …
+    const legacy = await buildImportPlan(
+      pagesDb([{ id: "p1", ...BASE_PAGE, title: "About Us  ", caption: "Caption" }]),
+      zip,
+      { mode: "overwrite" },
+    );
+    expect(legacy.errors).toEqual([]);
+    expect(legacy.categories[0].items[0].action).toBe("update");
+    expect(legacy.categories[0].items[0].changedFields).toEqual(["title"]);
+
+    // … then converges: once the DB holds the trimmed values, re-importing the
+    // same whitespace-carrying bundle is "unchanged" (plan/apply agreement).
+    const converged = await buildImportPlan(
+      pagesDb([{ id: "p1", ...BASE_PAGE, caption: "Caption" }]),
+      zip,
+      { mode: "overwrite" },
+    );
+    expect(converged.errors).toEqual([]);
+    expect(converged.categories[0].items[0].action).toBe("unchanged");
+  });
 });
 
 describe("fingerprint binding", () => {

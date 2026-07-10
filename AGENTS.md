@@ -122,6 +122,10 @@ At the successful end of a meaningful piece of work:
 - Any pre-authorisation for a gated change must live in an on-repo artifact (an
   issue body or an issue/PR comment) and be quoted or linked in the PR body, so
   the authorisation is attributable and auditable.
+- Before adopting a delegated-authority decision on an issue, re-read its full
+  comment thread for a direct owner decision on the same question — earlier or
+  later. A direct owner decision always outranks a delegated one (#1709), and a
+  delegated decision comment must state that this check was done.
 - Gated areas (money movement, booking capacity, membership/family lifecycle,
   schema/migrations, auth/security/privacy, and live providers Xero, Stripe,
   SES, and Sentry) require an explicit owner approval comment on the PR before

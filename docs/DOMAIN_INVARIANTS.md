@@ -591,8 +591,10 @@ override requires an explicit `pricingMode`:
   and email member" / "Cancel without emailing" — the suppression also covers
   the linked provisional split children cancelled with the parent). Both routes
   403 the flag from any non-(booking-management)-ADMIN caller, force notify for
-  non-admin actors at the service, default to notify when the flag is absent,
-  and record a suppressed send as `notifyMember: false` in the audit metadata;
+  non-admin actors (cancellation at the service — `cancelBooking` — and guest
+  removal in the route handler itself), default to notify when the flag is
+  absent, and record a suppressed send as `notifyMember: false` in the audit
+  metadata;
   refund/credit settlement, audit, booking events, waitlist processing, and the
   admin-facing alerts are never affected by the choice. **The Xero invoice
   email on the Internet Banking path is deliberately outside this choice and is

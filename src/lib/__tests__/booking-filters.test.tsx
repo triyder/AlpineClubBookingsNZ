@@ -154,6 +154,50 @@ describe("BookingFilters", () => {
     expect(url.searchParams.has("to")).toBe(false);
   });
 
+  it("preserves page across a pure legacy→canonical rewrite (#1732)", async () => {
+    // A paginated legacy bookmark encodes the SAME result set the canonical
+    // params do, so rewriting the param names must keep the user's place.
+    const legacyFrom = formatDateOnly(getTodayDateOnly());
+    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 14));
+    mocks.currentSearch = `from=${legacyFrom}&to=${legacyTo}&page=3`;
+    setLocation(mocks.currentSearch);
+
+    render(<BookingFilters />);
+
+    await waitFor(() => expect(mocks.routerPush).toHaveBeenCalled());
+    const url = pushedBookingsUrl();
+    expect(url.searchParams.get("checkInFrom")).toBe(legacyFrom);
+    expect(url.searchParams.get("checkOutTo")).toBe(legacyTo);
+    expect(url.searchParams.has("from")).toBe(false);
+    expect(url.searchParams.has("to")).toBe(false);
+    expect(url.searchParams.get("page")).toBe("3");
+  });
+
+  it("resets to page 1 when a filter actually changes", async () => {
+    // A real filter change means a different result set — page 3 of the old
+    // one is meaningless, so the rewrite drops the page param.
+    const checkInFrom = formatDateOnly(getTodayDateOnly());
+    mocks.currentSearch = `checkInFrom=${checkInFrom}&page=3`;
+    setLocation(mocks.currentSearch);
+
+    render(<BookingFilters />);
+
+    // The canonical paginated URL is already a no-op (page preserved by not
+    // navigating at all).
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(mocks.routerPush).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByPlaceholderText("Name or email..."), {
+      target: { value: "Aroha" },
+    });
+
+    await waitFor(() => expect(mocks.routerPush).toHaveBeenCalled());
+    const url = pushedBookingsUrl();
+    expect(url.searchParams.get("search")).toBe("Aroha");
+    expect(url.searchParams.get("checkInFrom")).toBe(checkInFrom);
+    expect(url.searchParams.has("page")).toBe(false);
+  });
+
   it("navigates when the search input changes", async () => {
     mocks.currentSearch = "";
     setLocation("");

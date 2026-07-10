@@ -35,7 +35,10 @@ admins at **Admin → Setup & Configuration → Export & Import**
   shared `PAGE_CONTENT_LIMITS`) and its system-page protections: a bundle
   cannot hide a page the editor refuses to unpublish (system and built-in
   pages), and cannot move a system page's fixed menu order (re-importing the
-  page's current order — an instance's own export — stays clean).
+  page's current order — an instance's own export — stays clean). A
+  cross-instance transfer therefore errors on a system page (e.g. `home`) whose
+  sort order differs between source and target — normalise the system pages'
+  sort order on both instances first.
 - **Door codes:** the dry-run prominently names each lodge whose door code the
   import would set or change, and the audit records which lodges' codes were
   actually written (never the values). Reseal recomputes the bundle's

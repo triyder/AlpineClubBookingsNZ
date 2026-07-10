@@ -269,7 +269,10 @@ function strictPageSlug(value: unknown): Valid<string> {
  * Field-cap parity with the admin route's zod schemas: the same
  * PAGE_CONTENT_LIMITS values, measured the same way (`trimmed` mirrors the
  * schema's .trim(); headerText/contentHtml are capped untrimmed, exactly like
- * the route, and BEFORE sanitisation, exactly like the route).
+ * the route, and BEFORE sanitisation, exactly like the route). The returned
+ * value is the MEASURED form — trimmed fields come back trimmed, mirroring
+ * zod's .trim() transform, so the import stores exactly what the admin route
+ * would store (#1732).
  */
 function withinCap(
   value: unknown,
@@ -280,7 +283,7 @@ function withinCap(
   if (s.length > max) {
     return { ok: false, message: `must be at most ${max} characters` };
   }
-  return { ok: true, value: asStr(value) };
+  return { ok: true, value: s };
 }
 
 /** Title parity: required (unless merge keeps the existing one) and capped. */
@@ -361,18 +364,23 @@ function parsePageRow(
   // Field caps + system-page protections: parity with the admin route's zod
   // schemas and PUT/PATCH guards (src/app/api/admin/page-content/route.ts),
   // through the shared PAGE_CONTENT_LIMITS / SYSTEM_PAGE_SLUGS /
-  // canUnpublishPage. Violations are row errors that block apply.
-  v.custom(
+  // canUnpublishPage. Violations are row errors that block apply. The trimmed
+  // fields (caption/menuTitle/title) keep the validator's TRIMMED value — the
+  // admin route stores the zod-trimmed form, so the import must too. parsePageRow
+  // feeds plan and apply alike, so the change preview diffs against the trimmed
+  // value apply would write: a legacy row whose stored value is untrimmed plans
+  // as one update, then converges to "unchanged" on re-import (#1732).
+  const caption = v.custom(
     "caption",
     withinCap(raw.caption, PAGE_CONTENT_LIMITS.captionMax, true),
     "",
   );
-  v.custom(
+  const menuTitle = v.custom(
     "menuTitle",
     withinCap(raw.menuTitle, PAGE_CONTENT_LIMITS.menuTitleMax, true),
     "",
   );
-  v.custom("title", strictPageTitle(raw.title, blankOk), "");
+  const title = v.custom("title", strictPageTitle(raw.title, blankOk), "");
   v.custom(
     "headerText",
     withinCap(raw.headerText, PAGE_CONTENT_LIMITS.headerTextMax, false),
@@ -409,9 +417,9 @@ function parsePageRow(
       // Derived from the slug, never trusted from the file — a crafted path
       // cell could otherwise disagree with the slug (mirrors the admin route).
       path: toPagePath(slug),
-      caption: raw.caption ?? "",
-      menuTitle: raw.menuTitle ?? "",
-      title: raw.title ?? "",
+      caption,
+      menuTitle,
+      title,
       // Stored sanitised, exactly like the admin write path. Both plan and
       // apply consume this value, so the change preview diffs against what
       // apply would actually write.

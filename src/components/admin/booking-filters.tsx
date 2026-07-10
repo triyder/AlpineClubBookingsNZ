@@ -117,7 +117,22 @@ export function BookingFilters({
   // navigation per keystroke) while keeping the URL-driven server model:
   // filtered views stay shareable links.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mount-time snapshot of the URL-seeded filter values (#1732). While the
+  // live values still equal it, an auto-apply push only renames legacy params
+  // to their canonical form — the result set is unchanged — so the URL's
+  // `page` is carried over. Once any value differs, the user changed a filter
+  // and dropping `page` (back to page 1) is correct.
+  const initialFilterSnapshotRef = useRef<string | null>(null);
   useEffect(() => {
+    const filterSnapshot = JSON.stringify([
+      status, updatedFrom, updatedTo, checkInFrom, checkInTo, checkOutFrom,
+      checkOutTo, search, sortBy, sortDir, month, deleted, paymentSource,
+      xeroState, bedState, changeState, lodgeId,
+    ]);
+    if (initialFilterSnapshotRef.current === null) {
+      initialFilterSnapshotRef.current = filterSnapshot;
+    }
+    const isPureRewrite = filterSnapshot === initialFilterSnapshotRef.current;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       const params = new URLSearchParams(window.location.search);
@@ -144,9 +159,15 @@ export function BookingFilters({
       const next = params.toString();
       // Compare against the live URL so the initial render is a no-op.
       const current = new URLSearchParams(window.location.search);
+      const livePage = current.get("page");
       current.delete("page");
       if (next !== current.toString()) {
-        router.push(next ? `/admin/bookings?${next}` : "/admin/bookings");
+        // A pure legacy→canonical rewrite (e.g. a bookmarked
+        // ?from=A&to=B&page=3) keeps the user's place in the unchanged result
+        // set; a real filter change lands on page 1.
+        if (isPureRewrite && livePage) params.set("page", livePage);
+        const target = params.toString();
+        router.push(target ? `/admin/bookings?${target}` : "/admin/bookings");
       }
     }, 350);
     return () => {
