@@ -251,6 +251,30 @@ describe("GET /api/admin/bookings/eligible-family", () => {
     );
   });
 
+  it("treats a memberless family group as invisible — a group-less member resolves to self only (#1681)", async () => {
+    mockAuth.mockResolvedValue(bookingOfficerNoMembershipView);
+    // A pending GROUP_CREATE leaves a memberless FamilyGroup row behind; it
+    // has no FamilyGroupMember rows, so it can never surface through
+    // familyGroupMemberships and booking eligibility is untouched.
+    mockPrisma.member.findUnique.mockResolvedValue({
+      ...OWNER,
+      familyGroupMemberships: [],
+    });
+
+    const res = await getCreateFamily(createReq("owner1"));
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.familyGroupId).toBeNull();
+    expect(data.familyGroupIds).toEqual([]);
+    expect(data.familyMembers).toHaveLength(1);
+    expect(data.familyMembers[0]).toMatchObject({
+      id: "owner1",
+      relationship: "self",
+    });
+    expect(mockPrisma.familyGroupMember.findMany).not.toHaveBeenCalled();
+  });
+
   it("returns 400 when forMemberId is missing", async () => {
     mockAuth.mockResolvedValue(bookingOfficerNoMembershipView);
 

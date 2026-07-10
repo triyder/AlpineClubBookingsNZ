@@ -48,7 +48,12 @@ export interface RequestMemberMatch extends MemberOption {
 
 export interface FamilyGroupRequest {
   id: string;
-  type: "JOIN_REQUEST" | "CHILD_REQUEST" | "ADULT_REQUEST" | "REMOVAL_REQUEST";
+  type:
+    | "JOIN_REQUEST"
+    | "CHILD_REQUEST"
+    | "ADULT_REQUEST"
+    | "REMOVAL_REQUEST"
+    | "GROUP_CREATE";
   createdAt: string;
   requester: MemberOption;
   familyGroup: {
@@ -81,6 +86,16 @@ export interface FamilyGroupRequest {
     email: string;
     ageTier: string;
     active: boolean;
+  } | null;
+  // For GROUP_CREATE: the partner to auto-invite on approval (if any).
+  invitedMemberId?: string | null;
+  invitedMember?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    ageTier?: string;
+    active?: boolean;
   } | null;
   matchingMembers: RequestMemberMatch[];
 }
@@ -150,6 +165,7 @@ export function getFamilyGroupRequestTypeLabel(request: FamilyGroupRequest) {
   if (request.type === "CHILD_REQUEST") return "Infant/Child/Youth Request";
   if (request.type === "ADULT_REQUEST") return "Same-email Adult Request";
   if (request.type === "REMOVAL_REQUEST") return "Removal Request";
+  if (request.type === "GROUP_CREATE") return "New Family Group";
   return "Join Request";
 }
 
@@ -157,6 +173,7 @@ export function getFamilyGroupRequestBadgeClass(request: FamilyGroupRequest) {
   if (request.type === "CHILD_REQUEST") return "bg-blue-100 text-blue-800 border-blue-200";
   if (request.type === "ADULT_REQUEST") return "bg-violet-100 text-violet-800 border-violet-200";
   if (request.type === "REMOVAL_REQUEST") return "bg-rose-100 text-rose-800 border-rose-200";
+  if (request.type === "GROUP_CREATE") return "bg-teal-100 text-teal-800 border-teal-200";
   return "bg-emerald-100 text-emerald-800 border-emerald-200";
 }
 
@@ -185,6 +202,12 @@ export function getFamilyGroupRequestSummary(request: FamilyGroupRequest) {
   if (request.type === "REMOVAL_REQUEST") {
     const subjectName = request.subjectMember ? getMemberName(request.subjectMember) : "a member";
     return `${getMemberName(request.requester)} wants to remove ${subjectName} from ${request.familyGroup.name || "this family group"}.`;
+  }
+  if (request.type === "GROUP_CREATE") {
+    const partnerClause = request.invitedMember
+      ? ` and invite ${getMemberName(request.invitedMember)}`
+      : "";
+    return `${getMemberName(request.requester)} wants to create the new family group ${request.familyGroup.name || "Unnamed Group"}${partnerClause}.`;
   }
   return `${getMemberName(request.requester)} wants to join ${request.familyGroup.name || "this family group"}.`;
 }

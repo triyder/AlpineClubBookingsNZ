@@ -70,6 +70,43 @@ describe("Family group email templates", () => {
     // Should not contain admin note box
     expect(html).not.toContain("Admin note:");
   });
+
+  it("groupCreateRequestConfirmationTemplate includes requester and group name", async () => {
+    const { groupCreateRequestConfirmationTemplate } = await import("../email-templates");
+    const html = groupCreateRequestConfirmationTemplate("Alice Smith", "Smith Family");
+
+    expect(html).toContain("Alice Smith");
+    expect(html).toContain("Smith Family");
+    expect(html).toContain("has been submitted");
+  });
+
+  it("groupCreateApprovedTemplate includes requester and group name", async () => {
+    const { groupCreateApprovedTemplate } = await import("../email-templates");
+    const html = groupCreateApprovedTemplate("Alice", "Smith Family");
+
+    expect(html).toContain("Alice");
+    expect(html).toContain("Smith Family");
+    expect(html).toContain("group admin");
+  });
+
+  it("groupCreateRejectedTemplate includes reason when provided and escapes HTML", async () => {
+    const { groupCreateRejectedTemplate } = await import("../email-templates");
+    const html = groupCreateRejectedTemplate("Alice", "<b>Smith</b> Family", "Duplicate group");
+
+    expect(html).toContain("Alice");
+    expect(html).not.toContain("<b>Smith</b>");
+    expect(html).toContain("&lt;b&gt;Smith&lt;/b&gt;");
+    expect(html).toContain("not approved");
+    expect(html).toContain("Duplicate group");
+  });
+
+  it("groupCreateRejectedTemplate works without reason", async () => {
+    const { groupCreateRejectedTemplate } = await import("../email-templates");
+    const html = groupCreateRejectedTemplate("Alice", "Smith Family");
+
+    expect(html).toContain("not approved");
+    expect(html).not.toContain("Admin note:");
+  });
 });
 
 // ── Route integration tests ──────────────────────────────────────────────

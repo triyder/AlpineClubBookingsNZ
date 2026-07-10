@@ -99,6 +99,7 @@ describe("getAdminPendingCounts", () => {
             "CHILD_REQUEST",
             "ADULT_REQUEST",
             "REMOVAL_REQUEST",
+            "GROUP_CREATE",
           ],
         },
       },

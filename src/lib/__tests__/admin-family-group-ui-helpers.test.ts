@@ -4,6 +4,7 @@ import {
   buildInitialRequestSelections,
   buildSharedEmailClusters,
   getFamilyGroupRequestSummary,
+  getFamilyGroupRequestTypeLabel,
   mapFamilyGroupRequestSearchResults,
   type FamilyGroupMemberRow,
   type FamilyGroupRequest,
@@ -175,5 +176,33 @@ describe("admin-family-group-ui-helpers", () => {
     expect(getFamilyGroupRequestSummary(removalRequest)).toBe(
       "Ada Parent wants to remove Bea Child from Parent Family."
     );
+  });
+
+  it("labels and summarizes GROUP_CREATE requests (#1681)", () => {
+    const groupCreateRequest: FamilyGroupRequest = {
+      ...baseRequest,
+      id: "request-4",
+      type: "GROUP_CREATE",
+      familyGroup: { id: "group-new", name: "New Family", members: [] },
+      invitedMember: {
+        id: "partner-1",
+        firstName: "Pat",
+        lastName: "Partner",
+        email: "pat@example.com",
+      },
+      matchingMembers: [],
+    };
+
+    expect(getFamilyGroupRequestTypeLabel(groupCreateRequest)).toBe(
+      "New Family Group"
+    );
+    expect(getFamilyGroupRequestSummary(groupCreateRequest)).toBe(
+      "Ada Parent wants to create the new family group New Family and invite Pat Partner."
+    );
+    expect(
+      getFamilyGroupRequestSummary({ ...groupCreateRequest, invitedMember: null })
+    ).toBe("Ada Parent wants to create the new family group New Family.");
+    // GROUP_CREATE never seeds a member-record selection.
+    expect(buildInitialRequestSelections([groupCreateRequest], {})).toEqual({});
   });
 });

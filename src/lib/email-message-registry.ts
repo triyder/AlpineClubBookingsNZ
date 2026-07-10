@@ -229,6 +229,18 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "Held booking-request owner failed re-validation at conversion; a fresh contact was substituted and the invoice will bill it instead of the intended owner",
     frequency: "Once per conversion where the held owner is no longer mappable",
   },
+  "family-group-create-request-confirmation": {
+    triggerSummary: "Member-initiated family group creation request submitted",
+    frequency: "Per group creation request",
+  },
+  "family-group-create-approved": {
+    triggerSummary: "Family group creation request approved by admin",
+    frequency: "Per group creation approval",
+  },
+  "family-group-create-rejected": {
+    triggerSummary: "Family group creation request rejected by admin",
+    frequency: "Per group creation rejection",
+  },
   "membership-cancellation-submitted": {
     triggerSummary: "Membership cancellation request submitted",
     frequency: "Per requester submission",

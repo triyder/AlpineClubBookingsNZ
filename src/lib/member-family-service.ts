@@ -277,6 +277,68 @@ export async function getMemberFamily(memberId: string): Promise<JsonRouteResult
     : [];
   const pendingRequests = Array.isArray(rawPendingRequests) ? rawPendingRequests : [];
 
+  // A pending GROUP_CREATE targets a group the requester is NOT yet a member
+  // of (the group row is memberless until approval), so the group-scoped
+  // pending query above cannot surface it. Fetch it requester-scoped so the
+  // profile can render the awaiting-review state (#1681).
+  const myPendingCreateRequestRow =
+    typeof prisma.familyGroupJoinRequest?.findFirst === "function"
+      ? await prisma.familyGroupJoinRequest.findFirst({
+          where: {
+            requesterId: memberId,
+            type: "GROUP_CREATE",
+            status: "PENDING",
+          },
+          select: {
+            id: true,
+            familyGroupId: true,
+            createdAt: true,
+            familyGroup: { select: { id: true, name: true } },
+            invitedMember: {
+              select: { id: true, firstName: true, lastName: true, email: true },
+            },
+          },
+        })
+      : null;
+
+  const myPendingCreateChildRequests = myPendingCreateRequestRow
+    ? await prisma.familyGroupJoinRequest.findMany({
+        where: {
+          familyGroupId: myPendingCreateRequestRow.familyGroupId,
+          requesterId: memberId,
+          type: "CHILD_REQUEST",
+          status: "PENDING",
+        },
+        select: { id: true, childFirstName: true, childLastName: true },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
+
+  const myPendingCreateRequest = myPendingCreateRequestRow
+    ? {
+        id: myPendingCreateRequestRow.id,
+        familyGroupId: myPendingCreateRequestRow.familyGroupId,
+        groupName: myPendingCreateRequestRow.familyGroup?.name ?? null,
+        createdAt: myPendingCreateRequestRow.createdAt,
+        partner: myPendingCreateRequestRow.invitedMember
+          ? {
+              id: myPendingCreateRequestRow.invitedMember.id,
+              firstName: myPendingCreateRequestRow.invitedMember.firstName,
+              lastName: myPendingCreateRequestRow.invitedMember.lastName,
+              email: myPendingCreateRequestRow.invitedMember.email,
+            }
+          : null,
+        pendingChildRequests: (Array.isArray(myPendingCreateChildRequests)
+          ? myPendingCreateChildRequests
+          : []
+        ).map((request) => ({
+          id: request.id,
+          firstName: request.childFirstName,
+          lastName: request.childLastName,
+        })),
+      }
+    : null;
+
   const allMembers = [currentMember, ...groupMemberships.map((membership) => membership.member)];
   const memberById = new Map(allMembers.map((member) => [member.id, member]));
   const groupIdsByMemberId = new Map<string, Set<string>>();
@@ -442,6 +504,7 @@ export async function getMemberFamily(memberId: string): Promise<JsonRouteResult
     familyGroupIds: groupIds,
     displayName: getDisplayName(currentMember),
     familyMembers,
+    myPendingCreateRequest,
     pendingRequests: pendingRequests.map((request) => ({
       id: request.id,
       type: request.type,

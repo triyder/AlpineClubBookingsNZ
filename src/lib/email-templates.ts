@@ -1647,6 +1647,53 @@ export function joinRequestConfirmationTemplate(
   `);
 }
 
+/** Confirmation email sent to the requester when they submit a group creation request (#1681) */
+export function groupCreateRequestConfirmationTemplate(
+  requesterName: string,
+  groupName: string
+): string {
+  return layout(`
+    ${heading("Family Group Request Submitted")}
+    ${paragraph("Hi " + escapeHtml(requesterName) + ",")}
+    ${paragraph("Your request to create the family group <strong>" + escapeHtml(groupName) + "</strong> has been submitted.")}
+    ${alertBox("An administrator will review your request. You'll be notified once it's been processed.", "info")}
+    ${supportContactMuted()}
+  `);
+}
+
+/** Sent to the requester when their group creation request is approved by admin */
+export function groupCreateApprovedTemplate(
+  requesterName: string,
+  groupName: string
+): string {
+  return layout(`
+    ${heading("Family Group Created")}
+    ${paragraph("Hi " + escapeHtml(requesterName) + ",")}
+    ${paragraph("Your family group <strong>" + escapeHtml(groupName) + "</strong> has been approved and created. You are the group admin.")}
+    ${alertBox("Any partner invitation has been sent for them to accept from their profile, and any infant/child/youth requests you included are reviewed separately by an administrator.", "success")}
+    ${supportContactMuted()}
+  `);
+}
+
+/** Sent to the requester when their group creation request is rejected by admin */
+export function groupCreateRejectedTemplate(
+  requesterName: string,
+  groupName: string,
+  reason?: string
+): string {
+  const reasonHtml = reason
+    ? `${alertBox("Admin note: " + escapeHtml(reason), "warning")}`
+    : "";
+  return layout(`
+    ${heading("Family Group Request Update")}
+    ${paragraph("Hi " + escapeHtml(requesterName) + ",")}
+    ${paragraph("Your request to create the family group <strong>" + escapeHtml(groupName) + "</strong> was not approved.")}
+    ${reasonHtml}
+    ${paragraph("If you have questions, please contact the club.")}
+    ${supportContactMuted()}
+  `);
+}
+
 export function membershipCancellationSubmittedTemplate(params: {
   firstName: string;
   participantSummary: string;

@@ -66,6 +66,26 @@ interface PendingFamilyRequest {
   requestedLastName: string | null;
 }
 
+interface MyPendingCreateRequest {
+  id: string;
+  familyGroupId: string;
+  groupName: string | null;
+  partner: { id: string; firstName: string; lastName: string; email: string } | null;
+  pendingChildRequests: Array<{
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+  }>;
+}
+
+interface CreateChildRow {
+  firstName: string;
+  lastName: string;
+  dateOfBirth: string;
+}
+
+const MAX_CREATE_GROUP_CHILDREN = 6;
+
 interface FamilyGroupSectionProps {
   familyGroups: FamilyGroup[];
   canManage?: boolean;
@@ -111,6 +131,12 @@ function getStatusBadge(
 
 export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGroupSectionProps) {
   const [showJoinForm, setShowJoinForm] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [createGroupName, setCreateGroupName] = useState("");
+  const [createPartnerEmail, setCreatePartnerEmail] = useState("");
+  const [createChildren, setCreateChildren] = useState<CreateChildRow[]>([]);
+  const [myPendingCreateRequest, setMyPendingCreateRequest] =
+    useState<MyPendingCreateRequest | null>(null);
   const [showInviteForm, setShowInviteForm] = useState<string | null>(null);
   const [showChildForm, setShowChildForm] = useState<string | null>(null);
   const [showAdultForm, setShowAdultForm] = useState<string | null>(null);
@@ -146,6 +172,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
     const data = await res.json();
     setFamilyStatuses(data.familyMembers || []);
     setPendingRequests(data.pendingRequests || []);
+    setMyPendingCreateRequest(data.myPendingCreateRequest || null);
   }
 
   useEffect(() => {
@@ -175,6 +202,59 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
       toast.success(data.message || "Request submitted successfully");
       setEmail("");
       setShowJoinForm(false);
+      await loadFamilyData();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function addCreateChildRow() {
+    setCreateChildren((prev) =>
+      prev.length >= MAX_CREATE_GROUP_CHILDREN
+        ? prev
+        : [...prev, { firstName: "", lastName: "", dateOfBirth: "" }]
+    );
+  }
+
+  function removeCreateChildRow(index: number) {
+    setCreateChildren((prev) => prev.filter((_, rowIndex) => rowIndex !== index));
+  }
+
+  function updateCreateChildRow(index: number, field: keyof CreateChildRow, value: string) {
+    setCreateChildren((prev) =>
+      prev.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value } : row))
+    );
+  }
+
+  async function handleCreateGroup(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setSubmitting(true);
+
+    try {
+      const res = await fetch("/api/members/family/create-group", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          groupName: createGroupName.trim() || undefined,
+          partnerEmail: createPartnerEmail.trim() || undefined,
+          children: createChildren.map((child) => ({
+            firstName: child.firstName.trim(),
+            lastName: child.lastName.trim(),
+            dateOfBirth: child.dateOfBirth,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Request failed");
+        return;
+      }
+      toast.success(data.message || "Request submitted");
+      setShowCreateForm(false);
+      setCreateGroupName("");
+      setCreatePartnerEmail("");
+      setCreateChildren([]);
       await loadFamilyData();
     } finally {
       setSubmitting(false);
@@ -380,6 +460,10 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
     setShowChildForm(null);
     setShowAdultForm(null);
     setShowJoinForm(false);
+    setShowCreateForm(false);
+    setCreateGroupName("");
+    setCreatePartnerEmail("");
+    setCreateChildren([]);
     setDetailMemberId(null);
     setRemovalMemberId(null);
     setEmail("");
@@ -800,16 +884,42 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
             );
           })}
         </div>
+      ) : myPendingCreateRequest ? (
+        <div className="space-y-1 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <p className="font-medium">Your family group request is awaiting admin review.</p>
+          <p>Requested group: {myPendingCreateRequest.groupName || "Unnamed Group"}</p>
+          {myPendingCreateRequest.partner && (
+            <p>
+              Partner to invite:{" "}
+              {getMemberName(myPendingCreateRequest.partner)}{" "}
+              ({myPendingCreateRequest.partner.email})
+            </p>
+          )}
+          {myPendingCreateRequest.pendingChildRequests.length > 0 && (
+            <p>
+              Infant/child/youth requests:{" "}
+              {myPendingCreateRequest.pendingChildRequests
+                .map((child) => [child.firstName, child.lastName].filter(Boolean).join(" "))
+                .join(", ")}
+            </p>
+          )}
+        </div>
       ) : (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            You are not currently in a family group. Request to join another member&apos;s group, or wait for an invitation.
+            You are not currently in a family group. Request to join another member&apos;s group, create a new family group, or wait for an invitation.
           </p>
-          {canManage && !showJoinForm && (
-            <Button variant="outline" size="sm" onClick={() => setShowJoinForm(true)}>
-              <Users className="h-4 w-4 mr-2" />
-              Request to Join a Family Group
-            </Button>
+          {canManage && !showJoinForm && !showCreateForm && (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowJoinForm(true)}>
+                <Users className="h-4 w-4 mr-2" />
+                Request to Join a Family Group
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setShowCreateForm(true)}>
+                <UserPlus className="h-4 w-4 mr-2" />
+                Create a Family Group
+              </Button>
+            </div>
           )}
           {showJoinForm && (
             <form onSubmit={handleRequestJoin} className="space-y-3">
@@ -830,6 +940,103 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
               <div className="flex gap-2">
                 <Button type="submit" size="sm" disabled={submitting}>
                   {submitting ? "Submitting..." : "Send Request"}
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={resetForms}>
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          )}
+          {showCreateForm && (
+            <form onSubmit={handleCreateGroup} className="space-y-3 rounded-lg border p-4">
+              <p className="text-sm font-medium flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Create a Family Group
+              </p>
+              <p className="text-xs text-muted-foreground">
+                An admin will review your request before the group is created.
+              </p>
+              <div>
+                <Label htmlFor="create-group-name">Group name (optional)</Label>
+                <Input
+                  id="create-group-name"
+                  value={createGroupName}
+                  onChange={(e) => setCreateGroupName(e.target.value)}
+                  maxLength={100}
+                  placeholder={
+                    familyStatuses[0]?.lastName
+                      ? `${familyStatuses[0].lastName} Family`
+                      : "e.g. Smith Family"
+                  }
+                />
+              </div>
+              <div>
+                <Label htmlFor="create-partner-email">Partner&apos;s email address (optional)</Label>
+                <Input
+                  id="create-partner-email"
+                  type="email"
+                  value={createPartnerEmail}
+                  onChange={(e) => setCreatePartnerEmail(e.target.value)}
+                  placeholder="member@example.com"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  They must already be a registered member — unregistered partners will be supported later. They will be invited once your group is approved.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Infants, children, and youth (optional)</p>
+                {createChildren.map((child, index) => (
+                  <div key={index} className="space-y-3 rounded-md border bg-slate-50 p-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label htmlFor={`create-child-first-${index}`}>First Name</Label>
+                        <Input
+                          id={`create-child-first-${index}`}
+                          value={child.firstName}
+                          onChange={(e) => updateCreateChildRow(index, "firstName", e.target.value)}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor={`create-child-last-${index}`}>Last Name</Label>
+                        <Input
+                          id={`create-child-last-${index}`}
+                          value={child.lastName}
+                          onChange={(e) => updateCreateChildRow(index, "lastName", e.target.value)}
+                          required
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label htmlFor={`create-child-dob-${index}`}>Date of Birth</Label>
+                      <Input
+                        id={`create-child-dob-${index}`}
+                        type="date"
+                        value={child.dateOfBirth}
+                        onChange={(e) => updateCreateChildRow(index, "dateOfBirth", e.target.value)}
+                        required
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => removeCreateChildRow(index)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+                {createChildren.length < MAX_CREATE_GROUP_CHILDREN && (
+                  <Button type="button" variant="outline" size="sm" onClick={addCreateChildRow}>
+                    <Baby className="h-4 w-4 mr-1" />
+                    Add Infant/Child/Youth
+                  </Button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button type="submit" size="sm" disabled={submitting}>
+                  {submitting ? "Submitting..." : "Submit Request"}
                 </Button>
                 <Button type="button" variant="outline" size="sm" onClick={resetForms}>
                   Cancel
