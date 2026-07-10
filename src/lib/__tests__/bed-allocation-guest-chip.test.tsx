@@ -4,12 +4,14 @@ import "@testing-library/jest-dom/vitest";
 import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { getBookingAccent } from "@/app/(admin)/admin/bed-allocation/_components/booking-accent";
 import { GuestChip } from "@/app/(admin)/admin/bed-allocation/_components/guest-chip";
 import type {
   BedOption,
   BedOptionGroup,
   BucketGuestGroup,
 } from "@/app/(admin)/admin/bed-allocation/_components/types";
+import { AGE_TIER_COLORS } from "@/lib/admin-family-group-ui-helpers";
 
 vi.mock("@dnd-kit/core", () => ({
   useDraggable: () => ({
@@ -116,5 +118,39 @@ describe("GuestChip bed select", () => {
     );
 
     expect(screen.getByText("Room One / Bed One")).toBeInTheDocument();
+  });
+
+  it("renders the booking accent and AgeTierBadge without plain age-tier metadata", () => {
+    const { container } = render(
+      <GuestChip
+        group={{ ...group, bookingId: "booking-colour-1", guestAgeTier: "CHILD" }}
+        bedOptions={beds}
+        bedOptionGroups={bedOptionGroups}
+        selectedBedId=""
+        onSelectBed={vi.fn()}
+        onAllocate={vi.fn()}
+        pending={false}
+      />,
+    );
+    const card = container.firstElementChild as HTMLElement;
+    const accentStrip = card.querySelector('[aria-hidden="true"]') as HTMLElement;
+
+    expect(card).toHaveAttribute("title", "Booking booking-colour-1");
+    expect(card.className).toContain(
+      getBookingAccent("booking-colour-1").ringClassName,
+    );
+    expect(card.className).toContain(
+      getBookingAccent("booking-colour-1").tintClassName,
+    );
+    expect(accentStrip.className).toContain(
+      getBookingAccent("booking-colour-1").stripClassName,
+    );
+    const badge = screen.getByText("CHILD");
+    expect(badge).toBeInTheDocument();
+    for (const className of AGE_TIER_COLORS.CHILD.split(" ")) {
+      expect(badge.className).toContain(className);
+    }
+    expect(screen.queryByText(/CHILD · Example Member/)).not.toBeInTheDocument();
+    expect(screen.getByText("Example Member")).toBeInTheDocument();
   });
 });
