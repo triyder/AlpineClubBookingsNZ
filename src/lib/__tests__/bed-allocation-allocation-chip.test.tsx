@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import type { ComponentProps, ReactNode } from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AllocationChip } from "@/app/(admin)/admin/bed-allocation/_components/allocation-chip";
-import type { DashboardAllocation } from "@/app/(admin)/admin/bed-allocation/_components/types";
+import type {
+  BedOption,
+  BedOptionGroup,
+  DashboardAllocation,
+} from "@/app/(admin)/admin/bed-allocation/_components/types";
 
 vi.mock("@dnd-kit/core", () => ({
   useDraggable: () => ({
@@ -14,6 +19,75 @@ vi.mock("@dnd-kit/core", () => ({
     transform: null,
     isDragging: false,
   }),
+}));
+
+vi.mock("@/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuContent: ({
+    children,
+    className,
+    collisionPadding,
+  }: {
+    children: ReactNode;
+    className?: string;
+    collisionPadding?: number;
+  }) => (
+    <div className={className} data-collision-padding={collisionPadding} role="menu">
+      {children}
+    </div>
+  ),
+  DropdownMenuItem: ({
+    children,
+    onSelect,
+    className,
+    "aria-label": ariaLabel,
+  }: ComponentProps<"div"> & {
+    onSelect?: () => void;
+  }) => (
+    <div
+      aria-label={ariaLabel}
+      className={className}
+      role="menuitem"
+      tabIndex={0}
+      onClick={onSelect}
+    >
+      {children}
+    </div>
+  ),
+  DropdownMenuLabel: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
+  DropdownMenuSeparator: () => <hr />,
+  DropdownMenuSub: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
+  DropdownMenuSubContent: ({
+    children,
+    className,
+    collisionPadding,
+  }: {
+    children: ReactNode;
+    className?: string;
+    collisionPadding?: number;
+  }) => (
+    <div className={className} data-collision-padding={collisionPadding} role="group">
+      {children}
+    </div>
+  ),
+  DropdownMenuSubTrigger: ({
+    children,
+    "aria-label": ariaLabel,
+  }: {
+    children: ReactNode;
+    "aria-label"?: string;
+  }) => (
+    <button aria-label={ariaLabel} type="button">
+      {children}
+    </button>
+  ),
+  DropdownMenuTrigger: ({ children }: { children: ReactNode }) => (
+    <>{children}</>
+  ),
 }));
 
 function buildAllocation(
@@ -39,13 +113,65 @@ function buildAllocation(
   };
 }
 
-function renderChip(allocation: DashboardAllocation, canEdit = true) {
+const bedOptions: BedOption[] = [
+  {
+    id: "bed-1",
+    roomId: "room-1",
+    roomName: "Room One",
+    bedName: "Bed One",
+    label: "Room One / Bed One",
+  },
+  {
+    id: "bed-2",
+    roomId: "room-1",
+    roomName: "Room One",
+    bedName: "Bed Two",
+    label: "Room One / Bed Two",
+  },
+  {
+    id: "bed-3",
+    roomId: "room-2",
+    roomName: "Room Two",
+    bedName: "Bed Three",
+    label: "Room Two / Bed Three",
+  },
+];
+
+const bedOptionGroups: BedOptionGroup[] = [
+  {
+    roomId: "room-1",
+    roomName: "Room One",
+    beds: [bedOptions[0], bedOptions[1]],
+  },
+  {
+    roomId: "room-2",
+    roomName: "Room Two",
+    beds: [bedOptions[2]],
+  },
+];
+
+function renderChip({
+  allocation = buildAllocation(),
+  canEdit = true,
+  onReassignBed = vi.fn(),
+  onRemove = vi.fn(),
+  options = [],
+  groups = [],
+}: {
+  allocation?: DashboardAllocation;
+  canEdit?: boolean;
+  onReassignBed?: (bedId: string) => void;
+  onRemove?: () => void;
+  options?: BedOption[];
+  groups?: BedOptionGroup[];
+} = {}) {
   return render(
     <AllocationChip
       allocation={allocation}
-      bedOptions={[]}
-      onReassignBed={vi.fn()}
-      onRemove={vi.fn()}
+      bedOptions={options}
+      bedOptionGroups={groups}
+      onReassignBed={onReassignBed}
+      onRemove={onRemove}
       pending={false}
       canEdit={canEdit}
     />,
@@ -55,7 +181,9 @@ function renderChip(allocation: DashboardAllocation, canEdit = true) {
 describe("AllocationChip held vs provisional state (#1251)", () => {
   it("labels a capacity-holding booking as Held with a solid border", () => {
     const { container } = renderChip(
-      buildAllocation({ bookingStatus: "PAID", holdsCapacity: true }),
+      {
+        allocation: buildAllocation({ bookingStatus: "PAID", holdsCapacity: true }),
+      },
     );
 
     expect(screen.getByText("Held")).toBeTruthy();
@@ -69,7 +197,12 @@ describe("AllocationChip held vs provisional state (#1251)", () => {
 
   it("labels a provisional booking as Provisional with a dashed border", () => {
     const { container } = renderChip(
-      buildAllocation({ bookingStatus: "PENDING", holdsCapacity: false }),
+      {
+        allocation: buildAllocation({
+          bookingStatus: "PENDING",
+          holdsCapacity: false,
+        }),
+      },
     );
 
     expect(screen.getByText("Provisional")).toBeTruthy();
@@ -82,7 +215,9 @@ describe("AllocationChip held vs provisional state (#1251)", () => {
   it("labels an accepted-but-unpaid quote (PENDING but holding) as Held (#1254)", () => {
     // Server sets holdsCapacity=true for a request-converted PENDING booking, so
     // the board must show it Held even though its status is PENDING.
-    renderChip(buildAllocation({ bookingStatus: "PENDING", holdsCapacity: true }));
+    renderChip({
+      allocation: buildAllocation({ bookingStatus: "PENDING", holdsCapacity: true }),
+    });
 
     expect(screen.getByText("Held")).toBeTruthy();
     expect(screen.queryByText("Provisional")).toBeNull();
@@ -91,17 +226,29 @@ describe("AllocationChip held vs provisional state (#1251)", () => {
   it.each(["PAYMENT_PENDING", "WAITLIST_OFFERED"])(
     "treats %s (bed-allocatable but not capacity-holding) as Provisional",
     (status) => {
-      renderChip(buildAllocation({ bookingStatus: status, holdsCapacity: false }));
+      renderChip({
+        allocation: buildAllocation({ bookingStatus: status, holdsCapacity: false }),
+      });
       expect(screen.getByText("Provisional")).toBeTruthy();
     },
   );
 
   it("uses theme tokens (not hardcoded light colours) for both states", () => {
     const { container: held } = renderChip(
-      buildAllocation({ bookingStatus: "CONFIRMED", holdsCapacity: true }),
+      {
+        allocation: buildAllocation({
+          bookingStatus: "CONFIRMED",
+          holdsCapacity: true,
+        }),
+      },
     );
     const { container: provisional } = renderChip(
-      buildAllocation({ bookingStatus: "PENDING", holdsCapacity: false }),
+      {
+        allocation: buildAllocation({
+          bookingStatus: "PENDING",
+          holdsCapacity: false,
+        }),
+      },
     );
 
     // Regression guard for the dark-mode requirement: the previous chip used
@@ -116,7 +263,7 @@ describe("AllocationChip held vs provisional state (#1251)", () => {
   });
 
   it("disables drag and manage controls for view-only booking access", () => {
-    renderChip(buildAllocation(), false);
+    renderChip({ canEdit: false });
 
     expect(
       screen.getByRole("button", { name: /Drag Example Guest to another bed or night/i }),
@@ -124,5 +271,65 @@ describe("AllocationChip held vs provisional state (#1251)", () => {
     expect(
       screen.getByRole("button", { name: /Manage allocation for Example Guest/i }),
     ).toBeDisabled();
+  });
+
+  it("groups move targets by room and omits the current bed", () => {
+    renderChip({ options: bedOptions, groups: bedOptionGroups });
+
+    const menu = screen.getByRole("menu");
+    expect(within(menu).getByText("Move to bed")).toBeInTheDocument();
+    expect(menu.className).toContain("max-h-[min(60vh,20rem)]");
+    expect(menu.className).toContain("overflow-y-auto");
+    expect(menu).toHaveAttribute("data-collision-padding", "8");
+    expect(
+      screen.getByRole("button", {
+        name: "Move Example Guest to a bed in Room One",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Move Example Guest to a bed in Room Two",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Bed One")).not.toBeInTheDocument();
+    expect(screen.getByText("Bed Two")).toBeInTheDocument();
+    expect(screen.getByText("Bed Three")).toBeInTheDocument();
+
+    const submenus = screen.getAllByRole("group");
+    expect(submenus[0].className).toContain("max-h-[min(60vh,18rem)]");
+    expect(submenus[0].className).toContain("overflow-y-auto");
+    expect(submenus[0]).toHaveAttribute("data-collision-padding", "8");
+  });
+
+  it("omits rooms with no remaining move targets", () => {
+    renderChip({
+      allocation: buildAllocation({ bedId: "bed-3" }),
+      options: bedOptions,
+      groups: bedOptionGroups,
+    });
+
+    expect(
+      screen.queryByRole("button", {
+        name: "Move Example Guest to a bed in Room Two",
+      }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Room One")).toBeInTheDocument();
+  });
+
+  it("calls the reassignment and remove handlers from the menu", () => {
+    const onReassignBed = vi.fn();
+    const onRemove = vi.fn();
+    renderChip({
+      options: bedOptions,
+      groups: bedOptionGroups,
+      onReassignBed,
+      onRemove,
+    });
+
+    fireEvent.click(screen.getByRole("menuitem", { name: /Room One \/ Bed Two/i }));
+    expect(onReassignBed).toHaveBeenCalledWith("bed-2");
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove allocation" }));
+    expect(onRemove).toHaveBeenCalledTimes(1);
   });
 });

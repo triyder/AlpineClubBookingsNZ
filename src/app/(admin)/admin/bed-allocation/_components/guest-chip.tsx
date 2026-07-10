@@ -9,13 +9,16 @@ import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-acces
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
   type BedOption,
+  type BedOptionGroup,
   type BucketGuestGroup,
   bucketDraggableId,
 } from "./types";
@@ -23,6 +26,7 @@ import {
 interface GuestChipProps {
   group: BucketGuestGroup;
   bedOptions: BedOption[];
+  bedOptionGroups?: BedOptionGroup[];
   selectedBedId: string;
   onSelectBed: (bedId: string) => void;
   onAllocate: () => void;
@@ -34,6 +38,7 @@ interface GuestChipProps {
 export function GuestChip({
   group,
   bedOptions,
+  bedOptionGroups = [],
   selectedBedId,
   onSelectBed,
   onAllocate,
@@ -52,6 +57,23 @@ export function GuestChip({
     group.stayDates.length === 1
       ? group.stayDates[0]
       : `${group.stayDates[0]} – ${group.stayDates[group.stayDates.length - 1]} (${group.stayDates.length} nights)`;
+  const optionGroups =
+    bedOptionGroups.length > 0
+      ? bedOptionGroups
+      : bedOptions.reduce<BedOptionGroup[]>((groups, bed) => {
+          const existing = groups.find((room) => room.roomId === bed.roomId);
+          if (existing) {
+            existing.beds.push(bed);
+          } else {
+            groups.push({
+              roomId: bed.roomId,
+              roomName: bed.roomName,
+              beds: [bed],
+            });
+          }
+          return groups;
+        }, []);
+  const selectedBed = bedOptions.find((bed) => bed.id === selectedBedId);
 
   return (
     <div
@@ -92,14 +114,21 @@ export function GuestChip({
           disabled={!canEdit}
         >
           <SelectTrigger className="w-44">
-            <SelectValue placeholder="Select bed" />
+            <SelectValue placeholder="Select bed">
+              {selectedBed ? selectedBed.label : undefined}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="none">Select bed</SelectItem>
-            {bedOptions.map((bed) => (
-              <SelectItem key={bed.id} value={bed.id}>
-                {bed.label}
-              </SelectItem>
+            {optionGroups.map((room) => (
+              <SelectGroup key={room.roomId}>
+                <SelectLabel>{room.roomName}</SelectLabel>
+                {room.beds.map((bed) => (
+                  <SelectItem key={bed.id} value={bed.id}>
+                    {bed.bedName}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             ))}
           </SelectContent>
         </Select>

@@ -7,6 +7,7 @@ import { GuestChip } from "./guest-chip";
 import {
   BUCKET_DROPPABLE_ID,
   type BedOption,
+  type BedOptionGroup,
   type BucketGuestGroup,
   type DashboardBookingSummary,
 } from "./types";
@@ -15,6 +16,7 @@ interface BucketBoardProps {
   bookings: DashboardBookingSummary[];
   groupsByBooking: Map<string, BucketGuestGroup[]>;
   bedOptions: BedOption[];
+  bedOptionGroups?: BedOptionGroup[];
   selectedBeds: Record<string, string>;
   onSelectBed: (bookingGuestId: string, bedId: string) => void;
   onAllocate: (group: BucketGuestGroup) => void;
@@ -27,6 +29,7 @@ export function BucketBoard({
   bookings,
   groupsByBooking,
   bedOptions,
+  bedOptionGroups = [],
   selectedBeds,
   onSelectBed,
   onAllocate,
@@ -136,6 +139,7 @@ export function BucketBoard({
                     key={group.bookingGuestId}
                     group={group}
                     bedOptions={bedOptions}
+                    bedOptionGroups={bedOptionGroups}
                     selectedBedId={selectedBeds[group.bookingGuestId] ?? ""}
                     onSelectBed={(bedId) => onSelectBed(group.bookingGuestId, bedId)}
                     onAllocate={() => onAllocate(group)}

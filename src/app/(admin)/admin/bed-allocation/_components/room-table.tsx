@@ -15,6 +15,7 @@ import {
 } from "./board-cell";
 import {
   type BedOption,
+  type BedOptionGroup,
   type DashboardAllocation,
   type DashboardRoom,
 } from "./types";
@@ -24,6 +25,7 @@ interface RoomTableProps {
   nights: string[];
   allocationByBedAndDate: Map<string, DashboardAllocation>;
   bedOptions: BedOption[];
+  bedOptionGroups?: BedOptionGroup[];
   onReassignBed: (allocation: DashboardAllocation, bedId: string) => void;
   onRemove: (allocation: DashboardAllocation) => void;
   pendingAllocationIds: Set<string>;
@@ -36,6 +38,7 @@ export function RoomTable({
   nights,
   allocationByBedAndDate,
   bedOptions,
+  bedOptionGroups = [],
   onReassignBed,
   onRemove,
   pendingAllocationIds,
@@ -96,6 +99,7 @@ export function RoomTable({
                     stayDate={night}
                     allocation={allocation}
                     bedOptions={bedOptions}
+                    bedOptionGroups={bedOptionGroups}
                     onReassignBed={onReassignBed}
                     onRemove={onRemove}
                     pending={

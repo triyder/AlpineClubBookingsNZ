@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { AllocationChip } from "./allocation-chip";
 import {
   type BedOption,
+  type BedOptionGroup,
   type DashboardAllocation,
   cellDroppableId,
 } from "./types";
@@ -19,6 +20,7 @@ interface BoardCellProps {
   stayDate: string;
   allocation: DashboardAllocation | undefined;
   bedOptions: BedOption[];
+  bedOptionGroups?: BedOptionGroup[];
   onReassignBed: (allocation: DashboardAllocation, bedId: string) => void;
   onRemove: (allocation: DashboardAllocation) => void;
   pending: boolean;
@@ -32,6 +34,7 @@ export function BoardCell({
   stayDate,
   allocation,
   bedOptions,
+  bedOptionGroups = [],
   onReassignBed,
   onRemove,
   pending,
@@ -58,6 +61,7 @@ export function BoardCell({
         <AllocationChip
           allocation={allocation}
           bedOptions={bedOptions}
+          bedOptionGroups={bedOptionGroups}
           onReassignBed={(targetBedId) => onReassignBed(allocation, targetBedId)}
           onRemove={() => onRemove(allocation)}
           pending={pending}
