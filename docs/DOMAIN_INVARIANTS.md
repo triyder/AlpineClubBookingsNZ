@@ -69,6 +69,22 @@ Future reviews and issues should cite this file when proposing changes.
   invariant still holds because rule (b) only extends holding to PENDING, which
   is already bed-allocatable (locked by
   `booking-status-bed-allocation-ownership.test.ts`, #813).
+- Auto-allocated stays are **room-continuous per booking** (issue #1677): the
+  planner (`buildFirstFitBedAllocationPlan`) places a booking's whole party in
+  ONE room for the ENTIRE stay — in free space first, and for capacity-holding
+  bookings by displacing whole provisional stays (#1387 preserved) — falling
+  back to the legacy per-night split only when no single room can host the
+  stay; fallback bookings are reported in
+  `BedAllocationPlan.roomContinuityFallbackBookingIds`. Displacement relocates
+  or unallocates a provisional booking's ENTIRE visible stay (one destination
+  room) and never night-splits it — whole-stay room claims (Phase 2) evict
+  newest bookings first, while the per-night fallback (Phase 3) selects
+  victims in room/bed sort order; an
+  admin-approved allocation (#776 lock) on ANY night pins the whole booking
+  against displacement, as does a stay extending beyond the reconcile load
+  envelope. Existing allocation rows are never rewritten by planning — only
+  provisional displacement moves rows — and re-planning a fully-allocated
+  state is a no-op.
 - Waitlisted and offered bookings do not consume capacity until confirmed.
 - A waitlist offer reprices the booking at current season rates,
   membership-type policy, group discount, and promo validity at the moment the

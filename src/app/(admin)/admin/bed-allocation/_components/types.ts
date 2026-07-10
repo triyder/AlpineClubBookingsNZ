@@ -72,7 +72,8 @@ export interface DashboardBookingSummary {
 
 interface DashboardWarning {
   id: string;
-  type: "BOOKING_SPLIT" | "MINOR_WITHOUT_BOOKING_ADULT";
+  // ROOM_SWITCH (#1677) is stay-level: the booking's rooms change mid-stay.
+  type: "BOOKING_SPLIT" | "MINOR_WITHOUT_BOOKING_ADULT" | "ROOM_SWITCH";
   bookingId: string;
   bookingGuestId?: string;
   stayDate: string;

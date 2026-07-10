@@ -113,6 +113,77 @@ describe("admin bed allocation", () => {
     ]);
   });
 
+  it("warns once, stay-level, when a booking's rooms change between nights (ROOM_SWITCH, #1677)", () => {
+    const allocation = (overrides: {
+      bookingId: string;
+      bookingGuestId: string;
+      roomId: string;
+      bedId: string;
+      stayDate: string;
+    }) => ({
+      id: `${overrides.bookingGuestId}:${overrides.stayDate}`,
+      guestName: "Guest",
+      guestAgeTier: "ADULT" as const,
+      roomName: overrides.roomId,
+      bedName: overrides.bedId,
+      source: "MANUAL" as const,
+      approvedAt: null,
+      approvedByName: null,
+      bookingStatus: "CONFIRMED",
+      holdsCapacity: true,
+      ...overrides,
+    });
+
+    const warnings = buildBedAllocationWarnings({
+      allocations: [
+        // booking-switch: room A night 1, room B night 2 → ROOM_SWITCH.
+        allocation({
+          bookingId: "booking-switch",
+          bookingGuestId: "guest-1",
+          roomId: "room-a",
+          bedId: "bed-a1",
+          stayDate: "2026-07-01",
+        }),
+        allocation({
+          bookingId: "booking-switch",
+          bookingGuestId: "guest-1",
+          roomId: "room-b",
+          bedId: "bed-b1",
+          stayDate: "2026-07-02",
+        }),
+        // booking-stable: same room both nights → no ROOM_SWITCH.
+        allocation({
+          bookingId: "booking-stable",
+          bookingGuestId: "guest-2",
+          roomId: "room-a",
+          bedId: "bed-a2",
+          stayDate: "2026-07-01",
+        }),
+        allocation({
+          bookingId: "booking-stable",
+          bookingGuestId: "guest-2",
+          roomId: "room-a",
+          bedId: "bed-a2",
+          stayDate: "2026-07-02",
+        }),
+      ],
+    });
+
+    const roomSwitchWarnings = warnings.filter(
+      (warning) => warning.type === "ROOM_SWITCH",
+    );
+    expect(roomSwitchWarnings).toHaveLength(1);
+    expect(roomSwitchWarnings[0]).toMatchObject({
+      id: "ROOM_SWITCH:booking-switch",
+      bookingId: "booking-switch",
+      stayDate: "2026-07-02",
+    });
+    // No same-night split here, so BOOKING_SPLIT stays quiet.
+    expect(
+      warnings.filter((warning) => warning.type === "BOOKING_SPLIT"),
+    ).toHaveLength(0);
+  });
+
   it("keeps bed allocation routes feature gated", () => {
     const featureRoutes = readRepoFile("src/config/feature-routes.ts");
     const sidebar = readRepoFile("src/components/admin-sidebar.tsx");
