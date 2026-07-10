@@ -71,6 +71,7 @@ const batchModifySchema = z.object({
   adminOverride: z.boolean().optional(),
   pricingMode: z.enum(["shift", "recalculate"]).optional(),
   confirmOverCapacity: z.boolean().optional(),
+  notifyMember: z.boolean().optional(),
 });
 
 const OVERRIDE_DATE_ONLY_FIELDS = [
@@ -128,11 +129,13 @@ export async function PUT(
   const actorRole = bookingManagementAuthorizationRole(session.user);
 
   // Issue #1668: admin-only date override gating.
-  const { adminOverride, pricingMode, confirmOverCapacity } = parsed.data;
+  const { adminOverride, pricingMode, confirmOverCapacity, notifyMember } =
+    parsed.data;
   const hasOverrideFlags =
     adminOverride !== undefined ||
     pricingMode !== undefined ||
-    confirmOverCapacity !== undefined;
+    confirmOverCapacity !== undefined ||
+    notifyMember !== undefined;
   if (hasOverrideFlags && actorRole !== "ADMIN") {
     return NextResponse.json(
       { error: "Admin override is not available for this account" },
@@ -145,9 +148,17 @@ export async function PUT(
       { status: 400 },
     );
   }
-  if (!adminOverride && (pricingMode !== undefined || confirmOverCapacity !== undefined)) {
+  if (
+    !adminOverride &&
+    (pricingMode !== undefined ||
+      confirmOverCapacity !== undefined ||
+      notifyMember !== undefined)
+  ) {
     return NextResponse.json(
-      { error: "adminOverride is required for pricingMode/confirmOverCapacity" },
+      {
+        error:
+          "adminOverride is required for pricingMode/confirmOverCapacity/notifyMember",
+      },
       { status: 400 },
     );
   }
@@ -174,6 +185,7 @@ export async function PUT(
               checkIn: parsed.data.checkIn,
               checkOut: parsed.data.checkOut,
               confirmOverCapacity,
+              notifyMember,
             },
             ipAddress,
           })

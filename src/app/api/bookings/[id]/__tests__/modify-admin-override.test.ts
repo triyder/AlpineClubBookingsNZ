@@ -84,8 +84,20 @@ describe("PUT /api/bookings/[id]/modify admin override gating (issue #1668)", ()
 
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
-      error: "adminOverride is required for pricingMode/confirmOverCapacity",
+      error:
+        "adminOverride is required for pricingMode/confirmOverCapacity/notifyMember",
     });
+    expect(h.adminShiftBookingDates).not.toHaveBeenCalled();
+  });
+
+  it("rejects notifyMember without adminOverride (400)", async () => {
+    const res = await PUT(
+      req({ notifyMember: false, checkIn: "2026-09-12" }),
+      { params },
+    );
+
+    expect(res.status).toBe(400);
+    expect(h.modifyBookingBatch).not.toHaveBeenCalled();
     expect(h.adminShiftBookingDates).not.toHaveBeenCalled();
   });
 
@@ -109,7 +121,12 @@ describe("PUT /api/bookings/[id]/modify admin override gating (issue #1668)", ()
 
   it("dispatches a shift override to adminShiftBookingDates, not the batch service", async () => {
     const res = await PUT(
-      req({ adminOverride: true, pricingMode: "shift", checkIn: "2026-09-12" }),
+      req({
+        adminOverride: true,
+        pricingMode: "shift",
+        checkIn: "2026-09-12",
+        notifyMember: false,
+      }),
       { params },
     );
 
@@ -118,7 +135,11 @@ describe("PUT /api/bookings/[id]/modify admin override gating (issue #1668)", ()
     expect(h.modifyBookingBatch).not.toHaveBeenCalled();
     const arg = h.adminShiftBookingDates.mock.calls[0][0];
     expect(arg.actor).toEqual({ id: "u1", role: "ADMIN" });
-    expect(arg.input).toMatchObject({ checkIn: "2026-09-12" });
+    // The admin's email choice is threaded to the service (owner decision).
+    expect(arg.input).toMatchObject({
+      checkIn: "2026-09-12",
+      notifyMember: false,
+    });
   });
 
   it("dispatches a recalculate override to the batch service", async () => {

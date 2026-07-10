@@ -31,6 +31,7 @@ const modifyDatesSchema = z
     adminOverride: z.boolean().optional(),
     pricingMode: z.enum(["shift", "recalculate"]).optional(),
     confirmOverCapacity: z.boolean().optional(),
+    notifyMember: z.boolean().optional(),
   })
   .refine((d) => d.checkIn || d.checkOut, {
     message: "At least one of checkIn or checkOut is required",
@@ -81,11 +82,13 @@ export async function PUT(
   // actually active (adminOverride === true); every other request — including
   // an explicit adminOverride: false — keeps the legacy access-role mapping, so
   // a caller-controlled boolean can never flip the standard path's authority.
-  const { adminOverride, pricingMode, confirmOverCapacity } = parsed.data;
+  const { adminOverride, pricingMode, confirmOverCapacity, notifyMember } =
+    parsed.data;
   const hasOverrideFlags =
     adminOverride !== undefined ||
     pricingMode !== undefined ||
-    confirmOverCapacity !== undefined;
+    confirmOverCapacity !== undefined ||
+    notifyMember !== undefined;
   if (
     hasOverrideFlags &&
     bookingManagementAuthorizationRole(session.user) !== "ADMIN"
@@ -105,9 +108,17 @@ export async function PUT(
       { status: 400 },
     );
   }
-  if (!adminOverride && (pricingMode !== undefined || confirmOverCapacity !== undefined)) {
+  if (
+    !adminOverride &&
+    (pricingMode !== undefined ||
+      confirmOverCapacity !== undefined ||
+      notifyMember !== undefined)
+  ) {
     return NextResponse.json(
-      { error: "adminOverride is required for pricingMode/confirmOverCapacity" },
+      {
+        error:
+          "adminOverride is required for pricingMode/confirmOverCapacity/notifyMember",
+      },
       { status: 400 },
     );
   }
@@ -122,6 +133,7 @@ export async function PUT(
               checkIn: parsed.data.checkIn,
               checkOut: parsed.data.checkOut,
               confirmOverCapacity,
+              notifyMember,
             },
             ipAddress,
           })

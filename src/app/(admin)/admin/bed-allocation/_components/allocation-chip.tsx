@@ -12,11 +12,15 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import {
   type BedOption,
+  type BedOptionGroup,
   type DashboardAllocation,
   allocationDraggableId,
 } from "./types";
@@ -24,6 +28,7 @@ import {
 interface AllocationChipProps {
   allocation: DashboardAllocation;
   bedOptions: BedOption[];
+  bedOptionGroups?: BedOptionGroup[];
   onReassignBed: (bedId: string) => void;
   onRemove: () => void;
   pending: boolean;
@@ -33,6 +38,7 @@ interface AllocationChipProps {
 export function AllocationChip({
   allocation,
   bedOptions,
+  bedOptionGroups = [],
   onReassignBed,
   onRemove,
   pending,
@@ -45,7 +51,29 @@ export function AllocationChip({
       disabled: !canEdit,
     });
 
-  const otherBeds = bedOptions.filter((bed) => bed.id !== allocation.bedId);
+  const optionGroups =
+    bedOptionGroups.length > 0
+      ? bedOptionGroups
+      : bedOptions.reduce<BedOptionGroup[]>((groups, bed) => {
+          const existing = groups.find((group) => group.roomId === bed.roomId);
+          if (existing) {
+            existing.beds.push(bed);
+          } else {
+            groups.push({
+              roomId: bed.roomId,
+              roomName: bed.roomName,
+              beds: [bed],
+            });
+          }
+          return groups;
+        }, []);
+
+  const otherBedGroups = optionGroups
+    .map((group) => ({
+      ...group,
+      beds: group.beds.filter((bed) => bed.id !== allocation.bedId),
+    }))
+    .filter((group) => group.beds.length > 0);
 
   // Issue #1251: a bed on a capacity-holding booking (booked/confirmed) holds
   // the night; a bed on a provisional booking (generic PENDING / PAYMENT_PENDING
@@ -134,12 +162,34 @@ export function AllocationChip({
             <X className="h-3 w-3" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent
+          align="end"
+          collisionPadding={8}
+          className="bed-allocation-move-menu max-h-[min(60vh,20rem)] overflow-y-auto"
+        >
           <DropdownMenuLabel>Move to bed</DropdownMenuLabel>
-          {otherBeds.map((bed) => (
-            <DropdownMenuItem key={bed.id} onSelect={() => onReassignBed(bed.id)}>
-              {bed.label}
-            </DropdownMenuItem>
+          {otherBedGroups.map((group) => (
+            <DropdownMenuSub key={group.roomId}>
+              <DropdownMenuSubTrigger
+                aria-label={`Move ${allocation.guestName} to a bed in ${group.roomName}`}
+              >
+                {group.roomName}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent
+                collisionPadding={8}
+                className="bed-allocation-move-submenu max-h-[min(60vh,18rem)] overflow-y-auto"
+              >
+                {group.beds.map((bed) => (
+                  <DropdownMenuItem
+                    key={bed.id}
+                    aria-label={`Move ${allocation.guestName} to ${bed.label}`}
+                    onSelect={() => onReassignBed(bed.id)}
+                  >
+                    {bed.bedName}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
           ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={onRemove} className="text-destructive">

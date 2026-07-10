@@ -1,0 +1,120 @@
+// @vitest-environment jsdom
+
+import "@testing-library/jest-dom/vitest";
+import type { ReactNode } from "react";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { GuestChip } from "@/app/(admin)/admin/bed-allocation/_components/guest-chip";
+import type {
+  BedOption,
+  BedOptionGroup,
+  BucketGuestGroup,
+} from "@/app/(admin)/admin/bed-allocation/_components/types";
+
+vi.mock("@dnd-kit/core", () => ({
+  useDraggable: () => ({
+    setNodeRef: vi.fn(),
+    attributes: {},
+    listeners: {},
+    transform: null,
+    isDragging: false,
+  }),
+}));
+
+vi.mock("@/components/ui/select", () => ({
+  Select: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SelectContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SelectGroup: ({ children }: { children: ReactNode }) => (
+    <div role="group">{children}</div>
+  ),
+  SelectItem: ({
+    children,
+    value,
+  }: {
+    children: ReactNode;
+    value: string;
+  }) => <div data-value={value}>{children}</div>,
+  SelectLabel: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SelectTrigger: ({ children }: { children: ReactNode }) => (
+    <button type="button">{children}</button>
+  ),
+  SelectValue: ({
+    children,
+    placeholder,
+  }: {
+    children?: ReactNode;
+    placeholder?: string;
+  }) => (
+    <span>{children ?? placeholder}</span>
+  ),
+}));
+
+const group: BucketGuestGroup = {
+  bookingGuestId: "guest-1",
+  bookingId: "booking-1",
+  guestName: "Example Guest",
+  guestAgeTier: "ADULT",
+  memberName: "Example Member",
+  stayDates: ["2026-07-01"],
+};
+
+const beds: BedOption[] = [
+  {
+    id: "bed-1",
+    roomId: "room-1",
+    roomName: "Room One",
+    bedName: "Bed One",
+    label: "Room One / Bed One",
+  },
+  {
+    id: "bed-2",
+    roomId: "room-2",
+    roomName: "Room Two",
+    bedName: "Bed Two",
+    label: "Room Two / Bed Two",
+  },
+];
+
+const bedOptionGroups: BedOptionGroup[] = [
+  { roomId: "room-1", roomName: "Room One", beds: [beds[0]] },
+  { roomId: "room-2", roomName: "Room Two", beds: [beds[1]] },
+];
+
+describe("GuestChip bed select", () => {
+  it("groups bed options by room label", () => {
+    render(
+      <GuestChip
+        group={group}
+        bedOptions={beds}
+        bedOptionGroups={bedOptionGroups}
+        selectedBedId=""
+        onSelectBed={vi.fn()}
+        onAllocate={vi.fn()}
+        pending={false}
+      />,
+    );
+
+    expect(screen.getByText("Room One")).toBeInTheDocument();
+    expect(screen.getByText("Bed One")).toBeInTheDocument();
+    expect(screen.getByText("Room Two")).toBeInTheDocument();
+    expect(screen.getByText("Bed Two")).toBeInTheDocument();
+  });
+
+  it("keeps the selected value distinguishable with the room context", () => {
+    render(
+      <GuestChip
+        group={group}
+        bedOptions={beds}
+        bedOptionGroups={bedOptionGroups}
+        selectedBedId="bed-1"
+        onSelectBed={vi.fn()}
+        onAllocate={vi.fn()}
+        pending={false}
+      />,
+    );
+
+    expect(screen.getByText("Room One / Bed One")).toBeInTheDocument();
+  });
+});

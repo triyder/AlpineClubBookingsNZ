@@ -118,6 +118,12 @@ export interface BedOption {
   label: string;
 }
 
+export interface BedOptionGroup {
+  roomId: string;
+  roomName: string;
+  beds: BedOption[];
+}
+
 export interface BucketGuestGroup {
   bookingGuestId: string;
   bookingId: string;
