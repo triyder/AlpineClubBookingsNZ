@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { toast } from "sonner";
@@ -360,11 +360,20 @@ export function useBookingWizard() {
     }
   }, [session, router]);
 
+  const familyLoadSeqRef = useRef(0);
   useEffect(() => {
     const loadFamilyMembers = () => {
+      // Monotonic request sequence: a slow mount fetch (self blocked) must not
+      // clobber a newer onboarding-confirmed refetch (self bookable) if it
+      // resolves out of order — that would revert the list and render the
+      // seeded ✓ button alongside the amber blocked warning.
+      const seq = (familyLoadSeqRef.current += 1);
       fetch("/api/members/family")
         .then((res) => res.ok ? res.json() : { familyMembers: [] })
-        .then((data) => setFamilyMembers(data.familyMembers || []))
+        .then((data) => {
+          if (seq !== familyLoadSeqRef.current) return;
+          setFamilyMembers(data.familyMembers || []);
+        })
         .catch(() => {});
     };
     loadFamilyMembers();
@@ -375,6 +384,61 @@ export function useBookingWizard() {
     return () =>
       window.removeEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, loadFamilyMembers);
   }, []);
+
+  // Pre-select the booker by default (#1680). The signed-in member is the
+  // `relationship === "self"` entry; seed them as a guest when the family list
+  // first arrives so the common case (booking yourself) needs no manual
+  // quick-add. It stays opt-out — the guest can still X themselves out.
+  //
+  // Seeding is a one-shot opportunity, consumed on the first family-data
+  // arrival that carries a real decision, so it fires only "while the wizard is
+  // fresh":
+  //   (a) party non-empty (existing guests / resumed draft) → consume without
+  //       seeding; the wizard is not fresh, so self is never injected later —
+  //       not even if the user empties the party mid-session.
+  //   (b) party empty + self bookable → seed and consume.
+  //   (c) party empty + self blocked (canBeBooked === false) → do NOT consume,
+  //       so the onboarding-confirmed refetch that flips them bookable (with the
+  //       party still empty) seeds them then (spec's explicit exception).
+  // Once consumed, the family refetch on MEMBER_ONBOARDING_CONFIRMED_EVENT can
+  // never re-add self after an explicit removal.
+  //
+  // The seed mirrors addFamilyMemberAsGuest's eligibility path and linked-member
+  // guest shape inline rather than calling it, so the effect depends only on
+  // stable values. Seeding only fires while the party is empty, so there is
+  // never a per-guest stay range or a live quote/promo/credit to invalidate;
+  // the resets below match that helper for parity and are no-ops here.
+  const selfSeededRef = useRef(false);
+  useEffect(() => {
+    if (selfSeededRef.current) return;
+    const self = familyMembers.find((fm) => fm.relationship === "self");
+    if (!self) return; // family list has not arrived yet
+
+    // Case (c): a blocked self with an empty party keeps the opportunity open
+    // for a later bookable-flip refetch.
+    if (self.canBeBooked === false && guests.length === 0) return;
+
+    // Consume the one-shot opportunity now — seeding must never fire later.
+    selfSeededRef.current = true;
+
+    // Only a fresh, bookable, within-capacity party gets self injected. Case (a)
+    // (a non-empty party) falls through here having spent the opportunity.
+    if (guests.length > 0) return;
+    if (guests.length >= lodgeCapacity) return;
+    setGuests([
+      {
+        firstName: self.firstName,
+        lastName: self.lastName,
+        ageTier: self.ageTier,
+        isMember: true,
+        memberId: self.id,
+      },
+    ]);
+    setAppliedPromo(null);
+    setPriceQuote(null);
+    setUseCredit(false);
+    setMemberNightConflicts([]);
+  }, [familyMembers, guests, lodgeCapacity]);
 
   useEffect(() => {
     const params = new URLSearchParams();
