@@ -281,7 +281,12 @@ describe("bed-allocation pruning by night set", () => {
           ],
         }),
       },
-      bedAllocation: { deleteMany },
+      bedAllocation: {
+        deleteMany,
+        // #1750: the prune sweep captures doomed primary bed-nights before
+        // deleting, to promote orphaned second occupants afterwards.
+        findMany: vi.fn().mockResolvedValue([]),
+      },
     } as unknown as Parameters<typeof reconcileBedAllocationsForBooking>[0]["db"];
 
     await reconcileBedAllocationsForBooking({
