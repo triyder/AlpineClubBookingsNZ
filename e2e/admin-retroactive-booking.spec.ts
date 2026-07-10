@@ -211,9 +211,17 @@ test("an admin records a past stay on behalf of a member without emailing them",
   );
 
   await expect(page).toHaveURL(/\/bookings\/[A-Za-z0-9-]+$/);
-  // The persisted booking renders its past check-in date.
-  const checkInLabel = new Date(`${pastCheckIn}T00:00:00.000Z`).getUTCDate();
-  await expect(page.getByText(new RegExp(String(checkInLabel)))).toBeVisible();
+  // The persisted booking renders its past check-in date. Match the full
+  // formatted date ("Friday, 3 July 2026") — a bare day-number regex collides
+  // with timestamps elsewhere on the page (strict-mode violation).
+  const [y, m, d] = pastCheckIn.split("-").map(Number);
+  const checkInText = new Date(y, m - 1, d).toLocaleDateString("en-NZ", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  await expect(page.getByText(checkInText).first()).toBeVisible();
   await page.close();
 });
 
