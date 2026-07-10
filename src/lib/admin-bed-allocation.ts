@@ -1,4 +1,4 @@
-import { Prisma, type BedAllocation } from "@prisma/client";
+import { Prisma, type BedAllocation, type LodgeRoom } from "@prisma/client";
 import { clubConfig } from "@/config/club";
 import {
   addDaysDateOnly,
@@ -658,6 +658,119 @@ export async function deleteBedAllocationBed(input: {
   return db.lodgeBed.delete({
     where: { id: input.id },
   });
+}
+
+// Shared by the pre-check guard and the FK backstop so the concurrent-write
+// race resolves to the exact same steering message an up-front check would give.
+const ROOM_HAS_ALLOCATION_HISTORY_MESSAGE =
+  "This room has allocation history and cannot be deleted. Deactivate it instead.";
+
+// A bed added by another admin between the guard and the room delete trips the
+// LodgeBed -> room Restrict FK, which is not allocation history — steer to a
+// retry rather than to Deactivate.
+const ROOM_CHANGED_WHILE_DELETING_MESSAGE =
+  "Room changed while deleting (a bed was just added). Refresh and try again.";
+
+// Classify a P2003 caught during the bed+room deletes. The pg driver adapter
+// can drop the structured constraint field (see booking-envelope-invariants),
+// so scan the message and any surviving meta. A BedAllocation FK means real
+// allocation history (the raw pg message names LodgeBed as the table being
+// modified in that case too, so BedAllocation must win when both appear); a
+// LodgeBed -> room FK means a bed was added mid-delete; anything else falls
+// back to the allocation-history steer.
+function p2003TargetsLodgeBedRoomFk(
+  error: Prisma.PrismaClientKnownRequestError,
+): boolean {
+  const meta = error.meta as
+    | { field_name?: unknown; constraint?: unknown }
+    | undefined;
+  const text = [
+    error.message,
+    typeof meta?.field_name === "string" ? meta.field_name : "",
+    typeof meta?.constraint === "string" ? meta.constraint : "",
+  ]
+    .join(" ")
+    .toLowerCase();
+  if (text.includes("bedallocation")) return false;
+  return text.includes("lodgebed");
+}
+
+async function assertNoRoomAllocationHistory(
+  roomId: string,
+  db: BedAllocationDb,
+) {
+  // Any allocation row for the room (past or future) blocks a hard delete —
+  // unlike the bed deactivate guard, which only cares about future dates. Rooms
+  // with history keep their audit trail and are deactivated instead.
+  const existing = await db.bedAllocation.findFirst({
+    where: { roomId },
+    select: { id: true },
+  });
+  if (existing) {
+    throw new BedAllocationAdminError(ROOM_HAS_ALLOCATION_HISTORY_MESSAGE, 409);
+  }
+}
+
+export async function deleteBedAllocationRoom(input: {
+  id: string;
+  // Optional lodge scope, consistent with the other room functions: when
+  // supplied the room must belong to this lodge (else 404). The route mirrors
+  // the bed DELETE and does not pass it; callers that carry lodge context can
+  // scope the delete defensively.
+  lodgeId?: string;
+  db?: BedAllocationDb;
+  // Explicit return type: the function references itself in the $transaction
+  // branch, which TS cannot infer through (TS7023), matching the annotation on
+  // the other self-recursive transaction helpers here.
+}): Promise<LodgeRoom> {
+  // Run the history guard and the bed+room deletes in one transaction so a
+  // concurrent allocation cannot slip between the check and the delete. A
+  // caller-supplied client is assumed to already be transactional.
+  if (!input.db) {
+    return prisma.$transaction((tx) =>
+      deleteBedAllocationRoom({ ...input, db: tx }),
+    );
+  }
+  const db = input.db;
+
+  const room = await db.lodgeRoom.findFirst({
+    where: {
+      id: input.id,
+      ...(input.lodgeId ? lodgeNullTolerantScope(input.lodgeId) : {}),
+    },
+    select: { id: true },
+  });
+  if (!room) {
+    throw new BedAllocationAdminError("Room not found", 404);
+  }
+
+  await assertNoRoomAllocationHistory(room.id, db);
+
+  try {
+    // The room's beds go with it under the same guard. Deleting the beds first
+    // also trips the BedAllocation composite (bedId, roomId) FK if an
+    // allocation was created after the guard ran.
+    await db.lodgeBed.deleteMany({ where: { roomId: room.id } });
+    return await db.lodgeRoom.delete({ where: { id: room.id } });
+  } catch (error) {
+    // FK Restrict backstop closing the guard->delete race. A concurrently
+    // created BedAllocation (BedAllocation.room / .bed are onDelete: Restrict)
+    // surfaces as P2003 and rolls the transaction back — map it to the same
+    // steering message as the up-front guard. A bed added mid-delete trips the
+    // LodgeBed -> room FK instead, which is not history, so steer to a retry.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2003"
+    ) {
+      throw new BedAllocationAdminError(
+        p2003TargetsLodgeBedRoomFk(error)
+          ? ROOM_CHANGED_WHILE_DELETING_MESSAGE
+          : ROOM_HAS_ALLOCATION_HISTORY_MESSAGE,
+        409,
+      );
+    }
+    throw error;
+  }
 }
 
 function memberName(member: {

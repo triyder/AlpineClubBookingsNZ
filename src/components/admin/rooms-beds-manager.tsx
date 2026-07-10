@@ -175,6 +175,21 @@ function mergeBedEdits(
   return next;
 }
 
+// Room-keyed client state (the per-room Add Bed draft, the per-room delete
+// error) is not covered by the bed/room edit merges, so a room that vanishes
+// server-side (a delete) would leave its entry orphaned. Prune to the rooms
+// still present, mirroring how the edit merges drop absent entities.
+function pruneByRoomId<T>(
+  byRoomId: Record<string, T>,
+  roomIds: Set<string>,
+): Record<string, T> {
+  const next: Record<string, T> = {};
+  for (const [roomId, value] of Object.entries(byRoomId)) {
+    if (roomIds.has(roomId)) next[roomId] = value;
+  }
+  return next;
+}
+
 export function RoomsBedsManager({
   permissionMatrix,
 }: {
@@ -200,6 +215,10 @@ export function RoomsBedsManager({
   const [roomEdits, setRoomEdits] = useState<Record<string, RoomDraft>>({});
   const [bedDrafts, setBedDrafts] = useState<Record<string, BedDraft>>({});
   const [bedEdits, setBedEdits] = useState<Record<string, BedDraft>>({});
+  // Per-room delete failure, shown inline below the room row (under its
+  // name/active/save controls) so a guard rejection ("deactivate instead")
+  // persists as an actionable message rather than a transient toast.
+  const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
   // Monotonic counter so an out-of-order refetch (overlapping saves) can't apply
   // a stale payload after a newer request has already landed.
   const loadSeqRef = useRef(0);
@@ -273,6 +292,11 @@ export function RoomsBedsManager({
       // row and untouched rows re-sync to server state (see mergeRoomEdits).
       setRoomEdits((prev) => mergeRoomEdits(prev, data.rooms, saved));
       setBedEdits((prev) => mergeBedEdits(prev, data.rooms, saved));
+      // Drop room-keyed state (Add Bed drafts, delete errors) for rooms that
+      // disappeared server-side so a deleted room leaves nothing behind.
+      const roomIds = new Set(data.rooms.map((room) => room.id));
+      setBedDrafts((prev) => pruneByRoomId(prev, roomIds));
+      setDeleteErrors((prev) => pruneByRoomId(prev, roomIds));
     } catch (error) {
       // An aborted request means the lodge changed (or the page unmounted);
       // a newer request owns the list now.
@@ -388,7 +412,7 @@ export function RoomsBedsManager({
     const draft = roomEdits[roomId];
     if (!draft) return;
 
-    await mutate(
+    const saved = await mutate(
       `room-${roomId}`,
       () =>
         fetch(`/api/admin/bed-allocation/rooms/${roomId}`, {
@@ -404,6 +428,9 @@ export function RoomsBedsManager({
       "Room saved",
       { kind: "room", id: roomId, sent: draft },
     );
+    // A successful save clears any lingering delete-guard message — e.g. after
+    // the admin follows the steer and deactivates the room instead.
+    if (saved) clearDeleteError(roomId);
   }
 
   async function createBed(roomId: string) {
@@ -469,6 +496,55 @@ export function RoomsBedsManager({
         }),
       "Bed deleted",
     );
+  }
+
+  function clearDeleteError(roomId: string) {
+    setDeleteErrors((current) => {
+      if (!(roomId in current)) return current;
+      const next = { ...current };
+      delete next[roomId];
+      return next;
+    });
+  }
+
+  // deleteRoom does not go through mutate(): a guard rejection must surface
+  // inline (below the room row) instead of as a toast, so it reads the error
+  // message itself and stores it per room. The Active toggle stays visible as
+  // the steered "deactivate instead" alternative.
+  async function deleteRoom(roomId: string) {
+    if (
+      !(await confirm({
+        title: "Delete this room?",
+        description:
+          "This room and all of its beds will be permanently deleted. A room with any bed-allocation history can't be deleted — deactivate it instead.",
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
+    )
+      return;
+
+    setSaving(`room-delete-${roomId}`);
+    clearDeleteError(roomId);
+    try {
+      const response = await fetch(`/api/admin/bed-allocation/rooms/${roomId}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const message = await readApiError(response, "Failed to delete room");
+        setDeleteErrors((current) => ({ ...current, [roomId]: message }));
+        return;
+      }
+      toast.success("Room deleted");
+      await loadRooms();
+    } catch (error) {
+      setDeleteErrors((current) => ({
+        ...current,
+        [roomId]:
+          error instanceof Error ? error.message : "Failed to delete room",
+      }));
+    } finally {
+      setSaving(null);
+    }
   }
 
   async function bulkCreateRooms() {
@@ -817,8 +893,23 @@ export function RoomsBedsManager({
                             <Save className="h-4 w-4" />
                             Save
                           </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            aria-label="Delete room"
+                            onClick={() => void deleteRoom(room.id)}
+                            disabled={saving === `room-delete-${room.id}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
                       </div>
+
+                      {deleteErrors[room.id] ? (
+                        <p role="alert" className="mt-2 text-sm text-red-600">
+                          {deleteErrors[room.id]}
+                        </p>
+                      ) : null}
 
                       <div className="mt-4 space-y-3">
                         <div className="grid gap-3 md:grid-cols-[2fr_90px_auto_auto]">

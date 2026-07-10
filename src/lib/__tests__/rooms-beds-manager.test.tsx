@@ -14,11 +14,13 @@ import {
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 
+const { mockConfirm } = vi.hoisted(() => ({ mockConfirm: vi.fn() }));
+
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 vi.mock("@/components/confirm-dialog", () => ({
-  useConfirm: () => ({ confirm: vi.fn(), confirmDialog: null }),
+  useConfirm: () => ({ confirm: mockConfirm, confirmDialog: null }),
 }));
 vi.mock("@/components/lodge-select", () => ({
   useLodgeOptions: () => ({ lodges: [], loading: false }),
@@ -148,7 +150,10 @@ interface SeedRoom {
 // store; the follow-up GET reflects those writes, so a saved row re-syncs to
 // server state while every other row's server value is unchanged — exactly the
 // shape needed to observe that a sibling's unsaved draft survived a save.
-function stubStatefulFetch(seed: SeedRoom[]) {
+function stubStatefulFetch(
+  seed: SeedRoom[],
+  options: { roomDeleteFailure?: { status: number; error: string } } = {},
+) {
   let rooms: SeedRoom[] = seed.map((room) => ({
     ...room,
     beds: room.beds.map((bed) => ({ ...bed })),
@@ -208,6 +213,18 @@ function stubStatefulFetch(seed: SeedRoom[]) {
           room.id === id ? { ...room, ...patch } : room,
         );
         const room = rooms.find((r) => r.id === id);
+        return respond(200, { room });
+      }
+      if (roomMatch && method === "DELETE") {
+        if (options.roomDeleteFailure) {
+          return respond(options.roomDeleteFailure.status, {
+            error: options.roomDeleteFailure.error,
+          });
+        }
+        const id = roomMatch[1];
+        const room = rooms.find((r) => r.id === id);
+        // The room and its beds go together, mirroring the server transaction.
+        rooms = rooms.filter((r) => r.id !== id);
         return respond(200, { room });
       }
 
@@ -565,5 +582,89 @@ describe("RoomsBedsManager — a save preserves other unsaved drafts (#1673)", (
     });
     // Failed create leaves the typed value in place.
     expect(screen.getByDisplayValue("Draft bed")).toBeTruthy();
+  });
+});
+
+describe("RoomsBedsManager — room delete (#1674)", () => {
+  afterEach(() => {
+    mockConfirm.mockReset();
+  });
+
+  it("confirms (warning about beds), deletes the room, and refreshes the list", async () => {
+    mockConfirm.mockResolvedValue(true);
+    const sonner = await import("sonner");
+    stubStatefulFetch([
+      seedRoom({
+        id: "room-1",
+        name: "Room 1",
+        beds: [seedBed({ id: "bed-a", roomId: "room-1", name: "Bed A" })],
+      }),
+    ]);
+    render(<RoomsBedsManager permissionMatrix={editorMatrix()} />);
+
+    await screen.findByDisplayValue("Room 1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete room" }));
+
+    // The confirm dialog spells out that the beds are deleted too.
+    expect(mockConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining("beds"),
+        destructive: true,
+      }),
+    );
+
+    // After the delete + refetch the room (and its bed) are gone.
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue("Room 1")).toBeNull();
+    });
+    expect(screen.queryByDisplayValue("Bed A")).toBeNull();
+    expect(sonner.toast.success).toHaveBeenCalledWith("Room deleted");
+  });
+
+  it("does nothing when the delete is not confirmed", async () => {
+    mockConfirm.mockResolvedValue(false);
+    const { calls } = stubStatefulFetch([
+      seedRoom({ id: "room-1", name: "Room 1" }),
+    ]);
+    render(<RoomsBedsManager permissionMatrix={editorMatrix()} />);
+
+    await screen.findByDisplayValue("Room 1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete room" }));
+
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalled());
+    // No DELETE was issued and the room stays.
+    expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+    expect(screen.getByDisplayValue("Room 1")).toBeTruthy();
+  });
+
+  it("surfaces the guard-failure steering message inline (not as a toast)", async () => {
+    mockConfirm.mockResolvedValue(true);
+    const sonner = await import("sonner");
+    const message =
+      "This room has allocation history and cannot be deleted. Deactivate it instead.";
+    stubStatefulFetch([seedRoom({ id: "room-1", name: "Room 1" })], {
+      roomDeleteFailure: { status: 409, error: message },
+    });
+    render(<RoomsBedsManager permissionMatrix={editorMatrix()} />);
+
+    await screen.findByDisplayValue("Room 1");
+
+    // Isolate from any toast.error calls made by earlier tests in this file
+    // (the module-level sonner mock's call history is not reset between them).
+    vi.mocked(sonner.toast.error).mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete room" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(message)).toBeTruthy();
+    });
+    // The inline message is rendered as an alert next to the room controls.
+    expect(screen.getByRole("alert").textContent).toBe(message);
+    // The room stays (deactivate remains the alternative) and the message is
+    // inline, not a transient toast.
+    expect(screen.getByDisplayValue("Room 1")).toBeTruthy();
+    expect(sonner.toast.error).not.toHaveBeenCalled();
   });
 });
