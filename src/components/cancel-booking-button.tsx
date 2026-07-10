@@ -3,6 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface CancelPreview {
   refundAmountCents: number;
@@ -24,6 +32,7 @@ export function CancelBookingButton({
   bookingId,
   refundAppealDescription,
   onBehalfOfMember = false,
+  canChooseMemberEmail = false,
 }: {
   bookingId: string;
   refundAppealDescription?: string;
@@ -32,12 +41,24 @@ export function CancelBookingButton({
   // booking). Re-frame the button label and confirm/success copy accordingly —
   // the cancel endpoint and settlement logic are unchanged.
   onBehalfOfMember?: boolean;
+  // Issue #1705 (#1698 pattern): when true, Confirm Cancellation first asks
+  // whether the member receives the cancellation email ("Cancel and email
+  // member" / "Cancel without emailing"). Pass viewerRole === "ADMIN" for the
+  // booking-management role (bookingManagementAuthorizationRole) — the same
+  // role the cancel route resolves before honouring notifyMember — so the
+  // dialog shows exactly when the server will honour the choice. A member
+  // self-cancel keeps the immediate always-notify confirm.
+  canChooseMemberEmail?: boolean;
 }) {
   const [step, setStep] = useState<"idle" | "loading" | "preview" | "cancelling" | "success" | "error">("idle");
   const [preview, setPreview] = useState<CancelPreview | null>(null);
   const [result, setResult] = useState<{ refundAmountCents: number; refundMethod: string; creditAmountCents?: number; creditRestoredCents?: number } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [refundMethod, setRefundMethod] = useState<"card" | "credit">("card");
+  // Issue #1705: the admin's explicit email choice dialog, and the choice that
+  // was made (null = no choice offered, i.e. always-notify member self-cancel).
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
+  const [notifiedMember, setNotifiedMember] = useState<boolean | null>(null);
   const router = useRouter();
 
   async function handleShowPreview() {
@@ -60,13 +81,32 @@ export function CancelBookingButton({
     }
   }
 
-  async function handleConfirmCancel() {
+  // Issue #1705 (#1698 pattern): an admin/booking-officer confirm goes through
+  // the notify dialog first; the dialog's two actions call performCancel with
+  // the explicit email choice. A member self-cancel calls performCancel with no
+  // argument and always notifies (the server 403s the flag from non-admins).
+  function handleConfirmCancel() {
+    if (canChooseMemberEmail) {
+      setNotifyDialogOpen(true);
+      return;
+    }
+    void performCancel();
+  }
+
+  async function performCancel(notifyMemberChoice?: boolean) {
     setStep("cancelling");
+    setNotifiedMember(notifyMemberChoice ?? null);
     try {
+      const body: { refundMethod: "card" | "credit"; notifyMember?: boolean } = {
+        refundMethod,
+      };
+      if (notifyMemberChoice !== undefined) {
+        body.notifyMember = notifyMemberChoice;
+      }
       const res = await fetch(`/api/bookings/${bookingId}/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refundMethod }),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
         const data = await res.json();
@@ -108,6 +148,9 @@ export function CancelBookingButton({
   if (step === "success") {
     const refund = result?.refundAmountCents || 0;
     const isCredit = result?.refundMethod === "credit";
+    // Issue #1705: when the admin chose "Cancel without emailing", the standard
+    // email-promise copy would be untrue — state the recorded choice instead.
+    const emailSuppressed = notifiedMember === false;
     return (
       <div className="rounded-md border border-green-200 bg-green-50 p-4 space-y-1">
         <p className="text-sm font-medium text-green-800">
@@ -127,14 +170,20 @@ export function CancelBookingButton({
         ) : refund > 0 ? (
           <p className="text-sm text-green-700">
             {onBehalfOfMember
-              ? `The refund of ${formatDollars(refund)} has been processed to the member's original payment method. They will receive a confirmation email shortly.`
-              : `Your refund of ${formatDollars(refund)} has been processed to your original payment method. You will receive a confirmation email shortly.`}
+              ? `The refund of ${formatDollars(refund)} has been processed to the member's original payment method.${emailSuppressed ? "" : " They will receive a confirmation email shortly."}`
+              : `Your refund of ${formatDollars(refund)} has been processed to your original payment method.${emailSuppressed ? "" : " You will receive a confirmation email shortly."}`}
           </p>
-        ) : (
+        ) : emailSuppressed ? null : (
           <p className="text-sm text-green-700">
             {onBehalfOfMember
               ? "The member will receive a confirmation email shortly."
               : "You will receive a confirmation email shortly."}
+          </p>
+        )}
+        {emailSuppressed && (
+          <p className="text-sm text-green-700">
+            The member was not emailed about this cancellation — your choice is
+            recorded in the audit log.
           </p>
         )}
       </div>
@@ -173,8 +222,10 @@ export function CancelBookingButton({
         {onBehalfOfMember && (
           <p className="text-sm text-red-700">
             You are cancelling this booking on behalf of the member. Any refund
-            or account credit is applied to the member&apos;s account and they
-            are notified by email.
+            or account credit is applied to the member&apos;s account
+            {canChooseMemberEmail
+              ? " — you will choose whether the member is emailed when you confirm."
+              : " and they are notified by email."}
           </p>
         )}
 
@@ -302,6 +353,44 @@ export function CancelBookingButton({
             Keep Booking
           </Button>
         </div>
+
+        {/* Owner decision (#1705, extending #1668/#1696): the admin explicitly
+            chooses, per cancellation, whether the member is emailed. Both
+            choices cancel the booking; the choice itself is recorded in the
+            audit log. */}
+        <Dialog open={notifyDialogOpen} onOpenChange={setNotifyDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Email the member about this cancellation?</DialogTitle>
+              <DialogDescription>
+                The booking will be cancelled either way, and any refund or
+                account credit is applied regardless. Choose whether the member
+                receives the standard cancellation email — your choice is
+                recorded in the audit log.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setNotifyDialogOpen(false);
+                  void performCancel(false);
+                }}
+              >
+                Cancel without emailing
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setNotifyDialogOpen(false);
+                  void performCancel(true);
+                }}
+              >
+                Cancel and email member
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }

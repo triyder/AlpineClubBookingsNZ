@@ -6,7 +6,10 @@ import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
-import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import {
+  bookingManagementAuthorizationRole,
+  hasAdminAreaAccess,
+} from "@/lib/admin-permissions";
 
 const cancelBookingParamsSchema = z.object({
   id: z.string().min(1),
@@ -14,6 +17,10 @@ const cancelBookingParamsSchema = z.object({
 
 const cancelBookingMutationSchema = z.object({
   refundMethod: z.enum(["card", "credit"]),
+  // Issue #1705: per-action member-email choice for admin cancellations, same
+  // semantics as the modify routes (#1696): booking-management ADMIN only,
+  // absent means notify.
+  notifyMember: z.boolean().optional(),
 });
 
 export async function POST(
@@ -60,6 +67,21 @@ export async function POST(
       );
     }
 
+    // Issue #1705 (#1696 semantics): only a booking-management ADMIN (Full
+    // Admin or Booking Officer) may carry the notify flag; any other caller —
+    // including the booking owner cancelling their own booking — is refused
+    // before the service runs, so a member can never suppress their own
+    // cancellation email.
+    if (
+      parsed.data.notifyMember !== undefined &&
+      bookingManagementAuthorizationRole(session.user) !== "ADMIN"
+    ) {
+      return NextResponse.json(
+        { error: "Admin override is not available for this account" },
+        { status: 403 }
+      );
+    }
+
     const result = await cancelBooking(
       parsedParams.data.id,
       session.user.id,
@@ -78,6 +100,10 @@ export async function POST(
           area: "bookings",
           level: "edit",
         }),
+        // Issue #1705: the admin's explicit per-cancel member-email choice.
+        // Absent means notify; the service additionally forces notify for any
+        // non-admin actor (defence in depth behind the 403 gate above).
+        notifyMember: parsed.data.notifyMember,
       }
     );
 

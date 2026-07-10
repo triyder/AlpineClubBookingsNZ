@@ -584,7 +584,21 @@ override requires an explicit `pricingMode`:
   modify-dates routes 403 any `notifyMember` flag from a non-ADMIN caller
   (pricing/capacity override flags still require `adminOverride`). A recalculate
   override that moves money still respects the admin's choice — the amounts
-  remain visible on the booking and in Xero regardless.
+  remain visible on the booking and in Xero regardless. The same per-action
+  choice covers the two remaining admin-driven member-facing emails (#1705):
+  the standalone **guest-removal** route (`DELETE /api/bookings/[id]/guests/
+  [guestId]`) and **cancellation** (`POST /api/bookings/[id]/cancel`, "Cancel
+  and email member" / "Cancel without emailing" — the suppression also covers
+  the linked provisional split children cancelled with the parent). Both routes
+  403 the flag from any non-(booking-management)-ADMIN caller, force notify for
+  non-admin actors at the service, default to notify when the flag is absent,
+  and record a suppressed send as `notifyMember: false` in the audit metadata;
+  refund/credit settlement, audit, booking events, waitlist processing, and the
+  admin-facing alerts are never affected by the choice. **The Xero invoice
+  email on the Internet Banking path is deliberately outside this choice and is
+  ALWAYS sent** — it is the member's payment instruction (invoice number + bank
+  details), so suppressing it could strand an unpaid invoice the member was
+  never told about (owner decision on #1705).
 - **recalculate** — the existing full-reprice machinery with the locked-period
   clamps lifted, so locked-night pricing semantics are otherwise preserved
   (a night the guest already bought keeps its stored `BookingGuestNight` price).

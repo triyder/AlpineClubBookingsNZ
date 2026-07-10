@@ -192,6 +192,7 @@ vi.mock("@/lib/promo", () => ({
 }));
 
 import { cancelBooking } from "@/lib/booking-cancel";
+import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
 describe("cancelBooking credit refunds", () => {
   beforeEach(() => {
@@ -1868,6 +1869,130 @@ describe("cancelBooking credit refunds", () => {
       expect(adminAudit.subjectMemberId).toBe("member_1");
       expect(officerAudit.details).toEqual(adminAudit.details);
       expect(officerAudit.metadata).toEqual(adminAudit.metadata);
+    });
+  });
+
+  // ── #1705: per-cancel member-email choice (#1696 semantics) ─────────────
+  describe("per-cancel member-email choice (issue #1705)", () => {
+    function cancelAuditEntry() {
+      return mocks.logAudit.mock.calls
+        .map((call) => call[0])
+        .find((entry) => entry?.action === "booking.cancel");
+    }
+
+    it("suppresses the cancellation email, audits the choice, and still refunds when a Full Admin passes notifyMember: false", async () => {
+      const result = await cancelBooking(
+        "booking_1",
+        "admin-1",
+        "ADMIN",
+        "127.0.0.1",
+        "card",
+        { notifyMember: false }
+      );
+
+      expect(result.status).toBe(200);
+      // The money outcome is independent of the email choice.
+      expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentId: "payment_1", amountCents: 5000 })
+      );
+      expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+      const audit = cancelAuditEntry();
+      expect(audit).toBeDefined();
+      expect(audit.metadata.notifyMember).toBe(false);
+    });
+
+    it("emails the member by default when an admin omits the flag (absent = notify, nothing extra recorded)", async () => {
+      const result = await cancelBooking(
+        "booking_1",
+        "admin-1",
+        "ADMIN",
+        "127.0.0.1",
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledTimes(1);
+      expect(cancelAuditEntry()!.metadata).not.toHaveProperty("notifyMember");
+    });
+
+    it("honours the choice for a Booking Officer (bookings:edit) exactly as for a Full Admin", async () => {
+      const result = await cancelBooking(
+        "booking_1",
+        "officer-1",
+        "USER", // the officer keeps their honest legacy role (#1313 A2)
+        "127.0.0.1",
+        "card",
+        { hasBookingsEditAccess: true, notifyMember: false }
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+      expect(cancelAuditEntry()!.metadata.notifyMember).toBe(false);
+    });
+
+    it("forces notify for the booking owner — a member can never suppress their own confirmation (defence in depth behind the route 403)", async () => {
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "USER",
+        "127.0.0.1",
+        "card",
+        { notifyMember: false }
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledTimes(1);
+      expect(cancelAuditEntry()!.metadata).not.toHaveProperty("notifyMember");
+    });
+
+    it("suppresses the email on the account-credit settlement branch too", async () => {
+      const result = await cancelBooking(
+        "booking_1",
+        "admin-1",
+        "ADMIN",
+        "127.0.0.1",
+        "credit",
+        { notifyMember: false }
+      );
+
+      expect(result.status).toBe(200);
+      // The credit still lands; only the member-facing email is skipped.
+      expect(mocks.createCancellationCredit).toHaveBeenCalled();
+      expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+      expect(cancelAuditEntry()!.metadata.notifyMember).toBe(false);
+    });
+
+    it("suppresses the email on a PENDING (no-payment) admin cancel", async () => {
+      const today = getTodayDateOnly();
+      const pendingBooking = {
+        id: "booking_pending",
+        memberId: "member_1",
+        status: "PENDING",
+        finalPriceCents: 10000,
+        checkIn: addDaysDateOnly(today, 30),
+        checkOut: addDaysDateOnly(today, 32),
+        member: {
+          id: "member_1",
+          email: "member@example.com",
+          firstName: "Alice",
+        },
+        payment: null,
+      };
+      mocks.bookingFindUnique.mockResolvedValue(pendingBooking);
+      mocks.txBookingFindUnique.mockResolvedValue(pendingBooking);
+
+      const result = await cancelBooking(
+        "booking_pending",
+        "admin-1",
+        "ADMIN",
+        "127.0.0.1",
+        "card",
+        { notifyMember: false }
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+      expect(cancelAuditEntry()!.metadata.notifyMember).toBe(false);
     });
   });
 

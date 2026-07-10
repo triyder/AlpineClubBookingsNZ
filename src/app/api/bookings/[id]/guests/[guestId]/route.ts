@@ -24,6 +24,7 @@ import {
   executeBookingModificationRefund,
 } from "@/lib/booking-modification-settlement";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
+import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
 
 export async function DELETE(
@@ -60,6 +61,29 @@ export async function DELETE(
   const settlementMethod = rawSettlementMethod as
     | BookingModificationSettlementMethod
     | undefined;
+
+  // Issue #1705 (#1696 semantics): the per-action member-email choice. Only a
+  // booking-management ADMIN (Full Admin / Booking Officer) may carry the flag;
+  // any other caller — the booking owner or a self-removing linked guest — is
+  // refused before the removal runs, so a member can never suppress their own
+  // guest-removal notification. Absent means notify.
+  const rawNotifyMember = (body as { notifyMember?: unknown } | null)
+    ?.notifyMember;
+  if (rawNotifyMember !== undefined && typeof rawNotifyMember !== "boolean") {
+    return NextResponse.json(
+      { error: "notifyMember must be a boolean" },
+      { status: 400 },
+    );
+  }
+  const managementRole = bookingManagementAuthorizationRole(session.user);
+  if (rawNotifyMember !== undefined && managementRole !== "ADMIN") {
+    return NextResponse.json(
+      { error: "Admin override is not available for this account" },
+      { status: 403 },
+    );
+  }
+  const notifyMember =
+    managementRole !== "ADMIN" ? true : rawNotifyMember !== false;
 
   try {
     const result = await prisma.$transaction((tx) =>
@@ -146,6 +170,10 @@ export async function DELETE(
         policyRetainedAmountCents: result.policyRetainedAmountCents,
         choreWarnings: result.choreWarnings,
         newGuestCount: result.booking.guests.length,
+        // Issue #1705 (#1698 pattern): a suppressed admin removal records the
+        // choice — notifyMember is false only when an admin opted out, so every
+        // suppressed guest-removal email stays auditable.
+        ...(notifyMember ? {} : { notifyMember: false }),
       },
       ipAddress,
     });
@@ -177,10 +205,14 @@ export async function DELETE(
       logger.error({ err, bookingId }, "Failed to queue Xero settlement for guest removal")
     );
 
-    // Send email
-    const member = await prisma.member.findUnique({
-      where: { id: result.booking.memberId },
-    });
+    // Send email — unless an admin explicitly chose not to (#1705). The
+    // admin-facing minors-only review alert below is NOT member-facing and is
+    // never suppressed by the choice.
+    const member = notifyMember
+      ? await prisma.member.findUnique({
+          where: { id: result.booking.memberId },
+        })
+      : null;
     if (member) {
       sendBookingModifiedEmail({
         email: member.email,
