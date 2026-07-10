@@ -10,7 +10,12 @@ import {
   type BundleEntry,
 } from "@/lib/config-transfer/bundle";
 import { buildImportPlan } from "@/lib/config-transfer/import";
-import type { ReadDb } from "@/lib/config-transfer/import-types";
+import { serialiseCsv } from "@/lib/config-transfer/csv";
+import {
+  PAGE_CONTENT_FIELDS,
+  siteContentImporter,
+} from "@/lib/config-transfer/categories/site-content";
+import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
 
 // Hardening behaviours: plan-time validation errors that BLOCK apply, the
 // fingerprint binding (bundle bytes / mode / selection / resolutions), the
@@ -156,6 +161,142 @@ describe("plan-time validation blocks apply", () => {
       { mode: "overwrite" },
     );
     expect(plan.errors.length).toBeGreaterThan(0);
+  });
+});
+
+// ---- site-content page hardening --------------------------------------------
+// The import must apply the SAME slug rules as the admin page-content route,
+// derive the path from the slug, and store headerText sanitised (issue #1712).
+
+const BASE_PAGE = {
+  slug: "about",
+  path: "/about",
+  caption: "",
+  menuTitle: "About",
+  title: "About Us",
+  headerText: "",
+  sortOrder: 1,
+  contentHtml: "<p>Hi</p>",
+  published: true,
+};
+
+function pagesBundle(rows: Array<Record<string, unknown>>): Uint8Array {
+  return bundleOf(
+    [
+      {
+        path: "site-content/pages.csv",
+        category: "site-content",
+        rowCount: rows.length,
+        bytes: strToU8(serialiseCsv([...PAGE_CONTENT_FIELDS], rows)),
+      },
+    ],
+    ["site-content"],
+  );
+}
+
+function pagesDb(existingPages: Array<Record<string, unknown>>): ReadDb {
+  return {
+    pageContent: { findMany: vi.fn().mockResolvedValue(existingPages) },
+    siteContent: { findMany: vi.fn().mockResolvedValue([]) },
+    clubTheme: { findUnique: vi.fn().mockResolvedValue(null) },
+    xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
+  } as unknown as ReadDb;
+}
+
+/** In-memory pageContent store + apply context for the site-content importer. */
+function pagesApplyHarness(bundle: Uint8Array) {
+  const pages = new Map<string, Record<string, unknown>>();
+  const tx = {
+    pageContent: {
+      findMany: async () => [...pages.values()],
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        pages.set(String(data.slug), { ...data });
+      },
+      update: async ({
+        where,
+        data,
+      }: {
+        where: Record<string, unknown>;
+        data: Record<string, unknown>;
+      }) => {
+        const key = String(where.slug);
+        pages.set(key, { ...(pages.get(key) ?? {}), ...data });
+      },
+    },
+    siteContent: { findMany: async () => [] },
+    clubTheme: { findUnique: async () => null },
+  } as unknown as TxDb;
+  const { manifest, files } = readBundle(bundle);
+  return {
+    pages,
+    ctx: {
+      tx,
+      files,
+      manifest,
+      mode: "overwrite" as const,
+      resolutions: new Map<string, string>(),
+      actorMemberId: "admin-1",
+      imageRemap: new Map<string, string>(),
+      notes: { doorCodesWritten: [] as string[] },
+    },
+  };
+}
+
+describe("site-content page hardening (slug/path/headerText)", () => {
+  it("flags an invalid page slug as a row error and excludes the row", async () => {
+    const zip = pagesBundle([{ ...BASE_PAGE, slug: "Bad Slug", path: "/bad" }]);
+    const plan = await buildImportPlan(pagesDb([]), zip, { mode: "merge" });
+    expect(plan.errors.join(" ")).toMatch(
+      /pages\.csv row 2: slug — "Bad Slug" is not a valid page slug/,
+    );
+    expect(plan.categories.flatMap((c) => c.items)).toEqual([]);
+  });
+
+  it("flags a reserved slug segment (admin route parity)", async () => {
+    const zip = pagesBundle([
+      { ...BASE_PAGE, slug: "admin/settings", path: "/admin/settings" },
+    ]);
+    const plan = await buildImportPlan(pagesDb([]), zip, { mode: "merge" });
+    expect(plan.errors.join(" ")).toMatch(/slug — .*reserved route segment/);
+    expect(plan.categories.flatMap((c) => c.items)).toEqual([]);
+  });
+
+  it("derives the path from the slug instead of trusting the file", async () => {
+    // Plan: a crafted path cell on an otherwise-identical row is NOT a change.
+    const zip = pagesBundle([{ ...BASE_PAGE, path: "/evil" }]);
+    const plan = await buildImportPlan(
+      pagesDb([{ id: "p1", ...BASE_PAGE }]),
+      zip,
+      { mode: "overwrite" },
+    );
+    expect(plan.errors).toEqual([]);
+    expect(plan.categories[0].items[0].action).toBe("unchanged");
+
+    // Apply (create): the stored path is derived from the slug.
+    const { pages, ctx } = pagesApplyHarness(zip);
+    await siteContentImporter.apply(ctx);
+    expect(pages.get("about")?.path).toBe("/about");
+  });
+
+  it("stores headerText sanitised, exactly like the admin write path", async () => {
+    const zip = pagesBundle([
+      { ...BASE_PAGE, headerText: "<script>alert(1)</script><p>Hi</p>" },
+    ]);
+
+    // Apply (create): the script tag never reaches the database.
+    const { pages, ctx } = pagesApplyHarness(zip);
+    await siteContentImporter.apply(ctx);
+    expect(pages.get("about")?.headerText).toBe("<p>Hi</p>");
+
+    // Plan diffs against the sanitised value: an existing row that already
+    // holds the sanitised form is "unchanged", not a spurious update.
+    const plan = await buildImportPlan(
+      pagesDb([{ id: "p1", ...BASE_PAGE, headerText: "<p>Hi</p>" }]),
+      zip,
+      { mode: "overwrite" },
+    );
+    expect(plan.errors).toEqual([]);
+    expect(plan.categories[0].items[0].action).toBe("unchanged");
   });
 });
 

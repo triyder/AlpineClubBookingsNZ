@@ -2,6 +2,11 @@ import { strToU8, strFromU8 } from "fflate";
 import type { Prisma } from "@prisma/client";
 
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
+import {
+  isReservedPageSlug,
+  isValidPageSlug,
+  toPagePath,
+} from "@/lib/page-content";
 import { remapImageRefs } from "../media";
 import type { BundleEntry } from "../bundle";
 
@@ -24,7 +29,7 @@ import {
   type PlanItem,
   type ReadDb,
 } from "../import-types";
-import { RowValidator, nz, readCsvRows } from "../values";
+import { RowValidator, asStr, nz, readCsvRows, type Valid } from "../values";
 
 // site-content category: CMS pages, keyed site content, and the club theme.
 // See docs/config-transfer/decisions/ADR-001.
@@ -222,6 +227,27 @@ interface ParsedPageRow {
   };
 }
 
+/**
+ * Strict page-slug cell: the same rules the admin page-content route applies
+ * (src/app/api/admin/page-content/route.ts). A hand-edited bundle must not
+ * write a slug the admin UI would reject — or one whose segments shadow a
+ * reserved application route (admin, api, book, ...).
+ */
+function strictPageSlug(value: unknown): Valid<string> {
+  const s = asStr(value).trim();
+  if (s === "") return { ok: false, message: "must not be blank" };
+  if (!isValidPageSlug(s)) {
+    return {
+      ok: false,
+      message: `"${s}" is not a valid page slug (lowercase letters, numbers, and hyphens, with optional forward slashes between segments)`,
+    };
+  }
+  if (isReservedPageSlug(s)) {
+    return { ok: false, message: `"${s}" uses a reserved route segment` };
+  }
+  return { ok: true, value: s };
+}
+
 /** Validate + build a page row; blanks legal only where merge keeps existing. */
 function parsePageRow(
   index: number,
@@ -230,7 +256,7 @@ function parsePageRow(
   errors: string[],
 ): ParsedPageRow | null {
   const v = new RowValidator(PAGE_FILE, index, errors);
-  const slug = v.required("slug", raw.slug);
+  const slug = v.custom("slug", strictPageSlug(raw.slug), "");
   const sortOrder =
     nz(raw.sortOrder) === null
       ? blankOk
@@ -248,11 +274,16 @@ function parsePageRow(
     raw,
     slug,
     data: {
-      path: raw.path ?? "",
+      // Derived from the slug, never trusted from the file — a crafted path
+      // cell could otherwise disagree with the slug (mirrors the admin route).
+      path: toPagePath(slug),
       caption: raw.caption ?? "",
       menuTitle: raw.menuTitle ?? "",
       title: raw.title ?? "",
-      headerText: raw.headerText ?? "",
+      // Stored sanitised, exactly like the admin write path. Both plan and
+      // apply consume this value, so the change preview diffs against what
+      // apply would actually write.
+      headerText: sanitizePageContentHtml(raw.headerText ?? ""),
       sortOrder,
       contentHtml: raw.contentHtml ?? "",
       published,

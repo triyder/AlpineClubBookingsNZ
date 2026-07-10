@@ -177,6 +177,10 @@ export class RowValidator {
   enumOrNull(field: string, enumName: string, value: unknown): string | null {
     return this.check(field, strictEnumOrNull(enumName, value), null);
   }
+  /** A category-specific strict validation result (built in the Valid<T> shape). */
+  custom<T>(field: string, result: Valid<T>, fallback: T): T {
+    return this.check(field, result, fallback);
+  }
   /** Non-empty string (e.g. a required name/key cell). */
   required(field: string, value: unknown): string {
     const s = asStr(value).trim();
