@@ -204,17 +204,23 @@ function buildTx(guests: Guest[]) {
   };
 }
 
-function makeRequest() {
+function makeRequest(body?: unknown) {
   return new NextRequest("https://example.test/api/bookings/b1/guests/g1", {
     method: "DELETE",
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    headers: { "content-type": "application/json" },
   });
 }
 
-async function runRemoval(removedGuestId: string, guests: Guest[]) {
+async function runRemoval(
+  removedGuestId: string,
+  guests: Guest[],
+  body?: unknown,
+) {
   mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
     cb(buildTx(guests)),
   );
-  return DELETE(makeRequest(), {
+  return DELETE(makeRequest(body), {
     params: Promise.resolve({ id: "b1", guestId: removedGuestId }),
   });
 }
@@ -321,5 +327,73 @@ describe("DELETE guest removal — minors-only admin alert wiring (#1372)", () =
 
     expect(res.status).toBe(200);
     expect(mocks.sendAdminMinorsOnlyReviewAlert).not.toHaveBeenCalled();
+  });
+});
+
+// Issue #1705 (#1696 semantics): the per-action member-email choice on the
+// standalone guest-removal route. The REAL bookingManagementAuthorizationRole /
+// authorizationRoleFromAccessRoles resolve the session, so these pin exactly
+// who may suppress: a Full Admin can; the booking owner (and any other
+// non-admin) is 403'd before the removal runs.
+describe("DELETE guest removal — admin notify choice (#1705)", () => {
+  const FULL_ADMIN_SESSION = {
+    user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
+  };
+
+  function removalAuditEntry() {
+    return mocks.logAudit.mock.calls
+      .map((call) => call[0])
+      .find(
+        (entry) =>
+          (entry as { action?: string })?.action ===
+          "booking.modify.guests.remove",
+      ) as { metadata: Record<string, unknown> } | undefined;
+  }
+
+  it("suppresses the member email and audits the choice when an admin sends notifyMember: false", async () => {
+    mocks.auth.mockResolvedValue(FULL_ADMIN_SESSION);
+
+    const res = await runRemoval("g-child", [ADULT, CHILD], {
+      notifyMember: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(mocks.sendBookingModifiedEmail).not.toHaveBeenCalled();
+    const audit = removalAuditEntry();
+    expect(audit).toBeDefined();
+    expect(audit!.metadata.notifyMember).toBe(false);
+  });
+
+  it("emails the member by default when an admin omits the flag (absent = notify, nothing extra recorded)", async () => {
+    mocks.auth.mockResolvedValue(FULL_ADMIN_SESSION);
+
+    const res = await runRemoval("g-child", [ADULT, CHILD], {});
+
+    expect(res.status).toBe(200);
+    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
+    expect(removalAuditEntry()!.metadata).not.toHaveProperty("notifyMember");
+  });
+
+  it("rejects notifyMember from the booking owner with 403, no removal, no email", async () => {
+    // Default session: the booking owner (m1) with only the USER access role —
+    // the REAL role helpers resolve them below booking-management ADMIN.
+    const res = await runRemoval("g-child", [ADULT, CHILD], {
+      notifyMember: false,
+    });
+
+    expect(res.status).toBe(403);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.sendBookingModifiedEmail).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-boolean notifyMember with 400", async () => {
+    mocks.auth.mockResolvedValue(FULL_ADMIN_SESSION);
+
+    const res = await runRemoval("g-child", [ADULT, CHILD], {
+      notifyMember: "false",
+    });
+
+    expect(res.status).toBe(400);
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 });

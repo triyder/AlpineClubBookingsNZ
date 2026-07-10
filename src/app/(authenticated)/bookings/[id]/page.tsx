@@ -1251,6 +1251,10 @@ export default async function BookingDetailPage({
           bookingId={booking.id}
           refundAppealDescription={refundAppealDescription}
           onBehalfOfMember={actingOnBehalf}
+          // Issue #1705: the notify dialog shows iff the cancel route will
+          // honour the choice — viewerAuthorizationRole is the same
+          // booking-management role the route resolves for its 403 gate.
+          canChooseMemberEmail={viewerAuthorizationRole === "ADMIN"}
         />
       )}
 

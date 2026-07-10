@@ -135,6 +135,18 @@ type CancelBookingResponse =
  * here is the only protection for that scenario. Defaults to `false`, so callers
  * cancelling genuine PENDING bookings (member self-cancel, deletion cleanup) are
  * unaffected.
+ *
+ * `options.notifyMember` (#1705, #1696 semantics): the admin's explicit
+ * per-cancel choice of whether the member receives the cancellation email.
+ * Honoured only for an admin-type actor (`sessionUserRole === "ADMIN"` or a
+ * Booking Officer via `hasBookingsEditAccess` — the same pair the authorization
+ * gate below accepts); any other actor always notifies, so a member can never
+ * suppress their own cancellation confirmation. Absent means notify. The choice
+ * covers the member-facing cancellation email on every branch — including the
+ * linked provisional split children cancelled with the parent — and is recorded
+ * in the audit metadata (`notifyMember: false`) whenever suppressed. Refund /
+ * credit settlement, audit, booking events, and waitlist processing are
+ * unaffected, and the Xero invoice/credit-note side stays untouched.
  */
 export async function cancelBooking(
   bookingId: string,
@@ -146,8 +158,16 @@ export async function cancelBooking(
     suppressCustomerNotification?: boolean;
     hasBookingsEditAccess?: boolean;
     requireRequestHold?: boolean;
+    notifyMember?: boolean;
   } = {}
 ): Promise<CancelBookingResponse> {
+  // Issue #1705: resolve the honoured email choice once, so the main cancel and
+  // the linked-children sweep below can never disagree. Non-admin actors are
+  // forced to notify (the cancel route additionally 403s their flag).
+  const notifyMember =
+    sessionUserRole !== "ADMIN" && !(options.hasBookingsEditAccess ?? false)
+      ? true
+      : options.notifyMember !== false;
   const result = await performBookingCancellation(
     bookingId,
     sessionUserId,
@@ -156,11 +176,17 @@ export async function cancelBooking(
     refundMethod,
     options.suppressCustomerNotification ?? false,
     options.hasBookingsEditAccess ?? false,
-    options.requireRequestHold ?? false
+    options.requireRequestHold ?? false,
+    notifyMember
   );
 
   if (result.status === 200) {
-    await cancelLinkedProvisionalChildBookings(bookingId, sessionUserId, ipAddress);
+    await cancelLinkedProvisionalChildBookings(
+      bookingId,
+      sessionUserId,
+      ipAddress,
+      notifyMember
+    );
     // If this booking hosts a group, clean up the joiners the PENDING-only sweep
     // above never touches (ORGANISER_PAYS children, group closure). Best-effort:
     // the organiser's own cancel has already committed, so a failure here is
@@ -192,7 +218,8 @@ export async function cancelBooking(
 async function cancelLinkedProvisionalChildBookings(
   parentBookingId: string,
   sessionUserId: string,
-  ipAddress: string
+  ipAddress: string,
+  notifyMember = true
 ) {
   const children = await prisma.booking.findMany({
     where: {
@@ -226,7 +253,11 @@ async function cancelLinkedProvisionalChildBookings(
       details:
         "Linked provisional non-member booking cancelled with its member booking",
       ipAddress,
-      metadata: { linkedParentBookingId: parentBookingId, paymentTaken: false },
+      metadata: {
+        linkedParentBookingId: parentBookingId,
+        paymentTaken: false,
+        ...(notifyMember ? {} : { notifyMember: false }),
+      },
     });
 
     await recordBookingEvent({
@@ -236,21 +267,26 @@ async function cancelLinkedProvisionalChildBookings(
       reason: "Cancelled with the linked member booking. No payment was taken.",
     });
 
-    sendBookingCancelledEmail(
-      child.member.email,
-      child.member.firstName,
-      child.checkIn,
-      child.checkOut,
-      0,
-      "card",
-      0,
-      child.lodgeId
-    ).catch((err) =>
-      logger.error(
-        { err, bookingId: child.id },
-        "Failed to send cancellation email for linked provisional booking"
-      )
-    );
+    // Issue #1705: the admin's per-cancel email choice covers the linked child
+    // too — "cancel without emailing" must not email the member about the
+    // provisional child cancelled alongside their booking.
+    if (notifyMember) {
+      sendBookingCancelledEmail(
+        child.member.email,
+        child.member.firstName,
+        child.checkIn,
+        child.checkOut,
+        0,
+        "card",
+        0,
+        child.lodgeId
+      ).catch((err) =>
+        logger.error(
+          { err, bookingId: child.id },
+          "Failed to send cancellation email for linked provisional booking"
+        )
+      );
+    }
 
     processWaitlistForDates({
       checkIn: child.checkIn,
@@ -274,8 +310,15 @@ async function performBookingCancellation(
   refundMethod: "card" | "credit" = "card",
   suppressCustomerNotification = false,
   hasBookingsEditAccess = false,
-  requireRequestHold = false
+  requireRequestHold = false,
+  // Issue #1705: already resolved by cancelBooking (forced true for non-admin
+  // actors), so every branch below can honour it directly.
+  notifyMember = true
 ): Promise<CancelBookingResponse> {
+  // Issue #1705 (#1698 pattern): a suppressed admin cancel records the choice in
+  // the audit metadata — notifyMember is false only when an authorized admin
+  // opted out, so every suppressed cancellation email stays auditable.
+  const notifyAuditFields = notifyMember ? {} : { notifyMember: false };
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: { payment: true, member: true },
@@ -467,7 +510,12 @@ async function performBookingCancellation(
         ? "Booking awaiting admin review cancelled"
         : `Waitlisted booking cancelled (was ${wasOffered ? "WAITLIST_OFFERED" : "WAITLISTED"})`,
       ipAddress,
-      metadata: { wasOffered, priorStatus, creditRestoredCents },
+      metadata: {
+        wasOffered,
+        priorStatus,
+        creditRestoredCents,
+        ...notifyAuditFields,
+      },
     });
 
     await recordBookingEvent({
@@ -482,8 +530,9 @@ async function performBookingCancellation(
     // #1255: the admin "Release hold" action cancels this held booking to
     // re-open owner mapping and passes suppressCustomerNotification, so the
     // requester is not emailed a cancellation for a hold being administratively
-    // released. The detach/reconcile/audit above still run.
-    if (!suppressCustomerNotification) {
+    // released. The detach/reconcile/audit above still run. #1705: the admin's
+    // per-cancel email choice suppresses the same email.
+    if (!suppressCustomerNotification && notifyMember) {
       sendBookingCancelledEmail(
         fresh.member.email,
         fresh.member.firstName,
@@ -590,6 +639,7 @@ async function performBookingCancellation(
         paymentTaken: false,
         setupIntentCancelled: Boolean(fresh.payment?.stripeSetupIntentId),
         creditRestoredCents,
+        ...notifyAuditFields,
       },
     });
 
@@ -603,16 +653,18 @@ async function performBookingCancellation(
       ),
     });
 
-    sendBookingCancelledEmail(
-      fresh.member.email,
-      fresh.member.firstName,
-      fresh.checkIn,
-      fresh.checkOut,
-      0,
-      "card",
-      creditRestoredCents,
-      fresh.lodgeId
-    ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+    if (notifyMember) {
+      sendBookingCancelledEmail(
+        fresh.member.email,
+        fresh.member.firstName,
+        fresh.checkIn,
+        fresh.checkOut,
+        0,
+        "card",
+        creditRestoredCents,
+        fresh.lodgeId
+      ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+    }
 
     // Trigger waitlist processing for freed dates
     processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
@@ -876,6 +928,7 @@ async function performBookingCancellation(
         xeroAllocatedAppliedCreditCents,
         queuedXeroClearingCreditNote: xeroClearingAmountCents > 0,
         creditRestoredCents,
+        ...notifyAuditFields,
       },
     });
 
@@ -891,16 +944,18 @@ async function performBookingCancellation(
       ),
     });
 
-    sendBookingCancelledEmail(
-      fresh.member.email,
-      fresh.member.firstName,
-      fresh.checkIn,
-      fresh.checkOut,
-      0,
-      "card",
-      creditRestoredCents,
-      fresh.lodgeId
-    ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+    if (notifyMember) {
+      sendBookingCancelledEmail(
+        fresh.member.email,
+        fresh.member.firstName,
+        fresh.checkIn,
+        fresh.checkOut,
+        0,
+        "card",
+        creditRestoredCents,
+        fresh.lodgeId
+      ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+    }
 
     // Trigger waitlist processing for freed dates
     processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
@@ -1320,6 +1375,7 @@ async function performBookingCancellation(
         refundableBaseCents,
         changeFeeCents: payment.changeFeeCents,
         creditRestoredCents,
+        ...notifyAuditFields,
       },
     });
 
@@ -1336,16 +1392,18 @@ async function performBookingCancellation(
       changeFeeCents: payment.changeFeeCents,
     });
 
-    sendBookingCancelledEmail(
-      fresh.member.email,
-      fresh.member.firstName,
-      fresh.checkIn,
-      fresh.checkOut,
-      refundAmountCents,
-      "credit",
-      creditRestoredCents,
-      fresh.lodgeId
-    ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+    if (notifyMember) {
+      sendBookingCancelledEmail(
+        fresh.member.email,
+        fresh.member.firstName,
+        fresh.checkIn,
+        fresh.checkOut,
+        refundAmountCents,
+        "credit",
+        creditRestoredCents,
+        fresh.lodgeId
+      ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+    }
 
     // Trigger waitlist processing for freed dates
     processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
@@ -1482,6 +1540,7 @@ async function performBookingCancellation(
         changeFeeCents: payment.changeFeeCents,
         creditRestoredCents,
         stripeRefundId: stripeRefundId ?? null,
+        ...notifyAuditFields,
       },
     });
 
@@ -1503,16 +1562,18 @@ async function performBookingCancellation(
       reason: `${refundPercentage}% refunded to the original payment method.`,
     });
 
-    sendBookingCancelledEmail(
-      fresh.member.email,
-      fresh.member.firstName,
-      fresh.checkIn,
-      fresh.checkOut,
-      refundAmountCents,
-      "card",
-      creditRestoredCents,
-      fresh.lodgeId
-    ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+    if (notifyMember) {
+      sendBookingCancelledEmail(
+        fresh.member.email,
+        fresh.member.firstName,
+        fresh.checkIn,
+        fresh.checkOut,
+        refundAmountCents,
+        "card",
+        creditRestoredCents,
+        fresh.lodgeId
+      ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+    }
 
     // Trigger waitlist processing for freed dates
     processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
@@ -1549,6 +1610,7 @@ async function performBookingCancellation(
       refundMethod: "card",
       creditRestoredCents,
       failedOutstandingAdditionalPayment: shouldFailAdditionalPayment,
+      ...notifyAuditFields,
     },
   });
 
@@ -1563,16 +1625,18 @@ async function performBookingCancellation(
     changeFeeCents: payment.changeFeeCents,
   });
 
-  sendBookingCancelledEmail(
-    fresh.member.email,
-    fresh.member.firstName,
-    fresh.checkIn,
-    fresh.checkOut,
-    0,
-    "card",
-    creditRestoredCents,
-    fresh.lodgeId
-  ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+  if (notifyMember) {
+    sendBookingCancelledEmail(
+      fresh.member.email,
+      fresh.member.firstName,
+      fresh.checkIn,
+      fresh.checkOut,
+      0,
+      "card",
+      creditRestoredCents,
+      fresh.lodgeId
+    ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+  }
 
   // Trigger waitlist processing for freed dates
   processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })

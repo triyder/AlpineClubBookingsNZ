@@ -464,6 +464,12 @@ Triggers and frequency:
 
 - User/admin cancellation flow for waitlisted, waitlist-offered, pending, confirmed, paid, and no-refund bookings.
 - One email per cancellation action after status is changed to `CANCELLED`.
+- An admin / Booking Officer cancellation carries an explicit per-cancel choice
+  (#1705, `notifyMember`): "Cancel without emailing" skips this email (including
+  for linked provisional split children cancelled with the parent) and records
+  `notifyMember: false` in the audit metadata. Member self-cancels always send.
+  The Xero invoice email on the Internet Banking path is a payment instruction
+  and is always sent regardless of the choice.
 
 ### booking-modified
 
@@ -526,6 +532,10 @@ Triggers and frequency:
 - Guest add route.
 - Guest remove route.
 - One email per successful modification request.
+- Admin / Booking Officer edits carry an explicit per-edit choice (#1696,
+  `notifyMember`); the standalone guest-remove route honours the same flag for
+  admins (#1705). "Without emailing" skips this email and records
+  `notifyMember: false` in the audit metadata; member self-edits always send.
 
 ### checkin-reminder
 
