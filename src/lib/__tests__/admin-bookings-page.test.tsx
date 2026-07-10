@@ -207,6 +207,37 @@ describe("AdminBookingsPage", () => {
     expect(callArgs.where.checkOut.lte).toEqual(new Date("2026-07-31T00:00:00.000Z"));
   });
 
+  it("treats BookingFilters' rewrite of a legacy from/to link as a no-op (#1720)", async () => {
+    // BookingFilters rewrites ?from=A&to=B into ?checkInFrom=A&checkOutTo=B.
+    // Both spellings must build the identical date where-clause.
+    const legacyFrom = formatDateOnly(getTodayDateOnly());
+    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 14));
+
+    await AdminBookingsPage({
+      searchParams: Promise.resolve({ from: legacyFrom, to: legacyTo }),
+    });
+    const legacyWhere = (
+      vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any
+    ).where;
+
+    vi.mocked(prisma.booking.findMany).mockClear();
+
+    await AdminBookingsPage({
+      searchParams: Promise.resolve({
+        checkInFrom: legacyFrom,
+        checkOutTo: legacyTo,
+      }),
+    });
+    const rewrittenWhere = (
+      vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any
+    ).where;
+
+    expect(rewrittenWhere.checkIn).toEqual(legacyWhere.checkIn);
+    expect(rewrittenWhere.checkOut).toEqual(legacyWhere.checkOut);
+    expect(legacyWhere.checkIn.gte).toEqual(parseDateOnly(legacyFrom));
+    expect(legacyWhere.checkOut.lte).toEqual(parseDateOnly(legacyTo));
+  });
+
   it("sorts by member using stable member-name ordering", async () => {
     vi.mocked(prisma.booking.findMany).mockResolvedValue([
       makeBooking({

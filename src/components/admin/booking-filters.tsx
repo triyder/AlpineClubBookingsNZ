@@ -56,10 +56,22 @@ export function BookingFilters({
   const [status, setStatus] = useState(searchParams.get("status") || "all");
   const [updatedFrom, setUpdatedFrom] = useState(searchParams.get("updatedFrom") || "");
   const [updatedTo, setUpdatedTo] = useState(searchParams.get("updatedTo") || "");
+  // Legacy `from` is a check-in lower bound server-side
+  // (admin-bookings-service: `query.checkInFrom ?? query.from`), so it seeds
+  // the Check In From control.
   const [checkInFrom, setCheckInFrom] = useState(searchParams.get("checkInFrom") || searchParams.get("from") || "");
-  const [checkInTo, setCheckInTo] = useState(searchParams.get("checkInTo") || searchParams.get("to") || "");
+  const [checkInTo, setCheckInTo] = useState(searchParams.get("checkInTo") || "");
   const [checkOutFrom, setCheckOutFrom] = useState(searchParams.get("checkOutFrom") || "");
-  const [checkOutTo, setCheckOutTo] = useState(searchParams.get("checkOutTo") || "");
+  // Legacy `to` is a CHECK-OUT upper bound server-side, and the service
+  // ignores it whenever an explicit checkInTo/checkOutTo param is present.
+  // Mirror that precedence exactly so rewriting a legacy link into named
+  // params keeps the same result set (#1720).
+  const [checkOutTo, setCheckOutTo] = useState(() => {
+    const explicitCheckOutTo = searchParams.get("checkOutTo");
+    if (explicitCheckOutTo) return explicitCheckOutTo;
+    if (searchParams.get("checkInTo")) return "";
+    return searchParams.get("to") || "";
+  });
   const [search, setSearch] = useState(searchParams.get("search") || "");
   const [month, setMonth] = useState(searchParams.get("month") || "all");
   const [deleted, setDeleted] = useState(searchParams.get("deleted") || "hide");

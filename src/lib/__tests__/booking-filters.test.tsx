@@ -3,6 +3,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BookingFilters } from "@/components/admin/booking-filters";
+import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
 const mocks = vi.hoisted(() => ({
   currentSearch: "",
@@ -90,6 +91,67 @@ describe("BookingFilters", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(mocks.routerPush).not.toHaveBeenCalled();
+  });
+
+  it("seeds legacy from/to into checkInFrom/checkOutTo, matching the server semantics (#1720)", async () => {
+    // Server-side, legacy `from` bounds check-IN and legacy `to` bounds
+    // check-OUT (admin-bookings-service). Seeding must match, so the URL
+    // rewrite keeps the legacy link's result set.
+    const legacyFrom = formatDateOnly(getTodayDateOnly());
+    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 14));
+    mocks.currentSearch = `from=${legacyFrom}&to=${legacyTo}`;
+    setLocation(mocks.currentSearch);
+
+    render(<BookingFilters />);
+
+    expect((screen.getByLabelText("Check In From") as HTMLInputElement).value).toBe(legacyFrom);
+    expect((screen.getByLabelText("Check In To") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Check Out To") as HTMLInputElement).value).toBe(legacyTo);
+
+    await waitFor(() => expect(mocks.routerPush).toHaveBeenCalled());
+    const url = pushedBookingsUrl();
+    expect(url.searchParams.get("checkInFrom")).toBe(legacyFrom);
+    expect(url.searchParams.get("checkOutTo")).toBe(legacyTo);
+    expect(url.searchParams.has("checkInTo")).toBe(false);
+    expect(url.searchParams.has("from")).toBe(false);
+    expect(url.searchParams.has("to")).toBe(false);
+  });
+
+  it("ignores legacy to when an explicit checkInTo is present, matching the server precedence", async () => {
+    // admin-bookings-service drops legacy `to` whenever an explicit
+    // checkInTo/checkOutTo param exists, so seeding it here would add a
+    // check-out bound the server never applied.
+    const checkInTo = formatDateOnly(getTodayDateOnly());
+    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 30));
+    mocks.currentSearch = `checkInTo=${checkInTo}&to=${legacyTo}`;
+    setLocation(mocks.currentSearch);
+
+    render(<BookingFilters />);
+
+    expect((screen.getByLabelText("Check In To") as HTMLInputElement).value).toBe(checkInTo);
+    expect((screen.getByLabelText("Check Out To") as HTMLInputElement).value).toBe("");
+
+    await waitFor(() => expect(mocks.routerPush).toHaveBeenCalled());
+    const url = pushedBookingsUrl();
+    expect(url.searchParams.get("checkInTo")).toBe(checkInTo);
+    expect(url.searchParams.has("checkOutTo")).toBe(false);
+    expect(url.searchParams.has("to")).toBe(false);
+  });
+
+  it("keeps an explicit checkOutTo over legacy to", async () => {
+    const checkOutTo = formatDateOnly(getTodayDateOnly());
+    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 30));
+    mocks.currentSearch = `checkOutTo=${checkOutTo}&to=${legacyTo}`;
+    setLocation(mocks.currentSearch);
+
+    render(<BookingFilters />);
+
+    expect((screen.getByLabelText("Check Out To") as HTMLInputElement).value).toBe(checkOutTo);
+
+    await waitFor(() => expect(mocks.routerPush).toHaveBeenCalled());
+    const url = pushedBookingsUrl();
+    expect(url.searchParams.get("checkOutTo")).toBe(checkOutTo);
+    expect(url.searchParams.has("to")).toBe(false);
   });
 
   it("navigates when the search input changes", async () => {
