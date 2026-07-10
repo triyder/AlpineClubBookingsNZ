@@ -447,7 +447,14 @@ describe("manuallyAllocateBedForNights", () => {
 describe("bed type + bunk pairing (#1675)", () => {
   function buildBunkDb(
     overrides: {
-      groupMembers?: Array<{ id: string; bedType: string }>;
+      groupMembers?: Array<{
+        id: string;
+        bedType: string;
+        // name/active are optional so the many pre-existing seeds (which omit
+        // them) still typecheck; the deactivated-blocker tests set both.
+        active?: boolean;
+        name?: string;
+      }>;
       existingBed?: {
         roomId: string;
         bedType: string;
@@ -567,6 +574,143 @@ describe("bed type + bunk pairing (#1675)", () => {
         db: db as never,
       }),
     ).rejects.toThrow('already has a bunk-top bed');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("keeps the active-blocker wording unchanged (no deactivation steer)", async () => {
+    // Pins the exact ACTIVE-partner wording so a refactor can't silently alter
+    // it. This alone does NOT discriminate `active === false` from `!active`
+    // (with active:true both take the active path); the undefined-active test
+    // below is the real discriminator for that.
+    const { db, create } = buildBunkDb({
+      groupMembers: [
+        { id: "top", bedType: "BUNK_TOP", active: true, name: "Upper" },
+      ],
+    });
+
+    await expect(
+      createBedAllocationBed({
+        roomId: "room-1",
+        name: "Another top",
+        bedType: "BUNK_TOP",
+        bunkGroup: "Bunk A",
+        db: db as never,
+      }),
+    ).rejects.toMatchObject({
+      message:
+        'Bunk group "Bunk A" already has a bunk-top bed. Pair a top with a bottom.',
+      status: 409,
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("treats a partner with an unknown active flag as active (discriminates === false from !active)", async () => {
+    // The seed omits `active` (undefined). The production column is always a
+    // boolean, but a `!active` regression treats undefined as deactivated and
+    // would name an "undefined" bed here — the exact active-path pin fails in
+    // that case, so this is the test that actually locks `active === false`.
+    const { db, create } = buildBunkDb({
+      groupMembers: [{ id: "top", bedType: "BUNK_TOP", name: "Upper" }],
+    });
+
+    await expect(
+      createBedAllocationBed({
+        roomId: "room-1",
+        name: "Another top",
+        bedType: "BUNK_TOP",
+        bunkGroup: "Bunk A",
+        db: db as never,
+      }),
+    ).rejects.toMatchObject({
+      message:
+        'Bunk group "Bunk A" already has a bunk-top bed. Pair a top with a bottom.',
+      status: 409,
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("names the deactivated bed that holds the requested bunk type", async () => {
+    // The blocking partner is inactive: it still counts toward the group
+    // (membership unchanged), but the steer names it so the admin sees why the
+    // slot is taken and can reactivate or delete it.
+    const { db, create } = buildBunkDb({
+      groupMembers: [
+        { id: "top", bedType: "BUNK_TOP", active: false, name: "Old Top" },
+      ],
+    });
+
+    await expect(
+      createBedAllocationBed({
+        roomId: "room-1",
+        name: "New top",
+        bedType: "BUNK_TOP",
+        bunkGroup: "Bunk A",
+        db: db as never,
+      }),
+    ).rejects.toMatchObject({
+      message:
+        'Bunk group "Bunk A" already has a bunk-top bed — the deactivated bed "Old Top". Reactivate or delete it, or use another group.',
+      status: 409,
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("names a full group's deactivated OPPOSITE-type bed but steers only to another group", async () => {
+    // Group = active top + deactivated bottom; admin adds another top.
+    // Reactivating/deleting the bottom can never admit a second top, so the
+    // steer must NOT offer that — name the deactivated bed, point elsewhere.
+    const { db, create } = buildBunkDb({
+      groupMembers: [
+        { id: "top", bedType: "BUNK_TOP", active: true, name: "Upper" },
+        {
+          id: "bottom",
+          bedType: "BUNK_BOTTOM",
+          active: false,
+          name: "Old Bottom",
+        },
+      ],
+    });
+
+    await expect(
+      createBedAllocationBed({
+        roomId: "room-1",
+        name: "Third bunk",
+        bedType: "BUNK_TOP",
+        bunkGroup: "Bunk A",
+        db: db as never,
+      }),
+    ).rejects.toMatchObject({
+      message:
+        'Bunk group "Bunk A" already has two beds, including the deactivated bed "Old Bottom". Use another group.',
+      status: 409,
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("offers reactivate/delete on a full group only for the SAME-type deactivated bed", async () => {
+    // Group = active bottom + deactivated top; admin adds a top. Deleting the
+    // deactivated top frees the top slot for the incoming bed, so the steer is
+    // accurate and names that bed.
+    const { db, create } = buildBunkDb({
+      groupMembers: [
+        { id: "bottom", bedType: "BUNK_BOTTOM", active: true, name: "Lower" },
+        { id: "top", bedType: "BUNK_TOP", active: false, name: "Old Top" },
+      ],
+    });
+
+    await expect(
+      createBedAllocationBed({
+        roomId: "room-1",
+        name: "Fresh top",
+        bedType: "BUNK_TOP",
+        bunkGroup: "Bunk A",
+        db: db as never,
+      }),
+    ).rejects.toMatchObject({
+      message:
+        'Bunk group "Bunk A" already has two beds, including the deactivated bed "Old Top". Reactivate or delete it, or use another group.',
+      status: 409,
+    });
     expect(create).not.toHaveBeenCalled();
   });
 

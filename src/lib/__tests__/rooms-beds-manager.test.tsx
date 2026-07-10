@@ -844,3 +844,166 @@ describe("RoomsBedsManager — bed types & bunk pairing (#1675)", () => {
     expect(screen.getByDisplayValue("Bunk A")).toBeTruthy();
   });
 });
+
+describe("RoomsBedsManager — bunk-group suggestions (#1702)", () => {
+  it("suggests the room's existing bunk groups via a per-room datalist, locale-sorted", async () => {
+    // Mixed casing discriminates the sort: a plain code-unit `.sort()` would put
+    // "Bunk B" before "bunk a" (uppercase B < lowercase b); localeCompare keeps
+    // them in reading order.
+    stubStatefulFetch([
+      seedRoom({
+        id: "room-1",
+        name: "Room 1",
+        beds: [
+          seedBed({
+            id: "bed-a",
+            roomId: "room-1",
+            name: "Upper",
+            bedType: "BUNK_TOP",
+            bunkGroup: "Bunk B",
+          }),
+          seedBed({
+            id: "bed-b",
+            roomId: "room-1",
+            name: "Solo",
+            bedType: "BUNK_TOP",
+            bunkGroup: "bunk a",
+          }),
+        ],
+      }),
+    ]);
+    const { container } = render(
+      <RoomsBedsManager permissionMatrix={editorMatrix()} />,
+    );
+
+    await screen.findByDisplayValue("Upper");
+
+    // One datalist per room holding its distinct group names, locale-sorted.
+    const datalist = container.querySelector("#bunk-groups-room-1");
+    expect(datalist).not.toBeNull();
+    const suggestions = Array.from(datalist!.querySelectorAll("option")).map(
+      (option) => (option as HTMLOptionElement).value,
+    );
+    expect(suggestions).toEqual(["bunk a", "Bunk B"]);
+
+    // The edit-row bunk-group input is wired to the room's datalist.
+    const editInput = within(rowOf("Upper")).getByLabelText("Bunk group");
+    expect(editInput.getAttribute("list")).toBe("bunk-groups-room-1");
+  });
+
+  it("de-duplicates a paired group to a single datalist option", async () => {
+    // Both beds of a real top+bottom pair share one group; the suggestion list
+    // must show that group once, not once per bed.
+    stubStatefulFetch([
+      seedRoom({
+        id: "room-1",
+        name: "Room 1",
+        beds: [
+          seedBed({
+            id: "top",
+            roomId: "room-1",
+            name: "Upper",
+            bedType: "BUNK_TOP",
+            bunkGroup: "Bunk A",
+          }),
+          seedBed({
+            id: "bottom",
+            roomId: "room-1",
+            name: "Lower",
+            bedType: "BUNK_BOTTOM",
+            bunkGroup: "Bunk A",
+          }),
+        ],
+      }),
+    ]);
+    const { container } = render(
+      <RoomsBedsManager permissionMatrix={editorMatrix()} />,
+    );
+
+    await screen.findByDisplayValue("Upper");
+
+    const options = Array.from(
+      container.querySelector("#bunk-groups-room-1")!.querySelectorAll("option"),
+    ).map((option) => (option as HTMLOptionElement).value);
+    expect(options).toEqual(["Bunk A"]);
+  });
+
+  it("wires the add-bed bunk-group input to the room's datalist", async () => {
+    // A bedless room keeps the query unambiguous: switching the add form to a
+    // bunk type reveals exactly one bunk-group input, wired to the (empty)
+    // datalist so free text still creates new groups.
+    stubStatefulFetch([seedRoom({ id: "room-1", name: "Room 1" })]);
+    const { container } = render(
+      <RoomsBedsManager permissionMatrix={editorMatrix()} />,
+    );
+
+    await screen.findByDisplayValue("Room 1");
+
+    // The datalist renders even with no groups yet, so the reference resolves.
+    expect(container.querySelector("#bunk-groups-room-1")).not.toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Bed type"), {
+      target: { value: "BUNK_TOP" },
+    });
+    expect(
+      screen.getByLabelText("Bunk group").getAttribute("list"),
+    ).toBe("bunk-groups-room-1");
+  });
+
+  it("scopes bunk-group suggestions to each room", async () => {
+    stubStatefulFetch([
+      seedRoom({
+        id: "room-1",
+        name: "Room 1",
+        beds: [
+          seedBed({
+            id: "bed-a",
+            roomId: "room-1",
+            name: "Alpha bed",
+            bedType: "BUNK_TOP",
+            bunkGroup: "Alpha",
+          }),
+        ],
+      }),
+      seedRoom({
+        id: "room-2",
+        name: "Room 2",
+        beds: [
+          seedBed({
+            id: "bed-b",
+            roomId: "room-2",
+            name: "Beta bed",
+            bedType: "BUNK_TOP",
+            bunkGroup: "Beta",
+          }),
+        ],
+      }),
+    ]);
+    const { container } = render(
+      <RoomsBedsManager permissionMatrix={editorMatrix()} />,
+    );
+
+    await screen.findByDisplayValue("Alpha bed");
+
+    const optionsOf = (selector: string) =>
+      Array.from(
+        container.querySelector(selector)!.querySelectorAll("option"),
+      ).map((option) => (option as HTMLOptionElement).value);
+
+    // A room's datalist holds only its own groups — never a sibling room's.
+    expect(optionsOf("#bunk-groups-room-1")).toEqual(["Alpha"]);
+    expect(optionsOf("#bunk-groups-room-2")).toEqual(["Beta"]);
+
+    // Each edit-row input points at its own room's datalist.
+    expect(
+      within(rowOf("Alpha bed"))
+        .getByLabelText("Bunk group")
+        .getAttribute("list"),
+    ).toBe("bunk-groups-room-1");
+    expect(
+      within(rowOf("Beta bed"))
+        .getByLabelText("Bunk group")
+        .getAttribute("list"),
+    ).toBe("bunk-groups-room-2");
+  });
+});

@@ -955,6 +955,14 @@ export function RoomsBedsManager({
                       );
                     }
                   }
+                  // Suggest this room's existing distinct bunk groups while
+                  // typing (native datalist, one per room). Free text still
+                  // creates new groups; the map keys are the trimmed persisted
+                  // group names, locale-sorted so casing doesn't scatter them.
+                  const bunkGroupListId = `bunk-groups-${room.id}`;
+                  const bunkGroupOptions = [...bunkGroupCounts.keys()].sort(
+                    (a, b) => a.localeCompare(b),
+                  );
 
                   return (
                     <div key={room.id} className="rounded-md border p-4">
@@ -1036,6 +1044,16 @@ export function RoomsBedsManager({
                       ) : null}
 
                       <div className="mt-4 space-y-3">
+                        {/* Bunk-group suggestions for this room, shared by the
+                            add-bed and edit-bed inputs via their `list` attr.
+                            Value-only options so their text can't collide with
+                            DOM text queries. Rendered even when empty so the
+                            `list` reference always resolves. */}
+                        <datalist id={bunkGroupListId}>
+                          {bunkGroupOptions.map((group) => (
+                            <option key={group} value={group} />
+                          ))}
+                        </datalist>
                         <div className="grid gap-3 md:grid-cols-[2fr_90px_auto_auto_auto]">
                           <Input
                             placeholder="Bed name"
@@ -1099,6 +1117,7 @@ export function RoomsBedsManager({
                             <Input
                               placeholder="Bunk group"
                               aria-label="Bunk group"
+                              list={bunkGroupListId}
                               value={bedDraft.bunkGroup}
                               onChange={(event) =>
                                 updateBedDraft(room.id, {
@@ -1196,6 +1215,7 @@ export function RoomsBedsManager({
                                             <Input
                                               placeholder="Bunk group"
                                               aria-label="Bunk group"
+                                              list={bunkGroupListId}
                                               value={bedEdit.bunkGroup}
                                               onChange={(event) =>
                                                 updateBedEdit(bed.id, {
