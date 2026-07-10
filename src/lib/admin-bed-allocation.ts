@@ -50,7 +50,10 @@ export interface BedAllocationSettingsPayload {
 
 export interface AdminBedAllocationWarning {
   id: string;
-  type: "BOOKING_SPLIT" | "MINOR_WITHOUT_BOOKING_ADULT";
+  // BOOKING_SPLIT is same-night (party split across rooms on one night);
+  // ROOM_SWITCH is stay-level (issue #1677) — the booking's room set changes
+  // between nights, so someone must move rooms mid-stay.
+  type: "BOOKING_SPLIT" | "MINOR_WITHOUT_BOOKING_ADULT" | "ROOM_SWITCH";
   severity: "warning";
   bookingId: string;
   bookingGuestId?: string;
@@ -1032,6 +1035,47 @@ export function buildBedAllocationWarnings(input: {
         });
       }
     }
+  }
+
+  // Stay-level room continuity (issue #1677): warn when a booking's set of
+  // rooms changes between nights — someone has to move rooms mid-stay. This is
+  // distinct from BOOKING_SPLIT, which flags a party split across rooms on ONE
+  // night; a booking split identically every night raises no ROOM_SWITCH.
+  const nightRoomsByBooking = new Map<string, Map<string, Set<string>>>();
+  for (const allocation of input.allocations) {
+    let nights = nightRoomsByBooking.get(allocation.bookingId);
+    if (!nights) {
+      nights = new Map();
+      nightRoomsByBooking.set(allocation.bookingId, nights);
+    }
+    let roomIds = nights.get(allocation.stayDate);
+    if (!roomIds) {
+      roomIds = new Set();
+      nights.set(allocation.stayDate, roomIds);
+    }
+    roomIds.add(allocation.roomId);
+  }
+  for (const [bookingId, nights] of nightRoomsByBooking) {
+    const sortedNights = [...nights.keys()].sort();
+    if (sortedNights.length < 2) continue;
+    const roomKeyForNight = (night: string) =>
+      [...(nights.get(night) ?? [])].sort().join(",");
+    const firstKey = roomKeyForNight(sortedNights[0]);
+    const switchNight = sortedNights.find(
+      (night) => roomKeyForNight(night) !== firstKey,
+    );
+    if (!switchNight) continue;
+    const roomCount = new Set(
+      sortedNights.flatMap((night) => [...(nights.get(night) ?? [])]),
+    ).size;
+    warnings.push({
+      id: `ROOM_SWITCH:${bookingId}`,
+      type: "ROOM_SWITCH",
+      severity: "warning",
+      bookingId,
+      stayDate: switchNight,
+      message: `Booking ${bookingId} changes rooms mid-stay (from ${switchNight}; ${roomCount} rooms across ${sortedNights.length} nights).`,
+    });
   }
 
   return warnings;
