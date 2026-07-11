@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({
@@ -45,12 +45,21 @@ import {
 import { hashActionToken } from "@/lib/action-tokens";
 
 const RAW_TOKEN = "a".repeat(64);
-// Anchored to the real clock, not a fixed date: getPartnerInviteTokenForClaim
-// compares expiresAt against a real `new Date()`, so a hardcoded NOW turned
-// the default +24h fixture into a time bomb (the suite went red repo-wide
-// when 2026-07-11T00:00Z passed). Every fixture derives from NOW, so the
-// relative expiry/claim assertions are unaffected.
-const NOW = new Date();
+// A fixed NOW with the runtime Date pinned to it (tokoroa upstream, PR #1763,
+// superseding the #1760 real-clock anchor): the claim/expiry paths under test
+// read the real clock, so an unpinned hardcoded NOW turned the default +24h
+// fixture into a UTC-midnight time bomb, while #1760's `new Date()` anchor
+// fixed the redness but left the fixtures nondeterministic. Fake only Date —
+// async stays real.
+const NOW = new Date("2026-07-10T00:00:00.000Z");
+
+beforeAll(() => {
+  vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
+});
+
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 function tokenRow(overrides: Record<string, unknown> = {}) {
   return {
