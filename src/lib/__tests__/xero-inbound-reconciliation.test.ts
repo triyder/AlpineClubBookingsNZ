@@ -950,7 +950,14 @@ describe("processStoredXeroInboundEvents", () => {
   });
 
   function mockCapacityFailInboundEvent(
-    params: { amountPaid?: number; invoicePayments?: unknown[] } = {}
+    params: {
+      amountPaid?: number;
+      invoicePayments?: unknown[];
+      // #1771: set on the POST-lock (locked) booking so the reconcile reads a
+      // persisted capacity override. Defaults null -> the existing capacity-fail
+      // pin is byte-identical.
+      capacityOverriddenAt?: Date | null;
+    } = {}
   ) {
     // Capture the exact transaction client the reconcile passes to its
     // callback so callers can prove the outbox enqueue committed atomically
@@ -1091,6 +1098,8 @@ describe("processStoredXeroInboundEvents", () => {
         finalPriceCents: 12345,
         discountCents: 0,
         promoAdjustmentCents: 0,
+        // #1771: null unless the caller marks this booking as an admin overbook.
+        capacityOverriddenAt: params.capacityOverriddenAt ?? null,
         guests: [{ id: "guest_cap", nights: [] }],
         member: {
           email: "member@example.com",
@@ -1190,6 +1199,39 @@ describe("processStoredXeroInboundEvents", () => {
     expect(mocks.txOperationFindFirst).toHaveBeenCalledTimes(1);
     // Not the paid path.
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
+  });
+
+  // #1771 — a PAYMENT_PENDING Internet Banking booking deliberately admitted
+  // over the ceiling by an admin carries a persisted capacityOverriddenAt
+  // marker. A late payment landing over capacity must SETTLE it (status -> PAID),
+  // not cancel it and mint an offsetting credit note. (The non-overridden pin is
+  // the preceding cancel+mint test.)
+  it("settles an over-capacity Internet Banking booking with a persisted capacity override to PAID instead of cancelling and minting a credit (#1771)", async () => {
+    mockCapacityFailInboundEvent({ capacityOverriddenAt: new Date("2026-06-01") });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    // Settled, not cancelled.
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "booking_ib_cap" },
+      data: { status: "PAID", draftExpiresAt: null },
+    });
+    expect(mocks.bookingUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "CANCELLED" }),
+      })
+    );
+    // No offsetting credit note is minted or enqueued.
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "CREDIT_NOTE" })
+    );
   });
 
   it("takes BOTH the global lock(1) and the booking's per-lodge lock before the capacity claim (H2)", async () => {

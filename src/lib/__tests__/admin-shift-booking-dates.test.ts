@@ -230,6 +230,9 @@ describe("adminShiftBookingDates (issue #1668 — pure translation)", () => {
     expect(updateArgs.data).not.toHaveProperty("totalPriceCents");
     expect(updateArgs.data).not.toHaveProperty("finalPriceCents");
     expect(updateArgs.data).not.toHaveProperty("discountCents");
+    // #1771: a within-capacity shift never persists the override columns.
+    expect(updateArgs.data).not.toHaveProperty("capacityOverriddenAt");
+    expect(updateArgs.data).not.toHaveProperty("capacityOverriddenByMemberId");
 
     // Guest envelope moved; NO priceCents written.
     const guestUpdate = h.txGuestUpdate.mock.calls[0][0];
@@ -368,6 +371,10 @@ describe("adminShiftBookingDates (issue #1668 — pure translation)", () => {
     expect(result.capacityOverridden).toBe(true);
     const modArgs = h.txModificationCreate.mock.calls[0][0];
     expect(modArgs.data.newData.capacityOverridden).toBe(true);
+    // #1771: the persisted override is stamped on the booking with the actor.
+    const updateArgs = h.txBookingUpdate.mock.calls[0][0];
+    expect(updateArgs.data.capacityOverriddenAt).toBeInstanceOf(Date);
+    expect(updateArgs.data.capacityOverriddenByMemberId).toBe("admin1");
   });
 
   it("skips the capacity check for a non-capacity-holding status (WAITLISTED)", async () => {

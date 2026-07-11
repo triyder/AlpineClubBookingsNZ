@@ -228,6 +228,40 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
     });
   });
 
+  // #1771 — an overbook force-confirm stamps the persisted capacity override on
+  // the booking (who + when), so every downstream payment-time re-check honours
+  // it and never cancels the deliberately-admitted booking.
+  it("stamps the persisted capacity override on an overbook force-confirm (#1771)", async () => {
+    const response = await POST(
+      forceConfirmRequest({ allowOverbook: true }),
+      routeParams(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.tx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          capacityOverriddenAt: expect.any(Date),
+          capacityOverriddenByMemberId: "admin-1",
+        }),
+      }),
+    );
+  });
+
+  it("does NOT stamp the capacity override when the force-confirm fits within capacity (#1771)", async () => {
+    mocks.checkCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      nightDetails: [],
+    });
+
+    const response = await POST(forceConfirmRequest({}), routeParams());
+
+    expect(response.status).toBe(200);
+    const updateData = mocks.tx.booking.update.mock.calls[0][0].data;
+    expect(updateData).not.toHaveProperty("capacityOverriddenAt");
+    expect(updateData).not.toHaveProperty("capacityOverriddenByMemberId");
+  });
+
   // #1723 path 1 (owner decision B): a past-dated force-confirm that lands
   // PAYMENT_PENDING is allowed but flagged at creation — in the response and
   // in the audit trail — because it creates an unpaid finished stay. Stay

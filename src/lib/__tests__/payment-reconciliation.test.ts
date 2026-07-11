@@ -62,6 +62,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
+import logger from "@/lib/logger";
 
 const tx = {
   $executeRaw: (...args: unknown[]) => mocks.executeRaw(...args),
@@ -418,6 +419,77 @@ describe("markBookingPaymentSucceeded", () => {
       "member-1",
       "booking-1",
       expect.anything()
+    );
+  });
+
+  // #1771 — a booking deliberately admitted above the ceiling by an admin
+  // carries a persisted capacityOverriddenAt marker. The settlement capacity
+  // re-check must NOT cancel-and-refund it: it settles to PAID exactly as if it
+  // fit, and logs that it skipped the capacity cancel.
+  it("settles an over-capacity booking with a persisted capacity override to PAID instead of cancelling (#1771)", async () => {
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: parseDateOnly("2026-04-10"),
+      checkOut: parseDateOnly("2026-04-12"),
+      finalPriceCents: 10000,
+      // Deliberately admitted over the ceiling by an admin (#1668/#1767).
+      capacityOverriddenAt: parseDateOnly("2026-04-01"),
+      capacityOverriddenByMemberId: "admin-1",
+      guests: [
+        {
+          id: "guest-1",
+          isMember: true,
+          stayStart: parseDateOnly("2026-04-10"),
+          stayEnd: parseDateOnly("2026-04-12"),
+        },
+      ],
+      member: { firstName: "Alice", lastName: "Member", email: "alice@example.com" },
+    });
+
+    // The lodge is full: without the override this would cancel-and-refund.
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        id: "committed-full",
+        status: BookingStatus.PAID,
+        checkIn: parseDateOnly("2026-04-10"),
+        checkOut: parseDateOnly("2026-04-12"),
+        guests: Array.from({ length: LODGE_CAPACITY }, (_, index) => ({
+          id: `committed-${index}`,
+          stayStart: parseDateOnly("2026-04-10"),
+          stayEnd: parseDateOnly("2026-04-12"),
+        })),
+      },
+    ]);
+
+    const result = await markBookingPaymentSucceeded({
+      bookingId: "booking-1",
+      paymentIntentId: "pi_override",
+      amountCents: 10000,
+      paymentMethodId: "pm_123",
+    });
+
+    expect(result.outcome).toBe("paid");
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "booking-1" },
+      data: {
+        status: BookingStatus.PAID,
+        draftExpiresAt: null,
+      },
+    });
+    // Never cancelled, never refunded.
+    expect(mocks.bookingUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: BookingStatus.CANCELLED }),
+      })
+    );
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mocks.restoreCreditFromBooking).not.toHaveBeenCalled();
+    // The skip is logged.
+    expect(logger.info).toHaveBeenCalledWith(
+      { bookingId: "booking-1" },
+      expect.stringContaining("persisted capacity override (#1771)")
     );
   });
 });

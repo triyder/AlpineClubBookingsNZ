@@ -133,6 +133,19 @@ export function bookingHoldsCapacity(booking: {
 }
 
 /**
+ * Does THIS booking carry a persisted capacity override (#1771)? When true, a
+ * payment-time / settlement capacity re-check must NOT cancel/refund, 409, or
+ * bump the booking — it was deliberately admitted above the lodge ceiling by an
+ * admin. Set at every over-capacity admission site (create/modify/force-confirm/
+ * capacity-hold); read at every re-check site.
+ */
+export function bookingHasCapacityOverride(booking: {
+  capacityOverriddenAt: Date | null;
+}): boolean {
+  return booking.capacityOverriddenAt != null;
+}
+
+/**
  * Prisma update-data fragment that releases an admin capacity hold (#1764).
  * Spread into every terminal status flip (the cancel paths and cancel-like
  * cron transitions) so no cancelled/expired booking keeps a stale hold record.

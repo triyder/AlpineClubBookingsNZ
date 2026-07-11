@@ -798,18 +798,14 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         !capacityCheck.available &&
         (requestedStatus === BookingStatus.PENDING || effectivePriceCents > 0 || review.blockForReview)
       ) {
-        if (
-          overCapacityWarnAndConfirm &&
-          // v1 carve-out (#1767): a non-member provisional hold (PENDING)
-          // never holds capacity, and cron-confirm-pending re-checks capacity
-          // at the hold window with no knowledge of the override — a
-          // confirmed overbook there would silently self-destruct (bump email
-          // included). Until the override is persisted and honoured by the
-          // re-check paths, the hold shape keeps the hard capacity block. A
-          // retroactive create can never be hold-eligible (past check-in), so
-          // #1695 behaviour is untouched.
-          (requestedStatus !== BookingStatus.PENDING || retroactiveOverride)
-        ) {
+        if (overCapacityWarnAndConfirm) {
+          // The v1 PENDING carve-out (#1767) is retired by #1771: the persisted
+          // capacity override is now stamped on the booking below and honoured
+          // by cron-confirm-pending's hold-window re-check, so a hold-eligible
+          // PENDING on-behalf overbook no longer silently self-destructs (bump
+          // email included). Members never overbook — overCapacityWarnAndConfirm
+          // is already false for member self-creates — so the members-never-
+          // overbook block is untouched.
           // On-behalf over-capacity is warn-and-confirm (#1695/#1767): the
           // lodge capacity lock is still held, only the availability decision
           // defers to the admin's explicit confirmation.
@@ -858,6 +854,15 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           requestedRoomId: requestedRoomId || null,
           cancelIfGuestsBumped: effectiveCancelIfGuestsBumped,
           createdById: isOnBehalf ? sessionUserId : null,
+          // Persisted capacity override (#1771): stamp the admitting admin when
+          // this create deliberately overbooked (pre-create branch). Omitted
+          // entirely on the in-capacity path so the columns default to null.
+          ...(capacityOverridden
+            ? {
+                capacityOverriddenAt: new Date(),
+                capacityOverriddenByMemberId: sessionUserId,
+              }
+            : {}),
           requiresAdminReview: review.requiresAdminReview,
           adminReviewReason: review.adminReviewReason,
           memberReviewJustification: review.memberReviewJustification,
@@ -939,7 +944,18 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         });
         await tx.booking.update({
           where: { id: newBooking.id },
-          data: { status: BookingStatus.PAID },
+          data: {
+            status: BookingStatus.PAID,
+            // Persisted capacity override (#1771): the $0/credit-covered branch
+            // decides the overbook AFTER the create, so stamp the admitting
+            // admin on this settling update. Guarded — never set in-capacity.
+            ...(capacityOverridden
+              ? {
+                  capacityOverriddenAt: new Date(),
+                  capacityOverriddenByMemberId: sessionUserId,
+                }
+              : {}),
+          },
         });
         newBooking.status = BookingStatus.PAID;
       } else if (

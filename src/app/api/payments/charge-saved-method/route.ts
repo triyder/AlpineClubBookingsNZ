@@ -17,6 +17,7 @@ import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { hasAdminAccess } from "@/lib/access-roles";
 
 const ChargeSavedMethodSchema = z.object({
@@ -103,7 +104,16 @@ export async function POST(request: NextRequest) {
       booking.id
     );
 
-    if (!capacity.available) {
+    if (!capacity.available && bookingHasCapacityOverride(booking)) {
+      // Persisted capacity override (#1771): admitted above the ceiling by an
+      // admin, so do not 409 the charge — proceed. The downstream
+      // markBookingPaymentSucceeded re-check honours the same override centrally.
+      logger.info(
+        { bookingId: booking.id },
+        "Charging an over-capacity booking with a persisted capacity override (#1771); skipping the capacity block"
+      );
+    }
+    if (!capacity.available && !bookingHasCapacityOverride(booking)) {
       return NextResponse.json(
         {
           error:

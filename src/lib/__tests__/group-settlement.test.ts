@@ -328,6 +328,39 @@ describe("createGroupSettlementIntent", () => {
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
   });
 
+  // #1771 — defensive: a child that somehow carried a persisted capacity
+  // override must SETTLE rather than 409, keeping the override invariant total
+  // even though group children cannot be overridden today.
+  it("settles a child carrying a persisted capacity override instead of aborting on capacity (#1771)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "child-1",
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      capacityOverriddenAt: new Date("2026-06-01"),
+      guests: [],
+    });
+    mocks.checkCapacity.mockResolvedValue({
+      available: false,
+      nightDetails: [{ date: new Date("2026-07-01"), availableBeds: -1 }],
+    });
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    expect(result.outcome).toBe("ready");
+    // The child is committed to CONFIRMED, not aborted.
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: BookingStatus.CONFIRMED }),
+      })
+    );
+    expect(mocks.createPaymentIntent).toHaveBeenCalled();
+  });
+
   it("internet banking: commits children, enqueues one combined invoice, opens no Stripe intent", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
     mocks.bookingFindMany.mockResolvedValue([

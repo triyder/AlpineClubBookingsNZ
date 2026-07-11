@@ -281,6 +281,11 @@ export async function POST(request: NextRequest) {
           tx
         );
 
+        // DRAFT-scoped exemption (#1771): this re-check runs only while the
+        // booking is DRAFT, and a DRAFT can never carry a persisted capacity
+        // override (#1767 blocks save-as-draft over capacity), so
+        // bookingHasCapacityOverride would always be false here — honouring it
+        // would be dead code. See docs/CAPACITY_MODEL.md.
         if (!capacity.available) {
           throw new Error("Not enough beds available for your dates. Please choose different dates.");
         }

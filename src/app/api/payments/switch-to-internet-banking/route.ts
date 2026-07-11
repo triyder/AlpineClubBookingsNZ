@@ -16,6 +16,7 @@ import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
+import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
@@ -197,7 +198,16 @@ export async function POST(request: NextRequest) {
         booking.id,
         tx,
       );
-      if (!capacity.available) {
+      if (!capacity.available && bookingHasCapacityOverride(booking)) {
+        // Persisted capacity override (#1771): admitted above the ceiling by an
+        // admin, so switching to Internet Banking must not report
+        // capacityExceeded — fall through and hold the slots as requested.
+        logger.info(
+          { bookingId: booking.id },
+          "Switching an over-capacity booking with a persisted capacity override (#1771) to Internet Banking; skipping the capacity block"
+        );
+      }
+      if (!capacity.available && !bookingHasCapacityOverride(booking)) {
         return { type: "capacityExceeded" as const };
       }
     }

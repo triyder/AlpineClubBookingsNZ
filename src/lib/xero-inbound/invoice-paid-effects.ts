@@ -10,6 +10,7 @@ import {
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
+import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { enqueueXeroAccountCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import { createAuditLog } from "@/lib/audit";
@@ -731,7 +732,23 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
               )
             : { available: true };
 
-        if (!capacity.available) {
+        // Persisted capacity override (#1771): read off the post-lock snapshot
+        // (locked is non-null whenever capacity was actually checked, but guard
+        // it so TS stays happy on the { available: true } branch). The marker is
+        // immutable, so the pre- vs post-lock read cannot disagree.
+        const lockedHasOverride =
+          locked != null && bookingHasCapacityOverride(locked.booking);
+
+        if (!capacity.available && lockedHasOverride) {
+          // The booking was deliberately admitted above the ceiling by an admin,
+          // so a late Internet Banking payment must settle it, not cancel + mint
+          // a credit. Fall through to the PAID flip below.
+          logger.info(
+            { invoiceId, paymentId: fresh.id, bookingId: fresh.bookingId },
+            "Settling an over-capacity Internet Banking booking with a persisted capacity override (#1771); skipping the capacity cancel"
+          );
+        }
+        if (!capacity.available && !lockedHasOverride) {
           await tx.booking.update({
             where: { id: fresh.bookingId },
             data: {

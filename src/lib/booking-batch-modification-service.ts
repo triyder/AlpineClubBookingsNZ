@@ -455,6 +455,16 @@ export async function modifyBookingBatch({
         adminReviewNotes: guestPlan.reviewUpdate.adminReviewNotes,
         adminReviewedById: guestPlan.reviewUpdate.adminReviewedById,
         adminReviewedAt: guestPlan.reviewUpdate.adminReviewedAt,
+        // Persisted capacity override (#1771): stamp the acting admin when this
+        // batch modification was admitted over capacity behind an admin confirm
+        // (pricing.capacityOverridden is set by calculateModifiedPricing).
+        // Guarded — never set when the change stayed within capacity.
+        ...(pricing.capacityOverridden
+          ? {
+              capacityOverriddenAt: new Date(),
+              capacityOverriddenByMemberId: actor.id,
+            }
+          : {}),
       },
       include: { guests: true, payment: true },
     });

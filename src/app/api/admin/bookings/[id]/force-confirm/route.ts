@@ -121,6 +121,16 @@ export async function POST(
           waitlistOfferedAt: null,
           waitlistOfferExpiresAt: null,
           ...reviewBackfill,
+          // Persisted capacity override (#1771): a waitlist force-confirm that
+          // admits over the ceiling (!available under allowOverbook) stamps the
+          // acting admin so payment-time re-checks honour it. Guarded — never
+          // set when the force-confirm fit within capacity.
+          ...(!available
+            ? {
+                capacityOverriddenAt: new Date(),
+                capacityOverriddenByMemberId: session.user.id,
+              }
+            : {}),
         },
       });
 

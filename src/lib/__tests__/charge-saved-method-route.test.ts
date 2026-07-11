@@ -234,6 +234,48 @@ describe("POST /api/payments/charge-saved-method", () => {
     expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
   });
 
+  // #1771 — a booking deliberately admitted over the ceiling by an admin carries
+  // a persisted capacityOverriddenAt marker. The saved-card preflight must NOT
+  // 409 it: the charge proceeds (and markBookingPaymentSucceeded, which honours
+  // the same override, settles it).
+  it("charges an over-capacity booking with a persisted capacity override instead of 409ing (#1771)", async () => {
+    mockBookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PENDING",
+      finalPriceCents: 12500,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      capacityOverriddenAt: new Date("2026-06-01"),
+      capacityOverriddenByMemberId: "admin-1",
+      guests: [{ id: "guest-1", stayStart: new Date("2026-07-10"), stayEnd: new Date("2026-07-12") }],
+      payment: { stripePaymentMethodId: "pm_123", stripeCustomerId: "cus_123" },
+      member: { firstName: "Alice", lastName: "Example" },
+    });
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      minAvailable: -1,
+      nightDetails: [],
+    });
+    mockChargePaymentMethod.mockResolvedValue({
+      id: "pi_override",
+      status: "succeeded",
+      amount: 12500,
+    });
+
+    const request = new NextRequest("http://localhost/api/payments/charge-saved-method", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    expect(mockChargePaymentMethod).toHaveBeenCalled();
+    expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalled();
+  });
+
   it("does not revert the booking to PENDING when local persistence fails after a successful charge", async () => {
     mockChargePaymentMethod.mockResolvedValue({
       id: "pi_success_2",

@@ -193,7 +193,19 @@ export async function POST(
 
         const claimed = await tx.booking.updateMany({
           where: { id: bookingId, status: BookingStatus.PENDING },
-          data: { status: BookingStatus.PAID, nonMemberHoldUntil: null },
+          data: {
+            status: BookingStatus.PAID,
+            nonMemberHoldUntil: null,
+            // Persisted capacity override (#1771): an admin "confirm now" that
+            // advances a $0 booking over the ceiling (allowOverbook past the
+            // gate) stamps the acting admin. Guarded — never set in-capacity.
+            ...(!available
+              ? {
+                  capacityOverriddenAt: new Date(),
+                  capacityOverriddenByMemberId: session.user.id,
+                }
+              : {}),
+          },
         });
         if (claimed.count === 0) {
           return { error: "Booking is no longer pending" as const, status: 409 };
@@ -298,7 +310,21 @@ export async function POST(
 
       const claimed = await tx.booking.updateMany({
         where: { id: bookingId, status: BookingStatus.PENDING },
-        data: { status: BookingStatus.CONFIRMED, nonMemberHoldUntil: null },
+        data: {
+          status: BookingStatus.CONFIRMED,
+          nonMemberHoldUntil: null,
+          // Persisted capacity override (#1771): an admin "confirm now" that
+          // claims a priced booking CONFIRMED over the ceiling (allowOverbook
+          // past the gate) stamps the acting admin so the later charge's
+          // markBookingPaymentSucceeded re-check honours it. Guarded — never
+          // set in-capacity.
+          ...(!available
+            ? {
+                capacityOverriddenAt: new Date(),
+                capacityOverriddenByMemberId: session.user.id,
+              }
+            : {}),
+        },
       });
       if (claimed.count === 0) {
         return { error: "Booking is no longer pending" as const, status: 409 };

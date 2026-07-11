@@ -284,14 +284,29 @@ raises `OverCapacityConfirmationRequiredError` (409,
 warn-and-confirm contract covers **every admin on-behalf create** — past-dated
 (#1695) and future-dated (#1767) — except a create that opted into the
 waitlist fallback (which keeps the capacity-exceeded outcome so the
-WAITLISTED booking is created instead) and a non-member hold-eligible
-(PENDING) party (hard block in v1 — the hold cron would bump a confirmed
-overbook); a member self-create keeps the hard capacity block and can never
-overbook. Every override move
-is audited as `booking.modify.admin_override` (including the admin's explicit
-member-notification choice, `notifyMember`) and linked, best-effort, to the
-booking's most recent APPROVED-but-unlinked change request that the move
-fulfils (date-only request whose named dates equal the applied values).
+WAITLISTED booking is created instead); a member self-create keeps the hard
+capacity block and can never overbook. (The former v1 hard block on a
+non-member hold-eligible (PENDING) party was retired by #1771 — the persisted
+override now lets the hold cron confirm rather than bump the overbook.) Every
+override move is audited as `booking.modify.admin_override` (including the
+admin's explicit member-notification choice, `notifyMember`) and linked,
+best-effort, to the booking's most recent APPROVED-but-unlinked change request
+that the move fulfils (date-only request whose named dates equal the applied
+values).
+
+**Persisted capacity override (#1771).** Every over-capacity admission stamps
+`Booking.capacityOverriddenAt` + `capacityOverriddenByMemberId` (immutable, set
+only when the override fires, never cleared on cancel). The payment-time and
+settlement capacity re-checks — `markBookingPaymentSucceeded`, payment links,
+`cron-confirm-pending`, `charge-saved-method`, `switch-to-internet-banking`, the
+Internet Banking invoice-paid reconcile, and group settlement — now consult
+`bookingHasCapacityOverride` and, when set, settle/advance the booking to its
+correct terminal state (PAID / CONFIRMED / payment proceeds) instead of
+cancelling+refunding, 409ing, or bumping it. Previously a *priced* overridden
+booking self-destructed when payment landed over capacity; $0/credit-covered
+overridden creates settled at create time and were never affected. The
+DRAFT-scoped re-checks (`create-payment-intent`, `confirm-draft`) are exempt (a
+DRAFT can never carry an override).
 
 To verify: failed post-transaction refund recovery, Xero credit-note creation,
 additional-payment cleanup, and bed-allocation reconciliation.

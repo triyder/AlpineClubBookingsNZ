@@ -242,6 +242,15 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(res.status).toBe(200);
     expect(body).toMatchObject({ status: "PAID", charged: true });
     expect(mocks.chargePaymentMethod).toHaveBeenCalled();
+    // #1771: claiming CONFIRMED over the ceiling stamps the persisted override
+    // with the acting admin, so the later markBookingPaymentSucceeded re-check
+    // never cancels the deliberately-admitted booking.
+    const confirmClaim = mocks.bookingUpdateMany.mock.calls.find(
+      (c) => (c[0] as { data: { status: string } }).data.status === "CONFIRMED"
+    );
+    const confirmData = (confirmClaim?.[0] as { data: Record<string, unknown> }).data;
+    expect(confirmData.capacityOverriddenAt).toBeInstanceOf(Date);
+    expect(confirmData.capacityOverriddenByMemberId).toBe("admin1");
   });
 
   // #1418: charge captured, then reconciliation throws (e.g. transient DB
@@ -448,9 +457,16 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
 
     expect(res.status).toBe(200);
     expect(body).toMatchObject({ status: "PAID", charged: false });
+    // #1771: claiming a $0 booking PAID over the ceiling stamps the persisted
+    // override with the acting admin.
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "PENDING" },
-      data: { status: "PAID", nonMemberHoldUntil: null },
+      data: {
+        status: "PAID",
+        nonMemberHoldUntil: null,
+        capacityOverriddenAt: expect.any(Date),
+        capacityOverriddenByMemberId: "admin1",
+      },
     });
   });
 

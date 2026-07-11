@@ -718,6 +718,16 @@ export async function modifyBookingDates({
         finalPriceCents: newFinalPriceCents,
         nonMemberHoldUntil: newNonMemberHoldUntil,
         status: newStatus,
+        // Persisted capacity override (#1771): when this date change was
+        // admitted over capacity behind an admin confirm, stamp the acting
+        // admin so payment-time re-checks honour it. Guarded — never set when
+        // the modification stayed within capacity.
+        ...(capacityOverridden
+          ? {
+              capacityOverriddenAt: new Date(),
+              capacityOverriddenByMemberId: actor.id,
+            }
+          : {}),
       },
       include: { guests: true, payment: true },
     });
@@ -1290,6 +1300,15 @@ export async function adminShiftBookingDates({
         checkOut: newCheckOut,
         nonMemberHoldUntil: newNonMemberHoldUntil,
         status: newStatus,
+        // Persisted capacity override (#1771): stamp the acting admin when this
+        // date shift was admitted over capacity behind an admin confirm.
+        // Guarded — never set when the shift stayed within capacity.
+        ...(capacityOverridden
+          ? {
+              capacityOverriddenAt: new Date(),
+              capacityOverriddenByMemberId: actor.id,
+            }
+          : {}),
       },
       include: { guests: true, payment: true },
     });

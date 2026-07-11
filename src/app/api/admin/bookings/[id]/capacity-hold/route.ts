@@ -137,6 +137,16 @@ export async function POST(
         data: {
           adminCapacityHoldAt: new Date(),
           adminCapacityHoldByMemberId: session.user.id,
+          // Persisted capacity override (#1771): a hold placed over the ceiling
+          // (allowOverbook past the gate) also records the durable override so a
+          // later payment on this booking is never cancelled/bumped. Guarded —
+          // never set when the hold fit within capacity.
+          ...(!capacity.available
+            ? {
+                capacityOverriddenAt: new Date(),
+                capacityOverriddenByMemberId: session.user.id,
+              }
+            : {}),
         },
         select: { adminCapacityHoldAt: true },
       });
