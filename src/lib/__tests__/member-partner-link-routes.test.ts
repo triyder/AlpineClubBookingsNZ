@@ -26,6 +26,9 @@ vi.mock("@/lib/member-partner-link", () => ({
   adminAssignPartnerLink: vi.fn(),
   adminRemovePartnerLink: vi.fn(),
 }));
+vi.mock("@/lib/partner-invite-token", () => ({
+  cancelOwnPartnerInviteToken: vi.fn(),
+}));
 
 import { prisma } from "@/lib/prisma";
 import {
@@ -38,6 +41,7 @@ import {
   adminAssignPartnerLink,
   adminRemovePartnerLink,
 } from "@/lib/member-partner-link";
+import { cancelOwnPartnerInviteToken } from "@/lib/partner-invite-token";
 import {
   GET as getPartnerLink,
   POST as postPartnerLink,
@@ -271,6 +275,38 @@ describe("DELETE /api/members/partner-link", () => {
       memberId: "member-a",
       linkId: "link-1",
     });
+  });
+
+  it("rejects a request carrying both a link id and an invite token id", async () => {
+    const res = await deletePartnerLink(
+      makeRequest("DELETE", undefined, "?id=link-1&inviteTokenId=pit-1")
+    );
+    expect(res.status).toBe(400);
+    expect(removeOwnPartnerLink).not.toHaveBeenCalled();
+    expect(cancelOwnPartnerInviteToken).not.toHaveBeenCalled();
+  });
+
+  it("cancels the caller's own partner invitation by token id (#1754)", async () => {
+    vi.mocked(cancelOwnPartnerInviteToken).mockResolvedValue(true);
+
+    const res = await deletePartnerLink(
+      makeRequest("DELETE", undefined, "?inviteTokenId=pit-1")
+    );
+    expect(res.status).toBe(200);
+    expect(cancelOwnPartnerInviteToken).toHaveBeenCalledWith({
+      tokenId: "pit-1",
+      memberId: "member-a",
+    });
+    expect(removeOwnPartnerLink).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the invitation is not the caller's, unknown, or claimed", async () => {
+    vi.mocked(cancelOwnPartnerInviteToken).mockResolvedValue(false);
+
+    const res = await deletePartnerLink(
+      makeRequest("DELETE", undefined, "?inviteTokenId=pit-1")
+    );
+    expect(res.status).toBe(404);
   });
 });
 

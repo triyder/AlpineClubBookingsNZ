@@ -99,6 +99,7 @@ beforeEach(() => {
     (fn as (tx: typeof prisma) => Promise<unknown>)(prisma)) as never);
   vi.mocked(prisma.$executeRaw).mockResolvedValue(0 as never);
   vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValue(null as never);
+  vi.mocked(prisma.memberPartnerLink.findMany).mockResolvedValue([] as never);
   vi.mocked(prisma.memberPartnerLink.findUnique).mockResolvedValue(null as never);
   vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 0 } as never);
 });
@@ -467,9 +468,13 @@ describe("respondToPartnerLink", () => {
   });
 
   it("re-checks the one-confirmed-partner invariant at confirm time", async () => {
-    vi.mocked(prisma.memberPartnerLink.findFirst)
-      .mockResolvedValueOnce(pendingLink as never) // link lookup
-      .mockResolvedValueOnce({ id: "confirmed-elsewhere" } as never); // invariant
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce(
+      pendingLink as never // link lookup
+    );
+    // The confirmer already holds a CONFIRMED link elsewhere.
+    vi.mocked(prisma.memberPartnerLink.findMany).mockResolvedValueOnce([
+      { memberAId: adultB.id, memberBId: "member-x" },
+    ] as never);
 
     const result = await respondToPartnerLink({
       memberId: adultB.id,
@@ -478,6 +483,29 @@ describe("respondToPartnerLink", () => {
     });
 
     expect(result).toMatchObject({ ok: false, status: 409 });
+    expect(result.ok === false && result.error).toMatch(/You already have/);
+    expect(prisma.memberPartnerLink.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses confirmation when the initiator gained a partner in the meantime", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce(
+      pendingLink as never // link lookup
+    );
+    // Only the initiator (member-a) is conflicted, not the confirmer.
+    vi.mocked(prisma.memberPartnerLink.findMany).mockResolvedValueOnce([
+      { memberAId: adultA.id, memberBId: "member-x" },
+    ] as never);
+
+    const result = await respondToPartnerLink({
+      memberId: adultB.id,
+      linkId: "link-1",
+      action: "accept",
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect(result.ok === false && result.error).toMatch(
+      /member already has a confirmed partner/i
+    );
     expect(prisma.memberPartnerLink.updateMany).not.toHaveBeenCalled();
   });
 
@@ -629,9 +657,9 @@ describe("adminAssignPartnerLink", () => {
 
   it("enforces the one-confirmed-partner invariant", async () => {
     mockMemberLookup([adultA, adultB]);
-    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
-      id: "other-confirmed",
-    } as never);
+    vi.mocked(prisma.memberPartnerLink.findMany).mockResolvedValueOnce([
+      { memberAId: adultA.id, memberBId: "member-x" },
+    ] as never);
 
     const result = await adminAssignPartnerLink({
       adminMemberId: "admin-1",
@@ -790,9 +818,9 @@ describe("formPartnerLinkOnClaim", () => {
 
   it("skips without throwing when either side already has a confirmed partner", async () => {
     mockMemberLookup([adultA, adultB]);
-    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
-      id: "other-confirmed",
-    } as never);
+    vi.mocked(prisma.memberPartnerLink.findMany).mockResolvedValueOnce([
+      { memberAId: adultA.id, memberBId: "member-x" },
+    ] as never);
 
     const outcome = await formPartnerLinkOnClaim({
       tx: prisma as never,
@@ -907,9 +935,9 @@ describe("claimPartnerInviteToken with createPartnerLink (#1742)", () => {
     vi.mocked(prisma.familyGroupMember.upsert).mockResolvedValue({} as never);
     vi.mocked(prisma.familyGroupJoinRequest.create).mockResolvedValue({} as never);
     // Inviter already has a confirmed partner elsewhere.
-    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
-      id: "other-confirmed",
-    } as never);
+    vi.mocked(prisma.memberPartnerLink.findMany).mockResolvedValueOnce([
+      { memberAId: adultA.id, memberBId: "member-x" },
+    ] as never);
 
     const result = await claimPartnerInviteToken({
       rawToken: token,
@@ -947,5 +975,6 @@ describe("claimPartnerInviteToken with createPartnerLink (#1742)", () => {
     expect(result.ok && result.partnerLinkFormed).toBe(false);
     expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
     expect(prisma.memberPartnerLink.findFirst).not.toHaveBeenCalled();
+    expect(prisma.memberPartnerLink.findMany).not.toHaveBeenCalled();
   });
 });

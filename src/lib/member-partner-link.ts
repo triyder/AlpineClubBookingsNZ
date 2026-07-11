@@ -144,6 +144,38 @@ async function memberHasConfirmedPartner(
 }
 
 /**
+ * The same invariant over a whole pair in one query: which of these members
+ * already hold a CONFIRMED link (optionally ignoring one link id). Used where
+ * both sides are checked together; requestPartnerLink keeps two separate
+ * single-member checks because D9 requires the target's check to run after
+ * every requester-side conflict.
+ */
+async function membersWithConfirmedPartner(
+  tx: TransactionClient,
+  memberIds: string[],
+  excludeLinkId?: string
+): Promise<Set<string>> {
+  const links = await tx.memberPartnerLink.findMany({
+    where: {
+      status: PARTNER_LINK_CONFIRMED,
+      ...(excludeLinkId ? { id: { not: excludeLinkId } } : {}),
+      OR: [
+        { memberAId: { in: memberIds } },
+        { memberBId: { in: memberIds } },
+      ],
+    },
+    select: { memberAId: true, memberBId: true },
+  });
+  const candidates = new Set(memberIds);
+  const partnered = new Set<string>();
+  for (const link of links) {
+    if (candidates.has(link.memberAId)) partnered.add(link.memberAId);
+    if (candidates.has(link.memberBId)) partnered.add(link.memberBId);
+  }
+  return partnered;
+}
+
+/**
  * Once a link is CONFIRMED, any other PENDING request involving either
  * member is moot (confirming it would trip the one-confirmed-partner
  * invariant), so prune them inside the same transaction. Pruned requesters
@@ -294,6 +326,7 @@ export async function listOneStepPartnerCandidates(
 }
 
 export interface PendingPartnerInviteIntent {
+  id: string;
   invitedEmail: string;
   expiresAt: Date;
 }
@@ -301,8 +334,9 @@ export interface PendingPartnerInviteIntent {
 /**
  * An outstanding partner-invite token this member minted with
  * createPartnerLink (#1682/#1742): the partnership will form when the
- * invitee claims. Surfaced read-only on the profile so the token-borne
- * intent is visible to the inviter; an admin can revoke the token.
+ * invitee claims. Surfaced on the profile so the token-borne intent is
+ * visible to the inviter, who can cancel it before it is claimed (#1754);
+ * admins can also revoke the token.
  */
 export async function getPendingPartnerInviteIntent(
   memberId: string,
@@ -316,7 +350,7 @@ export async function getPendingPartnerInviteIntent(
       expiresAt: { gte: now },
     },
     orderBy: { createdAt: "desc" },
-    select: { invitedEmail: true, expiresAt: true },
+    select: { id: true, invitedEmail: true, expiresAt: true },
   });
   return token;
 }
@@ -703,11 +737,14 @@ export async function respondToPartnerLink(params: {
   const result = await prisma.$transaction(async (tx): Promise<ConfirmOutcome> => {
     await lockPartnerMembers(tx, [link.memberAId, link.memberBId]);
 
-    if (await memberHasConfirmedPartner(tx, params.memberId, link.id)) {
-      return { outcome: "confirmed_exists", mine: true };
-    }
-    if (await memberHasConfirmedPartner(tx, other.id, link.id)) {
-      return { outcome: "confirmed_exists", mine: false };
+    const partnered = await membersWithConfirmedPartner(
+      tx,
+      [params.memberId, other.id],
+      link.id
+    );
+    if (partnered.size > 0) {
+      // The caller's own conflict takes precedence when both sides have one.
+      return { outcome: "confirmed_exists", mine: partnered.has(params.memberId) };
     }
 
     const updated = await tx.memberPartnerLink.updateMany({
@@ -920,11 +957,16 @@ export async function adminAssignPartnerLink(params: {
       return { outcome: "already_partners" };
     }
 
-    if (await memberHasConfirmedPartner(tx, memberOne.id, existingPair?.id)) {
-      return { outcome: "confirmed_exists", member: memberOne };
-    }
-    if (await memberHasConfirmedPartner(tx, memberTwo.id, existingPair?.id)) {
-      return { outcome: "confirmed_exists", member: memberTwo };
+    const partnered = await membersWithConfirmedPartner(
+      tx,
+      [memberOne.id, memberTwo.id],
+      existingPair?.id
+    );
+    if (partnered.size > 0) {
+      return {
+        outcome: "confirmed_exists",
+        member: partnered.has(memberOne.id) ? memberOne : memberTwo,
+      };
     }
 
     let linkId: string;
@@ -1155,10 +1197,12 @@ export async function formPartnerLinkOnClaim(params: {
     return { formed: false, reason: "already_partners" };
   }
 
-  if (
-    (await memberHasConfirmedPartner(tx, inviterMemberId, existingPair?.id)) ||
-    (await memberHasConfirmedPartner(tx, claimerMemberId, existingPair?.id))
-  ) {
+  const partnered = await membersWithConfirmedPartner(
+    tx,
+    [inviterMemberId, claimerMemberId],
+    existingPair?.id
+  );
+  if (partnered.size > 0) {
     return { formed: false, reason: "existing_confirmed_partner" };
   }
 

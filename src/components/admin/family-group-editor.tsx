@@ -20,6 +20,7 @@ import {
   type MemberOption,
   type SharedEmailCluster,
 } from "@/lib/admin-family-group-ui-helpers";
+import { useDebouncedMemberSearch } from "@/hooks/use-debounced-member-search";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { resolveEffectiveEmail } from "@/lib/member-email";
 
@@ -40,8 +41,6 @@ export function FamilyGroupEditor({
   const [formName, setFormName] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<MemberOption[]>([]);
   const [memberSearch, setMemberSearch] = useState("");
-  const [searchResults, setSearchResults] = useState<MemberOption[]>([]);
-  const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
@@ -60,6 +59,22 @@ export function FamilyGroupEditor({
     () => buildSharedEmailClusters(group?.members ?? []),
     [group?.members]
   );
+
+  const { results: rawSearchResults, searching } = useDebouncedMemberSearch<MemberOption>({
+    query: memberSearch,
+    params: { type: "primary", active: "true", pageSize: "10" },
+  });
+  const searchResults = useMemo(() => {
+    const selectedIds = new Set(selectedMembers.map((member) => member.id));
+    return rawSearchResults
+      .filter((member) => !selectedIds.has(member.id))
+      .map((member) => ({
+        id: member.id,
+        firstName: member.firstName,
+        lastName: member.lastName,
+        email: member.email,
+      }));
+  }, [rawSearchResults, selectedMembers]);
 
   const refreshEditor = useCallback(async () => {
     setLoading(true);
@@ -129,49 +144,9 @@ export function FamilyGroupEditor({
     if (error) scrollToError(errorRef);
   }, [error, scrollToError]);
 
-  useEffect(() => {
-    if (memberSearch.length < 2) {
-      setSearchResults([]);
-      return;
-    }
-
-    let cancelled = false;
-    setSearching(true);
-
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(
-          `/api/admin/members?q=${encodeURIComponent(memberSearch)}&type=primary&active=true&pageSize=10`
-        );
-        if (res.ok && !cancelled) {
-          const data = await res.json();
-          const selectedIds = new Set(selectedMembers.map((member) => member.id));
-          setSearchResults(
-            (data.members ?? [])
-              .filter((member: MemberOption) => !selectedIds.has(member.id))
-              .map((member: MemberOption) => ({
-                id: member.id,
-                firstName: member.firstName,
-                lastName: member.lastName,
-                email: member.email,
-              }))
-          );
-        }
-      } finally {
-        if (!cancelled) setSearching(false);
-      }
-    }, 300);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [memberSearch, selectedMembers]);
-
   function addMember(member: MemberOption) {
     setSelectedMembers((current) => [...current, member]);
     setMemberSearch("");
-    setSearchResults([]);
   }
 
   function removeMember(id: string) {

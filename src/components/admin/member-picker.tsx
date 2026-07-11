@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { isLodgeKioskAccount } from "@/lib/member-roles";
+import { useDebouncedMemberSearch } from "@/hooks/use-debounced-member-search";
 
 export interface PickedMember {
   id: string;
@@ -34,52 +35,35 @@ export function MemberPicker({
   selectedPrefix = "Booking on behalf of:",
 }: MemberPickerProps) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<PickedMember[]>([]);
-  // True when the search matched only lodge kiosk accounts, which are
-  // filtered out — the empty state must say so rather than claiming
-  // nothing matched. Members holding the admin role are real people and
-  // stay selectable (the server only rejects booking for yourself).
-  const [onlyKioskMatches, setOnlyKioskMatches] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
+  const { results: allMatches, searching: loading } = useDebouncedMemberSearch<
+    PickedMember & { role?: string; accessRoles?: string[] }
+  >({
+    query,
+    params: { active: "true", pageSize: "8" },
+    // Every completed search opens the dropdown, even an empty one — the
+    // "No members found" panel needs it.
+    onResults: () => setShowDropdown(true),
+  });
+
+  // Filter out shared lodge kiosk logins — a device account never holds a
+  // booking. Admin-role members are bookable people (the server only rejects
+  // booking for yourself).
+  const results = useMemo(
+    () => allMatches.filter((m) => !isLodgeKioskAccount(m.role, m.accessRoles)),
+    [allMatches]
+  );
+  // True when the search matched only lodge kiosk accounts, which are
+  // filtered out — the empty state must say so rather than claiming
+  // nothing matched.
+  const onlyKioskMatches = allMatches.length > 0 && results.length === 0;
+
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
     if (query.trim().length < 2) {
-      setResults([]);
       setShowDropdown(false);
-      return;
     }
-    debounceRef.current = setTimeout(async () => {
-      setLoading(true);
-      try {
-        const params = new URLSearchParams({
-          q: query.trim(),
-          active: "true",
-          pageSize: "8",
-        });
-        const res = await fetch(`/api/admin/members?${params}`);
-        if (res.ok) {
-          const data = await res.json();
-          // Filter out shared lodge kiosk logins — a device account never
-          // holds a booking. Admin-role members are bookable people.
-          const allMatches = data.members || [];
-          const members = allMatches.filter(
-            (m: PickedMember & { role?: string; accessRoles?: string[] }) =>
-              !isLodgeKioskAccount(m.role, m.accessRoles)
-          );
-          setOnlyKioskMatches(allMatches.length > 0 && members.length === 0);
-          setResults(members);
-          setShowDropdown(true);
-        }
-      } catch {
-        // silent
-      } finally {
-        setLoading(false);
-      }
-    }, 300);
   }, [query]);
 
   // Close dropdown on outside click
