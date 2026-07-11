@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useMemo,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { toast } from "sonner";
 import { shouldDefaultLinkSideEffects } from "@/lib/admin-member-detail-helpers";
 import { useDebouncedMemberSearch } from "@/hooks/use-debounced-member-search";
@@ -28,7 +22,7 @@ export function useMemberParentLink({
   const memberId = member?.id;
 
   const [parentLinkOpen, setParentLinkOpen] = useState(false);
-  const [parentLinkSearch, setParentLinkSearchState] = useState("");
+  const [parentLinkSearch, setParentLinkSearch] = useState("");
   const [selectedLinkParent, setSelectedLinkParent] =
     useState<LinkParentSearchResult | null>(null);
   const [parentLinkInheritEmail, setParentLinkInheritEmail] = useState(false);
@@ -73,14 +67,6 @@ export function useMemberParentLink({
     [rawParentResults, selectedLinkParent?.id],
   );
 
-  // Search and submit errors shared one state before the shared-hook split
-  // (#1758): typing a fresh query cleared a stale submit error. Keep that by
-  // clearing the submit error on every search edit; the search's own error
-  // now arrives via the hook and is merged at the return.
-  const setParentLinkSearch = useCallback((value: string) => {
-    setParentLinkError("");
-    setParentLinkSearchState(value);
-  }, []);
 
   const openParentLinkDialog = () => {
     if (!member) return;
@@ -189,8 +175,9 @@ export function useMemberParentLink({
     parentLinkDisableLogin,
     parentLinkFamilyGroupIds,
     parentLinkSaving,
-    // Submit errors take precedence; a search failure surfaces once the
-    // stale submit error is cleared (any search edit clears it).
+    // Search and submit errors shared one state before the shared-hook split
+    // (#1758). Submit errors take precedence; a search failure surfaces once
+    // the submit error clears (the page's onChangeSearch clears it per edit).
     parentLinkError: parentLinkError || parentSearchError,
     setParentLinkOpen,
     setParentLinkSearch,
