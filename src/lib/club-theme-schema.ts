@@ -70,17 +70,22 @@ export type ClubThemeValues = Record<ClubThemeColourKey, string> & {
 };
 
 export const DEFAULT_CLUB_THEME_VALUES: ClubThemeValues = {
-  // brandGold is the primary-action colour with brand-charcoal button text
-  // (see .website-theme --primary/--primary-foreground). It must clear WCAG AA
-  // 4.5:1 against brand-charcoal; #8fa87c gives 4.8:1 (the earlier #7a8f6a was
-  // 3.55:1 and failed getBlockingContrastWarnings, blocking first-run save).
-  brandGold: "#8fa87c",
-  brandCharcoal: "#30343b",
-  brandDeep: "#1f2933",
-  brandRidge: "#65717b",
-  brandMist: "#d7dde1",
-  brandSnow: "#f8faf8",
-  brandSafety: "#c2562c",
+  // Generic "Aotearoa" default palette (#1807): a glacial-teal primary accent on
+  // a deep bush-green cool-stone neutral ramp, with a terracotta safety accent.
+  // Reads as generic New Zealand alpine, not any specific club (Tokoroa gold now
+  // lives only in TOKOROA_CLUB_THEME_VALUES). brandGold is the primary-action
+  // colour with brand-charcoal button text (see .website-theme
+  // --primary/--primary-foreground); it must clear WCAG AA 4.5:1 against
+  // brand-charcoal — teal #57b3ab on #21362b gives 5.19:1. Every gated pair
+  // passes getBlockingContrastWarnings (regression-pinned in
+  // club-theme-schema.test.ts).
+  brandGold: "#57b3ab",
+  brandCharcoal: "#21362b",
+  brandDeep: "#17231c",
+  brandRidge: "#5c6f66",
+  brandMist: "#d4ddd7",
+  brandSnow: "#f5f8f6",
+  brandSafety: "#b04d28",
   headingFontKey: "LEAGUE_SPARTAN",
   bodyFontKey: "INTER",
   logoDataUrl: null,
