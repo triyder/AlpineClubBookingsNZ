@@ -64,6 +64,35 @@ before changing Next.js APIs or conventions.
   data-integrity work requires high or xhigh reasoning effort and human review
   before merge.
 
+## Orchestration Model
+
+The standard working model for agent sessions (owner directive, 2026-07-11) is
+an orchestrator with subagents, not a single agent doing everything inline:
+
+- **Orchestrator (the main session)** owns coordination and everything with an
+  external footprint: issue claims, worktree/branch setup, GitHub comments,
+  opening PRs, CI monitoring, merge-gate compliance, and cross-lane conflict
+  checks. Small in-flight edits are fine; bulk implementation is delegated.
+- **Implementor subagents** build the change inside the issue's dedicated
+  worktree. They commit on the branch but never push, never touch GitHub, and
+  never run the full test suite locally (lint + typecheck + targeted tests
+  only; PR CI arbitrates the full suite).
+- **Adversarial-review subagents** attack the diff before the PR opens, using
+  distinct lenses (for example correctness/domain-invariants versus
+  drift/consistency/UX). The orchestrator triages findings and dispatches
+  fixes. This complements — it does not replace — the owner-approval gate for
+  Critical/High-risk areas.
+- **Capability scaling:** the orchestrator chooses subagent model/effort by
+  task complexity. Work in gated areas (money movement, booking capacity,
+  membership/family lifecycle, schema, auth/security, live providers) keeps
+  the strongest available model at high reasoning effort, per the rule above.
+- **Parallel lanes:** multiple issues may run concurrently, each in its own
+  worktree/branch/PR, only when their code surfaces do not clash. Shared
+  documentation files (for example `docs/DOMAIN_INVARIANTS.md`) are acceptable
+  overlap, resolved at merge time. Before claiming a lane, check open PRs and
+  issue comments for other active agents and coordinate on-issue instead of
+  colliding.
+
 ## Done Criteria
 
 - The issue acceptance criteria are met or the blocker is documented.
