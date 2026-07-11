@@ -29,21 +29,24 @@ function mockDashboardCounts({
   pendingBookingChangeRequests,
   pendingDeletionRequests = 0,
   unpaidFinishedStays = 0,
+  unsettledAdditionalFinishedStays = 0,
 }: {
   pendingBookingReviews: number;
   pendingBookingChangeRequests: number;
   pendingDeletionRequests?: number;
   unpaidFinishedStays?: number;
+  unsettledAdditionalFinishedStays?: number;
 }) {
   vi.mocked(prisma.member.count).mockResolvedValue(0);
   // booking.count call order mirrors getStats(): totalBookings,
   // activeBookings, upcomingCheckIns, unpaidFinishedStays,
-  // pendingBookingReviews.
+  // unsettledAdditionalFinishedStays, pendingBookingReviews.
   vi.mocked(prisma.booking.count)
     .mockResolvedValueOnce(0)
     .mockResolvedValueOnce(0)
     .mockResolvedValueOnce(0)
     .mockResolvedValueOnce(unpaidFinishedStays)
+    .mockResolvedValueOnce(unsettledAdditionalFinishedStays)
     .mockResolvedValueOnce(pendingBookingReviews);
   vi.mocked(prisma.payment.aggregate).mockResolvedValue({
     _sum: { amountCents: 0 },
@@ -143,5 +146,59 @@ describe("admin dashboard deep links", () => {
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
     expect(html).not.toContain("Unpaid Finished Stays");
+  });
+
+  it("flags unsettled finished-stay additions and links to the additionalOwed filter (#1723)", async () => {
+    mockDashboardCounts({
+      pendingBookingReviews: 0,
+      pendingBookingChangeRequests: 0,
+      unsettledAdditionalFinishedStays: 3,
+    });
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+    const todayKey = formatDateOnly(getTodayDateOnly());
+
+    expect(html).toContain("Finished Stays With Unpaid Additions");
+    expect(html).toContain(
+      `href="/admin/bookings?additionalOwed=owed&amp;checkOutTo=${todayKey}"`,
+    );
+    expect(html).toContain("3 paid bookings");
+    expect(html).toContain(
+      "with an additional payment still owing after check-out",
+    );
+
+    // The count uses the sibling finished-stay predicate (#1723 path 2):
+    // settled statuses (never PAYMENT_PENDING, so it stays disjoint from the
+    // card above) whose latest additional payment never succeeded, with
+    // check-out on or before NZ today.
+    expect(vi.mocked(prisma.booking.count).mock.calls).toContainEqual([
+      {
+        where: {
+          deletedAt: null,
+          checkOut: { lte: getTodayDateOnly() },
+          status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
+          payment: {
+            is: {
+              additionalAmountCents: { gt: 0 },
+              OR: [
+                { additionalPaymentStatus: null },
+                { additionalPaymentStatus: { not: "SUCCEEDED" } },
+              ],
+            },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("hides the unpaid-additions card when every finished stay's additions are settled", async () => {
+    mockDashboardCounts({
+      pendingBookingReviews: 0,
+      pendingBookingChangeRequests: 0,
+    });
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(html).not.toContain("Finished Stays With Unpaid Additions");
   });
 });

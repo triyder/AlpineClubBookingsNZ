@@ -43,6 +43,7 @@ const KNOWN_BOOKING_FILTER_QUERY_KEYS = [
   "xeroState",
   "bedState",
   "changeState",
+  "additionalOwed",
   "page",
 ] as const;
 
@@ -81,6 +82,7 @@ export function BookingFilters({
     showBedAllocation ? searchParams.get("bedState") || "all" : "all"
   );
   const [changeState, setChangeState] = useState(searchParams.get("changeState") || "all");
+  const [additionalOwed, setAdditionalOwed] = useState(searchParams.get("additionalOwed") || "all");
   const [lodgeId, setLodgeId] = useState(searchParams.get("lodgeId") || "all");
   const showLodgeFilter = lodgeOptions.length > 1;
   const bookingStatuses = ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED", "CANCELLED", "BUMPED", "COMPLETED", "DRAFT"] as const;
@@ -137,7 +139,7 @@ export function BookingFilters({
     const filterSnapshot = JSON.stringify([
       status, updatedFrom, updatedTo, checkInFrom, checkInTo, checkOutFrom,
       checkOutTo, search, month, deleted, paymentSource,
-      xeroState, bedState, changeState, lodgeId,
+      xeroState, bedState, changeState, additionalOwed, lodgeId,
     ]);
     if (initialFilterSnapshotRef.current === null) {
       initialFilterSnapshotRef.current = filterSnapshot;
@@ -168,6 +170,7 @@ export function BookingFilters({
       if (xeroState !== "all") params.set("xeroState", xeroState);
       if (showBedAllocation && bedState !== "all") params.set("bedState", bedState);
       if (changeState !== "all") params.set("changeState", changeState);
+      if (additionalOwed !== "all") params.set("additionalOwed", additionalOwed);
       if (showLodgeFilter && lodgeId !== "all") params.set("lodgeId", lodgeId);
       const next = params.toString();
       // Compare against the live URL so the initial render is a no-op. Sort and
@@ -205,7 +208,7 @@ export function BookingFilters({
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [status, updatedFrom, updatedTo, checkInFrom, checkInTo, checkOutFrom, checkOutTo, search, month, deleted, paymentSource, xeroState, bedState, changeState, showBedAllocation, lodgeId, showLodgeFilter, router]);
+  }, [status, updatedFrom, updatedTo, checkInFrom, checkInTo, checkOutFrom, checkOutTo, search, month, deleted, paymentSource, xeroState, bedState, changeState, additionalOwed, showBedAllocation, lodgeId, showLodgeFilter, router]);
 
   function clearFilters() {
     setStatus("all");
@@ -222,6 +225,7 @@ export function BookingFilters({
     setXeroState("all");
     setBedState("all");
     setChangeState("all");
+    setAdditionalOwed("all");
     setLodgeId("all");
     router.push("/admin/bookings");
   }
@@ -348,6 +352,20 @@ export function BookingFilters({
             <SelectItem value="pendingRequest">Pending request</SelectItem>
             <SelectItem value="hasModification">Has modification</SelectItem>
             <SelectItem value="creditGenerated">Credit generated</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-gray-500">
+          Additional Payment
+        </label>
+        <Select value={additionalOwed} onValueChange={setAdditionalOwed}>
+          <SelectTrigger className="w-[170px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="owed">Still owing</SelectItem>
           </SelectContent>
         </Select>
       </div>

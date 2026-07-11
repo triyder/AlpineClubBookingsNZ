@@ -359,6 +359,19 @@ describe("POST /api/group-bookings/[code]/join", () => {
     });
   });
 
+  it("maps an ended-stay refusal to 409 (#1723 path 3)", async () => {
+    mocks.joinGroupBookingAsMember.mockRejectedValueOnce(
+      new GroupBookingError("This group's stay has ended", 409)
+    );
+    const res = await joinPOST(joinRequest(validBody), {
+      params: Promise.resolve({ code: "ABCD2345" }),
+    });
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "This group's stay has ended",
+    });
+  });
+
   it("joins an organiser-pays group with the joiner billed nothing", async () => {
     mocks.joinGroupBookingAsMember.mockResolvedValueOnce({
       bookingId: "booking-10",
@@ -460,6 +473,26 @@ describe("POST /api/group-bookings/[code]/join-request (non-member)", () => {
     expect(res.status).toBe(201);
     await expect(res.json()).resolves.toEqual({ success: true });
   });
+
+  it("surfaces an ended stay as 409 GROUP_STAY_ENDED (#1723 path 3)", async () => {
+    // Deliberately NOT in the neutral set: the public GET summary already
+    // exposes the stay dates and joinability for a valid code, so a plain
+    // refusal reveals nothing new — while a neutral fake-success would leave
+    // the joiner waiting for a verification email that never comes.
+    mocks.createNonMemberJoinRequest.mockRejectedValueOnce(
+      new GroupBookingError("This group's stay has ended", 409, {
+        code: "GROUP_STAY_ENDED",
+      })
+    );
+    const res = await joinRequestPOST(reqBody(), {
+      params: Promise.resolve({ code: "ABCD2345" }),
+    });
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "This group's stay has ended",
+      code: "GROUP_STAY_ENDED",
+    });
+  });
 });
 
 describe("POST /api/group-bookings/join/verify/[token] (non-member confirm)", () => {
@@ -531,6 +564,19 @@ describe("POST /api/group-bookings/join/verify/[token] (non-member confirm)", ()
     await expect(capacityRes.json()).resolves.toMatchObject({
       outcome: "capacity_full",
       fullNights: ["2026-07-01"],
+    });
+  });
+
+  it("maps an ended-stay outcome to 409 with its message (#1723 path 3)", async () => {
+    mocks.verifyAndCreateNonMemberJoin.mockResolvedValueOnce({
+      outcome: "not_joinable",
+      message: "This group's stay has ended",
+    });
+    const res = await callVerify(VALID_TOKEN);
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({
+      outcome: "not_joinable",
+      message: "This group's stay has ended",
     });
   });
 

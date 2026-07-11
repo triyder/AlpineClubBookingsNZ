@@ -163,6 +163,15 @@ export async function modifyBookingBatch({
     throw new ApiError("Admin override is not available for this account", 403);
   }
   const adminOverride = Boolean(input.adminOverride) && actor.role === "ADMIN";
+  // #1746: partner-shared admission is admin-initiated by owner decision —
+  // the reserved slots (#1745) must be unreachable from member self-service
+  // however the service is called.
+  if (input.partnerSharedGuests?.length && actor.role !== "ADMIN") {
+    throw new ApiError(
+      "Partner-shared placement is not available for this account",
+      403,
+    );
+  }
   // Owner decision (#1668/#1696): an admin chooses per edit whether the member is
   // emailed — on override AND plain edits — with absent meaning notify. A
   // non-admin actor can never suppress (the route 403s any notify flag), so they
@@ -349,6 +358,9 @@ export async function modifyBookingBatch({
           // Issue #1668: over-capacity warns-and-confirms under admin override.
           adminOverride,
           confirmOverCapacity: input.confirmOverCapacity,
+          // #1746: admin-flagged partner-sharers route capacity through the
+          // #1745 reserved-slot check (gated to ADMIN actors above).
+          partnerSharedGuests: input.partnerSharedGuests,
         });
 
     const promo = identityOnlyModification

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { resolveMemberFamily } from "@/lib/resolve-member-family";
+import { listBookingPartnerSharingCandidates } from "@/lib/double-bed-sharing";
 
 /**
  * GET /api/admin/bookings/[id]/eligible-family
@@ -41,5 +42,11 @@ export async function GET(
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  return NextResponse.json(family);
+  // #1746: confirmed partners of the booking's member guests, offered by the
+  // edit panel as partner-sharer quick-adds (a confirmed partner is usually
+  // NOT a family-group member, so the family list alone cannot carry them).
+  const partnerSharingCandidates =
+    await listBookingPartnerSharingCandidates(bookingId);
+
+  return NextResponse.json({ ...family, partnerSharingCandidates });
 }

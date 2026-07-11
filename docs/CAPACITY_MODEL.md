@@ -39,7 +39,14 @@ ceiling bump:
   (`checkCapacityForPartnerSharedAdmission`, `src/lib/capacity.ts`) can use
   the slots; every public/member/system path keeps reading the unchanged
   base `getLodgeCapacity`. An ordinary guest can never be admitted into
-  partner headroom. Initiation is admin-only (#1746).
+  partner headroom. Initiation is admin-only (#1746): the admin edit-booking
+  panel offers the confirmed partners of the booking's member guests as
+  "partner (shares a double bed)" quick-adds (server-computed,
+  `listBookingPartnerSharingCandidates` in `double-bed-sharing.ts`), and the
+  modify/modify-quote routes accept the matching `partnerSharedGuests` flags
+  from admins only — gated at route AND service, so the reserved slots are
+  unreachable from member self-service. A rejected flag surfaces the check's
+  reason verbatim and never falls back into the #1668 overbook confirm.
 - **Bounded:** at most `activeDoubleBedCount` shared admissions per night.
   Each admitted sharer must hold a CONFIRMED partner link with a member
   staying every requested night (`mayShareDoubleBed` stays the single source
@@ -71,6 +78,21 @@ Per-night admission rule (owner decision, #1745): admit if a base slot is
 free, OR the guest is an eligible partner-sharer **and**
 `sharedSlotsUsed < partnerSharedHeadroom` for that night. Occupancy already
 above the base ceiling counts as used shared slots.
+
+**Stale-pair sweep interplay (#1756):** when a pair breaks (partner link
+dissolved, member deactivated, ADULT→minor tier correction),
+`sweepFuturePartnerSharedAllocations` removes the pair's future
+`isSecondOccupant` *placements* — deliberately NOT the second occupant's
+`BookingGuest` row, which stays on its booking in the awaiting-allocation
+queue for an admin to resolve. Shared-slot accounting is occupancy-derived
+(guest-nights above base), never `BedAllocation`-derived, so the sweep cannot
+corrupt it: the swept guest keeps conservatively consuming their shared slot
+(the same treatment as #1668 forced overage) until the admin removes them
+from the booking or re-admits them. The reserved slot is therefore never
+silently double-granted — a new couple's admission is refused while the
+stale guest still occupies the headroom, and frees the moment the guest
+leaves the booking — and `getLodgePartnerSharedCapacityStatus` (bed
+inventory + ceiling) is untouched by the sweep by construction.
 
 Two conservative implementation choices sit on top of that decided rule
 (ratified via the #1745 PR review rather than the issue text): the ceiling

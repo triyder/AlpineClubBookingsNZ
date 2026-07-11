@@ -1985,6 +1985,35 @@ Triggers and frequency:
 - Fires post-commit alongside the durable `booking_request.owner_substituted` audit row (F20 residual #2 / #1377); a failed send never fails the conversion.
 - Gated by the "Xero sync errors" (`adminXeroSyncError`) admin notification preference, because the remedy is a Xero contact reconciliation (repoint the invoice's contact to the intended organisation) so the finance/Xero admin audience is the right recipient set.
 
+### admin-partner-share-swept
+
+Subject:
+
+```text
+Review required: shared double-bed placements removed ({{memberName}})
+```
+
+Body:
+
+```text
+Shared Double-Bed Placements Removed
+
+A partner pair no longer qualifies for double-bed sharing, so their future shared placements were removed. The affected guest nights are back in the awaiting-allocation queue and may need re-planning on the allocation board.
+
+Member: {{memberName}}
+Partner: {{partnerName}}
+Reason: {{reason}}
+Removed night{{s}}: {{date}}
+
+Review Bed Allocation: {{BASE_URL}}/admin/bed-allocation
+```
+
+Triggers and frequency:
+
+- A CONFIRMED partner link was dissolved (member self-service or admin removal), a member was deactivated (member edit, bulk update, or account-deletion anonymisation), or an ADULT member was re-tiered to a minor/N-A tier, while the pair still held future `isSecondOccupant` shared double-bed allocations (#1756). The sweep removes the second occupant back to the awaiting-allocation queue inside the same transaction and audits both bookings; this alert fires post-commit.
+- Sent once per event that removed at least one placement; a no-op sweep sends nothing. A failed send never fails the dissolve/deactivation.
+- Gated by the "Booking review required" (`adminBookingReviewRequired`) admin notification preference — the queue entry needs a human re-plan on the allocation board, the same review-shaped audience as the minors-only alert.
+
 ### admin-new-booking
 
 Subject variants:

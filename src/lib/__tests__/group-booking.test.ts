@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 import {
   generateGroupBookingCode,
+  hasGroupStayFullyEnded,
   isGroupJoinable,
   isOrganiserBookingActive,
   normaliseJoinCode,
@@ -121,7 +122,48 @@ describe("isOrganiserBookingActive", () => {
   });
 });
 
+describe("hasGroupStayFullyEnded", () => {
+  // Booking dates are NZ date-only lodge nights stored as UTC midnights; the
+  // helper derives "today" from `now` in the NZ time zone. All instants here
+  // are fixed — never real-now-dependent fixtures.
+  const checkOut = new Date("2026-06-17T00:00:00Z");
+
+  it("has ended when the stay checks out today (matches the unpaid-finished-stays cutoff)", () => {
+    // Midday NZST on the check-out day itself.
+    expect(
+      hasGroupStayFullyEnded({ checkOut }, new Date("2026-06-17T00:00:00Z"))
+    ).toBe(true);
+  });
+
+  it("has ended once the check-out day is in the past", () => {
+    expect(
+      hasGroupStayFullyEnded({ checkOut }, new Date("2026-06-20T00:00:00Z"))
+    ).toBe(true);
+  });
+
+  it("has not ended while the stay checks out tomorrow", () => {
+    expect(
+      hasGroupStayFullyEnded({ checkOut }, new Date("2026-06-16T00:00:00Z"))
+    ).toBe(false);
+  });
+
+  it("uses the NZ calendar day, not the UTC day, of `now`", () => {
+    // 2026-06-16T13:00Z is 01:00 NZST on the 17th: still the 16th in UTC, but
+    // the NZ day has rolled over, so a stay checking out on the 17th has ended.
+    expect(
+      hasGroupStayFullyEnded({ checkOut }, new Date("2026-06-16T13:00:00Z"))
+    ).toBe(true);
+    // 2026-06-16T11:00Z is 23:00 NZST on the 16th: not yet the check-out day.
+    expect(
+      hasGroupStayFullyEnded({ checkOut }, new Date("2026-06-16T11:00:00Z"))
+    ).toBe(false);
+  });
+});
+
 describe("toGroupBookingSummary", () => {
+  // Fixed evaluation instant well before the fixture's check-out, so the
+  // ended-stay exclusion (#1723 path 3) never depends on the real clock.
+  const now = new Date("2026-06-16T00:00:00Z");
   const baseRecord: GroupBookingRecordForSummary = {
     joinCode: "ABCD2345",
     status: GroupBookingStatus.OPEN,
@@ -138,7 +180,7 @@ describe("toGroupBookingSummary", () => {
   };
 
   it("exposes only public-safe fields", () => {
-    const summary = toGroupBookingSummary(baseRecord);
+    const summary = toGroupBookingSummary(baseRecord, now);
     expect(summary).toEqual({
       code: "ABCD2345",
       status: GroupBookingStatus.OPEN,
@@ -160,28 +202,53 @@ describe("toGroupBookingSummary", () => {
   });
 
   it("reflects joinability for a closed group", () => {
-    const summary = toGroupBookingSummary({
-      ...baseRecord,
-      status: GroupBookingStatus.CLOSED,
-    });
+    const summary = toGroupBookingSummary(
+      {
+        ...baseRecord,
+        status: GroupBookingStatus.CLOSED,
+      },
+      now,
+    );
     expect(summary.isJoinable).toBe(false);
   });
 
   it("is not joinable when the host booking is no longer active", () => {
-    const cancelledHost = toGroupBookingSummary({
-      ...baseRecord,
-      organiserBooking: { ...baseRecord.organiserBooking, status: BookingStatus.CANCELLED },
-    });
+    const cancelledHost = toGroupBookingSummary(
+      {
+        ...baseRecord,
+        organiserBooking: { ...baseRecord.organiserBooking, status: BookingStatus.CANCELLED },
+      },
+      now,
+    );
     expect(cancelledHost.isJoinable).toBe(false);
 
-    const deletedHost = toGroupBookingSummary({
-      ...baseRecord,
-      organiserBooking: {
-        ...baseRecord.organiserBooking,
-        deletedAt: new Date("2026-06-01T00:00:00Z"),
+    const deletedHost = toGroupBookingSummary(
+      {
+        ...baseRecord,
+        organiserBooking: {
+          ...baseRecord.organiserBooking,
+          deletedAt: new Date("2026-06-01T00:00:00Z"),
+        },
       },
-    });
+      now,
+    );
     expect(deletedHost.isJoinable).toBe(false);
+  });
+
+  it("is not joinable once the group's stay has fully ended (#1723 path 3)", () => {
+    // The fixture checks out on 2026-07-03; from that NZ day onward the group
+    // leaves the joinable set even while OPEN with an active host booking.
+    const onCheckOutDay = toGroupBookingSummary(
+      baseRecord,
+      new Date("2026-07-03T00:00:00Z"),
+    );
+    expect(onCheckOutDay.isJoinable).toBe(false);
+
+    const wellAfter = toGroupBookingSummary(
+      baseRecord,
+      new Date("2026-08-01T00:00:00Z"),
+    );
+    expect(wellAfter.isJoinable).toBe(false);
   });
 });
 

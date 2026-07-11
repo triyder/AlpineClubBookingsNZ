@@ -92,9 +92,26 @@ Future reviews and issues should cite this file when proposing changes.
   `double-bed-sharing.ts`. A PENDING link grants nothing; both members must
   also still be ACTIVE adults at placement time. (#1744 swapped this signal in
   for the interim same-`FamilyGroup` rule, which wrongly permitted e.g. a
-  parent and an adult child.) Eligibility is enforced at **placement time
-  only**: dissolving a link, deactivating a member, or a tier correction does
-  not sweep already-placed second occupants (#1756). Only an admin adds the second occupant on the board,
+  parent and an adult child.) The precondition is enforced at placement time
+  AND swept when it later breaks (#1756): **no future `isSecondOccupant`
+  allocation may outlive its partner link or the active-adult precondition**.
+  Dissolving a CONFIRMED link (`removeOwnPartnerLink` /
+  `adminRemovePartnerLink`), deactivating a member (member edit, bulk update,
+  or account-deletion anonymisation), or correcting an ADULT to a minor/N-A
+  tier runs `sweepFuturePartnerSharedAllocations`
+  (`bed-allocation-lifecycle.ts`) in the SAME transaction as the breaking
+  event: the pair's future (tonight onwards, NZ date-only) second-occupant
+  rows are deleted back to the awaiting-allocation queue — never the primary,
+  so the sweep cannot orphan anyone and needs no promotion pass — with a
+  `BED_ALLOCATION_PARTNER_SHARE_SWEPT` audit row against BOTH bookings and a
+  post-commit admin alert (`admin-partner-share-swept`, "Booking review
+  required" preference). A dissolve sweeps only bed-nights whose two occupants
+  are exactly the dissolved pair; deactivation/tier change sweeps any future
+  shared bed-night involving the member on either side. Past lodge nights are
+  history and stay untouched, and the sweep is idempotent (a second run finds
+  nothing). Membership cancellation and archive need no sweep call: approval
+  is blocked while ANY future booking or member guest appearance exists, so a
+  cancellable member cannot occupy a future shared bed-night. Only an admin adds the second occupant on the board,
   and only onto a bed whose primary already **holds capacity** — so displacement
   can never move the primary out from under the partner. Auto-allocation never
   creates a second occupant; every other bed type stays exactly one occupant per
@@ -115,7 +132,12 @@ Future reviews and issues should cite this file when proposing changes.
   feasible pairing always exists, modulo the documented #1668 forced-overbook
   residual), and capped by an explicit `LodgeSettings.capacity`, which limits
   *people*, so a `capped_beds` lodge gets no headroom (see
-  docs/CAPACITY_MODEL.md, "Partner-shared double-bed headroom"). A DOUBLE
+  docs/CAPACITY_MODEL.md, "Partner-shared double-bed headroom"). Initiation
+  is admin-only (#1746): the `partnerSharedGuests` flags on the booking
+  modify routes are rejected for non-admin actors at BOTH route and service,
+  the edit panel's quick-add candidates are server-computed
+  (`listBookingPartnerSharingCandidates`), and the public wizard carries no
+  shared-slot affordance. A DOUBLE
   holding a second occupant
   cannot be retyped to a non-double until that occupant is removed. Whenever a
   shared double loses its primary — a board delete (#1743), a board move of the
@@ -758,6 +780,57 @@ The member confirmation / hold email is an **explicit per-create choice**
 `booking.created_on_behalf` audit metadata alongside `allowPastDates`,
 `confirmOverCapacity`, and `capacityOverridden`; `sendAdminNewBookingAlert` and
 the Xero invoice email are unaffected by the choice.
+
+A **finished stay's card obligation never lingers unseen** (#1709, #1723). Two
+**disjoint** admin queues surface every uncollected card obligation on a stay
+whose check-out is on or before NZ today, both driven by the shared
+predicate/href helpers in `src/lib/unpaid-finished-stays.ts` (the dashboard
+attention cards, the sidebar Needs Attention badges via
+`admin-pending-counts`, and the bookings-list deep links all consume the same
+helpers so the surfaces can never drift):
+
+- **Unpaid finished stays** (#1709/#1731): `deletedAt` null +
+  `status = PAYMENT_PENDING` + `checkOut ≤ today` — the whole booking price is
+  still owed (a retroactive card create qualifies from the moment of
+  creation). Deep link:
+  `/admin/bookings?status=PAYMENT_PENDING&checkOutTo=<today>`.
+- **Unsettled finished-stay additions** (#1723 path 2, owner decision B — the
+  card additional-payment flow stays): `deletedAt` null + `checkOut ≤ today` +
+  `status ∈ {CONFIRMED, PAID, COMPLETED}` + payment
+  `additionalAmountCents > 0` with `additionalPaymentStatus` null or not
+  `SUCCEEDED` — a settled stay whose upward modification delta (admin
+  recalculate, guest add, date change) was never collected. The payment
+  summary columns mirror the LATEST ADDITIONAL payment transaction, and the
+  predicate mirrors the member-facing owed test (member dashboard / booking
+  detail), so admin and member agree on what is owed; `PAYMENT_PENDING` is
+  deliberately excluded so the two queue counts can be summed without
+  double-counting a booking. Deep link:
+  `/admin/bookings?additionalOwed=owed&checkOutTo=<today>` via the bookings
+  list's `additionalOwed` filter (AND-composed, so explicit status/date
+  filters in the same URL still narrow).
+
+Three side doors into the finished-unpaid state are closed at the door
+(owner decisions 2026-07-11, #1723):
+
+- **Past-dated waitlist force-confirm** (path 1, decision B — allow, flag at
+  creation): a force-confirm that lands `PAYMENT_PENDING` on a booking whose
+  check-out has already passed is allowed but flagged at creation —
+  `createdUnpaidFinishedStay` in the audit details/metadata, an
+  `unpaidFinishedStay` field in the route response, and an amber "Unpaid
+  finished stay created" card on the admin waitlist page. $0 force-confirms
+  (land `PAID`) and parked-for-review outcomes carry no obligation and are
+  not flagged.
+- **Upward modification of a settled past stay** (path 2, decision B): kept
+  on the card additional-payment flow rather than blocked; the uncollected
+  delta counts on the second queue above.
+- **Stale group join** (path 3, decision A — exclude): a group whose
+  organiser booking's stay has fully ended (`checkOut ≤ NZ today`, the same
+  cutoff as the queues — a stay checking out today has fully ended) leaves
+  the joinable set entirely: `hasGroupStayFullyEnded` gates the public
+  summary's `isJoinable`, the member join (409), the non-member join request
+  (409 `GROUP_STAY_ENDED`), and the emailed-token verify (`not_joinable`),
+  sitting directly after the open/deadline check and ahead of the
+  payment-mode/active-booking gates.
 
 A booking left with only non-adults (YOUTH/CHILD/INFANT) requires admin
 approval regardless of how it got there or whether it was already paid: every

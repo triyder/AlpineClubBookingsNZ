@@ -36,6 +36,15 @@ vi.mock("@/lib/email", () => ({
   sendPartnerLinkRemovedEmail: vi.fn().mockResolvedValue(undefined),
   sendFamilyGroupInviteAcceptedEmail: vi.fn().mockResolvedValue(undefined),
   sendPartnerInviteClaimedEmail: vi.fn().mockResolvedValue(undefined),
+  sendAdminPartnerShareSweptAlert: vi.fn().mockResolvedValue(undefined),
+}));
+// #1756: the dissolve paths sweep the pair's future shared-double allocations
+// through this helper; the sweep's own behaviour is covered in
+// bed-allocation-lifecycle.test.ts, so here it is a spy.
+vi.mock("@/lib/bed-allocation-lifecycle", () => ({
+  sweepFuturePartnerSharedAllocations: vi.fn().mockResolvedValue([]),
+  partnerShareSweepNights: vi.fn(() => [new Date("2026-08-01T00:00:00.000Z")]),
+  describePartnerSharedSweepReason: vi.fn(() => "Partner link dissolved"),
 }));
 
 import { prisma } from "@/lib/prisma";
@@ -44,7 +53,9 @@ import {
   sendPartnerLinkRequestEmail,
   sendPartnerLinkConfirmedEmail,
   sendPartnerLinkRemovedEmail,
+  sendAdminPartnerShareSweptAlert,
 } from "@/lib/email";
+import { sweepFuturePartnerSharedAllocations } from "@/lib/bed-allocation-lifecycle";
 import {
   canonicalPartnerPair,
   PARTNER_REQUEST_SENT_GENERIC_MESSAGE,
@@ -102,6 +113,7 @@ beforeEach(() => {
   vi.mocked(prisma.memberPartnerLink.findMany).mockResolvedValue([] as never);
   vi.mocked(prisma.memberPartnerLink.findUnique).mockResolvedValue(null as never);
   vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 0 } as never);
+  vi.mocked(sweepFuturePartnerSharedAllocations).mockResolvedValue([]);
 });
 
 describe("canonicalPartnerPair", () => {
@@ -586,6 +598,89 @@ describe("removeOwnPartnerLink", () => {
       expect.objectContaining({ action: "MEMBER_PARTNER_LINK_DISSOLVED" })
     );
   });
+
+  it("sweeps the pair's future shared-double allocations on dissolve and alerts admins (#1756)", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "CONFIRMED",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      initiatedByMemberId: "member-a",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(sweepFuturePartnerSharedAllocations).mockResolvedValueOnce([
+      {
+        allocationId: "alloc-2nd",
+        bookingId: "booking-b",
+        bookingGuestId: "guest-b",
+        bedId: "bed-double",
+        roomId: "room-1",
+        stayDate: new Date("2026-08-01T00:00:00.000Z"),
+        secondOccupantMemberId: "member-b",
+        secondOccupantName: "Ben Birch",
+        primaryBookingId: "booking-a",
+        primaryMemberId: "member-a",
+        primaryName: "Alice Ash",
+      },
+    ]);
+
+    const result = await removeOwnPartnerLink({ memberId: adultA.id, linkId: "link-1" });
+
+    expect(result.ok).toBe(true);
+    expect(sweepFuturePartnerSharedAllocations).toHaveBeenCalledWith({
+      memberId: "member-a",
+      partnerMemberId: "member-b",
+      reason: "partner_link_dissolved",
+      db: prisma,
+    });
+    expect(sendAdminPartnerShareSweptAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memberName: "Alice Ash",
+        partnerName: "Ben Birch",
+        reason: "Partner link dissolved",
+      })
+    );
+  });
+
+  it("does not sweep and does not alert when withdrawing a PENDING request (#1756)", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "PENDING",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      initiatedByMemberId: "member-a",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    const result = await removeOwnPartnerLink({ memberId: adultA.id, linkId: "link-1" });
+
+    expect(result.ok).toBe(true);
+    expect(sweepFuturePartnerSharedAllocations).not.toHaveBeenCalled();
+    expect(sendAdminPartnerShareSweptAlert).not.toHaveBeenCalled();
+  });
+
+  it("dissolves without an admin alert when the sweep removed nothing (#1756)", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "CONFIRMED",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      initiatedByMemberId: "member-a",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    const result = await removeOwnPartnerLink({ memberId: adultA.id, linkId: "link-1" });
+
+    expect(result.ok).toBe(true);
+    expect(sweepFuturePartnerSharedAllocations).toHaveBeenCalledTimes(1);
+    expect(sendAdminPartnerShareSweptAlert).not.toHaveBeenCalled();
+  });
 });
 
 describe("adminAssignPartnerLink", () => {
@@ -729,6 +824,73 @@ describe("adminRemovePartnerLink", () => {
 
     expect(result.ok).toBe(true);
     expect(sendPartnerLinkRemovedEmail).not.toHaveBeenCalled();
+  });
+
+  it("sweeps the pair's future shared-double allocations on admin dissolve (#1756)", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "CONFIRMED",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(sweepFuturePartnerSharedAllocations).mockResolvedValueOnce([
+      {
+        allocationId: "alloc-2nd",
+        bookingId: "booking-b",
+        bookingGuestId: "guest-b",
+        bedId: "bed-double",
+        roomId: "room-1",
+        stayDate: new Date("2026-08-01T00:00:00.000Z"),
+        secondOccupantMemberId: "member-b",
+        secondOccupantName: "Ben Birch",
+        primaryBookingId: "booking-a",
+        primaryMemberId: "member-a",
+        primaryName: "Alice Ash",
+      },
+    ]);
+
+    const result = await adminRemovePartnerLink({
+      adminMemberId: "admin-1",
+      linkId: "link-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sweepFuturePartnerSharedAllocations).toHaveBeenCalledWith({
+      memberId: "member-a",
+      partnerMemberId: "member-b",
+      reason: "partner_link_dissolved",
+      db: prisma,
+    });
+    expect(sendAdminPartnerShareSweptAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memberName: "Alice Ash",
+        partnerName: "Ben Birch",
+      })
+    );
+  });
+
+  it("does not sweep when removing a PENDING link (#1756)", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "PENDING",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    const result = await adminRemovePartnerLink({
+      adminMemberId: "admin-1",
+      linkId: "link-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sweepFuturePartnerSharedAllocations).not.toHaveBeenCalled();
+    expect(sendAdminPartnerShareSweptAlert).not.toHaveBeenCalled();
   });
 
   it("scopes the lookup to the given member when memberScopeId is set", async () => {

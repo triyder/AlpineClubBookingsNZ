@@ -27,6 +27,9 @@ vi.mock("@/lib/prisma", () => ({
     member: { findUnique: vi.fn() },
     familyGroupMember: { findMany: vi.fn() },
     booking: { findUnique: vi.fn() },
+    // #1746: the eligible-family payload also lists partner-sharer candidates.
+    bookingGuest: { findMany: vi.fn().mockResolvedValue([]) },
+    memberPartnerLink: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 

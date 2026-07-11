@@ -74,7 +74,11 @@ import {
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { resolveRequestBookingHoldUntil } from "@/lib/booking-request";
-import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
+import {
+  endOfDateOnlyForTimeZone,
+  formatDateOnly,
+  normalizeDateOnlyForTimeZone,
+} from "@/lib/date-only";
 import {
   checkInternetBankingLeadTime,
   loadInternetBankingPaymentSettings,
@@ -364,6 +368,25 @@ export function isOrganiserBookingActive(booking: {
 }
 
 // test seam
+/**
+ * True when the group's stay has fully ended (#1723 path 3): the organiser
+ * booking's check-out (an NZ date-only lodge night) is on or before the NZ
+ * date-only day of `now`. Semantics match the unpaid-finished-stays predicate
+ * (`checkOut lte today`) — a stay checking out today has fully ended. Such a
+ * group is excluded from the joinable set entirely (owner decision A): a join
+ * created now could only ever produce a retroactive card obligation.
+ */
+export function hasGroupStayFullyEnded(
+  organiserBooking: { checkOut: Date },
+  now: Date = new Date()
+): boolean {
+  return (
+    organiserBooking.checkOut.getTime() <=
+    normalizeDateOnlyForTimeZone(now).getTime()
+  );
+}
+
+// test seam
 /** Pure mapping from the selected record to the public-safe summary. */
 export function toGroupBookingSummary(
   group: GroupBookingRecordForSummary,
@@ -378,12 +401,14 @@ export function toGroupBookingSummary(
     checkIn: group.organiserBooking.checkIn,
     checkOut: group.organiserBooking.checkOut,
     joinDeadline: group.joinDeadline,
-    // A group is only joinable when BOTH the group itself is open/in-deadline
-    // AND its host booking is still active; otherwise the public page would
-    // invite joins the write paths will reject.
+    // A group is only joinable when the group itself is open/in-deadline,
+    // its host booking is still active, AND its stay has not fully ended
+    // (#1723 path 3); otherwise the public page would invite joins the write
+    // paths will reject.
     isJoinable:
       isGroupJoinable(group, now) &&
-      isOrganiserBookingActive(group.organiserBooking),
+      isOrganiserBookingActive(group.organiserBooking) &&
+      !hasGroupStayFullyEnded(group.organiserBooking, now),
   };
 }
 
@@ -500,6 +525,12 @@ export async function joinGroupBookingAsMember(
   }
   if (!isGroupJoinable(group)) {
     throw new GroupBookingError("This group is not accepting joins", 409);
+  }
+  // #1723 path 3: a stay that has fully ended (check-out on or before NZ
+  // today) accepts no further joins — a join now could only create a
+  // retroactive card obligation on a finished stay.
+  if (hasGroupStayFullyEnded(group.organiserBooking)) {
+    throw new GroupBookingError("This group's stay has ended", 409);
   }
   const organiserSettled =
     group.paymentMode === GroupBookingPaymentMode.ORGANISER_PAYS;
@@ -819,6 +850,12 @@ export async function createNonMemberJoinRequest(
       code: "GROUP_NOT_JOINABLE",
     });
   }
+  // #1723 path 3: a fully ended stay accepts no further join requests.
+  if (hasGroupStayFullyEnded(group.organiserBooking)) {
+    throw new GroupBookingError("This group's stay has ended", 409, {
+      code: "GROUP_STAY_ENDED",
+    });
+  }
   if (group.paymentMode !== GroupBookingPaymentMode.EACH_PAYS_OWN) {
     throw new GroupBookingError(
       "This group is not accepting individual sign-ups",
@@ -1042,6 +1079,11 @@ export async function verifyAndCreateNonMemberJoin(
   const organiserBooking = group.organiserBooking;
   if (!isGroupJoinable(group)) {
     return { outcome: "not_joinable", message: "This group is no longer accepting joins" };
+  }
+  // #1723 path 3: a fully ended stay accepts no further joins, even when the
+  // verification email was sent while the stay was still running.
+  if (hasGroupStayFullyEnded(organiserBooking)) {
+    return { outcome: "not_joinable", message: "This group's stay has ended" };
   }
   if (group.paymentMode !== GroupBookingPaymentMode.EACH_PAYS_OWN) {
     return { outcome: "not_joinable", message: "This group is not accepting individual sign-ups" };

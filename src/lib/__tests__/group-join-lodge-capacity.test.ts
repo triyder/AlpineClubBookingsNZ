@@ -77,9 +77,14 @@ import {
   joinGroupBookingAsMember,
   GroupBookingError,
 } from "@/lib/group-booking";
+import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
-const checkIn = new Date("2026-08-01");
-const checkOut = new Date("2026-08-03");
+// Kept relative to the real clock: the ended-stay gate (#1723 path 3) rejects
+// joins once the organiser booking's check-out reaches NZ today, so a
+// hardcoded calendar date would rot into "This group's stay has ended"
+// failures before these tests ever reach the capacity cap they pin.
+const checkIn = addDaysDateOnly(getTodayDateOnly(), 30);
+const checkOut = addDaysDateOnly(getTodayDateOnly(), 32);
 
 // The group's booking belongs to lodge-b, whose capacity (4) is smaller than
 // the default lodge's, so a 5-guest join must fail against 4 — not against the

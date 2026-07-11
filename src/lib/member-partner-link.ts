@@ -8,7 +8,14 @@ import {
   sendPartnerLinkRequestEmail,
   sendPartnerLinkConfirmedEmail,
   sendPartnerLinkRemovedEmail,
+  sendAdminPartnerShareSweptAlert,
 } from "@/lib/email";
+import {
+  describePartnerSharedSweepReason,
+  partnerShareSweepNights,
+  sweepFuturePartnerSharedAllocations,
+  type SweptPartnerSharedAllocation,
+} from "@/lib/bed-allocation-lifecycle";
 
 // Declared Partner/Husband/Wife relationship between two ADULT members
 // (#1742). The row is a canonical ordered pair (memberAId < memberBId; DB
@@ -114,6 +121,32 @@ function notifyBothPartners(
       logger.error({ err, linkId }, failureMessage);
     });
   }
+}
+
+/**
+ * Post-commit admin alert for a dissolve that swept future shared-double
+ * placements (#1756). Fire-and-forget like the partner emails around it: the
+ * sweep itself committed with the link delete, so a failed alert only loses
+ * the nudge (the audit rows on both bookings and the board's
+ * awaiting-allocation queue still tell the story).
+ */
+function notifyAdminsOfDissolveSweep(
+  swept: SweptPartnerSharedAllocation[],
+  names: { memberName: string; partnerName: string },
+  linkId: string,
+) {
+  if (swept.length === 0) return;
+  sendAdminPartnerShareSweptAlert({
+    memberName: names.memberName,
+    partnerName: names.partnerName,
+    reason: describePartnerSharedSweepReason("partner_link_dissolved"),
+    nights: partnerShareSweepNights(swept),
+  }).catch((err) => {
+    logger.error(
+      { err, linkId, sweptCount: swept.length },
+      "Failed to send partner share sweep alert"
+    );
+  });
 }
 
 /**
@@ -855,10 +888,29 @@ export async function removeOwnPartnerLink(params: {
   const self = link.memberAId === params.memberId ? link.memberA : link.memberB;
   const other = link.memberAId === params.memberId ? link.memberB : link.memberA;
 
-  const deleted = await prisma.memberPartnerLink.deleteMany({
-    where: { id: link.id, status: link.status },
+  // Delete + stale-share sweep commit together (#1756): a dissolved CONFIRMED
+  // link must not leave the pair sharing a double bed on future nights, so the
+  // pair's future isSecondOccupant allocations are swept back to the
+  // awaiting-allocation queue in the same transaction (audited against both
+  // bookings inside the sweep; admins alerted post-commit).
+  const { deletedCount, sweptShares } = await prisma.$transaction(async (tx) => {
+    const deleted = await tx.memberPartnerLink.deleteMany({
+      where: { id: link.id, status: link.status },
+    });
+    if (deleted.count === 0) {
+      return { deletedCount: 0, sweptShares: [] as SweptPartnerSharedAllocation[] };
+    }
+    const swept = wasConfirmed
+      ? await sweepFuturePartnerSharedAllocations({
+          memberId: link.memberAId,
+          partnerMemberId: link.memberBId,
+          reason: "partner_link_dissolved",
+          db: tx,
+        })
+      : [];
+    return { deletedCount: deleted.count, sweptShares: swept };
   });
-  if (deleted.count === 0) {
+  if (deletedCount === 0) {
     return { ok: false, status: 409, error: "Partner link not found or already changed." };
   }
 
@@ -890,6 +942,12 @@ export async function removeOwnPartnerLink(params: {
       }
     );
   }
+
+  notifyAdminsOfDissolveSweep(
+    sweptShares,
+    { memberName: memberName(self), partnerName: memberName(other) },
+    link.id
+  );
 
   return {
     ok: true,
@@ -1095,10 +1153,27 @@ export async function adminRemovePartnerLink(params: {
   }
 
   const wasConfirmed = link.status === PARTNER_LINK_CONFIRMED;
-  const deleted = await prisma.memberPartnerLink.deleteMany({
-    where: { id: link.id, status: link.status },
+  // Same delete + stale-share sweep transaction as removeOwnPartnerLink
+  // (#1756): the admin dissolve must also clear the pair's future shared
+  // double-bed placements.
+  const { deletedCount, sweptShares } = await prisma.$transaction(async (tx) => {
+    const deleted = await tx.memberPartnerLink.deleteMany({
+      where: { id: link.id, status: link.status },
+    });
+    if (deleted.count === 0) {
+      return { deletedCount: 0, sweptShares: [] as SweptPartnerSharedAllocation[] };
+    }
+    const swept = wasConfirmed
+      ? await sweepFuturePartnerSharedAllocations({
+          memberId: link.memberAId,
+          partnerMemberId: link.memberBId,
+          reason: "partner_link_dissolved",
+          db: tx,
+        })
+      : [];
+    return { deletedCount: deleted.count, sweptShares: swept };
   });
-  if (deleted.count === 0) {
+  if (deletedCount === 0) {
     return { ok: false, status: 409, error: "Partner link not found or already changed." };
   }
 
@@ -1132,6 +1207,12 @@ export async function adminRemovePartnerLink(params: {
       "Failed to send partner link removed email"
     );
   }
+
+  notifyAdminsOfDissolveSweep(
+    sweptShares,
+    { memberName: memberName(link.memberA), partnerName: memberName(link.memberB) },
+    link.id
+  );
 
   return {
     ok: true,

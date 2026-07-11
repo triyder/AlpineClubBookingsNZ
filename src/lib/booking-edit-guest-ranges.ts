@@ -60,6 +60,9 @@ export interface BookingEditGuestRangePlan {
   capacityGuestRanges: Array<{
     stayStart: Date;
     stayEnd: Date;
+    // Carried so the partner-shared admission check (#1746) can tell a
+    // flagged sharer's range from the ordinary ones; null for non-members.
+    memberId?: string | null;
   }>;
 }
 
@@ -207,10 +210,12 @@ export function buildInProgressGuestRangePlan(
       .map((entry) => ({
         stayStart: maxDate(entry.stayStart, editableFrom),
         stayEnd: entry.stayEnd,
+        memberId: entry.guest.memberId ?? null,
       })),
     ...proposedAddedGuests.map((entry) => ({
       stayStart: entry.stayStart,
       stayEnd: entry.stayEnd,
+      memberId: entry.guest.memberId ?? null,
     })),
   ];
 

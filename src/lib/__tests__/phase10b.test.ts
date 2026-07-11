@@ -55,6 +55,12 @@ vi.mock("@/lib/prisma", () => ({
     familyGroupMember: {
       deleteMany: vi.fn(),
     },
+    // #1756: deletion approval sweeps future shared-double placements inside
+    // the anonymise transaction; empty by default so it is a no-op here.
+    bedAllocation: {
+      findMany: vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -69,6 +75,7 @@ vi.mock("@/lib/email", () => ({
   sendAccountDeletionApprovedEmail: vi.fn().mockResolvedValue(undefined),
   sendAccountDeletionRejectedEmail: vi.fn().mockResolvedValue(undefined),
   sendAdminAccountDeletionRequestedAlert: vi.fn().mockResolvedValue(undefined),
+  sendAdminPartnerShareSweptAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/booking-cancel", () => ({

@@ -4,6 +4,18 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Admins can add a confirmed partner to a full lodge (#1746, completing the
+  double-bed epic #1741).** The admin edit-booking panel now offers the
+  confirmed partners of a booking's member guests as "partner (shares a
+  double bed)" quick-adds; the added partner is admitted through the reserved
+  partner-shared slots (#1745) even when the lodge is full by beds — bounded
+  per night by the double count — and is then placed as the double's second
+  occupant on the allocation board as before. Admin-only end to end: the
+  `partnerSharedGuests` flags are rejected for non-admin callers at both the
+  modify routes and the service, the public wizard is unchanged, and a
+  rejected admission shows the capacity check's reason rather than the
+  over-capacity overbook confirm.
+
 - **Lodge capacity gains reserved partner-shared headroom (#1745, part of the
   double-bed epic #1741).** Each active shareable `DOUBLE` bed now contributes
   one admission slot **above** the base lodge capacity — reserved for a guest

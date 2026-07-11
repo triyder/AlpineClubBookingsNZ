@@ -134,6 +134,13 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
           createMany: vi.fn().mockResolvedValue({ count: 1 }),
           deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
+        // #1756: a deactivate / ADULT→minor tier change sweeps future
+        // shared-double placements inside the transaction; no rows here, so
+        // the sweep is a no-op.
+        bedAllocation: {
+          findMany: vi.fn().mockResolvedValue([]),
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
         auditLog: {
           create: prisma.auditLog.create,
         },

@@ -178,6 +178,59 @@ describe("AdminBookingsPage", () => {
     expect(callArgs.where.checkOut.lte).toEqual(parseDateOnly(todayKey));
   });
 
+  it("expresses the unsettled-additions deep link (#1723): additionalOwed=owed and checkOutTo=today", async () => {
+    const todayKey = formatDateOnly(getTodayDateOnly());
+
+    await AdminBookingsPage({
+      searchParams: Promise.resolve({
+        additionalOwed: "owed",
+        checkOutTo: todayKey,
+      }),
+    });
+
+    const callArgs = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
+    // The owed fragment is AND-composed (shared with the dashboard card and
+    // sidebar badge via unpaid-finished-stays.ts) so the default status
+    // filter and the check-out cutoff still apply alongside it.
+    expect(callArgs.where.AND).toEqual([
+      {
+        status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
+        payment: {
+          is: {
+            additionalAmountCents: { gt: 0 },
+            OR: [
+              { additionalPaymentStatus: null },
+              { additionalPaymentStatus: { not: "SUCCEEDED" } },
+            ],
+          },
+        },
+      },
+    ]);
+    expect(callArgs.where.checkOut.lte).toEqual(parseDateOnly(todayKey));
+  });
+
+  it("composes additionalOwed=owed with an explicit status filter and omits it by default", async () => {
+    await AdminBookingsPage({
+      searchParams: Promise.resolve({
+        status: "PAID",
+        additionalOwed: "owed",
+      }),
+    });
+
+    let callArgs = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
+    // The explicit choice narrows (top-level status) while the AND fragment
+    // keeps the owed predicate — neither overwrites the other.
+    expect(callArgs.where.status).toBe("PAID");
+    expect(callArgs.where.AND).toHaveLength(1);
+
+    vi.mocked(prisma.booking.findMany).mockClear();
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([]);
+    await AdminBookingsPage({ searchParams: Promise.resolve({}) });
+
+    callArgs = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
+    expect(callArgs.where.AND).toBeUndefined();
+  });
+
   it("prefers explicit checkOutTo over the legacy to param", async () => {
     const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 30));
     const checkOutTo = formatDateOnly(getTodayDateOnly());

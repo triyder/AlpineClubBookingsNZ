@@ -307,7 +307,15 @@ admins to the deletion request queue. Unpaid finished stays (#1709/#1731) —
 `PAYMENT_PENDING` bookings whose check-out is on or before NZ today — badge an
 "Unpaid Finished Stays" entry deep-linking to the pre-filtered bookings list;
 its predicate and href live in `src/lib/unpaid-finished-stays.ts`, shared with
-the admin dashboard attention card so the two surfaces never drift.
+the admin dashboard attention card so the two surfaces never drift. The
+sibling queue "Unpaid Stay Additions" (#1723) — settled
+(`CONFIRMED`/`PAID`/`COMPLETED`, deliberately never `PAYMENT_PENDING` so the
+two queues stay disjoint) finished stays whose upward-modification delta was
+never collected (`additionalAmountCents > 0`, `additionalPaymentStatus` null
+or not `SUCCEEDED`) — follows the same pattern: its predicate/href helpers
+live in the same module, badge the sidebar, drive a second dashboard
+attention card, and deep-link to the bookings list's `additionalOwed=owed`
+filter.
 All sidebar badge counts come from the single `GET /api/admin/pending-counts`
 endpoint (`src/lib/admin-pending-counts.ts`), whose per-queue where-clauses
 mirror the individual queue routes. Sidebar sections render expanded by
