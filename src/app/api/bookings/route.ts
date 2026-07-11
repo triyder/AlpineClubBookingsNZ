@@ -188,20 +188,28 @@ export async function POST(request: NextRequest) {
     );
   }
   if (
-    (allowPastDatesFlag !== undefined || notifyMemberFlag !== undefined) &&
+    (allowPastDatesFlag !== undefined ||
+      notifyMemberFlag !== undefined ||
+      confirmOverCapacityFlag !== undefined) &&
     !parsed.data.forMemberId
   ) {
     return NextResponse.json(
       {
         error:
-          "allowPastDates and notifyMember are only available when booking on behalf of a member",
+          "allowPastDates, notifyMember and confirmOverCapacity are only available when booking on behalf of a member",
       },
       { status: 400 },
     );
   }
-  if (confirmOverCapacityFlag !== undefined && allowPastDatesFlag !== true) {
+  // The over-capacity confirmation resolves a create that would otherwise be
+  // admitted; a draft never runs the capacity check and a waitlist opt-in
+  // needs the capacity-exceeded outcome to fall through (#1767).
+  if (
+    confirmOverCapacityFlag !== undefined &&
+    (parsed.data.draft === true || parsed.data.waitlist === true)
+  ) {
     return NextResponse.json(
-      { error: "confirmOverCapacity requires allowPastDates" },
+      { error: "confirmOverCapacity cannot be combined with draft or waitlist" },
       { status: 400 },
     );
   }
@@ -655,6 +663,7 @@ export async function POST(request: NextRequest) {
       allowPastDates: retroactiveCreate,
       confirmOverCapacity: parsed.data.confirmOverCapacity,
       notifyMember: parsed.data.notifyMember,
+      waitlistIntent: waitlist === true,
     });
 
     if (outcome.type === "created") {

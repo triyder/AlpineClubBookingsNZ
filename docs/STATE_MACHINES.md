@@ -280,7 +280,14 @@ with zero deltas) or `recalculate` (the standard reprice with locked-period
 clamps lifted). An over-capacity override is warn-and-confirm: the first apply
 raises `OverCapacityConfirmationRequiredError` (409,
 `OVER_CAPACITY_CONFIRM_REQUIRED`) and only proceeds when resubmitted with
-`confirmOverCapacity: true`, recording `capacityOverridden`. Every override move
+`confirmOverCapacity: true`, recording `capacityOverridden`. The same
+warn-and-confirm contract covers **every admin on-behalf create** — past-dated
+(#1695) and future-dated (#1767) — except a create that opted into the
+waitlist fallback (which keeps the capacity-exceeded outcome so the
+WAITLISTED booking is created instead) and a non-member hold-eligible
+(PENDING) party (hard block in v1 — the hold cron would bump a confirmed
+overbook); a member self-create keeps the hard capacity block and can never
+overbook. Every override move
 is audited as `booking.modify.admin_override` (including the admin's explicit
 member-notification choice, `notifyMember`) and linked, best-effort, to the
 booking's most recent APPROVED-but-unlinked change request that the move
@@ -491,6 +498,8 @@ Known statuses: `PENDING`, `PROCESSING`, `SUCCEEDED`, `FAILED`, `REFUNDED`,
 PENDING -> PROCESSING -> SUCCEEDED
 PENDING/PROCESSING -> FAILED
 SUCCEEDED -> PARTIALLY_REFUNDED -> REFUNDED
+REFUNDED/PARTIALLY_REFUNDED -> (repay, #1765) fresh PRIMARY transaction on the
+  same Payment: PENDING/PROCESSING -> SUCCEEDED
 ```
 
 Booking cancellation honors these transitions (#1473): only a never-captured
@@ -499,7 +508,29 @@ evidence — the aggregate mirror alone can lie, because inbound reconciliation
 folds modification credit notes into `refundedAmountCents` /
 `PARTIALLY_REFUNDED` on never-captured Internet Banking payments (see
 `docs/DOMAIN_INVARIANTS.md`). Genuinely captured payments survive the cancel
-unchanged — there is no transition out of the refunded states.
+unchanged — no *transaction* ever leaves the refunded states.
+
+Repay-after-refund (#1765): a booking that was paid, then deliberately
+refunded, then left (or re-put) in a payable status legitimately owes a fresh
+payment — refund + promo reprice can produce this. The model is a **fresh
+`PRIMARY` `PaymentTransaction` on the same `Payment` row**; the refunded
+transaction is immutable history. Because a fully refunded Stripe
+PaymentIntent keeps `status: "succeeded"` forever (refunds hang off the
+charge), every reconciliation entry point discriminates *refund history* from
+*crashed-webhook recovery* on the local transaction ledger, never on the
+intent status: a transaction in `REFUNDED`/`PARTIALLY_REFUNDED` is history and
+is never re-admitted as settlement (`markBookingPaymentSucceeded` throws;
+`create-payment-intent` supersedes the stale pointer and mints a fresh
+card-entry intent at the current effective price under a per-repay-generation
+idempotency key `pi_<bookingId>_repay_<supersededIntentId>`), while a
+transaction still `PENDING`/`PROCESSING` against a succeeded intent is genuine
+recovery and reconciles exactly as before. After a repay settles, the Payment
+AGGREGATE returns to `PARTIALLY_REFUNDED` (gross captured across generations
+minus what was refunded), so the mirror invariant is net-based —
+`(amountCents − refundedAmountCents) + creditAppliedCents = finalPriceCents`
+at repay settlement (see `docs/DOMAIN_INVARIANTS.md`). The repay path assumes
+no saved card: it always goes through the immediate card-entry PaymentIntent
+flow.
 
 To verify: whether Internet Banking uses the same `PaymentStatus` transitions
 or Xero invoice state as the effective settlement state.

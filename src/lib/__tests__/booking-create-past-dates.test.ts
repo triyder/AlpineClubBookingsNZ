@@ -381,7 +381,11 @@ describe("createConfirmedBooking retroactive behaviour (#1695)", () => {
     expect(created).not.toHaveProperty("allowPastDates");
   });
 
-  it("keeps the hard capacity block for a future-dated create carrying allowPastDates (retroactive semantics need a past envelope)", async () => {
+  it("records no retroactive allowPastDates for a future-dated on-behalf override (audit shape pin)", async () => {
+    // Was: hard capacity block for a future-dated create carrying
+    // allowPastDates. #1767 makes every on-behalf create warn-and-confirm;
+    // this now pins that the audit distinguishes a forward override
+    // (allowPastDates false) from the retroactive one (allowPastDates true).
     h.checkCapacityForGuestRanges.mockResolvedValue({
       available: false,
       nightDetails: [{ date: checkIn, availableBeds: -2 }],
@@ -394,8 +398,131 @@ describe("createConfirmedBooking retroactive behaviour (#1695)", () => {
       }),
     );
 
+    expect(outcome.type).toBe("created");
+    expect(auditMetadata("booking.created")).toMatchObject({
+      allowPastDates: false,
+      confirmOverCapacity: true,
+      capacityOverridden: true,
+    });
+  });
+
+});
+
+describe("createConfirmedBooking forward-dated on-behalf over-capacity (#1767)", () => {
+  const overCapacity = () =>
+    h.checkCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      nightDetails: [
+        { date: checkIn, availableBeds: -2 },
+        { date: checkOut, availableBeds: 3 },
+      ],
+    });
+
+  it("throws OverCapacityConfirmationRequiredError with the over-capacity nights when unconfirmed", async () => {
+    overCapacity();
+
+    let thrown: unknown;
+    try {
+      await createConfirmedBooking(baseInput([guest(true, "Alice")]));
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(OverCapacityConfirmationRequiredError);
+    expect((thrown as OverCapacityConfirmationRequiredError).nightDetails).toEqual([
+      { date: formatDateOnly(checkIn), availableBeds: -2 },
+    ]);
+    expect(h.bookingCreate).not.toHaveBeenCalled();
+  });
+
+  it("creates over capacity when confirmed, auditing capacityOverridden with allowPastDates false", async () => {
+    overCapacity();
+
+    const outcome = await createConfirmedBooking(
+      baseInput([guest(true, "Alice")], { confirmOverCapacity: true }),
+    );
+
+    expect(outcome.type).toBe("created");
+    expect(h.bookingCreate).toHaveBeenCalledTimes(1);
+    expect(auditMetadata("booking.created")).toMatchObject({
+      allowPastDates: false,
+      confirmOverCapacity: true,
+      capacityOverridden: true,
+    });
+    expect(auditMetadata("booking.created_on_behalf")).toMatchObject({
+      capacityOverridden: true,
+    });
+  });
+
+  it("keeps the hard capacity block for a member self-create even when the flag is smuggled in (members can never overbook)", async () => {
+    // Group join and cross-lodge waitlist confirm also pass isOnBehalf false,
+    // so this pin covers those internal callers too.
+    overCapacity();
+
+    const outcome = await createConfirmedBooking(
+      baseInput([guest(true, "Alice")], {
+        isOnBehalf: false,
+        sessionUserId: "member-1",
+        confirmOverCapacity: true,
+      }),
+    );
+
     expect(outcome.type).toBe("capacityExceeded");
     expect(h.bookingCreate).not.toHaveBeenCalled();
   });
 
+  it("keeps the hard block for a non-member hold-eligible (PENDING) party — v1 carve-out, the hold cron would silently bump a confirmed overbook", async () => {
+    overCapacity();
+
+    const outcome = await createConfirmedBooking(
+      baseInput([guest(false, "Bob")], {
+        status: BookingStatus.PENDING,
+        shouldBePending: true,
+        confirmOverCapacity: true,
+      }),
+    );
+
+    expect(outcome.type).toBe("capacityExceeded");
+    expect(h.bookingCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns the capacityExceeded outcome under waitlistIntent so the route's waitlist fallback still runs", async () => {
+    overCapacity();
+
+    const outcome = await createConfirmedBooking(
+      baseInput([guest(true, "Alice")], { waitlistIntent: true }),
+    );
+
+    expect(outcome.type).toBe("capacityExceeded");
+    expect(h.bookingCreate).not.toHaveBeenCalled();
+  });
+
+  it("warn-and-confirms the $0/credit-covered final capacity claim too", async () => {
+    // A $0 booking skips the first capacity gate and re-checks at the
+    // final-claim site; both sites share the on-behalf override.
+    h.seasonFindMany.mockResolvedValue(seasonWithRate(0));
+    overCapacity();
+
+    let thrown: unknown;
+    try {
+      await createConfirmedBooking(baseInput([guest(true, "Alice")]));
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(OverCapacityConfirmationRequiredError);
+
+    vi.clearAllMocks();
+    armMocks();
+    h.seasonFindMany.mockResolvedValue(seasonWithRate(0));
+    overCapacity();
+
+    const outcome = await createConfirmedBooking(
+      baseInput([guest(true, "Alice")], { confirmOverCapacity: true }),
+    );
+    expect(outcome.type).toBe("created");
+    expect(auditMetadata("booking.created")).toMatchObject({
+      capacityOverridden: true,
+      allowPastDates: false,
+    });
+  });
 });

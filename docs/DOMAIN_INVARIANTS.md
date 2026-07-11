@@ -355,7 +355,8 @@ Future reviews and issues should cite this file when proposing changes.
   `MemberCreditNoteAllocation` (remaining = the positive lot's `amountCents` minus
   the sum of its allocation rows); lot order is conservation-neutral. The
   `payment` mirror holds `amountCents + creditAppliedCents = finalPriceCents`
-  (the switch path derives the applied amount from the `BOOKING_APPLIED` ledger,
+  (net of `refundedAmountCents` once a #1765 repay generation exists; the
+  switch path derives the applied amount from the `BOOKING_APPLIED` ledger,
   since the card-origin mirror is 0). The engine STAMPS the booking's
   `BOOKING_APPLIED` rows with a representative allocated note id LAST — only once
   the full applied amount is covered — so the #1597 clearing term above is exact;
@@ -394,7 +395,11 @@ Future reviews and issues should cite this file when proposing changes.
   the card flow — it is confirmed at $0 by the create-time zero-dollar path — so
   the intent route guards `effective > 0` rather than minting a $0 intent). The
   `Payment` mirror carries `amountCents = effective`, `creditAppliedCents = applied`
-  (invariant `amountCents + creditAppliedCents = finalPriceCents`). Every
+  (invariant `amountCents + creditAppliedCents = finalPriceCents`; once a repay
+  generation exists — #1765, pay → refund → reprice → repay on the same Payment —
+  the mirror aggregates gross captures across generations and the invariant is
+  NET-based: `(amountCents − refundedAmountCents) + creditAppliedCents =
+  finalPriceCents` at repay settlement). Every
   capture/reconciliation guard accepts EITHER the effective price OR the full
   `finalPriceCents` (legacy in-flight intents minted before the fix) and rejects any
   other amount (create-payment-intent reuse, `stripe-webhook-service`,
@@ -403,9 +408,13 @@ Future reviews and issues should cite this file when proposing changes.
   intents, so the leniency cannot re-open the double-charge. Because a card invoice
   is raised-and-paid near-instantly at capture (`queueXeroInvoiceForPaidBooking` →
   `createXeroInvoiceForBooking`), the #1620 fire-after-invoice outbox op is NOT used
-  on card; instead `createXeroInvoiceForBooking` records the EFFECTIVE Stripe payment
-  and then SYNCHRONOUSLY re-drives the same allocation engine (gated to a card cash
-  capture with `creditAppliedCents > 0`) so the invoice settles to PAID via
+  on card; instead `createXeroInvoiceForBooking` records the NET captured Stripe
+  cash — gross captures − refunds, i.e. the effective amount, capped at the
+  invoice's amount due (#1765: settlement evidence is captured-status + positive
+  net cash, never `status === "SUCCEEDED"` alone, which misreads a repay-settled
+  PARTIALLY_REFUNDED aggregate; every skip logs a populated reason) — and then
+  SYNCHRONOUSLY re-drives the same allocation engine (gated the same way, plus
+  `creditAppliedCents > 0`) so the invoice settles to PAID via
   (effective cash + credit-note allocation) and is never left with the applied slice
   outstanding. The allocation throws on failure (the invoice op fails and the retry
   short-circuits on the persisted `xeroInvoiceId`, re-driving the idempotent engine
@@ -741,8 +750,8 @@ waitlist confirm (a 48-hour offer accepted after NZ midnight) — the marker
 skips only the past-date rejection, never the retroactive semantics, and is
 not exposed via the API. Any of the three flags (`allowPastDates`,
 `confirmOverCapacity`, `notifyMember`) present without the ADMIN role is a
-403; the flag combination is validated (flag without `forMemberId` → 400,
-`confirmOverCapacity` without `allowPastDates` → 400, retroactive
+403; the flag combination is validated (any flag without `forMemberId` → 400,
+`confirmOverCapacity` combined with `draft`/`waitlist` → 400, retroactive
 `draft`/`waitlist` → 400). Because a
 retroactive booking invoices at its check-in (the invoice **issue date stays =
 checkIn**, no clamp), a create-time **Xero lock-date guard** protects it: when
@@ -788,9 +797,24 @@ The same guard protects the **booking modify paths**
 
 **Shift overrides are exempt**: a shift writes no Xero documents.
 As at create, only past check-ins are guarded.
-Over-capacity past nights are **warn-and-confirm** (the same
+Over-capacity nights on **any on-behalf create** — past (#1695) or
+future-dated (#1767) — are **warn-and-confirm** (the same
 `OverCapacityConfirmationRequiredError` → 409 `OVER_CAPACITY_CONFIRM_REQUIRED`
-contract as #1668, capacity lock still taken, `capacityOverridden` recorded).
+contract as #1668, capacity lock still taken, `capacityOverridden` recorded),
+with two carve-outs: an on-behalf create that opted into the **waitlist
+fallback** keeps the capacity-exceeded outcome so the route can create the
+WAITLISTED booking instead of prompting, and a **non-member hold-eligible
+(PENDING) party** keeps the hard capacity block (v1, #1767 — the
+`cron-confirm-pending` hold re-check knows nothing of the override and would
+silently bump the confirmed booking; unreachable retroactively, since a past
+check-in is never hold-eligible). A **member self-create can never
+overbook**: without `isOnBehalf` the service keeps the hard capacity block
+regardless of any flag, and the route rejects the flags outright (403
+non-admin, 400 without `forMemberId`). Known limitation shared with every
+override surface: the payment-time capacity re-checks do not consult the
+override, so a **priced** overridden booking can still be cancelled when
+payment arrives over capacity — see `docs/CAPACITY_MODEL.md` "Exceeding the
+ceiling"; $0/credit-covered overridden creates settle at create time.
 The member confirmation / hold email is an **explicit per-create choice**
 (`notifyMember`, honoured only for on-behalf creates) recorded in the
 `booking.created_on_behalf` audit metadata alongside `allowPastDates`,

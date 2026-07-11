@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   bookingUpdate: vi.fn(),
   paymentUpsert: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
+  findPaymentTransactionByIntentId: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   restoreCreditFromBooking: vi.fn(),
   deriveBookingAppliedCreditCents: vi.fn(),
@@ -27,6 +28,8 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mocks.upsertPaymentIntentTransaction(...args),
+  findPaymentTransactionByIntentId: (...args: unknown[]) =>
+    mocks.findPaymentTransactionByIntentId(...args),
   refundPaymentTransactions: (...args: unknown[]) =>
     mocks.refundPaymentTransactions(...args),
 }));
@@ -117,6 +120,8 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.bookingFindUnique.mockResolvedValue(makeStaggeredBooking());
     mocks.paymentUpsert.mockResolvedValue({ id: "payment-1" });
     mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
+    // #1765 — default: no prior transaction for the intent (fresh capture).
+    mocks.findPaymentTransactionByIntentId.mockResolvedValue(null);
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
     mocks.restoreCreditFromBooking.mockResolvedValue(undefined);

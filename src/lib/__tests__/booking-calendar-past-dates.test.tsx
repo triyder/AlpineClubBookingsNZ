@@ -89,3 +89,51 @@ describe("BookingCalendar retroactive dates (#1695)", () => {
     expect(dayButton(13, 15).hasAttribute("disabled")).toBe(true);
   });
 });
+
+describe("BookingCalendar full future days (#1767)", () => {
+  // The month one step FORWARD always contains the 15th as a future day.
+  const fullDay = new Date(now.getFullYear(), now.getMonth() + 1, 15);
+  const fullDayStr = `${fullDay.getFullYear()}-${String(fullDay.getMonth() + 1).padStart(2, "0")}-${String(fullDay.getDate()).padStart(2, "0")}`;
+
+  async function goForwardOneMonth() {
+    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    await waitFor(() =>
+      expect(screen.getByText(monthHeading(-1))).toBeTruthy(),
+    );
+  }
+
+  beforeEach(() => {
+    // Mark the target day fully occupied (capacity is mocked at 20).
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ availability: { [fullDayStr]: 20 }, seasons: {} }),
+      })),
+    );
+  });
+
+  it("keeps a full future day disabled by default (member flow pin)", async () => {
+    render(<BookingCalendar onDateSelect={() => {}} />);
+    await goForwardOneMonth();
+
+    await waitFor(() =>
+      expect(dayButton(-1, 15).hasAttribute("disabled")).toBe(true),
+    );
+    const label = dayButton(-1, 15).getAttribute("aria-label");
+    expect(label).toContain("full");
+    expect(label).not.toContain("selectable for over-capacity booking");
+  });
+
+  it("makes a full future day clickable under allowFullDates with the over-capacity hint", async () => {
+    render(<BookingCalendar onDateSelect={() => {}} allowFullDates />);
+    await goForwardOneMonth();
+
+    await waitFor(() =>
+      expect(dayButton(-1, 15).getAttribute("aria-label")).toContain(
+        "full — selectable for over-capacity booking",
+      ),
+    );
+    expect(dayButton(-1, 15).hasAttribute("disabled")).toBe(false);
+  });
+});

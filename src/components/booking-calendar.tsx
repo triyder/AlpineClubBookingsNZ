@@ -22,13 +22,17 @@ interface BookingCalendarProps {
   // today become selectable (muted, warn-and-confirm on full nights). Default
   // false keeps the member flow byte-identical.
   allowPastDates?: boolean;
+  // Admin over-capacity create (#1767): when true, full future days stay
+  // selectable — over-capacity is warn-and-confirm at submit. Default false
+  // keeps the member flow byte-identical (full days disabled).
+  allowFullDates?: boolean;
 }
 
 // Retroactive bookings may reach at most this many days into the past. Kept in
 // sync with RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS on the server (#1695).
 const RETROACTIVE_LOOKBACK_DAYS = 365;
 
-export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOut, lodgeId, allowPastDates = false }: BookingCalendarProps) {
+export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOut, lodgeId, allowPastDates = false, allowFullDates = false }: BookingCalendarProps) {
   const { lodgeCapacity } = useClubIdentity();
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
@@ -127,7 +131,11 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
       // distinct from the availability colours and the disabled/full grey.
       classes += "bg-slate-100 text-slate-500 italic hover:bg-slate-200 cursor-pointer ";
     } else if (available <= 0) {
-      classes += "bg-gray-100 text-gray-400 cursor-not-allowed ";
+      // Full day: hard-disabled for members; muted-but-clickable when the
+      // admin over-capacity flag allows selecting it (#1767).
+      classes += allowFullDates
+        ? "bg-gray-100 text-gray-500 italic hover:bg-gray-200 cursor-pointer "
+        : "bg-gray-100 text-gray-400 cursor-not-allowed ";
     } else if (available <= 5) {
       classes += "bg-red-100 text-red-700 hover:bg-red-200 cursor-pointer ";
     } else if (available <= 15) {
@@ -238,7 +246,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
             (isPast
               ? `${dateLabel}, unavailable`
               : available <= 0
-                ? `${dateLabel}, full`
+                ? `${dateLabel}, full${allowFullDates ? " — selectable for over-capacity booking" : ""}`
                 : `${dateLabel}, ${available} of ${lodgeCapacity} beds free`) +
             retroSuffix +
             selectionSuffix;
@@ -248,9 +256,10 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
               key={day}
               onClick={() => handleDayClick(day)}
               className={getDayClass(day, available, isPast, isRetroPast, dateStr)}
-              // Full past nights stay clickable under the retroactive flag —
-              // over-capacity is warn-and-confirm at submit, not a hard block.
-              disabled={isPast || (available <= 0 && !allowPastDates)}
+              // Full nights stay clickable under the retroactive or admin
+              // over-capacity flags — over-capacity is warn-and-confirm at
+              // submit, not a hard block.
+              disabled={isPast || (available <= 0 && !allowPastDates && !allowFullDates)}
               aria-label={dayLabel}
               aria-pressed={isCheckIn || isCheckOut}
             >

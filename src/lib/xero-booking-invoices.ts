@@ -48,6 +48,17 @@ import {
   getBookingInvoiceIssueDate,
 } from "./xero-invoice-helpers";
 
+// #1765 — the aggregate Payment statuses that prove cash was captured at some
+// point. Settlement gating must pair one of these with a positive NET capture
+// (amountCents − refundedAmountCents); `status === "SUCCEEDED"` alone
+// misclassifies a repay-after-refund payment, whose aggregate sits in
+// PARTIALLY_REFUNDED even though its repay capture settles the invoice.
+const STRIPE_CAPTURED_PAYMENT_STATUSES = new Set<string>([
+  "SUCCEEDED",
+  "PARTIALLY_REFUNDED",
+  "REFUNDED",
+]);
+
 export interface CreateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
   syncOperationId?: string;
@@ -265,7 +276,13 @@ export function buildInvoiceLineItems(
  * the applied credit unallocated (the exact defect this closes).
  */
 async function settleCardAppliedCreditAllocation(
-  payment: { source: PaymentSource; status: string; creditAppliedCents: number },
+  payment: {
+    source: PaymentSource;
+    status: string;
+    amountCents: number;
+    refundedAmountCents: number;
+    creditAppliedCents: number;
+  },
   bookingId: string,
   createdByMemberId?: string
 ): Promise<void> {
@@ -273,9 +290,15 @@ async function settleCardAppliedCreditAllocation(
   // (`creditAppliedCents > 0`). The positive test also skips on 0 / a missing
   // mirror (legacy full-price captures, no-credit bookings), which is required:
   // allocating against a full-price-paid invoice would over-allocate.
+  // #1765 — capture evidence is "captured status + positive net cash", not
+  // `status === "SUCCEEDED"`: a repay-after-refund payment aggregates to
+  // PARTIALLY_REFUNDED at invoice time even though its repay capture settles
+  // the invoice, and skipping here would strand the applied slice outstanding.
+  // A fully-refunded-out payment (net 0) still must not allocate.
   if (
     payment.source === PaymentSource.INTERNET_BANKING ||
-    payment.status !== "SUCCEEDED" ||
+    !STRIPE_CAPTURED_PAYMENT_STATUSES.has(payment.status) ||
+    payment.amountCents - (payment.refundedAmountCents ?? 0) <= 0 ||
     !(payment.creditAppliedCents > 0)
   ) {
     return;
@@ -490,27 +513,53 @@ export async function createXeroInvoiceForBooking(
 
     // Record payment against the invoice in Xero when real funds moved.
     // Xero already marks zero-total invoices as PAID and rejects $0 payments.
+    // #1765 — settlement evidence comes from the captured-transaction ledger,
+    // mirrored by reconcilePaymentAggregates as `amountCents = gross captured`
+    // and `refundedAmountCents = refunded`, NEVER from the aggregate status
+    // alone: a repay-after-refund payment sits in PARTIALLY_REFUNDED at
+    // invoice time (prod case: gross 28500 / refunded 19500) even though its
+    // repay capture fully settles the invoice. The recorded amount is the NET
+    // capture (gross − refunded): cash handed back to the member is not
+    // settlement, and the refunded slice reconciles against its own credit
+    // note, never against this invoice. Capped at the invoice's amount due —
+    // Xero hard-rejects an overpayment (e.g. a legacy full-price capture on a
+    // since-repriced booking).
     let paymentResponseBody: XeroPayment | null = null;
     let paymentWriteError: unknown = null;
     const paymentSource = booking.payment.source ?? PaymentSource.STRIPE;
+    const paymentCaptured = STRIPE_CAPTURED_PAYMENT_STATUSES.has(
+      booking.payment.status
+    );
+    const netCapturedCents = Math.max(
+      0,
+      booking.payment.amountCents - (booking.payment.refundedAmountCents ?? 0)
+    );
     const shouldRecordStripeInvoicePayment =
       paymentSource === PaymentSource.STRIPE &&
-      booking.payment.status === "SUCCEEDED" &&
-      booking.payment.amountCents > 0;
-    const paymentSkipped =
-      booking.payment.status === "SUCCEEDED" && !shouldRecordStripeInvoicePayment;
-    const paymentSkipReason =
-      booking.payment.amountCents === 0
-        ? "Zero-total invoice does not require Xero payment recording."
-        : paymentSource === PaymentSource.INTERNET_BANKING
-          ? "Internet Banking invoice payments are reconciled from Xero instead of recorded as Stripe bank payments."
-          : null;
+      paymentCaptured &&
+      netCapturedCents > 0;
+    const paymentSkipped = paymentCaptured && !shouldRecordStripeInvoicePayment;
+    const paymentSkipReason = !paymentSkipped
+      ? null
+      : paymentSource === PaymentSource.INTERNET_BANKING
+        ? "Internet Banking invoice payments are reconciled from Xero instead of recorded as Stripe bank payments."
+        : (booking.payment.refundedAmountCents ?? 0) > 0
+          ? "Captured Stripe cash was fully refunded; no net cash remains to record against the invoice."
+          : "Zero-total invoice does not require Xero payment recording.";
 
     if (shouldRecordStripeInvoicePayment) {
+      const invoiceAmountDueCents =
+        typeof createdInvoice.amountDue === "number"
+          ? Math.round(createdInvoice.amountDue * 100)
+          : null;
+      const invoicePaymentCents =
+        invoiceAmountDueCents === null
+          ? netCapturedCents
+          : Math.min(netCapturedCents, invoiceAmountDueCents);
       const payment: XeroPayment = {
         invoice: { invoiceID: createdInvoice.invoiceID },
         account: { code: bankCode },
-        amount: booking.payment.amountCents / 100,
+        amount: invoicePaymentCents / 100,
         date: formatDate(new Date()),
         reference: `Stripe ${booking.payment.stripePaymentIntentId ?? "payment"}`,
       };
@@ -544,10 +593,20 @@ export async function createXeroInvoiceForBooking(
           "Created Xero invoice but failed to record the corresponding Xero payment"
         );
       }
-    } else if (paymentSkipped && paymentSkipReason) {
-      logger.info(
-        { bookingId, invoiceId: createdInvoice.invoiceID, paymentSource },
-        paymentSkipReason
+    } else if (paymentSkipped) {
+      // #1765 — every skip of a captured payment's Xero write is loud and
+      // carries a populated reason; the silent status-gated skip is the exact
+      // defect that hid the repay-settled invoice's missing payment.
+      logger.warn(
+        {
+          bookingId,
+          invoiceId: createdInvoice.invoiceID,
+          paymentSource,
+          paymentStatus: booking.payment.status,
+          netCapturedCents,
+        },
+        paymentSkipReason ??
+          "Skipped recording a Xero payment for a captured Stripe payment without a matched reason"
       );
     }
 

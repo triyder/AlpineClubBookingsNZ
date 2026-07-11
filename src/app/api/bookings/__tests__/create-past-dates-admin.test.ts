@@ -57,6 +57,8 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findUnique: h.memberFindUnique },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
+    // Member self-books (no admin bypass) run the minimum-stay policy check.
+    minimumStayPolicy: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 vi.mock("@/lib/booking-guests", () => ({
@@ -81,6 +83,8 @@ vi.mock("@/lib/booking-member-night-conflicts", () => ({
 }));
 vi.mock("@/lib/lodges", () => ({
   resolveOptionalActiveLodgeId: vi.fn().mockResolvedValue("lodge-1"),
+  // The member self-book minimum-stay check filters policy rows per lodge.
+  resolvePolicyRowsForLodge: () => [],
 }));
 vi.mock("@/lib/lodge-capacity", () => ({
   getLodgeCapacity: vi.fn().mockResolvedValue(30),
@@ -231,15 +235,84 @@ describe("POST /api/bookings retroactive create gating (#1695)", () => {
     expect(h.createConfirmedBooking).not.toHaveBeenCalled();
   });
 
-  it("rejects confirmOverCapacity without allowPastDates (400)", async () => {
+  it("rejects confirmOverCapacity without forMemberId (400) — #1767 gating", async () => {
+    const checkIn = daysFromTodayStr(30);
+    const checkOut = daysFromTodayStr(32);
     const res = await POST(
-      makeRequest(futurePayload({ confirmOverCapacity: true })),
+      makeRequest({ checkIn, checkOut, guests, confirmOverCapacity: true }),
     );
 
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.error).toContain("confirmOverCapacity requires allowPastDates");
+    expect(body.error).toContain("booking on behalf");
     expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+  });
+
+  it("rejects confirmOverCapacity combined with waitlist (400)", async () => {
+    const res = await POST(
+      makeRequest(futurePayload({ confirmOverCapacity: true, waitlist: true })),
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("cannot be combined with draft or waitlist");
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+  });
+
+  it("rejects confirmOverCapacity combined with draft (400)", async () => {
+    const res = await POST(
+      makeRequest(futurePayload({ confirmOverCapacity: true, draft: true })),
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("cannot be combined with draft or waitlist");
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+  });
+
+  it("threads confirmOverCapacity on a forward-dated on-behalf create with waitlistIntent false (#1767)", async () => {
+    const res = await POST(
+      makeRequest(futurePayload({ confirmOverCapacity: true })),
+    );
+
+    expect(res.status).toBe(201);
+    expect(h.createConfirmedBooking).toHaveBeenCalledTimes(1);
+    expect(h.createConfirmedBooking.mock.calls[0][0]).toMatchObject({
+      allowPastDates: false,
+      confirmOverCapacity: true,
+      waitlistIntent: false,
+      isOnBehalf: true,
+    });
+  });
+
+  it("member self-book over capacity keeps the hard 409 CAPACITY_EXCEEDED with canWaitlist — members can never overbook", async () => {
+    h.managementRole.mockReturnValue("USER");
+    h.hasAdminAccess.mockReturnValue(false);
+    h.hasAccessRole.mockReturnValue(true);
+    // The self-book path re-reads the session member for the verified-email
+    // and Xero-link guards.
+    h.memberFindUnique.mockResolvedValue({
+      active: true,
+      emailVerified: new Date(),
+      xeroContactId: "xc-1",
+      ageTier: "ADULT",
+    });
+    h.createConfirmedBooking.mockResolvedValue({
+      type: "capacityExceeded",
+      fullNights: [daysFromTodayStr(31)],
+    });
+
+    const checkIn = daysFromTodayStr(30);
+    const checkOut = daysFromTodayStr(32);
+    const res = await POST(makeRequest({ checkIn, checkOut, guests }));
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("CAPACITY_EXCEEDED");
+    expect(body.canWaitlist).toBe(true);
+    expect(h.createConfirmedBooking.mock.calls[0][0]).toMatchObject({
+      isOnBehalf: false,
+    });
   });
 
   it("rejects a past check-in without the flag — 400 regression pin", async () => {
@@ -481,6 +554,11 @@ describe("POST /api/bookings retroactive create gating (#1695)", () => {
     );
 
     expect(res.status).toBe(201);
+    // waitlistIntent suppresses the on-behalf warn-and-confirm so the
+    // capacityExceeded outcome reaches this fallback (#1767).
+    expect(h.createConfirmedBooking.mock.calls[0][0]).toMatchObject({
+      waitlistIntent: true,
+    });
     expect(h.createWaitlistedBooking).toHaveBeenCalledTimes(1);
     expect(h.createWaitlistedBooking.mock.calls[0][0]).toMatchObject({
       notifyMember: false,

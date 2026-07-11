@@ -4,6 +4,21 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Admin book-on-behalf can overbook with an explicit confirmation (#1767).**
+  A forward-dated on-behalf create that exceeds lodge capacity now follows the
+  same warn-and-confirm contract as retroactive creates and admin date edits
+  (#1668/#1695): full days stay selectable on the admin calendar, the guest
+  step warns, and submitting prompts "Confirm over-capacity and create"
+  (audited as `capacityOverridden`). An on-behalf create that opted into the
+  waitlist fallback still waitlists instead of prompting, and a non-member
+  hold-eligible (PENDING) party keeps the hard block in v1 (the hold cron
+  would bump a confirmed overbook). Priced overridden bookings share the
+  pre-existing limitation that payment-time capacity re-checks do not consult
+  the override (see `docs/CAPACITY_MODEL.md`); $0/credit-covered creates
+  settle at create time. The admin guest caps now follow the selected lodge's
+  resolved capacity, and over-capacity parties cannot be saved as drafts.
+  Member self-books are unchanged — members can never overbook.
+
 - **Auto bed allocation no longer strands large groups (#1768).** The split
   fallback used to cap rooms-with-minors at the booking's adult count — a
   school group with two teachers filled exactly two rooms and reported the

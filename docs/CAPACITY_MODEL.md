@@ -191,6 +191,46 @@ is below the active bed count (it will cap the lodge). The allocation board
 still shows all physical beds; a capped lodge simply leaves some beds
 unbooked.
 
+## Exceeding the ceiling (admin overbook overrides)
+
+The resolved figure is a hard block for members: no member-facing path can
+create or grow a booking past it. Admins can exceed it only through an
+explicit, audited confirmation, via two distinct contracts:
+
+The **warn-and-confirm contract** (`OverCapacityConfirmationRequiredError` →
+409 `OVER_CAPACITY_CONFIRM_REQUIRED` → resubmit with
+`confirmOverCapacity: true`, `capacityOverridden` audited):
+
+- **admin date-edit override** (#1668) — `booking-modify-plan` /
+  date-modification service under `adminOverride`;
+- **admin on-behalf create** — retroactive (#1695) and forward-dated
+  (#1767) creates on `/admin/book`, with two carve-outs: a create that
+  opted into the waitlist fallback keeps the capacity-exceeded outcome and
+  waitlists instead, and a non-member hold-eligible (PENDING) party keeps
+  the hard block (v1 — the hold cron re-checks capacity with no knowledge
+  of the override and would silently bump the confirmed booking).
+
+The **explicit-overbook-flag contract** (409 `CAPACITY_EXCEEDED` +
+`overbookDates`, resubmit with the overbook flag; separate audit actions):
+
+- **confirm-pending-guests** on the booking detail page (#1366, flag under
+  the advisory-locked re-check);
+- **waitlist force-confirm** — "Confirm Anyway (Overbook)" on
+  `/admin/waitlist` (`allowOverbook`, audited as
+  `waitlist.force_confirmed_overbook`).
+
+Partner-shared admissions (#1745/#1746) are *not* overrides — they consume
+reserved headroom and reject rather than falling back into a confirm.
+
+**Known limitation (all override surfaces):** the payment-time capacity
+re-checks (`markBookingPaymentSucceeded`, payment links) and the
+non-member-hold cron do not consult any override marker, so an overridden
+booking that is still unpaid can be cancelled (and refunded) when payment
+arrives while the lodge remains over capacity on its nights. $0 and
+credit-covered overridden creates settle at create time and are unaffected.
+Tracked as a follow-up: persisting the override on the booking and honouring
+it in the re-check paths.
+
 ## Behaviour change (introduced with #1653)
 
 Previously, when Bed Allocation was on with beds configured, an

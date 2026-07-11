@@ -76,6 +76,11 @@ export default function AdminBookPage() {
   const [submitting, setSubmitting] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [availableBeds, setAvailableBeds] = useState(lodgeCapacity);
+  // Server-resolved capacity of the SELECTED lodge (per-night occupied +
+  // available from /api/availability/check). The club-identity figure is only
+  // a pre-selection fallback — a capped or secondary lodge resolves lower, and
+  // the create route hard-400s a party above the resolved value (#1767).
+  const [resolvedCapacity, setResolvedCapacity] = useState(lodgeCapacity);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);
@@ -166,9 +171,10 @@ export default function AdminBookPage() {
 
   function addFamilyMemberAsGuest(fm: FamilyMember) {
     if (guests.some((g) => g.memberId === fm.id)) return;
-    // Retroactive bookings may exceed the live availability (over-capacity is
-    // warn-and-confirm at submit), so cap by lodge capacity instead.
-    if (!isRetroactive && guests.length >= availableBeds) return;
+    // Admin creates may exceed the live availability (over-capacity is
+    // warn-and-confirm at submit, #1695/#1767), so cap by the selected
+    // lodge's resolved capacity — the create route's hard party-size limit.
+    if (guests.length >= resolvedCapacity) return;
     setGuests([
       ...guests,
       {
@@ -197,12 +203,17 @@ export default function AdminBookPage() {
     setError("");
     setAllowPastDates(false);
     setOverCapacityNights(null);
+    // The next date selection re-resolves the new lodge's capacity.
+    setResolvedCapacity(lodgeCapacity);
   }
 
   async function handleDateSelect(ci: Date, co: Date) {
     setCheckIn(ci);
     setCheckOut(co);
     setError("");
+    // A prior 409 confirm panel belongs to the previous dates/party; a stale
+    // one must not offer a pre-authorised overbook of the new selection.
+    setOverCapacityNights(null);
     const ciStr = formatLocalDateOnly(ci);
     const coStr = formatLocalDateOnly(co);
 
@@ -214,6 +225,14 @@ export default function AdminBookPage() {
     if (res.ok) {
       const data = await res.json();
       setAvailableBeds(data.minAvailable);
+      const night = Array.isArray(data.nightDetails) ? data.nightDetails[0] : null;
+      if (
+        night &&
+        typeof night.occupiedBeds === "number" &&
+        typeof night.availableBeds === "number"
+      ) {
+        setResolvedCapacity(night.occupiedBeds + night.availableBeds);
+      }
     }
 
     // Admin bypasses minimum stay — skip policy check
@@ -233,13 +252,11 @@ export default function AdminBookPage() {
       }
     }
 
-    // Retroactive bookings can exceed live availability — over-capacity becomes
-    // a warn-and-confirm at submit, not a hard block here (#1695).
-    if (!isRetroactive && guests.length > availableBeds) {
-      setError(`Only ${availableBeds} beds available for your dates`);
-      return;
-    }
-
+    // Admin creates can exceed live availability — over-capacity becomes a
+    // warn-and-confirm at submit, not a hard block here (#1695/#1767). The
+    // warning banner above the guest list flags the shortfall. A confirm
+    // panel from a previous 409 belongs to the previous party — clear it.
+    setOverCapacityNights(null);
     setError("");
     setPriceLoading(true);
     const checkInStr = formatLocalDateOnly(checkIn!);
@@ -506,6 +523,7 @@ export default function AdminBookPage() {
               selectedCheckOut={checkOut}
               lodgeId={lodgeId}
               allowPastDates={allowPastDates}
+              allowFullDates
             />
           </CardContent>
         </Card>
@@ -527,10 +545,10 @@ export default function AdminBookPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {isRetroactive && guests.length > availableBeds && (
+            {guests.length > availableBeds && (
               <div className="rounded-md bg-orange-50 p-3 text-sm text-orange-800">
-                This retroactive booking exceeds the {availableBeds} bed
-                {availableBeds === 1 ? "" : "s"} available for these past dates.
+                This booking exceeds the {availableBeds} bed
+                {availableBeds === 1 ? "" : "s"} available for these dates.
                 You can still create it \u2014 you will confirm the over-capacity
                 override at the final step.
               </div>
@@ -560,8 +578,7 @@ export default function AdminBookPage() {
                         }
                         size="sm"
                         disabled={
-                          alreadyAdded ||
-                          (!isRetroactive && guests.length >= availableBeds)
+                          alreadyAdded || guests.length >= resolvedCapacity
                         }
                         onClick={() => addFamilyMemberAsGuest(fm)}
                       >
@@ -576,7 +593,7 @@ export default function AdminBookPage() {
             <GuestForm
               guests={guests}
               onGuestsChange={setGuests}
-              maxGuests={isRetroactive ? lodgeCapacity : availableBeds}
+              maxGuests={resolvedCapacity}
             />
             <div className="flex justify-between pt-4">
               <Button variant="outline" onClick={() => setStep("dates")}>
@@ -863,11 +880,18 @@ export default function AdminBookPage() {
               <Button
                 variant="outline"
                 onClick={handleSaveAsDraft}
-                disabled={savingDraft || submitting || isRetroactive}
+                disabled={
+                  savingDraft ||
+                  submitting ||
+                  isRetroactive ||
+                  guests.length > availableBeds
+                }
                 title={
                   isRetroactive
                     ? "Retroactive bookings can't be saved as a draft"
-                    : undefined
+                    : guests.length > availableBeds
+                      ? "Over-capacity bookings can't be saved as a draft — confirm the over-capacity booking instead"
+                      : undefined
                 }
               >
                 {savingDraft ? "Saving draft..." : "Save as Draft"}
