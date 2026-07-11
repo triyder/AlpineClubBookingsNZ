@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   BED_ALLOCATABLE_BOOKING_STATUSES,
+  partnerShareSweepCounterpartNames,
+  partnerShareSweepNights,
   reconcileBedAllocationsForBooking,
+  sweepFuturePartnerSharedAllocations,
 } from "@/lib/bed-allocation-lifecycle";
 import { parseDateOnly } from "@/lib/date-only";
 
@@ -387,6 +390,93 @@ describe("bed allocation lifecycle", () => {
       createdCount: 1,
       promotedCount: 0,
     });
+  });
+
+  it("threads the SCHOOL request marker: teachers auto-fill together, students separately (#1768)", async () => {
+    const roomOf = (id: string, sortOrder: number) => ({
+      id,
+      name: `Room ${id}`,
+      sortOrder,
+      active: true,
+      beds: [1, 2, 3, 4].map((n) => ({
+        id: `bed-${id}-${n}`,
+        roomId: id,
+        name: `${id}${n}`,
+        sortOrder: n,
+        active: true,
+      })),
+    });
+    const db = makeDb({
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+      },
+      lodgeRoom: {
+        findMany: vi
+          .fn()
+          .mockResolvedValue([roomOf("room-a", 1), roomOf("room-b", 2)]),
+      },
+    });
+    const guest = (id: string, ageTier: string) => ({
+      id,
+      bookingId: "booking-school",
+      ageTier,
+      stayStart: parseDateOnly("2026-07-01"),
+      stayEnd: parseDateOnly("2026-07-02"),
+    });
+    const guests = [
+      guest("teacher-1", "ADULT"),
+      guest("teacher-2", "ADULT"),
+      guest("student-1", "YOUTH"),
+      guest("student-2", "CHILD"),
+      guest("student-3", "YOUTH"),
+    ];
+    db.booking.findUnique.mockResolvedValue({
+      id: "booking-school",
+      status: BookingStatus.PAID,
+      deletedAt: null,
+      checkIn: parseDateOnly("2026-07-01"),
+      checkOut: parseDateOnly("2026-07-02"),
+      guests,
+    });
+    db.booking.findMany.mockResolvedValue([
+      {
+        id: "booking-school",
+        createdAt: new Date("2026-06-01T00:00:00.000Z"),
+        status: BookingStatus.PAID,
+        checkIn: parseDateOnly("2026-07-01"),
+        checkOut: parseDateOnly("2026-07-02"),
+        requestedRoomId: null,
+        originBookingRequest: { id: "req-1", type: "SCHOOL" },
+        heldForBookingRequest: null,
+        guests,
+      },
+    ]);
+    db.bedAllocation.createMany.mockResolvedValue({ count: 5 });
+
+    await reconcileBedAllocationsForBooking({
+      bookingId: "booking-school",
+      db: db as any,
+    });
+
+    const created = db.bedAllocation.createMany.mock.calls[0][0].data as Array<{
+      bookingGuestId: string;
+      roomId: string;
+    }>;
+    expect(created).toHaveLength(5);
+    const teacherRooms = new Set(
+      created
+        .filter((row) => row.bookingGuestId.startsWith("teacher-"))
+        .map((row) => row.roomId),
+    );
+    const studentRooms = new Set(
+      created
+        .filter((row) => row.bookingGuestId.startsWith("student-"))
+        .map((row) => row.roomId),
+    );
+    expect(teacherRooms.size).toBe(1);
+    for (const roomId of studentRooms) {
+      expect(teacherRooms.has(roomId)).toBe(false);
+    }
   });
 
   it("prunes nights dropped by a booking date change without re-allocating when auto-allocation is off (issue #816)", async () => {
@@ -2374,5 +2464,287 @@ describe("prune orphan auto-promote (#1750)", () => {
     expect(db.$transaction).not.toHaveBeenCalled();
     expect(db.bedAllocation.update).toHaveBeenCalledTimes(1);
     expect(result.promotedCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1756: stale partner-share sweep
+// ---------------------------------------------------------------------------
+
+describe("sweepFuturePartnerSharedAllocations (#1756)", () => {
+  const AUG1 = parseDateOnly("2026-08-01");
+  const AUG2 = parseDateOnly("2026-08-02");
+
+  function makeSweepDb() {
+    return {
+      bedAllocation: {
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+  }
+
+  function allocationRow(opts: {
+    id: string;
+    bookingId: string;
+    bookingGuestId: string;
+    bedId: string;
+    stayDate: Date;
+    memberId: string | null;
+    name?: [string, string];
+  }) {
+    const [firstName, lastName] = opts.name ?? ["Guest", opts.id];
+    return {
+      id: opts.id,
+      bookingId: opts.bookingId,
+      bookingGuestId: opts.bookingGuestId,
+      bedId: opts.bedId,
+      roomId: "room-1",
+      stayDate: opts.stayDate,
+      bookingGuest: { memberId: opts.memberId, firstName, lastName },
+    };
+  }
+
+  it("pair scope: sweeps only the exact pair's future second-occupant rows and audits both bookings", async () => {
+    const db = makeSweepDb();
+    // Ben (member-b) is Alice's (member-a) second occupant on two nights, and
+    // ALSO holds a stale pre-#1756 share with member-x on another bed — that
+    // bed-night belongs to the b↔x pair's own event, not this dissolve.
+    const pairNight1 = allocationRow({
+      id: "alloc-1",
+      bookingId: "booking-b",
+      bookingGuestId: "guest-b",
+      bedId: "bed-d1",
+      stayDate: AUG1,
+      memberId: "member-b",
+      name: ["Ben", "Birch"],
+    });
+    const pairNight2 = allocationRow({
+      id: "alloc-2",
+      bookingId: "booking-b",
+      bookingGuestId: "guest-b",
+      bedId: "bed-d1",
+      stayDate: AUG2,
+      memberId: "member-b",
+      name: ["Ben", "Birch"],
+    });
+    const stalePairRow = allocationRow({
+      id: "alloc-stale",
+      bookingId: "booking-b",
+      bookingGuestId: "guest-b2",
+      bedId: "bed-d2",
+      stayDate: AUG1,
+      memberId: "member-b",
+      name: ["Ben", "Birch"],
+    });
+    db.bedAllocation.findMany
+      // 1: second-occupant rows whose guest is member-a or member-b
+      .mockResolvedValueOnce([pairNight1, pairNight2, stalePairRow])
+      // 2: primaries on the candidate bed-nights
+      .mockResolvedValueOnce([
+        allocationRow({
+          id: "alloc-primary-1",
+          bookingId: "booking-a",
+          bookingGuestId: "guest-a",
+          bedId: "bed-d1",
+          stayDate: AUG1,
+          memberId: "member-a",
+          name: ["Alice", "Ash"],
+        }),
+        allocationRow({
+          id: "alloc-primary-2",
+          bookingId: "booking-a",
+          bookingGuestId: "guest-a",
+          bedId: "bed-d1",
+          stayDate: AUG2,
+          memberId: "member-a",
+          name: ["Alice", "Ash"],
+        }),
+        allocationRow({
+          id: "alloc-primary-x",
+          bookingId: "booking-x",
+          bookingGuestId: "guest-x",
+          bedId: "bed-d2",
+          stayDate: AUG1,
+          memberId: "member-x",
+          name: ["Xena", "Xu"],
+        }),
+      ]);
+    db.bedAllocation.deleteMany.mockResolvedValue({ count: 2 });
+
+    const swept = await sweepFuturePartnerSharedAllocations({
+      memberId: "member-a",
+      partnerMemberId: "member-b",
+      reason: "partner_link_dissolved",
+      db: db as any,
+    });
+
+    // Future-only, second-occupant-only candidate query (past nights are
+    // filtered in SQL, so they can never be swept).
+    expect(db.bedAllocation.findMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          isSecondOccupant: true,
+          stayDate: { gte: expect.any(Date) },
+          bookingGuest: { memberId: { in: ["member-a", "member-b"] } },
+        }),
+      }),
+    );
+    // Only the exact pair's rows are deleted — never the b↔x bed-night, and
+    // never a primary (isSecondOccupant re-checked in the delete WHERE).
+    expect(db.bedAllocation.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["alloc-1", "alloc-2"] }, isSecondOccupant: true },
+    });
+    expect(swept).toHaveLength(2);
+    expect(swept[0]).toMatchObject({
+      allocationId: "alloc-1",
+      bookingId: "booking-b",
+      primaryBookingId: "booking-a",
+      secondOccupantMemberId: "member-b",
+      primaryMemberId: "member-a",
+    });
+
+    // Audit rows on BOTH bookings (grouped, one per side, nights listed).
+    expect(db.auditLog.create).toHaveBeenCalledTimes(2);
+    const auditedData = db.auditLog.create.mock.calls.map(
+      (call: any[]) => call[0].data,
+    );
+    const auditedTargets = auditedData.map((data: any) => data.entityId).sort();
+    expect(auditedTargets).toEqual(["booking-a", "booking-b"]);
+    for (const data of auditedData) {
+      expect(data.action).toBe("BED_ALLOCATION_PARTNER_SHARE_SWEPT");
+      expect(data.metadata).toMatchObject({
+        issue: 1756,
+        reason: "partner_link_dissolved",
+        stayDates: ["2026-08-01", "2026-08-02"],
+      });
+    }
+
+    // The alert helpers summarise the swept rows.
+    expect(partnerShareSweepNights(swept)).toEqual([AUG1, AUG2]);
+    expect(partnerShareSweepCounterpartNames(swept, "member-a")).toBe("Ben Birch");
+    expect(partnerShareSweepCounterpartNames(swept, "member-b")).toBe("Alice Ash");
+  });
+
+  it("member scope: sweeps the member's own second-occupant rows AND the partner sitting on their primary bed", async () => {
+    const db = makeSweepDb();
+    const ownSecondRow = allocationRow({
+      id: "alloc-own-2nd",
+      bookingId: "booking-m",
+      bookingGuestId: "guest-m",
+      bedId: "bed-d1",
+      stayDate: AUG1,
+      memberId: "member-m",
+      name: ["Mo", "Mane"],
+    });
+    const partnerOnOwnBed = allocationRow({
+      id: "alloc-partner-2nd",
+      bookingId: "booking-p",
+      bookingGuestId: "guest-p",
+      bedId: "bed-d2",
+      stayDate: AUG2,
+      memberId: "member-p",
+      name: ["Pat", "Pine"],
+    });
+    db.bedAllocation.findMany
+      // 1: rows where member-m IS the second occupant
+      .mockResolvedValueOnce([ownSecondRow])
+      // 2: member-m's own PRIMARY bed-nights
+      .mockResolvedValueOnce([{ bedId: "bed-d2", stayDate: AUG2 }])
+      // 3: second occupants on those primary bed-nights
+      .mockResolvedValueOnce([partnerOnOwnBed])
+      // 4: primaries on all candidate bed-nights
+      .mockResolvedValueOnce([
+        allocationRow({
+          id: "alloc-primary-q",
+          bookingId: "booking-q",
+          bookingGuestId: "guest-q",
+          bedId: "bed-d1",
+          stayDate: AUG1,
+          memberId: "member-q",
+          name: ["Quin", "Quay"],
+        }),
+        allocationRow({
+          id: "alloc-primary-m",
+          bookingId: "booking-m2",
+          bookingGuestId: "guest-m2",
+          bedId: "bed-d2",
+          stayDate: AUG2,
+          memberId: "member-m",
+          name: ["Mo", "Mane"],
+        }),
+      ]);
+    db.bedAllocation.deleteMany.mockResolvedValue({ count: 2 });
+
+    const swept = await sweepFuturePartnerSharedAllocations({
+      memberId: "member-m",
+      reason: "member_deactivated",
+      db: db as any,
+    });
+
+    // Both directions swept: member-m removed as a second occupant, and
+    // member-m's partner removed from member-m's own primary bed — the
+    // primaries themselves are never deleted.
+    expect(db.bedAllocation.deleteMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["alloc-own-2nd", "alloc-partner-2nd"] },
+        isSecondOccupant: true,
+      },
+    });
+    expect(swept).toHaveLength(2);
+    expect(partnerShareSweepCounterpartNames(swept, "member-m")).toBe(
+      "Quin Quay, Pat Pine",
+    );
+  });
+
+  it("is a safe no-op on an empty candidate set and therefore idempotent on a second run", async () => {
+    const db = makeSweepDb();
+
+    const first = await sweepFuturePartnerSharedAllocations({
+      memberId: "member-a",
+      partnerMemberId: "member-b",
+      reason: "partner_link_dissolved",
+      db: db as any,
+    });
+    const second = await sweepFuturePartnerSharedAllocations({
+      memberId: "member-a",
+      partnerMemberId: "member-b",
+      reason: "partner_link_dissolved",
+      db: db as any,
+    });
+
+    expect(first).toEqual([]);
+    expect(second).toEqual([]);
+    expect(db.bedAllocation.deleteMany).not.toHaveBeenCalled();
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("pair scope: skips a candidate whose primary is missing (orphan) rather than guessing the pair", async () => {
+    const db = makeSweepDb();
+    db.bedAllocation.findMany
+      .mockResolvedValueOnce([
+        allocationRow({
+          id: "alloc-orphan",
+          bookingId: "booking-b",
+          bookingGuestId: "guest-b",
+          bedId: "bed-d1",
+          stayDate: AUG1,
+          memberId: "member-b",
+        }),
+      ])
+      // No primary row on that bed-night (transient #1743 orphan).
+      .mockResolvedValueOnce([]);
+
+    const swept = await sweepFuturePartnerSharedAllocations({
+      memberId: "member-a",
+      partnerMemberId: "member-b",
+      reason: "partner_link_dissolved",
+      db: db as any,
+    });
+
+    expect(swept).toEqual([]);
+    expect(db.bedAllocation.deleteMany).not.toHaveBeenCalled();
   });
 });

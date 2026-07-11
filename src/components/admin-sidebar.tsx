@@ -64,7 +64,10 @@ import {
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
-import { buildUnpaidFinishedStaysHref } from "@/lib/unpaid-finished-stays";
+import {
+  buildUnpaidFinishedStaysHref,
+  buildUnsettledAdditionalFinishedStaysHref,
+} from "@/lib/unpaid-finished-stays";
 
 interface NavSection {
   label?: string;
@@ -101,6 +104,15 @@ const UNPAID_FINISHED_STAYS_HREF = buildUnpaidFinishedStaysHref(
   formatDateOnly(getTodayDateOnly()),
 );
 
+/**
+ * Deep link for the unsettled finished-stay additions queue (#1723 path 2):
+ * settled past stays whose upward modification delta was never collected.
+ * Same evaluation moment and drift rule as the queue above.
+ */
+const UNSETTLED_ADDITIONS_HREF = buildUnsettledAdditionalFinishedStaysHref(
+  formatDateOnly(getTodayDateOnly()),
+);
+
 const navSections: NavSection[] = [
   {
     items: [
@@ -126,6 +138,11 @@ const navSections: NavSection[] = [
       {
         href: UNPAID_FINISHED_STAYS_HREF,
         label: "Unpaid Finished Stays",
+        icon: DollarSign,
+      },
+      {
+        href: UNSETTLED_ADDITIONS_HREF,
+        label: "Unpaid Stay Additions",
         icon: DollarSign,
       },
       {
@@ -384,6 +401,7 @@ const ZERO_PENDING_COUNTS: AdminPendingCounts = {
   bookingChangeRequests: 0,
   publicBookingRequests: 0,
   unpaidFinishedStays: 0,
+  unsettledAdditionalFinishedStays: 0,
   membershipCancellations: 0,
   archiveRequests: 0,
   deletionRequests: 0,
@@ -485,6 +503,9 @@ function SidebarLinks({
   }
   if (counts.unpaidFinishedStays > 0) {
     badges[UNPAID_FINISHED_STAYS_HREF] = counts.unpaidFinishedStays;
+  }
+  if (counts.unsettledAdditionalFinishedStays > 0) {
+    badges[UNSETTLED_ADDITIONS_HREF] = counts.unsettledAdditionalFinishedStays;
   }
   if (counts.refundAppeals + counts.creditApprovals > 0) {
     badges["/admin/refund-requests"] =

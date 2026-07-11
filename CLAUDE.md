@@ -39,6 +39,15 @@ written." Follow `AGENTS.md` → "Completion and Merge":
    force-push. Close a linked issue only when its PR is eligible and merged.
 5. Delete the merged branch and confirm `main` CI stays green.
 
+## Orchestrate with subagents
+
+Follow `AGENTS.md` → "Orchestration Model": the interactive session acts as
+orchestrator (claims, worktrees, GitHub, PRs, CI, merges) and delegates bulk
+implementation to implementor subagents working in per-issue worktrees, then
+runs adversarial-review subagents over the diff before opening the PR. Scale
+subagent model/effort to task complexity, and run independent issues as
+parallel lanes only when their code surfaces do not clash.
+
 ## Keep docs in lockstep
 
 Whenever a feature is added, changed, or removed, update everything it touches in

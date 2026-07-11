@@ -1,6 +1,7 @@
 import {
   adminMinorsReviewRequiredTemplate,
   adminOwnerSubstitutionTemplate,
+  adminPartnerShareSweptTemplate,
   adminNewBookingTemplate,
   adminPendingDeadlineTemplate,
   adminBookingBumpedTemplate,
@@ -71,6 +72,34 @@ export async function sendAdminMinorsOnlyReviewAlert(data: {
       checkOut: formatNZDate(data.checkOut),
       guestCount: data.guestCount,
       reviewReason: data.reviewReason,
+    },
+    preferenceKey: "adminBookingReviewRequired",
+  });
+}
+
+// #1756: Admin alert - a partner pair's future shared double-bed placements
+// were swept (partner link dissolved, member deactivated, or member no longer
+// an adult). The second occupant is back in the awaiting-allocation queue, so
+// the board needs a human look — fired on the existing "Booking review
+// required" preference (#1422 precedent: reuse a category rather than mint a
+// new NotificationPreference column for a rare event).
+export async function sendAdminPartnerShareSweptAlert(data: {
+  memberName: string;
+  partnerName: string;
+  reason: string;
+  nights: Date[];
+}) {
+  await sendToAdmins({
+    subject: `Review required: shared double-bed placements removed (${data.memberName})`,
+    html: adminPartnerShareSweptTemplate(data),
+    templateName: "admin-partner-share-swept",
+    templateData: {
+      memberName: data.memberName,
+      partnerName: data.partnerName,
+      reason: data.reason,
+      count: data.nights.length,
+      s: data.nights.length === 1 ? "" : "s",
+      date: data.nights.map((night) => formatNZDate(night)).join(", "),
     },
     preferenceKey: "adminBookingReviewRequired",
   });

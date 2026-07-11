@@ -1651,6 +1651,12 @@ describe("Phase 3: Admin Member Management", () => {
             count: vi.fn().mockResolvedValue(2),
           },
           familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          // #1756: a deactivate sweeps future shared-double placements inside
+          // the transaction; no rows here, so the sweep is a no-op.
+          bedAllocation: {
+            findMany: vi.fn().mockResolvedValue([]),
+            deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+          },
         };
         return fn(tx);
       });

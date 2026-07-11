@@ -326,7 +326,10 @@ describe("bed allocation planner", () => {
     ]);
   });
 
-  it("leaves minors unallocated rather than placing them without an adult", () => {
+  it("overflows a minor into a minors-only room when the adult's room is full (#1768)", () => {
+    // Pre-#1768 this stranded the child (NO_BED_AVAILABLE) even though room B
+    // sat empty. The booking's adult is on-site tonight (Phase 0 satisfied),
+    // so the child may take a room of its own.
     const plan = buildFirstFitBedAllocationPlan({
       enabled: true,
       rooms: [
@@ -360,15 +363,16 @@ describe("bed allocation planner", () => {
         stayDate: "2026-07-01",
         source: "AUTO",
       },
-    ]);
-    expect(plan.unallocatedGuestNights).toEqual([
       {
         bookingId: "booking-family",
         bookingGuestId: "child-1",
+        roomId: "room-b",
+        bedId: "bed-b1",
         stayDate: "2026-07-01",
-        reason: "NO_BED_AVAILABLE",
+        source: "AUTO",
       },
     ]);
+    expect(plan.unallocatedGuestNights).toEqual([]);
   });
 
   it("uses existing adult allocations when filling a missing minor guest-night", () => {
@@ -990,6 +994,436 @@ describe("bed allocation whole-stay room continuity (issue #1677)", () => {
         source: "AUTO",
       },
     ]);
+  });
+});
+
+describe("cross-booking age mix and minors-only rooms (#1768)", () => {
+  function roomOf(id: string, sortOrder: number, bedCount: number): BedAllocationRoom {
+    return {
+      id,
+      name: `Room ${id.toUpperCase()}`,
+      sortOrder,
+      beds: Array.from({ length: bedCount }, (_, index) => ({
+        id: `bed-${id}-${index + 1}`,
+        roomId: id,
+        name: `${id.toUpperCase()}${index + 1}`,
+        sortOrder: index + 1,
+      })),
+    };
+  }
+
+  function schoolGroupBooking(isSchoolGroup: boolean | undefined) {
+    const guests = [
+      { id: "teacher-1", ageTier: "ADULT" as const },
+      { id: "teacher-2", ageTier: "ADULT" as const },
+      ...Array.from({ length: 28 }, (_, index) => ({
+        id: `student-${index + 1}`,
+        ageTier: (index % 2 === 0 ? "YOUTH" : "CHILD") as BedAllocationAgeTier,
+      })),
+    ];
+    return {
+      ...multiGuestBooking("booking-school", "2026-06-01", guests),
+      isSchoolGroup,
+    };
+  }
+
+  const SIX_ROOMS_SIX_BEDS = [1, 2, 3, 4, 5, 6].map((n) =>
+    roomOf(`r${n}`, n, 6),
+  );
+
+  it("places a whole school group: 2 adults + 28 minors fill rooms with none stranded (family layout)", () => {
+    // The pre-#1768 planner allocated exactly two rooms (one per adult) and
+    // reported the other 18 minors NO_BED_AVAILABLE with four rooms empty.
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: SIX_ROOMS_SIX_BEDS,
+      bookings: [schoolGroupBooking(undefined)],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toHaveLength(30);
+    // Family layout: one adult heads each of the first two rooms, minors
+    // overflow into rooms of their own after that.
+    const roomsByGuest = new Map(
+      plan.allocations.map((allocation) => [
+        allocation.bookingGuestId,
+        allocation.roomId,
+      ]),
+    );
+    expect(roomsByGuest.get("teacher-1")).toBe("r1");
+    expect(roomsByGuest.get("teacher-2")).toBe("r2");
+    const occupiedRooms = new Set(plan.allocations.map((a) => a.roomId));
+    expect([...occupiedRooms].sort()).toEqual(["r1", "r2", "r3", "r4", "r5"]);
+  });
+
+  it("rooms a school group's teachers together and its students separately (isSchoolGroup)", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: SIX_ROOMS_SIX_BEDS,
+      bookings: [schoolGroupBooking(true)],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toHaveLength(30);
+    const teacherRooms = new Set(
+      plan.allocations
+        .filter((a) => a.bookingGuestId.startsWith("teacher-"))
+        .map((a) => a.roomId),
+    );
+    const studentRooms = new Set(
+      plan.allocations
+        .filter((a) => a.bookingGuestId.startsWith("student-"))
+        .map((a) => a.roomId),
+    );
+    // Both teachers share ONE room and no student rooms with them.
+    expect(teacherRooms.size).toBe(1);
+    for (const room of studentRooms) {
+      expect(teacherRooms.has(room)).toBe(false);
+    }
+  });
+
+  it("family regression: one adult + five minors across three 2-bed rooms, none unallocated", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [roomOf("r1", 1, 2), roomOf("r2", 2, 2), roomOf("r3", 3, 2)],
+      bookings: [
+        multiGuestBooking("booking-family", "2026-06-01", [
+          { id: "adult-1", ageTier: "ADULT" },
+          { id: "minor-1", ageTier: "CHILD" },
+          { id: "minor-2", ageTier: "CHILD" },
+          { id: "minor-3", ageTier: "YOUTH" },
+          { id: "minor-4", ageTier: "YOUTH" },
+          { id: "minor-5", ageTier: "CHILD" },
+        ]),
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toHaveLength(6);
+    // The adult still heads a room with a minor (family pairing preserved).
+    const adultRoom = plan.allocations.find(
+      (a) => a.bookingGuestId === "adult-1",
+    )?.roomId;
+    expect(
+      plan.allocations.some(
+        (a) => a.roomId === adultRoom && a.bookingGuestId.startsWith("minor-"),
+      ),
+    ).toBe(true);
+  });
+
+  it("Phase-0 pin: a night with no booking adult on-site stays NO_BOOKING_ADULT even with rooms free", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [roomOf("r1", 1, 4)],
+      bookings: [
+        multiGuestBooking("booking-family", "2026-06-01", [
+          {
+            id: "adult-1",
+            ageTier: "ADULT",
+            stayStart: "2026-07-01",
+            stayEnd: "2026-07-02",
+          },
+          {
+            id: "minor-1",
+            ageTier: "CHILD",
+            stayStart: "2026-07-01",
+            stayEnd: "2026-07-03",
+          },
+        ]),
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "minor-1",
+        stayDate: "2026-07-02",
+        reason: "NO_BOOKING_ADULT",
+      },
+    ]);
+    // The covered night still allocates both guests together.
+    expect(
+      plan.allocations.filter((a) => a.stayDate === "2026-07-01"),
+    ).toHaveLength(2);
+  });
+
+  it("never places a minor into a room-night holding another booking's adult (seeded occupancy)", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [roomOf("r1", 1, 2), roomOf("r2", 2, 2)],
+      bookings: [
+        multiGuestBooking("booking-family", "2026-06-01", [
+          { id: "adult-1", ageTier: "ADULT" },
+          { id: "minor-1", ageTier: "CHILD" },
+          { id: "minor-2", ageTier: "CHILD" },
+        ]),
+      ],
+      occupiedBedNights: [
+        {
+          bedId: "bed-r1-1",
+          roomId: "r1",
+          bookingId: "booking-other",
+          bookingGuestId: "other-adult",
+          ageTier: "ADULT",
+          stayDate: "2026-07-01",
+        },
+      ],
+    });
+
+    // r1's free bed is beside another booking's adult: no minor may take it.
+    const minorAllocations = plan.allocations.filter((a) =>
+      a.bookingGuestId.startsWith("minor-"),
+    );
+    for (const allocation of minorAllocations) {
+      expect(allocation.roomId).toBe("r2");
+    }
+    // The party of 3 cannot fit r2 alone: adult pairs with one minor in r2 and
+    // the other minor is reported rather than placed beside the stranger.
+    expect(plan.unallocatedGuestNights).toEqual([
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "minor-2",
+        stayDate: "2026-07-01",
+        reason: "NO_BED_AVAILABLE",
+      },
+    ]);
+  });
+
+  it("never places an adult into a room-night holding another booking's minor — seeded and same-run", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [roomOf("r1", 1, 3), roomOf("r2", 2, 2), roomOf("r3", 3, 1)],
+      bookings: [
+        // First booking: a family (adult + minor) lands in r1 whole-stay.
+        multiGuestBooking("booking-family", "2026-06-01", [
+          { id: "fam-adult", ageTier: "ADULT" },
+          { id: "fam-minor", ageTier: "CHILD" },
+        ]),
+        // Second booking: a lone adult must skip r1's free bed (same-run
+        // minor) AND r2's free bed (seeded minor) and land in r3.
+        multiGuestBooking("booking-solo", "2026-06-02", [
+          { id: "solo-adult", ageTier: "ADULT" },
+        ]),
+      ],
+      occupiedBedNights: [
+        {
+          bedId: "bed-r2-1",
+          roomId: "r2",
+          bookingId: "booking-other",
+          bookingGuestId: "other-minor",
+          ageTier: "CHILD",
+          stayDate: "2026-07-01",
+        },
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    const soloAllocation = plan.allocations.find(
+      (a) => a.bookingGuestId === "solo-adult",
+    );
+    expect(soloAllocation?.roomId).toBe("r3");
+  });
+
+  it("spreads leftover adults only into rooms without another booking's minors", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [roomOf("r1", 1, 2), roomOf("r2", 2, 2)],
+      bookings: [
+        multiGuestBooking("booking-adults", "2026-06-01", [
+          { id: "adult-1", ageTier: "ADULT" },
+          { id: "adult-2", ageTier: "ADULT" },
+          { id: "adult-3", ageTier: "ADULT" },
+        ]),
+      ],
+      occupiedBedNights: [
+        {
+          bedId: "bed-r1-1",
+          roomId: "r1",
+          bookingId: "booking-other",
+          bookingGuestId: "other-minor",
+          ageTier: "CHILD",
+          stayDate: "2026-07-01",
+        },
+      ],
+    });
+
+    // r1 has a free bed but hosts another booking's minor: the third adult is
+    // reported rather than placed beside it.
+    const adultRooms = plan.allocations.map((a) => a.roomId);
+    expect(adultRooms).toEqual(["r2", "r2"]);
+    expect(plan.unallocatedGuestNights).toEqual([
+      {
+        bookingId: "booking-adults",
+        bookingGuestId: "adult-3",
+        stayDate: "2026-07-01",
+        reason: "NO_BED_AVAILABLE",
+      },
+    ]);
+  });
+
+  it("treats an unknown occupant as an adult: blocks minors, not adults", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [roomOf("r1", 1, 3), roomOf("r2", 2, 2)],
+      bookings: [
+        multiGuestBooking("booking-family", "2026-06-01", [
+          { id: "adult-1", ageTier: "ADULT" },
+          { id: "minor-1", ageTier: "CHILD" },
+        ]),
+        multiGuestBooking("booking-solo", "2026-06-02", [
+          { id: "solo-adult", ageTier: "ADULT" },
+        ]),
+      ],
+      // A bed-night with no booking attribution (legacy row): conservative.
+      occupiedBedNights: [
+        { bedId: "bed-r1-1", roomId: "r1", stayDate: "2026-07-01" },
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    const familyRooms = new Set(
+      plan.allocations
+        .filter((a) => a.bookingId === "booking-family")
+        .map((a) => a.roomId),
+    );
+    // The family's minor cannot share r1 with the unknown occupant, so the
+    // family lands whole in r2...
+    expect([...familyRooms]).toEqual(["r2"]);
+    // ...while the lone adult may still take a bed beside the unknown row.
+    const soloAllocation = plan.allocations.find(
+      (a) => a.bookingGuestId === "solo-adult",
+    );
+    expect(soloAllocation?.roomId).toBe("r1");
+  });
+
+  it("held family evicts a conflicting adult to give its minor a minors-only room; the evictee is not moved beside minors (#1768 displacement)", () => {
+    // r1 (1 bed) holds a displaceable provisional adult; r2 (1 bed) holds the
+    // held booking's own adult. The held minor may claim r1 only by evicting
+    // the whole provisional booking — and that booking cannot be MOVEd into
+    // r2 (a room-night with... no, r2 is full) nor left in place; with no
+    // clean destination its whole stay is UNALLOCATEd.
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      prioritizeCapacityHolding: true,
+      rooms: [roomOf("r1", 1, 1), roomOf("r2", 2, 1)],
+      bookings: [
+        {
+          ...multiGuestBooking("booking-held", "2026-06-01", [
+            { id: "held-minor", ageTier: "CHILD" },
+          ]),
+          holdsCapacity: true,
+        },
+      ],
+      occupiedBedNights: [
+        {
+          bedId: "bed-r2-1",
+          roomId: "r2",
+          bookingId: "booking-held",
+          bookingGuestId: "held-adult",
+          ageTier: "ADULT",
+          stayDate: "2026-07-01",
+        },
+        {
+          bedId: "bed-r1-1",
+          roomId: "r1",
+          bookingId: "booking-prov",
+          bookingGuestId: "prov-adult",
+          ageTier: "ADULT",
+          stayDate: "2026-07-01",
+          holdsCapacity: false,
+          bookingCreatedAt: "2026-06-05T00:00:00.000Z",
+        },
+      ],
+    });
+
+    // The held minor takes r1 as a minors-only room (its own adult is
+    // on-site in r2 — Phase 0 satisfied, no adult-in-room requirement).
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-held",
+        bookingGuestId: "held-minor",
+        roomId: "r1",
+        bedId: "bed-r1-1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+    ]);
+    expect(plan.displacements).toEqual([
+      {
+        type: "UNALLOCATE",
+        bookingId: "booking-prov",
+        bookingGuestId: "prov-adult",
+        stayDate: "2026-07-01",
+        fromBedId: "bed-r1-1",
+        fromRoomId: "r1",
+        displacedByBookingId: "booking-held",
+      },
+    ]);
+  });
+
+  it("never relocates a displaced provisional family into a room-night holding another booking's adult (falls back to UNALLOCATE)", () => {
+    // Held booking (3 adults) needs the whole of r1, evicting the provisional
+    // minors. Their only alternative room r2 has TWO free beds — enough for
+    // both minors — but already hosts a third booking's adult, so the minors
+    // are UNALLOCATEd rather than moved beside a stranger.
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      prioritizeCapacityHolding: true,
+      rooms: [roomOf("r1", 1, 3), roomOf("r2", 2, 3)],
+      bookings: [
+        {
+          ...multiGuestBooking("booking-held", "2026-06-01", [
+            { id: "held-adult-1", ageTier: "ADULT" },
+            { id: "held-adult-2", ageTier: "ADULT" },
+            { id: "held-adult-3", ageTier: "ADULT" },
+          ]),
+          holdsCapacity: true,
+        },
+      ],
+      occupiedBedNights: [
+        {
+          bedId: "bed-r1-1",
+          roomId: "r1",
+          bookingId: "booking-prov",
+          bookingGuestId: "prov-minor-1",
+          ageTier: "CHILD",
+          stayDate: "2026-07-01",
+          holdsCapacity: false,
+          bookingCreatedAt: "2026-06-05T00:00:00.000Z",
+        },
+        {
+          bedId: "bed-r1-2",
+          roomId: "r1",
+          bookingId: "booking-prov",
+          bookingGuestId: "prov-minor-2",
+          ageTier: "CHILD",
+          stayDate: "2026-07-01",
+          holdsCapacity: false,
+          bookingCreatedAt: "2026-06-05T00:00:00.000Z",
+        },
+        {
+          bedId: "bed-r2-1",
+          roomId: "r2",
+          bookingId: "booking-x",
+          bookingGuestId: "x-adult",
+          ageTier: "ADULT",
+          stayDate: "2026-07-01",
+          holdsCapacity: true,
+        },
+      ],
+    });
+
+    const heldRooms = new Set(
+      plan.allocations
+        .filter((a) => a.bookingId === "booking-held")
+        .map((a) => a.roomId),
+    );
+    expect([...heldRooms]).toEqual(["r1"]);
+    expect(plan.displacements).toHaveLength(2);
+    for (const displacement of plan.displacements ?? []) {
+      expect(displacement.type).toBe("UNALLOCATE");
+      expect(displacement.bookingId).toBe("booking-prov");
+    }
   });
 });
 

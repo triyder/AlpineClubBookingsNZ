@@ -31,6 +31,14 @@ import {
   financeAccessLevelFromMatrix,
   getAdminPermissionMatrix,
 } from "@/lib/admin-permissions";
+import {
+  describePartnerSharedSweepReason,
+  partnerShareSweepCounterpartNames,
+  partnerShareSweepNights,
+  sweepFuturePartnerSharedAllocations,
+  type SweptPartnerSharedAllocation,
+} from "@/lib/bed-allocation-lifecycle";
+import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 
 const bulkUpdateSchema = z.object({
   ids: z.array(z.string()).min(1, "At least one member ID is required").max(100),
@@ -245,6 +253,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // #1756: shared-double placements swept by a deactivate, collected inside
+    // the transaction and alerted on after commit.
+    const sweptSharesByMember: Array<{
+      memberId: string;
+      swept: SweptPartnerSharedAllocation[];
+    }> = [];
+
     // Perform update in transaction
     const result = await prisma.$transaction(async (tx) => {
       // Last-admin end-state guard (issue #1604): evaluate the whole set, not
@@ -315,9 +330,44 @@ export async function POST(req: NextRequest) {
         await tx.familyGroupMember.deleteMany({
           where: { memberId: { in: idsToUpdate } },
         });
+        // #1756: deactivation breaks the double-bed sharing precondition, so
+        // sweep each member's future shared-double placements in the same
+        // transaction (idempotent; a member holding no shares is a no-op).
+        // The removed second occupants return to the awaiting-allocation
+        // queue; admins are alerted per affected member after commit.
+        for (const memberId of idsToUpdate) {
+          const swept = await sweepFuturePartnerSharedAllocations({
+            memberId,
+            reason: "member_deactivated",
+            db: tx,
+          });
+          if (swept.length > 0) {
+            sweptSharesByMember.push({ memberId, swept });
+          }
+        }
       }
       return updateResult;
     });
+
+    for (const { memberId, swept } of sweptSharesByMember) {
+      const member = existingMembers.find((m) => m.id === memberId);
+      // Post-commit, fire-and-forget: a failed alert only loses the nudge —
+      // the sweep committed with the deactivation and both bookings carry
+      // audit rows.
+      sendAdminPartnerShareSweptAlert({
+        memberName: member
+          ? `${member.firstName} ${member.lastName}`.trim()
+          : memberId,
+        partnerName: partnerShareSweepCounterpartNames(swept, memberId),
+        reason: describePartnerSharedSweepReason("member_deactivated"),
+        nights: partnerShareSweepNights(swept),
+      }).catch((err) => {
+        logger.error(
+          { err, memberId, sweptCount: swept.length },
+          "Failed to send partner share sweep alert",
+        );
+      });
+    }
 
     // Audit log for each affected member
     for (const member of existingMembers) {

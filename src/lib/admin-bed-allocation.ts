@@ -68,8 +68,15 @@ export interface AdminBedAllocationWarning {
   id: string;
   // BOOKING_SPLIT is same-night (party split across rooms on one night);
   // ROOM_SWITCH is stay-level (issue #1677) — the booking's room set changes
-  // between nights, so someone must move rooms mid-stay.
-  type: "BOOKING_SPLIT" | "MINOR_WITHOUT_BOOKING_ADULT" | "ROOM_SWITCH";
+  // between nights, so someone must move rooms mid-stay. MINOR_ADULT_MIX
+  // (#1768) flags a room-night where one booking's minors share the room with
+  // another booking's adults — the planner never creates this, so it marks a
+  // pre-existing or manual placement for the admin to resolve.
+  type:
+    | "BOOKING_SPLIT"
+    | "MINOR_WITHOUT_BOOKING_ADULT"
+    | "ROOM_SWITCH"
+    | "MINOR_ADULT_MIX";
   severity: "warning";
   bookingId: string;
   bookingGuestId?: string;
@@ -1151,8 +1158,12 @@ async function loadBookingRecords(
       parentBookingId: true,
       // Whether this booking is the converted booking of a BookingRequest — an
       // accepted-but-unpaid quote / approved request holds capacity even while
-      // PENDING (#1254), which the Held/Provisional badge must reflect.
-      originBookingRequest: { select: { id: true } },
+      // PENDING (#1254), which the Held/Provisional badge must reflect. The
+      // request `type` marks SCHOOL groups for the planner's adults-together /
+      // students-separate grouping (#1768) — including the pre-approval held
+      // booking of a SCHOOL request (#1280).
+      originBookingRequest: { select: { id: true, type: true } },
+      heldForBookingRequest: { select: { type: true } },
       requestedRoom: {
         select: {
           id: true,
@@ -1389,6 +1400,12 @@ function candidateGuestBookings(
         createdAt: booking.createdAt,
         lodgeId: booking.lodgeId,
         requestedRoomId: booking.requestedRoomId,
+        // SCHOOL request bookings (#1768): adults room together, students
+        // separately — covers both the converted booking and a SCHOOL
+        // request's pre-approval held booking.
+        isSchoolGroup:
+          booking.originBookingRequest?.type === "SCHOOL" ||
+          booking.heldForBookingRequest?.type === "SCHOOL",
         guests,
       };
     })
@@ -1463,6 +1480,47 @@ export function buildBedAllocationWarnings(input: {
         });
       }
     }
+  }
+
+  // Cross-booking age mix (#1768): one booking's minors sharing a room-night
+  // with another booking's adults violates the placement invariant the
+  // planner enforces — persisted rows can only get here via manual moves or
+  // pre-#1768 auto-allocation, so surface them for the admin to untangle.
+  const allocationsByRoomNight = new Map<string, DashboardAllocation[]>();
+  for (const allocation of input.allocations) {
+    const key = `${allocation.roomId}:${allocation.stayDate}`;
+    const group = allocationsByRoomNight.get(key) ?? [];
+    group.push(allocation);
+    allocationsByRoomNight.set(key, group);
+  }
+  for (const group of allocationsByRoomNight.values()) {
+    const minorBookingIds = [
+      ...new Set(
+        group
+          .filter((allocation) => allocation.guestAgeTier !== "ADULT")
+          .map((allocation) => allocation.bookingId),
+      ),
+    ].sort();
+    if (minorBookingIds.length === 0) continue;
+    const adultBookingIds = new Set(
+      group
+        .filter((allocation) => allocation.guestAgeTier === "ADULT")
+        .map((allocation) => allocation.bookingId),
+    );
+    const mixedMinorBookingId = minorBookingIds.find((minorBookingId) =>
+      [...adultBookingIds].some((adultId) => adultId !== minorBookingId),
+    );
+    if (!mixedMinorBookingId) continue;
+    const first = group[0];
+    warnings.push({
+      id: `MINOR_ADULT_MIX:${first.roomId}:${first.stayDate}`,
+      type: "MINOR_ADULT_MIX",
+      severity: "warning",
+      bookingId: mixedMinorBookingId,
+      stayDate: first.stayDate,
+      roomId: first.roomId,
+      message: `${first.roomName} on ${first.stayDate} mixes minors with adults from a different booking.`,
+    });
   }
 
   // Stay-level room continuity (issue #1677): warn when a booking's set of

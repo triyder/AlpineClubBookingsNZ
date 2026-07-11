@@ -26,9 +26,11 @@ type DoubleBedSharingDb = Pick<typeof prisma, "member" | "memberPartnerLink">;
  * blocks new placements even while a stale link row survives), and the pair
  * must hold a CONFIRMED link — a PENDING request grants nothing. Anything
  * else returns false so the caller can reject the placement with a clear
- * domain error. This gates NEW placements only: already-placed second
- * occupants are not swept when a link dissolves or a member is deactivated
- * (#1756).
+ * domain error. This gates NEW placements; already-placed second occupants
+ * are swept when the pair breaks — link dissolve, member deactivation, or an
+ * ADULT→minor tier correction — by sweepFuturePartnerSharedAllocations in
+ * bed-allocation-lifecycle.ts (#1756), so no future isSecondOccupant row
+ * outlives its partner link or the active-adult precondition.
  */
 export interface PartnerSharingCandidate {
   id: string;

@@ -26,6 +26,7 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-membership-application-pending",
   "admin-minors-review",
   "admin-owner-substitution",
+  "admin-partner-share-swept",
   "admin-new-booking",
   "admin-payment-failure",
   "admin-pending-deadline",
@@ -204,6 +205,7 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "booking-request-quote": ["token"],
   "admin-booking-request-pending": ["requesterName", "reviewUrl"],
   "admin-booking-request-hold-expired": ["requesterName", "reviewUrl"],
+  "admin-partner-share-swept": ["memberName", "partnerName", "reason"],
 };
 
 const TEMPLATE_TRIGGER_METADATA: Partial<
@@ -234,6 +236,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary:
       "Held booking-request owner failed re-validation at conversion; a fresh contact was substituted and the invoice will bill it instead of the intended owner",
     frequency: "Once per conversion where the held owner is no longer mappable",
+  },
+  "admin-partner-share-swept": {
+    triggerSummary:
+      "A partner pair's future shared double-bed placements were swept after their link dissolved or a member stopped being an eligible sharer (#1756)",
+    frequency:
+      "Once per dissolve/deactivation/tier-change event that removed at least one placement",
   },
   "family-group-create-request-confirmation": {
     triggerSummary: "Member-initiated family group creation request submitted",

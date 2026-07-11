@@ -234,6 +234,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Owner substitution — reconcile Xero contact for booking request {{requestId}}",
     "defaultBody": "Owner Substitution — Xero Reconciliation Required\n\nAn owner substitution occurred while converting booking request {{requestId}} into booking {{bookingId}}. The booking (and its Xero invoice) will bill a newly-created contact instead of the intended owner.\n\nAction required: reconcile the invoice's contact in Xero — repoint it from the newly-created contact to the intended organisation.\n\nIntended owner (should be billed): {{intendedMemberName}} ({{intendedMemberId}})\nSubstituted contact (currently billed): {{substituteMemberName}} ({{substituteMemberId}})\nReason: {{reason}}\nRequester: {{requesterName}} ({{memberEmail}})\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nReview Bookings: {{BASE_URL}}/admin/bookings"
   },
+  "admin-partner-share-swept": {
+    "defaultSubject": "Review required: shared double-bed placements removed ({{memberName}})",
+    "defaultBody": "Shared Double-Bed Placements Removed\n\nA partner pair no longer qualifies for double-bed sharing, so their future shared placements were removed. The affected guest nights are back in the awaiting-allocation queue and may need re-planning on the allocation board.\n\nMember: {{memberName}}\nPartner: {{partnerName}}\nReason: {{reason}}\nRemoved night{{s}}: {{date}}\n\nReview Bed Allocation: {{BASE_URL}}/admin/bed-allocation"
+  },
   "admin-new-booking": {
     "defaultSubject": "New Booking: {{memberName}} ({{status}})",
     "defaultBody": "New Booking Created\n\nA new booking has been created.\n\n{{reviewReason}} [only when reviewReason exists]\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal: {{total}}\nStatus: {{status}}\n\nView Bookings: {{BASE_URL}}/admin/bookings"

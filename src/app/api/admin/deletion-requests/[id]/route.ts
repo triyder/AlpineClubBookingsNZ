@@ -20,7 +20,15 @@ import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import {
   sendAccountDeletionApprovedEmail,
   sendAccountDeletionRejectedEmail,
+  sendAdminPartnerShareSweptAlert,
 } from "@/lib/email";
+import {
+  describePartnerSharedSweepReason,
+  partnerShareSweepCounterpartNames,
+  partnerShareSweepNights,
+  sweepFuturePartnerSharedAllocations,
+  type SweptPartnerSharedAllocation,
+} from "@/lib/bed-allocation-lifecycle";
 import logger from "@/lib/logger";
 
 const actionSchema = z.object({
@@ -241,6 +249,7 @@ export async function POST(
 
     // 4-7: Anonymise atomically in a single transaction
     const anonymisedEmail = `deleted-${member.id.substring(0, 8)}@deleted.invalid`;
+    let sweptShares: SweptPartnerSharedAllocation[] = [];
     await prisma.$transaction(async (tx) => {
       // Race-safe re-check of the last-admin invariant inside the mutation
       // transaction (issue #1604): the fail-fast check above ran before the
@@ -248,6 +257,18 @@ export async function POST(
       if (await wouldRemoveLastFullAdmin(tx, member.id)) {
         throw new AdminAccountGuardError(LAST_FULL_ADMIN_GUARD_MESSAGE);
       }
+
+      // #1756: anonymisation deactivates the member and unlinks their guest
+      // rows, breaking the double-bed sharing precondition. Sweep their future
+      // shared-double placements now, while bookingGuest.memberId (nulled in
+      // step 5 below) still identifies them. Second-occupant appearances on
+      // OTHER members' bookings survive the own-booking cancellation above, so
+      // this is not vacuously empty.
+      sweptShares = await sweepFuturePartnerSharedAllocations({
+        memberId: member.id,
+        reason: "member_deactivated",
+        db: tx,
+      });
 
       // 3. Anonymise the member record
       await tx.member.update({
@@ -305,6 +326,23 @@ export async function POST(
         },
       });
     });
+
+    if (sweptShares.length > 0) {
+      // Post-commit, fire-and-forget (#1756). Uses the pre-anonymisation name
+      // captured above — admins keep an actionable reference, consistent with
+      // the audit trail this route already retains.
+      sendAdminPartnerShareSweptAlert({
+        memberName: `${member.firstName} ${member.lastName}`.trim(),
+        partnerName: partnerShareSweepCounterpartNames(sweptShares, member.id),
+        reason: describePartnerSharedSweepReason("member_deactivated"),
+        nights: partnerShareSweepNights(sweptShares),
+      }).catch((alertErr) => {
+        logger.error(
+          { err: alertErr, memberId: member.id, sweptCount: sweptShares.length },
+          "Failed to send partner share sweep alert"
+        );
+      });
+    }
 
     logAudit({
       action: "member.deletion_approved",

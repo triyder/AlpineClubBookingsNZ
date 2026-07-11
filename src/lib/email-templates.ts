@@ -766,6 +766,36 @@ export function adminMinorsReviewRequiredTemplate(data: {
   `);
 }
 
+// ---- #1756: Admin Alert — stale partner-share swept from the board ----
+// A partner link dissolved (or a member was deactivated / re-tiered off ADULT)
+// while the pair still held future shared double-bed placements; the second
+// occupant was returned to the awaiting-allocation queue and the board may
+// need re-planning.
+
+export function adminPartnerShareSweptTemplate(data: {
+  memberName: string;
+  partnerName: string;
+  reason: string;
+  nights: Date[];
+}): string {
+  return layout(`
+    ${heading("Shared Double-Bed Placements Removed")}
+    ${paragraph(
+      "A partner pair no longer qualifies for double-bed sharing, so their future shared placements were removed. The affected guest nights are back in the awaiting-allocation queue and may need re-planning on the allocation board.",
+    )}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Partner", value: escapeHtml(data.partnerName) },
+      { label: "Reason", value: escapeHtml(data.reason) },
+      {
+        label: `Removed night${data.nights.length === 1 ? "" : "s"}`,
+        value: data.nights.map((night) => formatNZDate(night)).join(", "),
+      },
+    ])}
+    ${button("Review Bed Allocation", BASE_URL + "/admin/bed-allocation")}
+  `);
+}
+
 // ---- F20 / #1377: Admin Alert — booking-request owner substitution ----
 // A held owner failed re-validation at conversion, so a fresh non-login contact
 // was minted and the invoice will bill THAT contact instead of the intended
