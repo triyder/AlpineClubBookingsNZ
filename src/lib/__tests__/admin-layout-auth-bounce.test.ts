@@ -18,6 +18,12 @@ vi.mock("@/lib/auth-diagnostics", () => ({
   recordAuthBounce: (input: unknown) => mockRecordAuthBounce(input),
 }));
 
+// The layout now loads the app fonts (#1801); stub the loader so importing it
+// stays light and does not pull in next/font/google under vitest.
+vi.mock("@/lib/club-theme-fonts", () => ({
+  clubThemeFontVariableClassName: "font-vars",
+}));
+
 vi.mock("next/navigation", () => ({
   redirect: (path: string) => mockRedirect(path),
 }));

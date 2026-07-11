@@ -10,6 +10,7 @@ import { NavBar } from "@/components/nav-bar";
 import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { clubIdentity } from "@/config/club-identity";
+import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { isFullAdmin } from "@/lib/access-roles";
 import {
@@ -125,7 +126,15 @@ export default async function AdminLayout({
 
   return (
     <AppProviders clubIdentity={liveClubIdentity} nonce={nonce}>
-      <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
+      <div
+        className={`${clubThemeFontVariableClassName} app-theme-scope min-h-screen flex flex-col bg-background text-foreground`}
+      >
+        <a
+          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:ring-2 focus:ring-ring"
+          href="#main-content"
+        >
+          Skip to main content
+        </a>
         <NavBar user={user} features={effectiveModules} />
         <div className="flex flex-1">
           <AdminSidebar
@@ -135,7 +144,10 @@ export default async function AdminLayout({
             hutLeaderLabel={liveClubIdentity.hutLeaderLabel}
           />
           <div className="flex flex-1 flex-col md:overflow-hidden">
-            <main className="flex-1 overflow-y-auto p-6 pb-24 print:overflow-visible print:p-0 md:p-8 md:pb-28">
+            <main
+              id="main-content"
+              className="flex-1 overflow-y-auto p-6 pb-24 print:overflow-visible print:p-0 md:p-8 md:pb-28"
+            >
               <div className="mb-4 flex justify-end print:hidden">
                 <ContextualHelpButton scope="admin" />
               </div>

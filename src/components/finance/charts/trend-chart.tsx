@@ -55,7 +55,9 @@ export function TrendChart({
 }: TrendChartProps) {
   if (data.length === 0 || series.length === 0) {
     return (
-      <p className="py-8 text-center text-sm text-slate-500">{emptyMessage}</p>
+      <p className="py-8 text-center text-sm text-muted-foreground">
+        {emptyMessage}
+      </p>
     );
   }
 
@@ -76,12 +78,12 @@ export function TrendChart({
     }
 
     return (
-      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm">
-        <p className="mb-1 font-semibold text-slate-900">{label}</p>
+      <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-sm">
+        <p className="mb-1 font-semibold text-popover-foreground">{label}</p>
         {payload.map((entry) => {
           const matched = seriesByKey.get(String(entry.dataKey));
           return (
-            <p key={String(entry.dataKey)} className="text-slate-600">
+            <p key={String(entry.dataKey)} className="text-muted-foreground">
               <span style={{ color: entry.color ?? matched?.color }}>●</span>{" "}
               {matched?.name ?? entry.name}:{" "}
               {formatFinanceValue(
@@ -97,6 +99,10 @@ export function TrendChart({
 
   const sharedAxes = (
     <>
+      {/* Grid/axis/tick colours are themed in globals.css via `.finance-trend-chart
+          .recharts-*` selectors — CSS var() does not resolve inside SVG
+          presentation attributes, so these literals are only the light-mode
+          fallback and the CSS rules override them (incl. dark mode). */}
       <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
       <XAxis
         dataKey={xKey}
@@ -118,7 +124,10 @@ export function TrendChart({
   );
 
   return (
-    <div className="h-[300px] print:h-[220px]" style={{ height }}>
+    <div
+      className="finance-trend-chart h-[300px] print:h-[220px]"
+      style={{ height }}
+    >
       <ResponsiveContainer width="100%" height="100%">
         {variant === "bar" ? (
           <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>

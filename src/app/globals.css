@@ -42,6 +42,12 @@
   --color-brand-mist: var(--brand-mist);
   --color-brand-snow: var(--brand-snow);
   --color-brand-safety: var(--brand-safety);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-muted: var(--success-muted);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-muted: var(--warning-muted);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -94,6 +100,18 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  /* Semantic status tokens (#1801). `--success` / `--warning` are the accessible
+     text/accent colours; `-muted` are the subtle tinted backgrounds; `-foreground`
+     is text ON the solid accent. Light values equal the previous badge Tailwind
+     pairings (green-100/800, yellow-100/800) so light mode is unchanged; the `.dark`
+     block re-tints them to match the dark colored-callout remap. These are NEW,
+     additive tokens — they do NOT alter the default palette (a separate #1807). */
+  --success: #166534;
+  --success-foreground: #ffffff;
+  --success-muted: #dcfce7;
+  --warning: #854d0e;
+  --warning-foreground: #ffffff;
+  --warning-muted: #fef9c3;
 }
 
 .dark {
@@ -138,6 +156,17 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.55 0 0);
   --sidebar-ring: oklch(0.55 0 0);
+  /* Semantic status tokens (#1801) — dark re-tint mirrors the colored-callout
+     remap tones (green hue 150, amber hue 75): muted bg oklch(0.33 0.05 h) and
+     accent/text oklch(0.84 0.11 h), which clears >= 5.8:1 text-on-muted (the same
+     ratio documented for the family-text remap below); solid-accent foreground is
+     near-black. */
+  --success: oklch(0.84 0.11 150);
+  --success-foreground: oklch(0.2 0 0);
+  --success-muted: oklch(0.33 0.05 150);
+  --warning: oklch(0.84 0.11 75);
+  --warning-foreground: oklch(0.2 0 0);
+  --warning-muted: oklch(0.33 0.05 75);
 }
 
 .website-theme {
@@ -247,6 +276,22 @@
   }
 }
 
+/* A11y baseline (#1801): honour the OS "reduce motion" preference by collapsing
+   animations/transitions to near-instant and disabling smooth scroll for users
+   who opt out. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @layer components {
   .app-brand-mark {
     @apply inline-flex items-center justify-center rounded-full bg-brand-gold/20 text-brand-charcoal dark:bg-brand-gold/15 dark:text-brand-gold;
@@ -350,8 +395,65 @@
 }
 
 .app-theme-scope {
+  /* App shells (authenticated + admin) load --font-theme-inter /
+     --font-theme-league-spartan via clubThemeFontVariableClassName on the scope
+     wrapper, giving Inter body + League Spartan headings (#1801). Where those vars
+     are absent (public/finance/lodge scopes, and portalled dialogs mounted at
+     <body>), --font-sans falls back to the system stack, so their font rendering
+     is unchanged. Mirrors how .website-theme wires --font-sans / --font-heading. */
+  --font-sans: var(
+    --font-theme-inter,
+    ui-sans-serif,
+    system-ui,
+    sans-serif,
+    "Apple Color Emoji",
+    "Segoe UI Emoji"
+  );
+  --font-heading: var(--font-theme-league-spartan, var(--font-sans));
   background: var(--background);
   color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+/* App headings pick up --font-heading (League Spartan when loaded). Specificity is
+   (0,1,1); the earlier .website-theme heading rule is (0,2,0), so a website-themed
+   subtree nested in an app scope (e.g. the site-style preview) keeps its own
+   heading font regardless of source order. */
+.app-theme-scope :is(h1, h2, h3, h4) {
+  font-family: var(--font-heading);
+}
+
+/* Tabular figures for aligned numeric/data contexts (#1801): tables get them by
+   default, and .tabular-figures opts any money/count/date cell in. */
+.app-theme-scope table {
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-figures {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Recharts draws gridlines/axes/ticks as SVG presentation attributes, where CSS
+   var() does not resolve — so the finance TrendChart's structural lines and tick
+   labels are themed here with real CSS rules that follow the light/dark tokens
+   (#1801). CSS declarations override the component's literal fallback attrs. Kept
+   scoped to .finance-trend-chart to match the single named file; a broader
+   `.app-theme-scope .recharts-*` sweep for every chart is a follow-up. */
+.finance-trend-chart .recharts-cartesian-grid line {
+  stroke: var(--border);
+}
+
+.finance-trend-chart
+  :is(.recharts-cartesian-axis-line, .recharts-cartesian-axis-tick-line) {
+  stroke: var(--border);
+}
+
+.finance-trend-chart
+  :is(
+    .recharts-cartesian-axis-tick-value,
+    .recharts-cartesian-axis-tick-value tspan
+  ) {
+  fill: var(--muted-foreground);
 }
 
 /* White + neutral -50/-100/-200 surfaces are remapped to dark tokens so they

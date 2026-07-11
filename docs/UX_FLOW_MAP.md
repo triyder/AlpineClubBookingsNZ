@@ -69,6 +69,34 @@ every screen:
 New code follows this rule; existing inline success panels are converted
 opportunistically when a file is already being touched.
 
+## Design Foundation — Restrained Alpine (#1800)
+
+The authenticated + admin app shells carry the club identity, not just stock
+shadcn neutral (epic #1800). The foundation (#1801) establishes:
+
+- **Type:** Inter (body) + League Spartan (headings) load on the app-scope
+  wrapper in `(authenticated)`/`(admin)` layouts via
+  `clubThemeFontVariableClassName`; `.app-theme-scope` wires
+  `--font-sans`/`--font-heading` and applies League Spartan to `h1`–`h4`.
+  Public/website keep their own fonts; finance/lodge intentionally stay on the
+  system stack for now (they don't load the font vars, so they fall back
+  cleanly).
+- **Semantic status tokens:** `--success`/`--success-foreground`/
+  `--success-muted` and `--warning`/… (plus their `--color-*` registrations in
+  `@theme inline`) are defined for light **and** dark and clear WCAG AA. Use
+  `bg-success-muted text-success` / `bg-warning-muted text-warning` (or the
+  solid `bg-success text-success-foreground`) instead of hardcoded
+  green/yellow Tailwind classes so badges/chips adapt to dark mode.
+- **Tabular figures:** numeric/data cells inside `.app-theme-scope table` get
+  `tabular-nums` automatically; opt any other money/count/date node in with the
+  `.tabular-figures` class.
+- **A11y baseline:** a global `prefers-reduced-motion: reduce` guard collapses
+  animation/transition duration + delay, and both app shells have a
+  skip-to-content link targeting `#main-content`.
+
+Later epic issues build on these primitives; do not re-introduce hardcoded
+status hex, `bg-white`, or `text-slate-*` on app surfaces.
+
 ## Review Prompts
 
 For every journey, verify the next action, failure state, pending state,

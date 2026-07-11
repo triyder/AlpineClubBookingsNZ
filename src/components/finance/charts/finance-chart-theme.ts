@@ -1,6 +1,12 @@
 import { formatDollarsDisplay } from "@/lib/finance-format";
 
-/** Ordered palette for mix/breakdown charts (pies, stacked bars). */
+/**
+ * Ordered palette for mix/breakdown charts (pies, stacked bars). Intentionally
+ * kept as literal brand hex rather than CSS-variable tokens (#1801): these feed
+ * Recharts `fill`/`stroke` props as concrete categorical colours, and the eight
+ * saturated brand tones stay legible in both light and dark mode. Chart neutrals
+ * (axis/grid/tooltip) ARE tokenised in trend-chart.tsx so they follow the theme.
+ */
 export const FINANCE_MIX_COLORS = [
   "#ffcb05",
   "#ff7c12",
