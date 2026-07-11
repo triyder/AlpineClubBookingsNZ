@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ExternalLink, UserMinus } from "lucide-react";
@@ -135,7 +136,7 @@ export default function BookPage() {
 
       {/* Subscription warning banner */}
       {!subscriptionLoading && subscriptionUnpaid && (
-        <div className="rounded-md bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
+        <Alert variant="warning">
           <p>
             <strong>Subscription unpaid:</strong> Your subscription for the{" "}
             {subscriptionStatus!.seasonDisplay} season is unpaid.{" "}
@@ -169,7 +170,7 @@ export default function BookPage() {
               Invoice reference: <strong>{subscriptionInvoiceNumber}</strong> — check your email from Xero for the payment link.
             </p>
           ) : null}
-        </div>
+        </Alert>
       )}
 
       {error && (

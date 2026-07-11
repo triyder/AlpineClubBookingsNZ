@@ -4,6 +4,8 @@ import Link from "next/link"
 import { ArrowDown, ArrowUp, ArrowUpDown, ExternalLink, Users } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { EmptyState } from "@/components/ui/empty-state"
+import { Spinner } from "@/components/ui/spinner"
 import {
   Table,
   TableBody,
@@ -108,20 +110,27 @@ export function MemberTable({
 }: MemberTableProps) {
   if (loading) {
     return (
-      <div className="py-12 text-center">
-        <p className="text-sm text-slate-500">Loading members...</p>
+      <div className="flex justify-center py-12">
+        <Spinner label="Loading members…" />
       </div>
     )
   }
 
   if (members.length === 0) {
     return (
-      <div className="py-12 text-center">
-        <Users className="mx-auto h-10 w-10 text-slate-300 mb-3" />
-        <p className="text-sm font-medium text-slate-500">
-          {debouncedSearch ? `No members found matching "${debouncedSearch}"` : "No members yet"}
-        </p>
-      </div>
+      <EmptyState
+        icon={Users}
+        title={
+          debouncedSearch
+            ? `No members match "${debouncedSearch}"`
+            : "No members yet"
+        }
+        description={
+          debouncedSearch
+            ? "Try a different name or email, or clear the search to see everyone."
+            : "Members you add will appear here."
+        }
+      />
     )
   }
 

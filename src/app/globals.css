@@ -48,6 +48,9 @@
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
   --color-warning-muted: var(--warning-muted);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-muted: var(--info-muted);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -112,6 +115,12 @@
   --warning: #854d0e;
   --warning-foreground: #ffffff;
   --warning-muted: #fef9c3;
+  /* --info completes the status trio (#1802). Light values are the blue-800 /
+     blue-100 pairing (text-on-muted contrast validated >= 4.5:1); the `.dark`
+     block re-tints to the same L ramp as success/warning at a cool blue hue. */
+  --info: #1e40af;
+  --info-foreground: #ffffff;
+  --info-muted: #dbeafe;
 }
 
 .dark {
@@ -167,6 +176,9 @@
   --warning: oklch(0.84 0.11 75);
   --warning-foreground: oklch(0.2 0 0);
   --warning-muted: oklch(0.33 0.05 75);
+  --info: oklch(0.84 0.11 250);
+  --info-foreground: oklch(0.2 0 0);
+  --info-muted: oklch(0.33 0.05 250);
 }
 
 .website-theme {

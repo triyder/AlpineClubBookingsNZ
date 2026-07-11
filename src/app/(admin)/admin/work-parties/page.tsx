@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -9,6 +10,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -369,13 +372,16 @@ export default function AdminWorkPartiesPage() {
       )}
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading work party events...</p>
+        <div className="flex justify-center py-8">
+          <Spinner label="Loading work party events…" />
+        </div>
       ) : events.length === 0 ? (
         <Card>
-          <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            No work party events yet. Create one to offer an automatic working
-            bee discount.
-          </CardContent>
+          <EmptyState
+            icon={CalendarDays}
+            title="No work party events yet"
+            description="Create one to offer an automatic working bee discount on nights in the window."
+          />
         </Card>
       ) : (
         <div className="space-y-4">
