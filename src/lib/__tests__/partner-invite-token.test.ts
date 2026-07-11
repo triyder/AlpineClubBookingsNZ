@@ -54,7 +54,11 @@ function tokenRow(overrides: Record<string, unknown> = {}) {
     familyGroupId: "fg1",
     invitedEmail: "ghost@test.com",
     createdById: "inviter1",
-    expiresAt: new Date(NOW.getTime() + 24 * 60 * 60 * 1000),
+    // Relative to the real clock, not the fixed NOW: getPartnerInviteTokenForClaim
+    // (and claims that don't inject `now`) compare expiry against new Date(),
+    // so an absolute expiry becomes a time bomb the day it passes (this file
+    // went red repo-wide at 2026-07-11T00:00Z with the old NOW+24h value).
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     confirmedAt: null,
     familyGroup: { id: "fg1", name: "Smith Family", _count: { memberships: 1 } },
     createdBy: { id: "inviter1", email: "alice@test.com" },

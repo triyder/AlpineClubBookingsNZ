@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useDebouncedMemberSearch } from "@/hooks/use-debounced-member-search";
 import type { EmailInheritanceSearchResult } from "../_types";
 
 interface UseInheritEmailSearchParams {
@@ -10,106 +11,51 @@ interface UseInheritEmailSearchParams {
 }
 
 // Debounced search for an eligible primary adult to receive a no-login
-// member's notifications. Extracted verbatim from the retired use-member-edit
-// hook; `enabled` replaces its `editOpen && !form.canLogin` gate.
+// member's notifications. The debounce/fetch/stale-guard mechanics live in
+// the shared useDebouncedMemberSearch (#1758); this hook keeps the
+// inherit-email specifics — the eligibility params, the selected-source
+// bookkeeping, and filtering the current selection out of the results.
 export function useInheritEmailSearch({
   memberId,
   enabled,
 }: UseInheritEmailSearchParams) {
   const [search, setSearch] = useState("");
-  const [results, setResults] = useState<EmailInheritanceSearchResult[]>([]);
-  const [error, setError] = useState("");
-  const [searching, setSearching] = useState(false);
   const [selected, setSelected] =
     useState<EmailInheritanceSearchResult | null>(null);
 
-  useEffect(() => {
-    if (!enabled || !memberId) {
-      setResults([]);
-      setError("");
-      setSearching(false);
-      return;
-    }
+  const {
+    results: rawResults,
+    searching,
+    error,
+  } = useDebouncedMemberSearch<EmailInheritanceSearchResult>({
+    query: search,
+    enabled: enabled && Boolean(memberId),
+    params: {
+      pageSize: "8",
+      inheritEmailEligible: "true",
+      excludeId: memberId ?? "",
+    },
+    errorFallback: "Failed to search eligible adult members",
+  });
 
-    const query = search.trim();
-    if (query.length < 2) {
-      setResults([]);
-      setError("");
-      setSearching(false);
-      return;
-    }
+  const results = useMemo(
+    () =>
+      rawResults
+        .map((candidate) => ({
+          id: candidate.id,
+          firstName: candidate.firstName,
+          lastName: candidate.lastName,
+          email: candidate.email,
+          active: candidate.active,
+        }))
+        .filter((candidate) => candidate.id !== selected?.id),
+    [rawResults, selected?.id],
+  );
 
-    let cancelled = false;
-    setSearching(true);
-    setError("");
-
-    const timer = setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({
-          q: query,
-          pageSize: "8",
-          inheritEmailEligible: "true",
-          excludeId: memberId,
-        });
-        const res = await fetch(`/api/admin/members?${params.toString()}`);
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          throw new Error(
-            data.error || "Failed to search eligible adult members",
-          );
-        }
-
-        if (!cancelled) {
-          setResults(
-            (data.members ?? [])
-              .map(
-                (candidate: {
-                  id: string;
-                  firstName: string;
-                  lastName: string;
-                  email: string;
-                  active: boolean;
-                }) => ({
-                  id: candidate.id,
-                  firstName: candidate.firstName,
-                  lastName: candidate.lastName,
-                  email: candidate.email,
-                  active: candidate.active,
-                }),
-              )
-              .filter(
-                (candidate: EmailInheritanceSearchResult) =>
-                  candidate.id !== selected?.id,
-              ),
-          );
-        }
-      } catch (searchError) {
-        if (!cancelled) {
-          setResults([]);
-          setError(
-            searchError instanceof Error
-              ? searchError.message
-              : "Failed to search eligible adult members",
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setSearching(false);
-        }
-      }
-    }, 300);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [enabled, memberId, search, selected?.id]);
-
+  // Clearing the query is all it takes: the shared hook derives empty
+  // results and a blank error for an inactive query in the same render.
   const resetSearch = useCallback(() => {
     setSearch("");
-    setResults([]);
-    setError("");
   }, []);
 
   const select = useCallback(

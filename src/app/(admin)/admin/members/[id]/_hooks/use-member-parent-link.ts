@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { toast } from "sonner";
 import { shouldDefaultLinkSideEffects } from "@/lib/admin-member-detail-helpers";
+import { useDebouncedMemberSearch } from "@/hooks/use-debounced-member-search";
 import type { LinkParentSearchResult, MemberDetail } from "../_types";
 
 interface UseMemberParentLinkParams {
@@ -22,10 +23,6 @@ export function useMemberParentLink({
 
   const [parentLinkOpen, setParentLinkOpen] = useState(false);
   const [parentLinkSearch, setParentLinkSearch] = useState("");
-  const [parentLinkSearchResults, setParentLinkSearchResults] = useState<
-    LinkParentSearchResult[]
-  >([]);
-  const [parentLinkSearching, setParentLinkSearching] = useState(false);
   const [selectedLinkParent, setSelectedLinkParent] =
     useState<LinkParentSearchResult | null>(null);
   const [parentLinkInheritEmail, setParentLinkInheritEmail] = useState(false);
@@ -38,96 +35,43 @@ export function useMemberParentLink({
   const [parentLinkSaving, setParentLinkSaving] = useState(false);
   const [parentLinkError, setParentLinkError] = useState("");
 
-  useEffect(() => {
-    if (
-      !parentLinkOpen ||
-      !memberId ||
-      (member?.parentLinks?.length ?? 0) >= 2
-    ) {
-      setParentLinkSearchResults([]);
-      setParentLinkSearching(false);
-      return;
-    }
+  const {
+    results: rawParentResults,
+    searching: parentLinkSearching,
+    error: parentSearchError,
+  } = useDebouncedMemberSearch<LinkParentSearchResult>({
+    query: parentLinkSearch,
+    enabled:
+      parentLinkOpen &&
+      Boolean(memberId) &&
+      (member?.parentLinks?.length ?? 0) < 2,
+    params: { pageSize: "8", parentLinkEligibleFor: memberId ?? "" },
+    errorFallback: "Failed to search parent members",
+  });
 
-    const query = parentLinkSearch.trim();
-    if (query.length < 2) {
-      setParentLinkSearchResults([]);
-      setParentLinkSearching(false);
-      return;
-    }
+  const parentLinkSearchResults = useMemo(
+    () =>
+      rawParentResults
+        .map((candidate) => ({
+          id: candidate.id,
+          firstName: candidate.firstName,
+          lastName: candidate.lastName,
+          email: candidate.email,
+          ageTier: candidate.ageTier,
+          active: candidate.active,
+          canLogin: candidate.canLogin,
+          dateOfBirth: candidate.dateOfBirth,
+          familyGroups: candidate.familyGroups ?? [],
+        }))
+        .filter((candidate) => candidate.id !== selectedLinkParent?.id),
+    [rawParentResults, selectedLinkParent?.id],
+  );
 
-    let cancelled = false;
-    setParentLinkSearching(true);
-    setParentLinkError("");
-
-    const timer = setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({
-          q: query,
-          pageSize: "8",
-          parentLinkEligibleFor: memberId,
-        });
-        const res = await fetch(`/api/admin/members?${params.toString()}`);
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          throw new Error(data.error || "Failed to search parent members");
-        }
-
-        if (!cancelled) {
-          setParentLinkSearchResults(
-            (data.members ?? [])
-              .map((candidate: LinkParentSearchResult) => ({
-                id: candidate.id,
-                firstName: candidate.firstName,
-                lastName: candidate.lastName,
-                email: candidate.email,
-                ageTier: candidate.ageTier,
-                active: candidate.active,
-                canLogin: candidate.canLogin,
-                dateOfBirth: candidate.dateOfBirth,
-                familyGroups: candidate.familyGroups ?? [],
-              }))
-              .filter(
-                (candidate: LinkParentSearchResult) =>
-                  candidate.id !== selectedLinkParent?.id,
-              ),
-          );
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setParentLinkSearchResults([]);
-          setParentLinkError(
-            error instanceof Error
-              ? error.message
-              : "Failed to search parent members",
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setParentLinkSearching(false);
-        }
-      }
-    }, 300);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [
-    member?.parentLinks?.length,
-    memberId,
-    parentLinkOpen,
-    parentLinkSearch,
-    selectedLinkParent?.id,
-  ]);
 
   const openParentLinkDialog = () => {
     if (!member) return;
     const defaultSideEffects = shouldDefaultLinkSideEffects(member.ageTier);
     setParentLinkSearch("");
-    setParentLinkSearchResults([]);
-    setParentLinkSearching(false);
     setSelectedLinkParent(null);
     setParentLinkInheritEmail(defaultSideEffects);
     setParentLinkNotificationParentId("");
@@ -148,7 +92,6 @@ export function useMemberParentLink({
       candidate.familyGroups.map((group) => group.id),
     );
     setParentLinkSearch("");
-    setParentLinkSearchResults([]);
     setParentLinkError("");
   };
 
@@ -161,7 +104,6 @@ export function useMemberParentLink({
     setParentLinkDisableLogin(defaultSideEffects);
     setParentLinkFamilyGroupIds([]);
     setParentLinkSearch("");
-    setParentLinkSearchResults([]);
     setParentLinkError("");
   };
 
@@ -233,7 +175,10 @@ export function useMemberParentLink({
     parentLinkDisableLogin,
     parentLinkFamilyGroupIds,
     parentLinkSaving,
-    parentLinkError,
+    // Search and submit errors shared one state before the shared-hook split
+    // (#1758). Submit errors take precedence; a search failure surfaces once
+    // the submit error clears (the page's onChangeSearch clears it per edit).
+    parentLinkError: parentLinkError || parentSearchError,
     setParentLinkOpen,
     setParentLinkSearch,
     setSelectedLinkParent,

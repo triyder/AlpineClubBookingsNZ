@@ -11,14 +11,13 @@ const NO_RESULTS: never[] = [];
 /**
  * Debounced admin member search against GET /api/admin/members — the shared
  * implementation of the type-2-chars-wait-300ms-then-fetch pattern the admin
- * member area kept re-growing (#1754; member-picker, family-group-editor, and
- * the member-detail Partner card use it — the member-detail `_hooks`
- * inherit-email and parent-link searches are remaining candidates). The
- * trimmed query must reach 2 characters (and `enabled` must hold) before
- * anything is fetched; a pending fetch is discarded when the query changes or
- * the consumer unmounts, so stale responses can never overwrite newer ones. A
- * failed search clears the results and surfaces its message via `error` (""
- * while healthy).
+ * member area kept re-growing (#1754/#1758; member-picker,
+ * family-group-editor, the member-detail Partner card, and the member-detail
+ * inherit-email and parent-link searches all use it). The trimmed query must
+ * reach 2 characters (and `enabled` must hold) before anything is fetched; a
+ * pending fetch is discarded when the query changes or the consumer unmounts,
+ * so stale responses can never overwrite newer ones. A failed search clears
+ * the results and surfaces its message via `error` ("" while healthy).
  *
  * `TMember` is the row shape the caller expects from the endpoint's `members`
  * array for its `params` (e.g. include `role`/`accessRoles` when the caller
@@ -33,8 +32,10 @@ export function useDebouncedMemberSearch<TMember>(options: {
   enabled?: boolean;
   /** Called with each successful, non-stale response's results. */
   onResults?: (results: TMember[]) => void;
+  /** `error` message when a failure carries no message of its own. */
+  errorFallback?: string;
 }): { results: TMember[]; searching: boolean; error: string } {
-  const { query, enabled = true } = options;
+  const { query, enabled = true, errorFallback = "Failed to search members" } = options;
   const [results, setResults] = useState<TMember[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState("");
@@ -70,7 +71,7 @@ export function useDebouncedMemberSearch<TMember>(options: {
         const res = await fetch(`/api/admin/members?${paramsKey}`);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          throw new Error(data.error || "Failed to search members");
+          throw new Error(data.error || errorFallback);
         }
         if (!cancelled) {
           const members = (data.members ?? []) as TMember[];
@@ -81,7 +82,7 @@ export function useDebouncedMemberSearch<TMember>(options: {
       } catch (err) {
         if (!cancelled) {
           setResults([]);
-          setError(err instanceof Error ? err.message : "Failed to search members");
+          setError(err instanceof Error ? err.message : errorFallback);
         }
       } finally {
         if (!cancelled) {
@@ -94,7 +95,7 @@ export function useDebouncedMemberSearch<TMember>(options: {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [active, paramsKey]);
+  }, [active, paramsKey, errorFallback]);
 
   // Derive the inactive state at render time (the effect's own clear only
   // lands after paint): clearing the query — e.g. a picker resetting itself
