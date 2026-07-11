@@ -68,11 +68,7 @@ function tokenRow(overrides: Record<string, unknown> = {}) {
     familyGroupId: "fg1",
     invitedEmail: "ghost@test.com",
     createdById: "inviter1",
-    // Relative to the real clock, not the fixed NOW: getPartnerInviteTokenForClaim
-    // (and claims that don't inject `now`) compare expiry against new Date(),
-    // so an absolute expiry becomes a time bomb the day it passes (this file
-    // went red repo-wide at 2026-07-11T00:00Z with the old NOW+24h value).
-    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    expiresAt: new Date(NOW.getTime() + 24 * 60 * 60 * 1000),
     confirmedAt: null,
     familyGroup: { id: "fg1", name: "Smith Family", _count: { memberships: 1 } },
     createdBy: { id: "inviter1", email: "alice@test.com" },
@@ -144,7 +140,7 @@ describe("getPartnerInviteTokenForClaim", () => {
 
   it("returns expired for a past expiry", async () => {
     vi.mocked(prisma.partnerInviteToken.findUnique).mockResolvedValue(
-      tokenRow({ expiresAt: new Date(Date.now() - 1000) }) as never
+      tokenRow({ expiresAt: new Date(NOW.getTime() - 1000) }) as never
     );
     const view = await getPartnerInviteTokenForClaim(RAW_TOKEN);
     expect(view.status).toBe("expired");
