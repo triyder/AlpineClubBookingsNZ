@@ -361,6 +361,10 @@ describe("createConfirmedBooking retroactive behaviour (#1695)", () => {
     expect(auditMetadata("booking.created_on_behalf")).toMatchObject({
       notifyMember: true,
     });
+    // #1771: an in-capacity create never persists the override columns.
+    const createData = h.bookingCreate.mock.calls[0][0].data;
+    expect(createData).not.toHaveProperty("capacityOverriddenAt");
+    expect(createData).not.toHaveProperty("capacityOverriddenByMemberId");
   });
 
   it("allows a past check-in for the internal inherited-stay marker without retroactive semantics (group-join / waitlist-confirm pin)", async () => {
@@ -452,6 +456,10 @@ describe("createConfirmedBooking forward-dated on-behalf over-capacity (#1767)",
     expect(auditMetadata("booking.created_on_behalf")).toMatchObject({
       capacityOverridden: true,
     });
+    // #1771: the override is also persisted on the booking with the acting admin.
+    const createData = h.bookingCreate.mock.calls[0][0].data;
+    expect(createData.capacityOverriddenAt).toBeInstanceOf(Date);
+    expect(createData.capacityOverriddenByMemberId).toBe("admin-1");
   });
 
   it("keeps the hard capacity block for a member self-create even when the flag is smuggled in (members can never overbook)", async () => {
@@ -471,7 +479,11 @@ describe("createConfirmedBooking forward-dated on-behalf over-capacity (#1767)",
     expect(h.bookingCreate).not.toHaveBeenCalled();
   });
 
-  it("keeps the hard block for a non-member hold-eligible (PENDING) party — v1 carve-out, the hold cron would silently bump a confirmed overbook", async () => {
+  it("warn-and-confirms a non-member hold-eligible (PENDING) party over capacity and stamps the persisted override — #1771 retired the v1 carve-out", async () => {
+    // The v1 carve-out (#1767) hard-blocked this because cron-confirm-pending
+    // would silently bump the confirmed overbook at the hold window. #1771
+    // persists the override on the booking and teaches that cron to honour it,
+    // so the hold-eligible PENDING overbook is now admitted and marked.
     overCapacity();
 
     const outcome = await createConfirmedBooking(
@@ -482,8 +494,12 @@ describe("createConfirmedBooking forward-dated on-behalf over-capacity (#1767)",
       }),
     );
 
-    expect(outcome.type).toBe("capacityExceeded");
-    expect(h.bookingCreate).not.toHaveBeenCalled();
+    expect(outcome.type).toBe("created");
+    expect(h.bookingCreate).toHaveBeenCalledTimes(1);
+    // The persisted override is stamped on the create with the acting admin.
+    const createData = h.bookingCreate.mock.calls[0][0].data;
+    expect(createData.capacityOverriddenAt).toBeInstanceOf(Date);
+    expect(createData.capacityOverriddenByMemberId).toBe("admin-1");
   });
 
   it("returns the capacityExceeded outcome under waitlistIntent so the route's waitlist fallback still runs", async () => {

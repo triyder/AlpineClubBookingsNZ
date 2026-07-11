@@ -237,12 +237,53 @@ describe("createConfirmedBooking split bookings (#738)", () => {
     expect((child.guests as { create: Array<{ isMember: boolean }> }).create).toHaveLength(1);
     expect((child.guests as { create: Array<{ isMember: boolean }> }).create[0].isMember).toBe(false);
     expect(child.nonMemberHoldUntil).toBeInstanceOf(Date);
+    // #1771: an in-capacity split stamps no override on either row.
+    expect(primary).not.toHaveProperty("capacityOverriddenAt");
+    expect(child).not.toHaveProperty("capacityOverriddenAt");
 
     // The returned booking is the member (primary) booking, so the booker is
     // sent to pay for the held portion.
     if (outcome.type === "created") {
       expect(outcome.booking.id).toBe("booking-1");
     }
+  });
+
+  it("stamps the persisted capacity override on BOTH the member parent and the non-member child of an over-capacity mixed party (#1771)", async () => {
+    // Adversarial-review gap (#1771): when the MEMBER guests alone overflow, an
+    // on-behalf overbook admits the whole party above the ceiling behind the
+    // admin's confirm. The stamped member parent now survives payment; without
+    // the same stamp on the provisional non-member child, cron-confirm-pending
+    // re-checks the child at the hold window, finds the lodge over-full (from
+    // the parent's own overbook), and bumps it days later — a silent
+    // partial-drop against an explicit admin overbook. Both rows must carry it.
+    h.checkCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      nightDetails: [{ date: checkIn, availableBeds: -2 }],
+    });
+
+    const outcome = await createConfirmedBooking(
+      baseInput([guest(true, "Alice"), guest(false, "Bob")], {
+        isOnBehalf: true,
+        sessionUserId: "admin-1",
+        confirmOverCapacity: true,
+      })
+    );
+
+    expect(outcome.type).toBe("created");
+    const payloads = createPayloads();
+    expect(payloads).toHaveLength(2);
+    const [parent, child] = payloads;
+
+    // Parent (member) stamped with the acting admin.
+    expect(parent.hasNonMembers).toBe(false);
+    expect(parent.capacityOverriddenAt).toBeInstanceOf(Date);
+    expect(parent.capacityOverriddenByMemberId).toBe("admin-1");
+
+    // Child (provisional non-member) inherits the same override.
+    expect(child.parentBookingId).toBe("booking-1");
+    expect(child.hasNonMembers).toBe(true);
+    expect(child.capacityOverriddenAt).toBeInstanceOf(Date);
+    expect(child.capacityOverriddenByMemberId).toBe("admin-1");
   });
 
   it("keeps a pure-member party as a single held booking", async () => {

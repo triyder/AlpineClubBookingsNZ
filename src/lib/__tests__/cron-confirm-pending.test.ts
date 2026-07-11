@@ -511,6 +511,44 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockSendBumpedEmail).toHaveBeenCalled();
   });
 
+  // #1771 — a hold-eligible PENDING booking deliberately admitted over the
+  // ceiling by an admin carries a persisted capacityOverriddenAt marker. The
+  // hold-window re-check must NOT bump it: it falls through and confirms
+  // (here a $0 booking straight to PAID). This is the read-site that lets
+  // booking-create retire its PENDING carve-out.
+  it("confirms an over-capacity PENDING booking with a persisted capacity override instead of bumping it (#1771)", async () => {
+    const booking = {
+      ...makePendingBooking("b1", { finalPriceCents: 0 }),
+      capacityOverriddenAt: new Date("2026-06-01"),
+      capacityOverriddenByMemberId: "admin-1",
+    };
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      minAvailable: 0,
+      nightDetails: [],
+    });
+    mockBookingUpdateMany.mockResolvedValue({ count: 1 });
+    mockBookingUpdate.mockResolvedValue({});
+
+    const result = await confirmPendingBookings();
+
+    // Confirmed, not bumped.
+    expect(result.bumpedBookingIds).not.toContain("b1");
+    expect(result.confirmedBookingIds).toEqual(["b1"]);
+    // The $0 booking is claimed straight to PAID; it is never CANCELLED.
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "b1", status: "PENDING" },
+      data: { status: "PAID", nonMemberHoldUntil: null },
+    });
+    expect(mockBookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "CANCELLED" }),
+      })
+    );
+    expect(mockSendBumpedEmail).not.toHaveBeenCalled();
+  });
+
   it("fails gracefully when no payment method is saved", async () => {
     const booking = makePendingBooking("b1", { hasPaymentMethod: false });
     mockPendingBookings([booking]);

@@ -8,6 +8,7 @@ import {
 
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
+import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import logger from "@/lib/logger";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
@@ -263,7 +264,18 @@ async function resolveHoldWindowUnderLock(
       tx
     );
 
-    if (!capacityCheck.available) {
+    if (!capacityCheck.available && bookingHasCapacityOverride(booking)) {
+      // Persisted capacity override (#1771): this hold-eligible PENDING booking
+      // was deliberately admitted above the ceiling by an admin, so the
+      // hold-window re-check must NOT bump it. Fall through to the normal
+      // confirm flow below ($0 -> PAID, or the priced claim-for-charge path).
+      // This read-site is what lets booking-create retire its PENDING carve-out.
+      logger.info(
+        { bookingId: booking.id, job: "confirmPendingBookings" },
+        "Confirming an over-capacity booking with a persisted capacity override (#1771); skipping the capacity bump"
+      );
+    }
+    if (!capacityCheck.available && !bookingHasCapacityOverride(booking)) {
       const claimed = await tx.booking.updateMany({
         where: { id: booking.id, status: BookingStatus.PENDING },
         data: {

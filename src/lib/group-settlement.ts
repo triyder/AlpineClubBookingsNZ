@@ -39,6 +39,7 @@ import {
   getPaymentIntent,
 } from "@/lib/stripe";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
+import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
@@ -460,7 +461,17 @@ async function commitChildrenToConfirmed(children: SettleableChild[]) {
         fresh.id,
         tx
       );
-      if (!capacity.available) {
+      if (!capacity.available && bookingHasCapacityOverride(fresh)) {
+        // Persisted capacity override (#1771): defensive guard so the invariant
+        // stays total. Group children cannot be admitted over capacity today, so
+        // this branch is not expected to fire — but if a child ever carried an
+        // override it must settle, not 409. Fall through to the CONFIRMED flip.
+        logger.info(
+          { bookingId: fresh.id },
+          "Settling an over-capacity group child with a persisted capacity override (#1771); skipping the capacity block"
+        );
+      }
+      if (!capacity.available && !bookingHasCapacityOverride(fresh)) {
         const fullNights = capacity.nightDetails
           .filter((n) => n.availableBeds < 0)
           .map((n) => n.date);

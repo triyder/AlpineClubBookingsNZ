@@ -801,25 +801,44 @@ Over-capacity nights on **any on-behalf create** — past (#1695) or
 future-dated (#1767) — are **warn-and-confirm** (the same
 `OverCapacityConfirmationRequiredError` → 409 `OVER_CAPACITY_CONFIRM_REQUIRED`
 contract as #1668, capacity lock still taken, `capacityOverridden` recorded),
-with two carve-outs: an on-behalf create that opted into the **waitlist
+with one carve-out: an on-behalf create that opted into the **waitlist
 fallback** keeps the capacity-exceeded outcome so the route can create the
-WAITLISTED booking instead of prompting, and a **non-member hold-eligible
-(PENDING) party** keeps the hard capacity block (v1, #1767 — the
-`cron-confirm-pending` hold re-check knows nothing of the override and would
-silently bump the confirmed booking; unreachable retroactively, since a past
-check-in is never hold-eligible). A **member self-create can never
-overbook**: without `isOnBehalf` the service keeps the hard capacity block
-regardless of any flag, and the route rejects the flags outright (403
-non-admin, 400 without `forMemberId`). Known limitation shared with every
-override surface: the payment-time capacity re-checks do not consult the
-override, so a **priced** overridden booking can still be cancelled when
-payment arrives over capacity — see `docs/CAPACITY_MODEL.md` "Exceeding the
-ceiling"; $0/credit-covered overridden creates settle at create time.
+WAITLISTED booking instead of prompting. (The former v1 carve-out that
+hard-blocked a **non-member hold-eligible (PENDING) party** was retired by
+#1771: the persisted override is now honoured by `cron-confirm-pending`, so the
+hold re-check confirms rather than bumps the overbook.) A **member self-create
+can never overbook**: without `isOnBehalf` the service keeps the hard capacity
+block regardless of any flag, and the route rejects the flags outright (403
+non-admin, 400 without `forMemberId`).
 The member confirmation / hold email is an **explicit per-create choice**
 (`notifyMember`, honoured only for on-behalf creates) recorded in the
 `booking.created_on_behalf` audit metadata alongside `allowPastDates`,
 `confirmOverCapacity`, and `capacityOverridden`; `sendAdminNewBookingAlert` and
 the Xero invoice email are unaffected by the choice.
+
+A **deliberately over-capacity booking is never destroyed by a later capacity
+re-check** (#1771). Every over-capacity admission — on-behalf create
+(#1668/#1695/#1767), date/batch modification (#1668), waitlist force-confirm,
+confirm-pending-guests overbook (#1366), and admin capacity-hold (#1764) —
+**persists** the decision on the booking as `Booking.capacityOverriddenAt` +
+`capacityOverriddenByMemberId`. The marker records "a deliberate overbook on the
+booking's **current** nights": one-shot admissions stamp it once, while the date
+and batch modification services **reconcile** it (re-stamp if the new range is
+still an admin-confirmed overbook, **clear** it if the change moved the booking
+back within capacity) because they re-evaluate capacity on the new nights — so a
+stale flag can never suppress a legitimate cancel after a booking is modified
+from an over-capacity range into a fitting one. It is not cleared on cancel (a
+cancelled booking never re-enters a re-check). Every payment-time / settlement
+capacity
+re-check — `markBookingPaymentSucceeded`, payment links, `cron-confirm-pending`,
+`charge-saved-method`, `switch-to-internet-banking`, the Internet Banking
+invoice-paid reconcile, and group settlement — **must** consult
+`bookingHasCapacityOverride(booking)` and, when set, settle/advance the booking
+to its correct terminal state instead of cancelling+refunding, 409ing, or
+bumping it. The DRAFT-scoped re-checks (`create-payment-intent`,
+`confirm-draft`) are exempt because #1767 prevents a DRAFT from ever carrying an
+override. Members can never overbook, so this marker only ever appears behind an
+explicit, audited admin act.
 
 A **finished stay's card obligation never lingers unseen** (#1709, #1723). Two
 **disjoint** admin queues surface every uncollected card obligation on a stay

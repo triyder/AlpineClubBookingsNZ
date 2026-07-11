@@ -523,6 +523,35 @@ describe("createPaymentIntentForPaymentLink", () => {
     expect(mockedFindOrCreateCustomer).not.toHaveBeenCalled();
   });
 
+  // #1771 — a booking deliberately admitted over the ceiling by an admin carries
+  // a persisted capacityOverriddenAt marker. The payment-link capacity re-check
+  // must NOT 409 it: the payment proceeds and a fresh intent is minted.
+  it("pays an over-capacity booking with a persisted capacity override instead of 409ing (#1771)", async () => {
+    mockedFindUnique.mockResolvedValue(baseLink() as never);
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue(
+      baseBooking({
+        guests: [{ id: "guest-1" }],
+        capacityOverriddenAt: new Date("2026-06-01T00:00:00.000Z"),
+        capacityOverriddenByMemberId: "admin-1",
+      }) as never
+    );
+    mockedCheckCapacity.mockResolvedValue({ available: false, minAvailable: -1, nightDetails: [] } as never);
+    mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_new",
+      client_secret: "secret_new",
+      amount: 12000,
+    } as never);
+    vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
+
+    const result = await createPaymentIntentForPaymentLink(RAW_TOKEN);
+
+    expect(result).toMatchObject({ type: "clientSecret", paymentIntentId: "pi_new" });
+    // The payment proceeded rather than 409ing.
+    expect(mockedFindOrCreateCustomer).toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).toHaveBeenCalled();
+  });
+
   it("consumes the POST-lock re-read (not the pre-lock read) for the capacity check (H3)", async () => {
     // Pre-lock read is a lodgeId-only key select; the buggy order consumed its
     // stale dates/guests. Make the two in-transaction reads differ and prove

@@ -164,6 +164,10 @@ describe("POST /api/admin/bookings/[id]/capacity-hold (Admin Hold)", () => {
         }),
       }),
     );
+    // #1771: a within-capacity hold never persists the override columns.
+    const holdUpdateData = mocks.tx.booking.update.mock.calls[0][0].data;
+    expect(holdUpdateData).not.toHaveProperty("capacityOverriddenAt");
+    expect(holdUpdateData).not.toHaveProperty("capacityOverriddenByMemberId");
     expect(mocks.tx.auditLog.create).toHaveBeenCalledTimes(1);
     const audit = mocks.tx.auditLog.create.mock.calls[0][0].data;
     expect(audit).toMatchObject({
@@ -248,6 +252,11 @@ describe("POST /api/admin/bookings/[id]/capacity-hold (Admin Hold)", () => {
       overbookDates: ["2026-09-01"],
     });
     expect(mocks.tx.booking.update).toHaveBeenCalled();
+    // #1771: an over-capacity hold also records the persisted override so a later
+    // payment on this booking is never cancelled/bumped.
+    const updateData = mocks.tx.booking.update.mock.calls[0][0].data;
+    expect(updateData.capacityOverriddenAt).toBeInstanceOf(Date);
+    expect(updateData.capacityOverriddenByMemberId).toBe("admin-1");
     const audit = mocks.tx.auditLog.create.mock.calls[0][0].data;
     expect(audit).toMatchObject({
       action: "booking.admin_capacity_hold.placed_overbook",

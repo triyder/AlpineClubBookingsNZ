@@ -528,6 +528,7 @@ model Member {
   bookingsCreatedOnBehalf                    Booking[]                                  @relation("BookingsCreatedBy")
   bookingsAdminReviewed                      Booking[]                                  @relation("BookingsAdminReviewed")
   bookingsAdminCapacityHeld                  Booking[]                                  @relation("BookingsAdminCapacityHeld")
+  bookingsCapacityOverridden                 Booking[]                                  @relation("BookingsCapacityOverridden")
   approvedBedAllocations                     BedAllocation[]                            @relation("BedAllocationApprover")
   refundRequests                             RefundRequest[]
   issueReports                               IssueReport[]
@@ -1089,6 +1090,20 @@ model Booking {
   // beds, so capacity is never double-counted).
   adminCapacityHoldAt         DateTime?
   adminCapacityHoldByMemberId String?
+  // Persisted capacity override (#1771): set when this booking was deliberately
+  // admitted ABOVE the lodge ceiling via an explicit admin over-capacity confirm
+  // (#1668/#1695/#1767 create, date/batch modify, waitlist force-confirm, #1764
+  // admin capacity-hold). Read by every payment-time / settlement capacity
+  // re-check (see bookingHasCapacityOverride) so a *priced* overridden booking is
+  // never cancelled/refunded, 409'd, or bumped when payment lands over capacity.
+  // Reflects "is this a deliberate overbook on its CURRENT nights": one-shot
+  // admissions (create, force-confirm, capacity-hold) stamp it; date/batch
+  // modification RECONCILES it (re-stamps if the new range is still over
+  // capacity, clears it if the change moved back within capacity) since those
+  // paths re-evaluate capacity on the new nights. Not cleared on cancel — a
+  // cancelled booking never re-enters a re-check, so the audit fact is kept.
+  capacityOverriddenAt         DateTime?
+  capacityOverriddenByMemberId String?
   createdAt                 DateTime           @default(now())
   updatedAt                 DateTime           @updatedAt
 
@@ -1100,6 +1115,7 @@ model Booking {
   deletedBy                   Member?                         @relation("BookingsDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
   adminReviewedBy             Member?                         @relation("BookingsAdminReviewed", fields: [adminReviewedById], references: [id], onDelete: SetNull)
   adminCapacityHoldBy         Member?                         @relation("BookingsAdminCapacityHeld", fields: [adminCapacityHoldByMemberId], references: [id], onDelete: SetNull)
+  capacityOverriddenBy        Member?                         @relation("BookingsCapacityOverridden", fields: [capacityOverriddenByMemberId], references: [id], onDelete: SetNull)
   requestedRoom               LodgeRoom?                      @relation("BookingRequestedRoom", fields: [requestedRoomId], references: [id], onDelete: SetNull)
   parentBooking               Booking?                        @relation("BookingGroup", fields: [parentBookingId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   linkedBookings              Booking[]                       @relation("BookingGroup")
@@ -1147,6 +1163,7 @@ model Booking {
   @@index([adminReviewStatus, createdAt])
   @@index([adminReviewedById])
   @@index([adminCapacityHoldByMemberId])
+  @@index([capacityOverriddenByMemberId])
   @@index([requestedRoomId])
   @@index([parentBookingId])
   @@index([lodgeId])

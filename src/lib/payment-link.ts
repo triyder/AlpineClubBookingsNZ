@@ -20,6 +20,7 @@ import {
   type NarrativeEvent,
 } from "@/lib/booking-narrative";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
+import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
 import { sendBookingRequestApprovedEmail } from "@/lib/email";
@@ -454,7 +455,16 @@ export async function createPaymentIntentForPaymentLink(
       tx
     );
 
-    if (!capacity.available) {
+    if (!capacity.available && bookingHasCapacityOverride(freshBooking)) {
+      // Persisted capacity override (#1771): the booking was deliberately
+      // admitted above the ceiling by an admin, so a payment link must not 409
+      // it — fall through and let the payment proceed.
+      logger.info(
+        { bookingId: booking.id },
+        "Paying an over-capacity booking with a persisted capacity override (#1771); skipping the payment-link capacity block"
+      );
+    }
+    if (!capacity.available && !bookingHasCapacityOverride(freshBooking)) {
       throw new PaymentLinkError(
         "Not enough beds remain available for these dates. Please contact the club.",
         409

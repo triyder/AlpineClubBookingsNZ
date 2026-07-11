@@ -204,11 +204,11 @@ The **warn-and-confirm contract** (`OverCapacityConfirmationRequiredError` →
 - **admin date-edit override** (#1668) — `booking-modify-plan` /
   date-modification service under `adminOverride`;
 - **admin on-behalf create** — retroactive (#1695) and forward-dated
-  (#1767) creates on `/admin/book`, with two carve-outs: a create that
+  (#1767) creates on `/admin/book`, with one carve-out: a create that
   opted into the waitlist fallback keeps the capacity-exceeded outcome and
-  waitlists instead, and a non-member hold-eligible (PENDING) party keeps
-  the hard block (v1 — the hold cron re-checks capacity with no knowledge
-  of the override and would silently bump the confirmed booking).
+  waitlists instead. (The former v1 carve-out that hard-blocked a non-member
+  hold-eligible (PENDING) party was retired by #1771 — the persisted override
+  is now honoured by the hold cron, so that overbook is admitted and marked.)
 
 The **explicit-overbook-flag contract** (409 `CAPACITY_EXCEEDED` +
 `overbookDates`, resubmit with the overbook flag; separate audit actions):
@@ -217,19 +217,58 @@ The **explicit-overbook-flag contract** (409 `CAPACITY_EXCEEDED` +
   the advisory-locked re-check);
 - **waitlist force-confirm** — "Confirm Anyway (Overbook)" on
   `/admin/waitlist` (`allowOverbook`, audited as
-  `waitlist.force_confirmed_overbook`).
+  `waitlist.force_confirmed_overbook`);
+- **admin capacity-hold** — placing a hold over the ceiling (#1764,
+  `allowOverbook`, audited as `booking.admin_capacity_hold.placed_overbook`).
 
 Partner-shared admissions (#1745/#1746) are *not* overrides — they consume
 reserved headroom and reject rather than falling back into a confirm.
 
-**Known limitation (all override surfaces):** the payment-time capacity
-re-checks (`markBookingPaymentSucceeded`, payment links) and the
-non-member-hold cron do not consult any override marker, so an overridden
-booking that is still unpaid can be cancelled (and refunded) when payment
-arrives while the lodge remains over capacity on its nights. $0 and
-credit-covered overridden creates settle at create time and are unaffected.
-Tracked as a follow-up: persisting the override on the booking and honouring
-it in the re-check paths.
+### Persisted capacity override (#1771)
+
+Every over-capacity admission above **persists** the decision on the booking:
+`Booking.capacityOverriddenAt` (when) and `capacityOverriddenByMemberId` (the
+acting admin). The marker records "this booking is a deliberate overbook on its
+**current** nights", so it is set when the override fires and **reconciled**
+wherever a booking's capacity is re-evaluated against a new footprint. The
+predicate `bookingHasCapacityOverride(booking)` reads it.
+
+**Set-sites** (stamp on the over-capacity path only): `booking-create`
+(#1668/#1695/#1767 pre-create + $0/credit-covered branches), waitlist
+force-confirm (#1668/waitlist), confirm-pending-guests ($0 and priced gates,
+#1366), and admin capacity-hold (#1764). These are **one-shot admissions** — the
+booking's nights are fixed at the moment they run, so the stamp is set once and
+never needs clearing. The date and batch modification services (#1668) instead
+**reconcile** the marker: they re-run the capacity check against the new range,
+so they re-stamp when the new nights are still an admin-confirmed overbook and
+**clear** any prior stamp when the modification moved the booking back within
+capacity. Without that clear, a booking overbooked on its old nights and then
+modified to an in-capacity range would keep a stale flag that wrongly suppressed
+a legitimate cancel once the new nights filled. The marker is **not** cleared on
+cancel — a cancelled booking never re-enters a re-check, so the audit fact is
+preserved. For a **mixed-party split** create whose member guests alone overflow,
+the provisional non-member child booking (#738) inherits the same override as
+its member parent — otherwise the parent would survive payment while the
+hold cron silently bumped the unstamped child, a partial-drop against an
+explicit admin overbook.
+
+**Read-sites** (honour it → settle/proceed instead of cancel/refund/409/bump):
+`markBookingPaymentSucceeded` (settlement), `createPaymentIntentForPaymentLink`,
+the non-member-hold cron (`cron-confirm-pending`), `charge-saved-method`,
+`switch-to-internet-banking`, the Internet Banking invoice-paid reconcile
+(`xero-inbound/invoice-paid-effects`), and group settlement (defensive). Each
+falls through to the booking's correct terminal state (PAID / CONFIRMED /
+payment proceeds) and logs the skip.
+
+**DRAFT-scoped exemptions** (documented, no code): the capacity re-checks in
+`create-payment-intent` and `confirm-draft` run only while the booking is DRAFT,
+and #1767 blocks saving a DRAFT over capacity, so a DRAFT can never carry an
+override — honouring it there would be dead code.
+
+This fixes the former limitation where a *priced* overridden booking
+self-destructed (cancel + refund / 409 / bump) when payment landed while the
+lodge was still over capacity on its nights. ($0 and credit-covered overridden
+creates always settled at create time and were never affected.)
 
 ## Behaviour change (introduced with #1653)
 

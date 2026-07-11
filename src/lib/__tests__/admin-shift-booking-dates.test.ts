@@ -230,6 +230,10 @@ describe("adminShiftBookingDates (issue #1668 — pure translation)", () => {
     expect(updateArgs.data).not.toHaveProperty("totalPriceCents");
     expect(updateArgs.data).not.toHaveProperty("finalPriceCents");
     expect(updateArgs.data).not.toHaveProperty("discountCents");
+    // #1771: a within-capacity shift RECONCILES the override to cleared (the
+    // update always writes the columns; on the in-capacity path they are null).
+    expect(updateArgs.data.capacityOverriddenAt).toBeNull();
+    expect(updateArgs.data.capacityOverriddenByMemberId).toBeNull();
 
     // Guest envelope moved; NO priceCents written.
     const guestUpdate = h.txGuestUpdate.mock.calls[0][0];
@@ -368,6 +372,36 @@ describe("adminShiftBookingDates (issue #1668 — pure translation)", () => {
     expect(result.capacityOverridden).toBe(true);
     const modArgs = h.txModificationCreate.mock.calls[0][0];
     expect(modArgs.data.newData.capacityOverridden).toBe(true);
+    // #1771: the persisted override is stamped on the booking with the actor.
+    const updateArgs = h.txBookingUpdate.mock.calls[0][0];
+    expect(updateArgs.data.capacityOverriddenAt).toBeInstanceOf(Date);
+    expect(updateArgs.data.capacityOverriddenByMemberId).toBe("admin1");
+  });
+
+  it("CLEARS a stale override when a stamped booking is shifted back within capacity (#1771)", async () => {
+    // A booking overbooked on its OLD nights (stamped) is date-shifted to a
+    // range that fits. The shift re-evaluates capacity on the new nights and
+    // finds room (default mock = available), so the marker must be reconciled
+    // to cleared — otherwise the stale flag would suppress a legitimate cancel
+    // if the new nights later filled and payment re-checked capacity.
+    const booking = makeBooking({
+      capacityOverriddenAt: D("2026-08-01"),
+      capacityOverriddenByMemberId: "admin0",
+    });
+    primeTx(booking);
+    // Default beforeEach mock leaves checkCapacityForGuestRanges → available.
+
+    const result = await adminShiftBookingDates({
+      bookingId: "b1",
+      actor: { id: "admin1", role: "ADMIN" },
+      input: { checkIn: "2026-09-12" },
+      ipAddress: "1.1.1.1",
+    });
+
+    expect(result.capacityOverridden).toBe(false);
+    const updateArgs = h.txBookingUpdate.mock.calls[0][0];
+    expect(updateArgs.data.capacityOverriddenAt).toBeNull();
+    expect(updateArgs.data.capacityOverriddenByMemberId).toBeNull();
   });
 
   it("skips the capacity check for a non-capacity-holding status (WAITLISTED)", async () => {

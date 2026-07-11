@@ -4,6 +4,21 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **A deliberately over-capacity booking is no longer destroyed when payment
+  lands (#1771).** Every admin over-capacity admission — on-behalf create
+  (#1668/#1695/#1767), date/batch modification (#1668), waitlist force-confirm,
+  confirm-pending-guests overbook (#1366), and admin capacity-hold (#1764) —
+  now persists the decision on the booking (`capacityOverriddenAt` +
+  `capacityOverriddenByMemberId`). Every payment-time / settlement capacity
+  re-check (`markBookingPaymentSucceeded`, payment links, the non-member-hold
+  cron, saved-card charge, switch-to-Internet-Banking, the Internet Banking
+  invoice-paid reconcile, and group settlement) now honours that marker and
+  settles the booking to its correct terminal state instead of
+  cancelling+refunding, 409ing, or bumping it. This retires the #1767 v1
+  carve-out that hard-blocked a non-member hold-eligible (PENDING) on-behalf
+  overbook — the hold cron now confirms rather than bumps it. Members can never
+  overbook; the marker only ever appears behind an explicit, audited admin act.
+
 - **Admin can choose whether to email members when assigning or removing a
   partner link (#1769a).** The Partner card on `/admin/members/[id]` now asks,
   per action, whether the members receive the standard partner-relationship
@@ -23,14 +38,12 @@ All notable public reference-release changes should be recorded here.
   (#1668/#1695): full days stay selectable on the admin calendar, the guest
   step warns, and submitting prompts "Confirm over-capacity and create"
   (audited as `capacityOverridden`). An on-behalf create that opted into the
-  waitlist fallback still waitlists instead of prompting, and a non-member
-  hold-eligible (PENDING) party keeps the hard block in v1 (the hold cron
-  would bump a confirmed overbook). Priced overridden bookings share the
-  pre-existing limitation that payment-time capacity re-checks do not consult
-  the override (see `docs/CAPACITY_MODEL.md`); $0/credit-covered creates
-  settle at create time. The admin guest caps now follow the selected lodge's
-  resolved capacity, and over-capacity parties cannot be saved as drafts.
-  Member self-books are unchanged — members can never overbook.
+  waitlist fallback still waitlists instead of prompting. (#1771 persists and
+  honours the override, so a priced overridden booking is no longer cancelled
+  when payment lands over capacity, and the former non-member hold-eligible
+  (PENDING) carve-out is retired.) The admin guest caps now follow the selected
+  lodge's resolved capacity, and over-capacity parties cannot be saved as
+  drafts. Member self-books are unchanged — members can never overbook.
 
 - **Auto bed allocation no longer strands large groups (#1768).** The split
   fallback used to cap rooms-with-minors at the booking's adult count — a

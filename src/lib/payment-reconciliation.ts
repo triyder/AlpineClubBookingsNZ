@@ -21,7 +21,10 @@ import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { getDefaultLodgeId } from "@/lib/lodges";
-import { RELEASE_ADMIN_CAPACITY_HOLD_UPDATE } from "@/lib/booking-status";
+import {
+  bookingHasCapacityOverride,
+  RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+} from "@/lib/booking-status";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
@@ -237,7 +240,16 @@ export async function markBookingPaymentSucceeded({
     // does not fit against committed bookings is cancelled-and-refunded here,
     // never bumped into a full lodge (issue #738, carried over from R1). The
     // non-member portion of a mixed party is now its own provisional booking.
-    if (!capacity.available) {
+    if (!capacity.available && bookingHasCapacityOverride(booking)) {
+      // Persisted capacity override (#1771): this booking was deliberately
+      // admitted above the ceiling by an admin. Settle it instead of cancelling
+      // — fall through to the PAID update below.
+      logger.info(
+        { bookingId: booking.id },
+        "Settling an over-capacity booking with a persisted capacity override (#1771); skipping the capacity cancel"
+      );
+    }
+    if (!capacity.available && !bookingHasCapacityOverride(booking)) {
       await tx.booking.update({
         where: { id: booking.id },
         data: {
