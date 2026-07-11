@@ -674,7 +674,8 @@ conflicting room-night (it is wholly UNALLOCATEd instead), and an occupant row
 with no booking attribution conservatively blocks minors but not adults.
 Persisted rows that already violate the invariant (manual moves, pre-#1768
 plans) surface on the board as `MINOR_ADULT_MIX` warnings rather than being
-rewritten. Same-booking mixing is unrestricted — Phase 0 remains the
+rewritten — warning-only on the manual board is the intended function (owner
+decision 2026-07-11), not a pending hard-block. Same-booking mixing is unrestricted — Phase 0 remains the
 night-level adult-coverage rule, and minors-only ROOMS are allowed whenever
 the booking has an adult on-site that night.
 

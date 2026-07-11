@@ -99,8 +99,12 @@ Future reviews and issues should cite this file when proposing changes.
   bookings (`isSchoolGroup`, from the origin/held `BookingRequest.type`)
   prefer adults together and students separate. The planner never rewrites
   persisted violations (manual/legacy rows) — the board surfaces them as
-  `MINOR_ADULT_MIX` warnings; the manual board itself is warned, not blocked
-  (a follow-up owner decision may harden it).
+  `MINOR_ADULT_MIX` warnings; the manual board itself is warned, not blocked,
+  **by design** (owner decision, 2026-07-11, closing the deferral from
+  #1768/PR #1775): the invariant binds every automated placement path, while
+  the manual board deliberately stays an admin-judgment escape hatch with the
+  warning as its guard. Do not add a hard block without a fresh owner
+  decision.
 - **Double-bed shared occupancy (#1701):** a `DOUBLE` bed may hold two occupants
   on a night — one primary and one second occupant — when they are declared
   partners: two `ADULT` members holding a **CONFIRMED** `MemberPartnerLink`
