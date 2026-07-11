@@ -317,7 +317,8 @@ Future reviews and issues should cite this file when proposing changes.
   `MemberCreditNoteAllocation` (remaining = the positive lot's `amountCents` minus
   the sum of its allocation rows); lot order is conservation-neutral. The
   `payment` mirror holds `amountCents + creditAppliedCents = finalPriceCents`
-  (the switch path derives the applied amount from the `BOOKING_APPLIED` ledger,
+  (net of `refundedAmountCents` once a #1765 repay generation exists; the
+  switch path derives the applied amount from the `BOOKING_APPLIED` ledger,
   since the card-origin mirror is 0). The engine STAMPS the booking's
   `BOOKING_APPLIED` rows with a representative allocated note id LAST — only once
   the full applied amount is covered — so the #1597 clearing term above is exact;
@@ -356,7 +357,11 @@ Future reviews and issues should cite this file when proposing changes.
   the card flow — it is confirmed at $0 by the create-time zero-dollar path — so
   the intent route guards `effective > 0` rather than minting a $0 intent). The
   `Payment` mirror carries `amountCents = effective`, `creditAppliedCents = applied`
-  (invariant `amountCents + creditAppliedCents = finalPriceCents`). Every
+  (invariant `amountCents + creditAppliedCents = finalPriceCents`; once a repay
+  generation exists — #1765, pay → refund → reprice → repay on the same Payment —
+  the mirror aggregates gross captures across generations and the invariant is
+  NET-based: `(amountCents − refundedAmountCents) + creditAppliedCents =
+  finalPriceCents` at repay settlement). Every
   capture/reconciliation guard accepts EITHER the effective price OR the full
   `finalPriceCents` (legacy in-flight intents minted before the fix) and rejects any
   other amount (create-payment-intent reuse, `stripe-webhook-service`,
@@ -365,9 +370,13 @@ Future reviews and issues should cite this file when proposing changes.
   intents, so the leniency cannot re-open the double-charge. Because a card invoice
   is raised-and-paid near-instantly at capture (`queueXeroInvoiceForPaidBooking` →
   `createXeroInvoiceForBooking`), the #1620 fire-after-invoice outbox op is NOT used
-  on card; instead `createXeroInvoiceForBooking` records the EFFECTIVE Stripe payment
-  and then SYNCHRONOUSLY re-drives the same allocation engine (gated to a card cash
-  capture with `creditAppliedCents > 0`) so the invoice settles to PAID via
+  on card; instead `createXeroInvoiceForBooking` records the NET captured Stripe
+  cash — gross captures − refunds, i.e. the effective amount, capped at the
+  invoice's amount due (#1765: settlement evidence is captured-status + positive
+  net cash, never `status === "SUCCEEDED"` alone, which misreads a repay-settled
+  PARTIALLY_REFUNDED aggregate; every skip logs a populated reason) — and then
+  SYNCHRONOUSLY re-drives the same allocation engine (gated the same way, plus
+  `creditAppliedCents > 0`) so the invoice settles to PAID via
   (effective cash + credit-note allocation) and is never left with the applied slice
   outstanding. The allocation throws on failure (the invoice op fails and the retry
   short-circuits on the persisted `xeroInvoiceId`, re-driving the idempotent engine

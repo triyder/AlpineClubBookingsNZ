@@ -7,6 +7,11 @@ const mocks = vi.hoisted(() => ({
   markBookingSetupIntentSucceeded: vi.fn(),
   logAudit: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
+  // #1765 — null = no prior transaction row; the refunded-history
+  // discriminator then falls back to the Payment aggregate status, which in
+  // these fixtures is never REFUNDED/PARTIALLY_REFUNDED, so every existing
+  // recovery expectation is unchanged.
+  findPaymentTransactionByIntentId: vi.fn().mockResolvedValue(null),
   sendBookingConfirmedEmail: vi.fn(),
   queueXeroInvoiceForPaidBooking: vi.fn(),
 }));
@@ -51,6 +56,7 @@ vi.mock("@/lib/payment-reconciliation", () => ({
 
 vi.mock("@/lib/payment-transactions", () => ({
   upsertPaymentIntentTransaction: mocks.upsertPaymentIntentTransaction,
+  findPaymentTransactionByIntentId: mocks.findPaymentTransactionByIntentId,
 }));
 
 vi.mock("@/lib/audit", () => ({

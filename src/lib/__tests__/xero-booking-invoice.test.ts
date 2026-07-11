@@ -218,6 +218,7 @@ describe("createXeroInvoiceForBooking", () => {
         id: "pay_1",
         status: "SUCCEEDED",
         amountCents: 0,
+        refundedAmountCents: 0,
         stripePaymentIntentId: null,
         xeroInvoiceId: null,
         xeroInvoiceNumber: null,
@@ -260,6 +261,7 @@ describe("createXeroInvoiceForBooking", () => {
         status: "SUCCEEDED",
         // effective (10000 finalPrice − 3000 applied credit)
         amountCents: 7000,
+        refundedAmountCents: 0,
         creditAppliedCents: 3000,
         stripePaymentIntentId: "pi_1",
         xeroInvoiceId: null,
@@ -746,6 +748,175 @@ describe("createXeroInvoiceForBooking", () => {
 
       const discount = getPromoAdjustmentLine();
       expect(discount?.description).toBe("Promo adjustment");
+    });
+  });
+
+  // #1765 — repay-after-refund: the Payment aggregate sits in
+  // PARTIALLY_REFUNDED at invoice time (gross captures across generations
+  // minus refunds), so the payment write must gate on captured-status +
+  // positive NET cash and record the NET capture, never gate on
+  // `status === "SUCCEEDED"` or write the gross aggregate.
+  describe("#1765 repay-after-refund invoice payment", () => {
+    function repayBooking(paymentOverrides: Record<string, unknown> = {}) {
+      return {
+        id: "booking_1",
+        memberId: "mem_1",
+        member: { id: "mem_1" },
+        checkIn: "2026-07-31T00:00:00.000Z",
+        checkOut: "2026-08-02T00:00:00.000Z",
+        createdAt: "2026-05-15T10:30:00.000Z",
+        discountCents: 0,
+        promoAdjustmentCents: 0,
+        guests: [
+          {
+            firstName: "Jordan",
+            lastName: "Hartley-Smith",
+            ageTier: "ADULT",
+            isMember: true,
+            priceCents: 9000,
+          },
+        ],
+        payment: {
+          id: "pay_1",
+          // Production shape from #1765: paid 19500, fully refunded, repay
+          // captured 9000 → gross 28500, refunded 19500, aggregate
+          // PARTIALLY_REFUNDED. Net capture = 9000.
+          status: "PARTIALLY_REFUNDED",
+          amountCents: 28500,
+          refundedAmountCents: 19500,
+          creditAppliedCents: 0,
+          stripePaymentIntentId: "pi_repay",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          source: "STRIPE",
+          ...paymentOverrides,
+        },
+      };
+    }
+
+    beforeEach(() => {
+      mocks.xeroClientInstance.accountingApi.createPayment.mockResolvedValue({
+        body: { paymentID: "xpay_repay" },
+      });
+      mocks.allocateAppliedCreditForBooking.mockResolvedValue(undefined);
+      mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_repay",
+              invoiceNumber: "INV-9",
+              total: 90,
+              amountDue: 90,
+              status: "AUTHORISED",
+            },
+          ],
+        },
+      });
+    });
+
+    it("records the NET capture (gross − refunded) as the invoice payment for a repay-settled booking", async () => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(repayBooking());
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe(
+        "inv_repay"
+      );
+
+      expect(
+        mocks.xeroClientInstance.accountingApi.createPayment
+      ).toHaveBeenCalledTimes(1);
+      const xeroPayment =
+        mocks.xeroClientInstance.accountingApi.createPayment.mock.calls[0][1];
+      // Net 9000 cents = $90, NOT the $285 gross aggregate.
+      expect(xeroPayment.amount).toBe(90);
+      expect(xeroPayment.reference).toBe("Stripe pi_repay");
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        "op_1",
+        expect.objectContaining({
+          responsePayload: expect.objectContaining({
+            paymentSkipped: false,
+            paymentSkipReason: null,
+          }),
+        })
+      );
+    });
+
+    it("caps the recorded payment at the invoice's amount due (Xero rejects overpayment)", async () => {
+      // Legacy full-price capture on a booking whose invoice was repriced
+      // below the captured cash: net 19500 > amountDue 9000.
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        repayBooking({
+          status: "SUCCEEDED",
+          amountCents: 19500,
+          refundedAmountCents: 0,
+        })
+      );
+
+      await createXeroInvoiceForBooking("booking_1");
+
+      const xeroPayment =
+        mocks.xeroClientInstance.accountingApi.createPayment.mock.calls[0][1];
+      expect(xeroPayment.amount).toBe(90);
+    });
+
+    it("skips loudly, with a populated reason, when captured cash was fully refunded (net 0)", async () => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        repayBooking({
+          status: "REFUNDED",
+          amountCents: 19500,
+          refundedAmountCents: 19500,
+        })
+      );
+
+      await createXeroInvoiceForBooking("booking_1");
+
+      expect(
+        mocks.xeroClientInstance.accountingApi.createPayment
+      ).not.toHaveBeenCalled();
+      expect(mocks.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookingId: "booking_1",
+          netCapturedCents: 0,
+          paymentStatus: "REFUNDED",
+        }),
+        "Captured Stripe cash was fully refunded; no net cash remains to record against the invoice."
+      );
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        "op_1",
+        expect.objectContaining({
+          responsePayload: expect.objectContaining({
+            paymentSkipped: true,
+            paymentSkipReason:
+              "Captured Stripe cash was fully refunded; no net cash remains to record against the invoice.",
+          }),
+        })
+      );
+    });
+
+    it("still allocates applied credit for a repay booking that carries applied credit", async () => {
+      // Repay generation captured the credit-reduced effective amount:
+      // finalPrice 9000, applied 2000 → repay capture 7000; gross 26500.
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        repayBooking({
+          amountCents: 26500,
+          refundedAmountCents: 19500,
+          creditAppliedCents: 2000,
+        })
+      );
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe(
+        "inv_repay"
+      );
+
+      // Net cash $70 recorded, then the applied slice allocated — the old
+      // status === "SUCCEEDED" gate skipped both for a PARTIALLY_REFUNDED
+      // repay aggregate.
+      const xeroPayment =
+        mocks.xeroClientInstance.accountingApi.createPayment.mock.calls[0][1];
+      expect(xeroPayment.amount).toBe(70);
+      expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalledWith(
+        "booking_1",
+        expect.anything()
+      );
     });
   });
 });

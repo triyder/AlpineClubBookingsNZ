@@ -470,6 +470,8 @@ Known statuses: `PENDING`, `PROCESSING`, `SUCCEEDED`, `FAILED`, `REFUNDED`,
 PENDING -> PROCESSING -> SUCCEEDED
 PENDING/PROCESSING -> FAILED
 SUCCEEDED -> PARTIALLY_REFUNDED -> REFUNDED
+REFUNDED/PARTIALLY_REFUNDED -> (repay, #1765) fresh PRIMARY transaction on the
+  same Payment: PENDING/PROCESSING -> SUCCEEDED
 ```
 
 Booking cancellation honors these transitions (#1473): only a never-captured
@@ -478,7 +480,29 @@ evidence — the aggregate mirror alone can lie, because inbound reconciliation
 folds modification credit notes into `refundedAmountCents` /
 `PARTIALLY_REFUNDED` on never-captured Internet Banking payments (see
 `docs/DOMAIN_INVARIANTS.md`). Genuinely captured payments survive the cancel
-unchanged — there is no transition out of the refunded states.
+unchanged — no *transaction* ever leaves the refunded states.
+
+Repay-after-refund (#1765): a booking that was paid, then deliberately
+refunded, then left (or re-put) in a payable status legitimately owes a fresh
+payment — refund + promo reprice can produce this. The model is a **fresh
+`PRIMARY` `PaymentTransaction` on the same `Payment` row**; the refunded
+transaction is immutable history. Because a fully refunded Stripe
+PaymentIntent keeps `status: "succeeded"` forever (refunds hang off the
+charge), every reconciliation entry point discriminates *refund history* from
+*crashed-webhook recovery* on the local transaction ledger, never on the
+intent status: a transaction in `REFUNDED`/`PARTIALLY_REFUNDED` is history and
+is never re-admitted as settlement (`markBookingPaymentSucceeded` throws;
+`create-payment-intent` supersedes the stale pointer and mints a fresh
+card-entry intent at the current effective price under a per-repay-generation
+idempotency key `pi_<bookingId>_repay_<supersededIntentId>`), while a
+transaction still `PENDING`/`PROCESSING` against a succeeded intent is genuine
+recovery and reconciles exactly as before. After a repay settles, the Payment
+AGGREGATE returns to `PARTIALLY_REFUNDED` (gross captured across generations
+minus what was refunded), so the mirror invariant is net-based —
+`(amountCents − refundedAmountCents) + creditAppliedCents = finalPriceCents`
+at repay settlement (see `docs/DOMAIN_INVARIANTS.md`). The repay path assumes
+no saved card: it always goes through the immediate card-entry PaymentIntent
+flow.
 
 To verify: whether Internet Banking uses the same `PaymentStatus` transitions
 or Xero invoice state as the effective settlement state.
