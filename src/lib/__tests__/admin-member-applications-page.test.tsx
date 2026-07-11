@@ -197,6 +197,14 @@ describe("MemberApplicationsPage", () => {
       screen.getByRole("button", { name: /Reject application/i })
     );
 
+    // #1786: the reject action now opens the notify-choice dialog; confirm with
+    // the default notify path ("Reject and email applicant") to fire the PUT.
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /Reject and email applicant/i,
+      })
+    );
+
     await waitFor(() => {
       const putCall = fetchMock.mock.calls.find(
         ([, init]) => (init as RequestInit | undefined)?.method === "PUT"
