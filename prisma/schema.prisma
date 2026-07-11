@@ -1096,7 +1096,12 @@ model Booking {
   // admin capacity-hold). Read by every payment-time / settlement capacity
   // re-check (see bookingHasCapacityOverride) so a *priced* overridden booking is
   // never cancelled/refunded, 409'd, or bumped when payment lands over capacity.
-  // Immutable decision record — deliberately NOT cleared on cancel.
+  // Reflects "is this a deliberate overbook on its CURRENT nights": one-shot
+  // admissions (create, force-confirm, capacity-hold) stamp it; date/batch
+  // modification RECONCILES it (re-stamps if the new range is still over
+  // capacity, clears it if the change moved back within capacity) since those
+  // paths re-evaluate capacity on the new nights. Not cleared on cancel — a
+  // cancelled booking never re-enters a re-check, so the audit fact is kept.
   capacityOverriddenAt         DateTime?
   capacityOverriddenByMemberId String?
   createdAt                 DateTime           @default(now())

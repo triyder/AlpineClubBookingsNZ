@@ -718,16 +718,15 @@ export async function modifyBookingDates({
         finalPriceCents: newFinalPriceCents,
         nonMemberHoldUntil: newNonMemberHoldUntil,
         status: newStatus,
-        // Persisted capacity override (#1771): when this date change was
-        // admitted over capacity behind an admin confirm, stamp the acting
-        // admin so payment-time re-checks honour it. Guarded — never set when
-        // the modification stayed within capacity.
-        ...(capacityOverridden
-          ? {
-              capacityOverriddenAt: new Date(),
-              capacityOverriddenByMemberId: actor.id,
-            }
-          : {}),
+        // Persisted capacity override (#1771): this date change re-evaluates
+        // capacity against the *new* nights (capacityOverridden above), so the
+        // marker must be RECONCILED, not just set. Stamp the acting admin when
+        // the new range was admitted over capacity behind a confirm; CLEAR any
+        // prior stamp when the modification moved the booking back within
+        // capacity — otherwise a stale flag from the old nights would suppress
+        // a legitimate cancel when the new nights later fill.
+        capacityOverriddenAt: capacityOverridden ? new Date() : null,
+        capacityOverriddenByMemberId: capacityOverridden ? actor.id : null,
       },
       include: { guests: true, payment: true },
     });
@@ -1300,15 +1299,14 @@ export async function adminShiftBookingDates({
         checkOut: newCheckOut,
         nonMemberHoldUntil: newNonMemberHoldUntil,
         status: newStatus,
-        // Persisted capacity override (#1771): stamp the acting admin when this
-        // date shift was admitted over capacity behind an admin confirm.
-        // Guarded — never set when the shift stayed within capacity.
-        ...(capacityOverridden
-          ? {
-              capacityOverriddenAt: new Date(),
-              capacityOverriddenByMemberId: actor.id,
-            }
-          : {}),
+        // Persisted capacity override (#1771): this shift re-evaluates capacity
+        // against the *new* nights, so RECONCILE the marker — stamp when the
+        // shift was admitted over capacity behind a confirm, and CLEAR any
+        // prior stamp when the shift moved the booking back within capacity (or
+        // into a status that holds no bed), so a stale flag can't suppress a
+        // legitimate cancel on the new nights later.
+        capacityOverriddenAt: capacityOverridden ? new Date() : null,
+        capacityOverriddenByMemberId: capacityOverridden ? actor.id : null,
       },
       include: { guests: true, payment: true },
     });

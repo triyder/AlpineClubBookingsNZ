@@ -821,8 +821,15 @@ re-check** (#1771). Every over-capacity admission — on-behalf create
 (#1668/#1695/#1767), date/batch modification (#1668), waitlist force-confirm,
 confirm-pending-guests overbook (#1366), and admin capacity-hold (#1764) —
 **persists** the decision on the booking as `Booking.capacityOverriddenAt` +
-`capacityOverriddenByMemberId` (an immutable record, set only when the override
-fires and never cleared on cancel). Every payment-time / settlement capacity
+`capacityOverriddenByMemberId`. The marker records "a deliberate overbook on the
+booking's **current** nights": one-shot admissions stamp it once, while the date
+and batch modification services **reconcile** it (re-stamp if the new range is
+still an admin-confirmed overbook, **clear** it if the change moved the booking
+back within capacity) because they re-evaluate capacity on the new nights — so a
+stale flag can never suppress a legitimate cancel after a booking is modified
+from an over-capacity range into a fitting one. It is not cleared on cancel (a
+cancelled booking never re-enters a re-check). Every payment-time / settlement
+capacity
 re-check — `markBookingPaymentSucceeded`, payment links, `cron-confirm-pending`,
 `charge-saved-method`, `switch-to-internet-banking`, the Internet Banking
 invoice-paid reconcile, and group settlement — **must** consult

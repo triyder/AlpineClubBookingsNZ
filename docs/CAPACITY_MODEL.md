@@ -228,15 +228,25 @@ reserved headroom and reject rather than falling back into a confirm.
 
 Every over-capacity admission above **persists** the decision on the booking:
 `Booking.capacityOverriddenAt` (when) and `capacityOverriddenByMemberId` (the
-acting admin). It is an immutable decision record — set only when the override
-actually fires, and deliberately **not** cleared on cancel. The predicate
-`bookingHasCapacityOverride(booking)` reads it.
+acting admin). The marker records "this booking is a deliberate overbook on its
+**current** nights", so it is set when the override fires and **reconciled**
+wherever a booking's capacity is re-evaluated against a new footprint. The
+predicate `bookingHasCapacityOverride(booking)` reads it.
 
 **Set-sites** (stamp on the over-capacity path only): `booking-create`
-(#1668/#1695/#1767 pre-create + $0/credit-covered branches), the date and batch
-modification services (#1668), waitlist force-confirm (#1668/waitlist),
-confirm-pending-guests ($0 and priced gates, #1366), and admin capacity-hold
-(#1764). For a **mixed-party split** create whose member guests alone overflow,
+(#1668/#1695/#1767 pre-create + $0/credit-covered branches), waitlist
+force-confirm (#1668/waitlist), confirm-pending-guests ($0 and priced gates,
+#1366), and admin capacity-hold (#1764). These are **one-shot admissions** — the
+booking's nights are fixed at the moment they run, so the stamp is set once and
+never needs clearing. The date and batch modification services (#1668) instead
+**reconcile** the marker: they re-run the capacity check against the new range,
+so they re-stamp when the new nights are still an admin-confirmed overbook and
+**clear** any prior stamp when the modification moved the booking back within
+capacity. Without that clear, a booking overbooked on its old nights and then
+modified to an in-capacity range would keep a stale flag that wrongly suppressed
+a legitimate cancel once the new nights filled. The marker is **not** cleared on
+cancel — a cancelled booking never re-enters a re-check, so the audit fact is
+preserved. For a **mixed-party split** create whose member guests alone overflow,
 the provisional non-member child booking (#738) inherits the same override as
 its member parent — otherwise the parent would survive payment while the
 hold cron silently bumped the unstamped child, a partial-drop against an
