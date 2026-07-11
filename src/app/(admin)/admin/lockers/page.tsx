@@ -4,6 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Pencil, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/confirm-dialog";
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { AdminDataTable } from "@/components/admin/admin-data-table";
+import {
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   Card,
   CardContent,
@@ -311,12 +320,10 @@ export default function LockersPage() {
   return (
     <div className="space-y-6">
       {confirmDialog}
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Lockers</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Create lockers and optionally allocate them to members.
-        </p>
-      </div>
+      <AdminPageHeader
+        title="Lockers"
+        description="Create lockers and optionally allocate them to members."
+      />
 
       <div className="max-w-xs">
         <LodgeSelect lodges={lodges} value={lodgeId} onChange={setLodgeId} loading={lodgesLoading} />
@@ -469,80 +476,76 @@ export default function LockersPage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <p className="text-sm text-slate-500">Loading lockers...</p>
+            <p className="text-sm text-muted-foreground">Loading lockers...</p>
           ) : sortedLockers.length === 0 ? (
-            <p className="text-sm text-slate-500">No lockers created yet.</p>
+            <p className="text-sm text-muted-foreground">No lockers created yet.</p>
           ) : (
-            <div className="overflow-x-auto rounded-md border border-slate-200">
-              <table className="min-w-full text-left text-sm text-slate-700">
-                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 font-semibold"
-                        onClick={() => toggleSort("name")}
-                      >
-                        Name
-                        {sortField === "name" ? (
-                          <SortIcon className="h-3.5 w-3.5" />
-                        ) : null}
-                      </button>
-                    </th>
-                    <th className="px-4 py-3">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 font-semibold"
-                        onClick={() => toggleSort("allocatedTo")}
-                      >
-                        Allocated To
-                        {sortField === "allocatedTo" ? (
-                          <SortIcon className="h-3.5 w-3.5" />
-                        ) : null}
-                      </button>
-                    </th>
-                    <th className="px-4 py-3 text-right font-semibold">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedLockers.map((locker) => (
-                    <tr key={locker.id} className="border-t border-slate-200">
-                      <td className="px-4 py-3 font-medium text-slate-900">
-                        {locker.name}
-                      </td>
-                      <td className="px-4 py-3">
-                        {memberDisplayName(locker.allocatedTo)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => beginEdit(locker)}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-300 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
-                            aria-label={`Edit locker ${locker.name}`}
-                            title="Edit locker"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void deleteLocker(locker)}
-                            disabled={deletingLockerId === locker.id}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded border border-red-200 text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-                            aria-label={`Delete locker ${locker.name}`}
-                            title="Delete locker"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <AdminDataTable>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 font-semibold"
+                      onClick={() => toggleSort("name")}
+                    >
+                      Name
+                      {sortField === "name" ? (
+                        <SortIcon className="h-3.5 w-3.5" />
+                      ) : null}
+                    </button>
+                  </TableHead>
+                  <TableHead>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 font-semibold"
+                      onClick={() => toggleSort("allocatedTo")}
+                    >
+                      Allocated To
+                      {sortField === "allocatedTo" ? (
+                        <SortIcon className="h-3.5 w-3.5" />
+                      ) : null}
+                    </button>
+                  </TableHead>
+                  <TableHead className="text-right font-semibold">
+                    Actions
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sortedLockers.map((locker) => (
+                  <TableRow key={locker.id}>
+                    <TableCell className="font-medium">{locker.name}</TableCell>
+                    <TableCell>
+                      {memberDisplayName(locker.allocatedTo)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => beginEdit(locker)}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          aria-label={`Edit locker ${locker.name}`}
+                          title="Edit locker"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void deleteLocker(locker)}
+                          disabled={deletingLockerId === locker.id}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded border border-red-200 text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label={`Delete locker ${locker.name}`}
+                          title="Delete locker"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </AdminDataTable>
           )}
         </CardContent>
       </Card>

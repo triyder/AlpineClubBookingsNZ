@@ -3,6 +3,15 @@
 import type { AgeTier } from "@prisma/client";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { AdminDataTable } from "@/components/admin/admin-data-table";
+import {
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -279,15 +288,18 @@ export default function AgeTierSettingsPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Age Group Settings</h1>
-        <p className="text-slate-600 mt-1">
-          Configure the age boundaries for each membership tier. The highest tier has no
-          upper limit. MaxAge for each tier is automatically set to the next tier&apos;s
-          MinAge minus 1. Optional Xero contact-group mappings drive managed Xero
-          contact-group allocation for linked members.
-        </p>
-      </div>
+      <AdminPageHeader
+        title="Age Group Settings"
+        description={
+          <>
+            Configure the age boundaries for each membership tier. The highest
+            tier has no upper limit. MaxAge for each tier is automatically set to
+            the next tier&apos;s MinAge minus 1. Optional Xero contact-group
+            mappings drive managed Xero contact-group allocation for linked
+            members.
+          </>
+        }
+      />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -603,36 +615,36 @@ export default function AgeTierSettingsPage() {
           <CardTitle>Current Boundaries</CardTitle>
         </CardHeader>
         <CardContent>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b">
-                <th className="text-left py-2 font-medium text-slate-700">Tier</th>
-                <th className="text-left py-2 font-medium text-slate-700">Label</th>
-                <th className="text-left py-2 font-medium text-slate-700">Age Range</th>
-                <th className="text-left py-2 font-medium text-slate-700">Booking Subscription</th>
-                <th className="text-left py-2 font-medium text-slate-700">Family Request Creation</th>
-                <th className="text-left py-2 font-medium text-slate-700">Xero Group</th>
-              </tr>
-            </thead>
-            <tbody>
+          <AdminDataTable>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Tier</TableHead>
+                <TableHead>Label</TableHead>
+                <TableHead>Age Range</TableHead>
+                <TableHead>Booking Subscription</TableHead>
+                <TableHead>Family Request Creation</TableHead>
+                <TableHead>Xero Group</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {sorted.map((setting) => (
-                <tr key={setting.tier} className="border-b last:border-0">
-                  <td className="py-2 font-medium text-slate-900">{setting.tier}</td>
-                  <td className="py-2 text-slate-600">{setting.label}</td>
-                  <td className="py-2 text-slate-600">
+                <TableRow key={setting.tier}>
+                  <TableCell className="font-medium">{setting.tier}</TableCell>
+                  <TableCell>{setting.label}</TableCell>
+                  <TableCell>
                     {setting.maxAge !== null
                       ? `${setting.minAge} – ${setting.maxAge}`
                       : `${setting.minAge}+`}
-                  </td>
-                  <td className="py-2 text-slate-600">
+                  </TableCell>
+                  <TableCell>
                     {setting.subscriptionRequiredForBooking ? "Required" : "Not required"}
-                  </td>
-                  <td className="py-2 text-slate-600">
+                  </TableCell>
+                  <TableCell>
                     {setting.familyGroupRequestCreateMemberAllowed
                       ? "Allowed"
                       : "Link existing only"}
-                  </td>
-                  <td className="py-2 text-slate-600">
+                  </TableCell>
+                  <TableCell>
                     {setting.xeroContactGroupName ?? setting.xeroContactGroupId ? (
                       <span>
                         {setting.xeroContactGroupName ?? setting.xeroContactGroupId} (default)
@@ -649,11 +661,11 @@ export default function AgeTierSettingsPage() {
                     ) : (
                       "Not mapped"
                     )}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </AdminDataTable>
         </CardContent>
       </Card>
     </div>
