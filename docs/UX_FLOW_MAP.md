@@ -90,7 +90,16 @@ shadcn neutral (epic #1800). The foundation (#1801) establishes:
   `@theme inline`) are defined for light **and** dark and clear WCAG AA. Use
   `bg-success-muted text-success` / `bg-warning-muted text-warning` (or the
   solid `bg-success text-success-foreground`) instead of hardcoded
-  green/yellow Tailwind classes so badges/chips adapt to dark mode.
+  green/yellow Tailwind classes so badges/chips adapt to dark mode. The trio is
+  completed by `--info` (calm blue) and `--danger` (dark-adaptable red — used
+  instead of the solid `--destructive`, which fails dark-mode AA at 2.63:1).
+- **Status + occupancy primitives (#1804):** render any domain status with
+  `StatusChip` (`src/components/ui/status-chip.tsx`; `kind` =
+  booking|payment|subscription|lifecycle|financeAccess) — it resolves each state
+  to one of five semantic tones (neutral/info/success/warning/danger) as an
+  icon + label, wrapping the shared label maps. Show fullness with
+  `OccupancyMeter` (`filled`/`capacity`; accent bar → safety-orange + a "Full"
+  label when full). Both are presentation-only and dark-mode correct.
 - **Tabular figures:** numeric/data cells inside `.app-theme-scope table` get
   `tabular-nums` automatically; opt any other money/count/date node in with the
   `.tabular-figures` class.
@@ -102,6 +111,15 @@ shadcn neutral (epic #1800). The foundation (#1801) establishes:
   it degrades to a static indicator under reduced motion) and `EmptyState`
   (`src/components/ui/empty-state.tsx`; icon + heading + one-line direction +
   optional action) instead of bare `Loading…`/`No results` text.
+- **Admin table primitives (#1805):** build admin list screens on the shared
+  `AdminPageHeader`, `AdminDataTable` (`src/components/admin/`; themed
+  shadcn-`Table` shell with a sticky header, optional sticky first column, and a
+  comfortable/compact density toggle persisted per user), the shared
+  `SortHeader` (`aria-sort`, URL- or callback-driven), and the shared
+  `Pagination` (page-size selector; URL `hrefForPage` or callback `onPageChange`
+  modes) — instead of re-implementing the table shell / sort / pagination per
+  page. `bookings-pagination.tsx` / `member-pagination.tsx` are thin wrappers
+  over the shared `Pagination`.
 
 Later epic issues build on these primitives; do not re-introduce hardcoded
 status hex, `bg-white`, or `text-slate-*` on app surfaces.
