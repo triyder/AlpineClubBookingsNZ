@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 // Service-level tests for the #1786 applicant-email notify choice on
 // approveMemberApplication / rejectMemberApplication. Isolated harness (not the
@@ -177,9 +177,8 @@ function setupApproveFixture() {
     },
   };
 
-  vi.mocked(prisma.$transaction).mockImplementation(
-    async (callback: never) =>
-      (callback as unknown as (client: typeof tx) => unknown)(tx),
+  (prisma.$transaction as unknown as Mock).mockImplementation(
+    (callback: (client: typeof tx) => unknown) => callback(tx),
   );
 }
 
@@ -209,9 +208,8 @@ function setupRejectFixture() {
     },
   };
 
-  vi.mocked(prisma.$transaction).mockImplementation(
-    async (callback: never) =>
-      (callback as unknown as (client: typeof tx) => unknown)(tx),
+  (prisma.$transaction as unknown as Mock).mockImplementation(
+    (callback: (client: typeof tx) => unknown) => callback(tx),
   );
 }
 
