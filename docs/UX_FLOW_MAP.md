@@ -102,6 +102,15 @@ shadcn neutral (epic #1800). The foundation (#1801) establishes:
   it degrades to a static indicator under reduced motion) and `EmptyState`
   (`src/components/ui/empty-state.tsx`; icon + heading + one-line direction +
   optional action) instead of bare `Loading…`/`No results` text.
+- **Admin table primitives (#1805):** build admin list screens on the shared
+  `AdminPageHeader`, `AdminDataTable` (`src/components/admin/`; themed
+  shadcn-`Table` shell with a sticky header, optional sticky first column, and a
+  comfortable/compact density toggle persisted per user), the shared
+  `SortHeader` (`aria-sort`, URL- or callback-driven), and the shared
+  `Pagination` (page-size selector; URL `hrefForPage` or callback `onPageChange`
+  modes) — instead of re-implementing the table shell / sort / pagination per
+  page. `bookings-pagination.tsx` / `member-pagination.tsx` are thin wrappers
+  over the shared `Pagination`.
 
 Later epic issues build on these primitives; do not re-introduce hardcoded
 status hex, `bg-white`, or `text-slate-*` on app surfaces.
