@@ -49,34 +49,44 @@ export type CalendarOverlayValue = {
 // construction, which its JIT would prune). Consumers pass a tone; the calendar
 // never builds these strings at runtime. `ringCell` is the low-emphasis variant
 // used when an overlay sets emphasis: "ring".
+//
+// "Restrained Alpine" (epic #1800, #1815): each tone now renders on the shared
+// dark-adapting semantic tokens (#1801/#1804 success/warning/info/danger + the
+// neutral muted pair) instead of hardcoded Tailwind hues, so overlays adapt in
+// dark mode. The keys stay the original COLOUR NAMES to preserve the tone-string
+// API that callers (roster + hut-leaders) already pass — so a key's name no
+// longer implies its rendered hue (e.g. `orange` renders `info`, `violet`
+// renders neutral). Meaning is always carried by the overlay's text label too,
+// never colour alone. Roster severity order (needs-roster > suggested >
+// needs-attention > confirmed) maps onto danger > warning > info > success.
 const CALENDAR_TONE_CLASSES: Record<
   CalendarTone,
   { cell: string; ringCell: string; badge: string }
 > = {
   red: {
-    cell: "border-red-300 bg-red-50 text-slate-900 hover:bg-red-100",
-    ringCell: "ring-1 ring-inset ring-red-300 bg-white text-slate-900 hover:bg-red-50",
-    badge: "bg-red-100 text-red-800",
+    cell: "border-danger/40 bg-danger-muted text-foreground hover:bg-danger-muted/70",
+    ringCell: "ring-1 ring-inset ring-danger/50 bg-card text-foreground hover:bg-danger-muted/40",
+    badge: "bg-danger-muted text-danger",
   },
   amber: {
-    cell: "border-amber-300 bg-amber-50 text-slate-900 hover:bg-amber-100",
-    ringCell: "ring-1 ring-inset ring-amber-300 bg-white text-slate-900 hover:bg-amber-50",
-    badge: "bg-amber-100 text-amber-800",
+    cell: "border-warning/40 bg-warning-muted text-foreground hover:bg-warning-muted/70",
+    ringCell: "ring-1 ring-inset ring-warning/50 bg-card text-foreground hover:bg-warning-muted/40",
+    badge: "bg-warning-muted text-warning",
   },
   orange: {
-    cell: "border-orange-300 bg-orange-50 text-slate-900 hover:bg-orange-100",
-    ringCell: "ring-1 ring-inset ring-orange-300 bg-white text-slate-900 hover:bg-orange-50",
-    badge: "bg-orange-100 text-orange-800",
+    cell: "border-info/40 bg-info-muted text-foreground hover:bg-info-muted/70",
+    ringCell: "ring-1 ring-inset ring-info/50 bg-card text-foreground hover:bg-info-muted/40",
+    badge: "bg-info-muted text-info",
   },
   green: {
-    cell: "border-green-300 bg-green-50 text-slate-900 hover:bg-green-100",
-    ringCell: "ring-1 ring-inset ring-green-300 bg-white text-slate-900 hover:bg-green-50",
-    badge: "bg-green-100 text-green-800",
+    cell: "border-success/40 bg-success-muted text-foreground hover:bg-success-muted/70",
+    ringCell: "ring-1 ring-inset ring-success/50 bg-card text-foreground hover:bg-success-muted/40",
+    badge: "bg-success-muted text-success",
   },
   violet: {
-    cell: "border-violet-300 bg-violet-100 text-slate-900 hover:bg-violet-200",
-    ringCell: "ring-1 ring-inset ring-violet-300 bg-white text-slate-900 hover:bg-violet-50",
-    badge: "bg-violet-100 text-violet-800",
+    cell: "border-border bg-muted text-foreground hover:bg-muted/70",
+    ringCell: "ring-1 ring-inset ring-border bg-card text-foreground hover:bg-muted/60",
+    badge: "bg-muted text-foreground",
   },
 };
 
@@ -366,8 +376,8 @@ export function OccupancyCalendar({
   });
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-3 py-2">
+    <div className="rounded-lg border border-border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2">
         <div className="flex items-center gap-2">
           <Button
             type="button"
@@ -378,7 +388,7 @@ export function OccupancyCalendar({
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <div className="min-w-36 text-center text-sm font-semibold text-slate-900">
+          <div className="min-w-36 text-center text-sm font-semibold text-foreground">
             {visibleMonthLabel}
           </div>
           <Button
@@ -391,7 +401,7 @@ export function OccupancyCalendar({
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <CalendarDays className="h-4 w-4" />
           {loadingMonthKeys.includes(visibleMonthKey)
             ? "Loading occupancy..."
@@ -400,14 +410,14 @@ export function OccupancyCalendar({
       </div>
 
       {loadError && (
-        <div className="border-b border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="border-b border-danger/30 bg-danger-muted px-3 py-2 text-sm text-danger">
           {loadError}
         </div>
       )}
 
-      <div className="grid grid-cols-7 border-b border-slate-200">
+      <div className="grid grid-cols-7 border-b border-border">
         {DAY_LABELS.map((label) => (
-          <div key={label} className="px-1 py-2 text-center text-xs font-medium text-slate-500">
+          <div key={label} className="px-1 py-2 text-center text-xs font-medium text-muted-foreground">
             {label}
           </div>
         ))}
@@ -415,7 +425,7 @@ export function OccupancyCalendar({
 
       <div className="grid grid-cols-7">
         {Array.from({ length: startOffset }).map((_, index) => (
-          <div key={`empty-${index}`} className="min-h-16 border-b border-r border-slate-100 bg-slate-50" />
+          <div key={`empty-${index}`} className="min-h-16 border-b border-r border-border bg-muted" />
         ))}
         {Array.from({ length: daysInMonth }, (_, index) => {
           const day = index + 1;
@@ -434,16 +444,16 @@ export function OccupancyCalendar({
           const overlay = overlayByDate?.[dateString];
           const selectionClass =
             isSelectedStart || isSelectedEnd
-              ? "border-blue-600 bg-blue-600 text-white"
+              ? "border-brand-gold bg-brand-gold text-brand-charcoal"
               : isInRange
-                ? "border-blue-200 bg-blue-50 text-blue-900"
+                ? "border-brand-gold/40 bg-brand-gold/25 text-foreground"
                 : overlay
                   ? overlay.emphasis === "ring"
                     ? CALENDAR_TONE_CLASSES[overlay.tone].ringCell
                     : CALENDAR_TONE_CLASSES[overlay.tone].cell
                   : hasGuests
-                    ? "border-emerald-200 bg-emerald-50 text-slate-900 hover:bg-emerald-100"
-                    : "border-slate-100 bg-white text-slate-700 hover:bg-slate-50";
+                    ? "border-brand-gold/25 bg-brand-gold/10 text-foreground hover:bg-brand-gold/20"
+                    : "border-border bg-card text-foreground hover:bg-muted";
           const guestLabel = night?.guestCount
             ? `${night.guestCount} guest${night.guestCount === 1 ? "" : "s"}`
             : "No guests";
@@ -456,12 +466,19 @@ export function OccupancyCalendar({
               onClick={() => handleDayClick(dateString)}
               aria-pressed={isSelectedStart || isSelectedEnd || isInRange}
               aria-label={`${formatDisplayDate(dateString)}, ${guestLabel}${isPast ? ", past date" : ""}${overlay ? `, ${overlay.label}` : ""}`}
-              className={`min-h-16 border-b border-r p-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-300 ${selectionClass}`}
+              // Stable hooks for tests/tooling so overlay assertions target the
+              // tone + emphasis rather than the token class strings, which the
+              // "Restrained Alpine" restyle may re-tint.
+              data-overlay-tone={overlay?.tone}
+              data-overlay-emphasis={overlay ? (overlay.emphasis ?? "fill") : undefined}
+              className={`min-h-16 border-b border-r p-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground ${selectionClass}`}
             >
               <span className="block text-sm font-semibold leading-none">{day}</span>
               {hasGuests && (
                 <span className={`mt-2 inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${
-                  isSelectedStart || isSelectedEnd ? "bg-white/20 text-white" : "bg-emerald-100 text-emerald-800"
+                  isSelectedStart || isSelectedEnd
+                    ? "bg-brand-charcoal/15 text-brand-charcoal"
+                    : "bg-brand-gold/20 text-brand-charcoal dark:bg-brand-gold/15 dark:text-brand-gold"
                 }`}>
                   <Users className="mr-1 h-3 w-3" />
                   {night?.guestCount}
@@ -480,13 +497,13 @@ export function OccupancyCalendar({
       </div>
 
       <div className="space-y-3 px-3 py-3">
-        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded bg-emerald-100 ring-1 ring-emerald-200" />
+            <span className="h-3 w-3 rounded bg-brand-gold/25 ring-1 ring-brand-gold/40" />
             Guests staying
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded bg-blue-600" />
+            <span className="h-3 w-3 rounded bg-brand-gold" />
             Selected {mode === "single" ? "date" : "range"}
           </span>
           {overlayLegend?.map((item) => (
@@ -497,11 +514,11 @@ export function OccupancyCalendar({
           ))}
         </div>
 
-        <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+        <div className="rounded-md border border-border bg-muted p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h3 className="text-sm font-semibold text-slate-900">Who&apos;s at the lodge</h3>
-              <p className="text-xs text-slate-500">
+              <h3 className="text-sm font-semibold text-foreground">Who&apos;s at the lodge</h3>
+              <p className="text-xs text-muted-foreground">
                 {selectedPanelRange
                   ? `${selectedPanelRange.startDate} to ${selectedPanelRange.endDate}`
                   : mode === "single"
@@ -510,7 +527,7 @@ export function OccupancyCalendar({
               </p>
             </div>
             {selectedPanelRange && (
-              <Badge variant="outline" className="bg-white">
+              <Badge variant="outline" className="bg-card">
                 {selectedRangeLoading
                   ? "Loading..."
                   : `${selectedGuestCount} guest-night${selectedGuestCount === 1 ? "" : "s"}`}
@@ -519,17 +536,17 @@ export function OccupancyCalendar({
           </div>
 
           {selectedRangeLoading ? (
-            <p className="mt-3 text-sm text-slate-500">
+            <p className="mt-3 text-sm text-muted-foreground">
               Loading occupancy for this selection...
             </p>
           ) : selectedRangeLoadFailed ? (
-            <p className="mt-3 text-sm text-red-700">
+            <p className="mt-3 text-sm text-danger">
               Occupancy could not be loaded for this selection.
             </p>
           ) : selectedPanelRange && selectedBookings.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">No operational bookings in this selection.</p>
+            <p className="mt-3 text-sm text-muted-foreground">No operational bookings in this selection.</p>
           ) : selectedPanelRange ? (
-            <div className="mt-3 divide-y divide-slate-200 rounded-md border border-slate-200 bg-white">
+            <div className="mt-3 divide-y divide-border rounded-md border border-border bg-card">
               {selectedBookings.map((booking) => {
                 const isSingleNight =
                   selectedPanelRange.startDate === selectedPanelRange.endDate;
@@ -537,13 +554,13 @@ export function OccupancyCalendar({
                   <Link
                     key={booking.id}
                     href={`/bookings/${booking.id}`}
-                    className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-slate-50"
+                    className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-muted"
                   >
                     <span>
-                      <span className="font-medium text-slate-900">{booking.ownerName}</span>
-                      <span className="ml-2 text-xs text-slate-500">#{booking.reference}</span>
+                      <span className="font-medium text-foreground">{booking.ownerName}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">#{booking.reference}</span>
                     </span>
-                    <span className="text-xs text-slate-600">
+                    <span className="text-xs text-muted-foreground">
                       {booking.checkIn} to {booking.checkOut} - {booking.guestCount}{" "}
                       {isSingleNight ? "guest" : "guest-night"}
                       {booking.guestCount === 1 ? "" : "s"}

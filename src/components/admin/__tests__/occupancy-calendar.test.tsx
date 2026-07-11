@@ -378,9 +378,14 @@ describe("OccupancyCalendar", () => {
     const dayButton = await screen.findByRole("button", {
       name: /10 Jul.*Needs chores/i,
     });
-    // Tone cell class (static table, orange) is applied over the guest emerald.
-    expect(dayButton.className).toContain("bg-orange-50");
-    expect(dayButton.className).not.toContain("bg-emerald-50");
+    // Overlay tone/emphasis are exposed as stable data attributes (the token
+    // class strings may be re-tinted by the "Restrained Alpine" restyle).
+    expect(dayButton).toHaveAttribute("data-overlay-tone", "orange");
+    expect(dayButton).toHaveAttribute("data-overlay-emphasis", "fill");
+    // The "orange" tone now renders on the semantic info tokens; its muted fill
+    // paints over the guest-gold tint.
+    expect(dayButton.className).toContain("bg-info-muted");
+    expect(dayButton.className).not.toContain("bg-brand-gold/10");
     // aria-label keeps the existing guest label and appends the overlay label.
     expect(dayButton.getAttribute("aria-label")).toMatch(/1 guest, Needs chores$/);
     // Compact overlay badge renders the label as visible text.
@@ -419,9 +424,12 @@ describe("OccupancyCalendar", () => {
     const dayButton = await screen.findByRole("button", {
       name: /11 Jul.*Smith/i,
     });
-    // Ring variant: violet outline over a white cell, never the solid tint.
-    expect(dayButton.className).toContain("ring-violet-300");
-    expect(dayButton.className).not.toContain("bg-violet-100");
+    // Ring variant: a low-emphasis inset outline over a card cell, never a solid
+    // tint. Emphasis is asserted via the stable data attribute; the ring is drawn
+    // with the semantic tokens rather than a hardcoded hue.
+    expect(dayButton).toHaveAttribute("data-overlay-emphasis", "ring");
+    expect(dayButton.className).toContain("ring-inset");
+    expect(dayButton.className).toContain("bg-card");
     // Badge still renders the label.
     expect(screen.getByText("Smith")).toBeInTheDocument();
   });
@@ -435,8 +443,10 @@ describe("OccupancyCalendar", () => {
     });
     // No overlay label appended; aria-label ends at the guest count.
     expect(dayButton.getAttribute("aria-label")).toMatch(/, 1 guest$/);
-    // Guest cells keep their emerald styling; no tone class leaks in.
-    expect(dayButton.className).toContain("bg-emerald-50");
-    expect(dayButton.className).not.toContain("bg-orange-50");
+    // No overlay data attributes when no overlay prop is supplied.
+    expect(dayButton).not.toHaveAttribute("data-overlay-tone");
+    // Guest cells keep their accent-gold tint; no overlay tone token leaks in.
+    expect(dayButton.className).toContain("bg-brand-gold/10");
+    expect(dayButton.className).not.toContain("bg-info-muted");
   });
 });
