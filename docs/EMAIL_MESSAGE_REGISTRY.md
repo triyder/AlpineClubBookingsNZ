@@ -657,6 +657,7 @@ Triggers and frequency:
 - Sends one email per guest with an email address and assigned chores.
 - For each guest that will be emailed, the route deletes old guest chore tokens for that guest/date before creating a new 48-hour token.
 - Honors the `choreRoster` preference via the Option C hybrid resolver (#1285), evaluated in `admin-roster-service.ts` **before** the token is created so an opted-out recipient leaves no orphaned token: the guest's own preference wins, else the inheriting primary's (`inheritEmailFromId`), else send. Suppressed guests are reported in the response `skipped` count. Non-member guests have no preference and are always sent.
+- Per-send email choice (#1785, part of the #1769b sweep): the admin roster send now offers, per send, whether to email or suppress the whole batch. Default = email (fresh 48-hour tokens reissued as today). Suppress (`notifyMember: false`) skips the send entirely **and** leaves existing guest chore tokens/links intact — no token deletion, no new tokens, no email — recording `notifyMember: false` in the audit log (`ADMIN_CHORE_ROSTER_EMAIL_SUPPRESSED`). The `choreRoster` per-member opt-out above still applies on top of the notify path.
 
 ### hut-leader-assignment
 

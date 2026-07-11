@@ -2,6 +2,14 @@
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -97,6 +105,13 @@ export default function RosterPage() {
   const [saving, setSaving] = useState(false)
   const [includeNonEssential, setIncludeNonEssential] = useState<boolean | null>(null)
   const [sendingEmail, setSendingEmail] = useState(false)
+  // #1785 (#1769b sweep): the admin chooses, per send, whether to email the
+  // roster. The dialog opens on the "Email Roster to Guests" click; the button
+  // only renders when at least one guest is affected, so opening it already
+  // means an email would send. `lastEmailSuppressed` records whether the last
+  // completed send suppressed the emails (for truthful success copy).
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false)
+  const [lastEmailSuppressed, setLastEmailSuppressed] = useState(false)
   // Lodge context for the roster; LodgeSelect renders nothing (and reports
   // the sole lodge) while fewer than two lodges exist (ADR-002).
   const { lodges, loading: lodgesLoading } = useLodgeOptions("admin")
@@ -176,6 +191,10 @@ export default function RosterPage() {
       }
       const data: RosterData = await res.json()
       setRoster(data)
+      // #1785: the "last send suppressed" note is scoped to the currently
+      // loaded date — drop it whenever a roster (re)loads so a suppress on one
+      // date can never keep asserting itself over another date's roster.
+      setLastEmailSuppressed(false)
       // Refresh the month overlay so an auto-suggest on opening a needs-roster
       // date (and every mutation that re-fetches) is reflected on the calendar.
       void loadMonthStatus(date.slice(0, 7))
@@ -322,17 +341,34 @@ export default function RosterPage() {
     }
   }
 
-  async function handleSendEmail() {
-    if (!confirm("Send chore roster email to all guests for this date?")) return
+  // #1785: the click now asks — via the notify dialog — whether to email. The
+  // button only renders when at least one guest is affected, so opening the
+  // dialog already satisfies "ask only when an email would actually send".
+  function handleSendEmail() {
+    setNotifyDialogOpen(true)
+  }
+
+  async function performSendEmail(notifyMember: boolean) {
     setSendingEmail(true)
+    // Clear the prior "last send suppressed" note at the start of every send
+    // attempt; the outcome below re-sets it only when this send suppresses.
+    setLastEmailSuppressed(false)
     try {
       const res = await fetch(rosterUrl(selectedDate), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "email" }),
+        body: JSON.stringify({ action: "email", notifyMember }),
       })
       if (!res.ok) throw new Error("Failed to send emails")
       const data = await res.json()
+      // Suppress branch: nothing was sent and existing chore links stay valid.
+      if (data.suppressed) {
+        setLastEmailSuppressed(true)
+        alert(
+          "No emails sent. Existing chore links remain valid. Your choice is recorded in the audit log."
+        )
+        return
+      }
       const skippedNote = data.skipped
         ? ` ${data.skipped} guest(s) skipped (opted out of chore roster emails).`
         : ""
@@ -507,6 +543,12 @@ export default function RosterPage() {
                     {" · "}
                     {roster.assignments.length} assignment{roster.assignments.length !== 1 ? "s" : ""}
                   </CardDescription>
+                  {lastEmailSuppressed && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Last send: no emails sent — existing chore links remain
+                      valid (recorded in the audit log).
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center space-x-2">
                   {hasAnySuggested && (
@@ -691,6 +733,48 @@ export default function RosterPage() {
           )}
         </>
       )}
+
+      {/* #1785 (#1769b sweep): per-send email choice, mirroring the #1705/#1769a
+          pattern. Emailing reissues fresh 48-hour chore links to every affected
+          guest; suppressing sends nothing and leaves any previously-issued chore
+          links valid. Both choices are recorded — the suppression is audited as
+          `notifyMember: false`. The triggering button only renders when at least
+          one guest is affected, so opening this already means an email would
+          send. */}
+      <Dialog open={notifyDialogOpen} onOpenChange={setNotifyDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Email the roster to guests?</DialogTitle>
+            <DialogDescription>
+              Emailing sends each affected guest a fresh chore link — guests
+              who opted out of chore-roster emails are still skipped. Choosing
+              not to email leaves any previously-sent chore links valid and
+              sends nothing. Your choice is recorded in the audit log.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              disabled={sendingEmail}
+              onClick={() => {
+                setNotifyDialogOpen(false)
+                void performSendEmail(false)
+              }}
+            >
+              Don’t email — keep existing links
+            </Button>
+            <Button
+              disabled={sendingEmail}
+              onClick={() => {
+                setNotifyDialogOpen(false)
+                void performSendEmail(true)
+              }}
+            >
+              Email guests the roster
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

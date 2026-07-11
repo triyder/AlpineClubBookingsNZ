@@ -11,6 +11,7 @@ import { validateRosterAllocationsForDate } from "@/lib/lodge-date-scoping"
 import { lodgeNullTolerantScope } from "@/lib/lodges"
 import { z } from "zod"
 import logger from "@/lib/logger"
+import { logAudit } from "@/lib/audit"
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status"
 
 type JsonRouteResult = {
@@ -44,7 +45,7 @@ export const rosterActionSchema = z.discriminatedUnion("action", [
     overwriteConfirmed: z.boolean().optional(),
   }),
   z.object({ action: z.literal("confirm") }),
-  z.object({ action: z.literal("email") }),
+  z.object({ action: z.literal("email"), notifyMember: z.boolean().optional() }),
 ])
 
 export type RosterActionInput = z.infer<typeof rosterActionSchema>
@@ -305,8 +306,9 @@ export async function updateAdminRosterForDate(params: {
   dateString: string
   data: RosterActionInput
   lodgeId: string
+  adminMemberId?: string
 }): Promise<JsonRouteResult> {
-  const { date, dateString: dateStr, data, lodgeId } = params
+  const { date, dateString: dateStr, data, lodgeId, adminMemberId } = params
   try {
   switch (data.action) {
     case "reassign": {
@@ -426,6 +428,31 @@ export async function updateAdminRosterForDate(params: {
       break
     }
     case "email": {
+      // #1785 (#1769b sweep): the admin can suppress the whole roster send.
+      // SUPPRESS (notifyMember === false) short-circuits BEFORE any token work
+      // or email — no token deletion, no new tokens, no sends — so previously
+      // emailed chore links stay valid. Only the suppression is audited; the
+      // default/true notify path writes no audit field (mirrors #1769a).
+      if (data.notifyMember === false) {
+        logAudit({
+          action: "ADMIN_CHORE_ROSTER_EMAIL_SUPPRESSED",
+          memberId: adminMemberId,
+          category: "communication",
+          severity: "info",
+          summary: "Admin suppressed the chore-roster email send",
+          details: JSON.stringify({ date: dateStr, lodgeId, notifyMember: false }),
+          metadata: { date: dateStr, lodgeId, notifyMember: false },
+        })
+        return jsonResult({
+          success: true,
+          suppressed: true,
+          sent: 0,
+          skipped: 0,
+          failed: 0,
+          failures: [],
+        })
+      }
+
       // Send roster email to all guests for this date
       const assignments = await prisma.choreAssignment.findMany({
         where: { date },
