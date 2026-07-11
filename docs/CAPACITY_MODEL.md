@@ -145,6 +145,27 @@ is below the active bed count (it will cap the lodge). The allocation board
 still shows all physical beds; a capped lodge simply leaves some beds
 unbooked.
 
+## Exceeding the ceiling (admin overbook overrides)
+
+The resolved figure is a hard block for members: no member-facing path can
+create or grow a booking past it. Admins can exceed it only through the
+shared warn-and-confirm contract (`OverCapacityConfirmationRequiredError` →
+409 `OVER_CAPACITY_CONFIRM_REQUIRED` → resubmit with
+`confirmOverCapacity: true`, `capacityOverridden` audited), on these
+surfaces:
+
+- **admin date-edit override** (#1668) — `booking-modify-plan` /
+  date-modification service under `adminOverride`;
+- **admin on-behalf create** — retroactive (#1695) and forward-dated
+  (#1767) creates on `/admin/book`, unless the create opted into the
+  waitlist fallback (which keeps the capacity-exceeded outcome and
+  waitlists instead);
+- **confirm-pending-guests** on the booking detail page (#1366, explicit
+  overbook flag under the advisory-locked re-check).
+
+Partner-shared admissions (#1745/#1746) are *not* overrides — they consume
+reserved headroom and reject rather than falling back into the confirm.
+
 ## Behaviour change (introduced with #1653)
 
 Previously, when Bed Allocation was on with beds configured, an

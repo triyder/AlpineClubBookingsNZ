@@ -166,9 +166,9 @@ export default function AdminBookPage() {
 
   function addFamilyMemberAsGuest(fm: FamilyMember) {
     if (guests.some((g) => g.memberId === fm.id)) return;
-    // Retroactive bookings may exceed the live availability (over-capacity is
-    // warn-and-confirm at submit), so cap by lodge capacity instead.
-    if (!isRetroactive && guests.length >= availableBeds) return;
+    // Admin creates may exceed the live availability (over-capacity is
+    // warn-and-confirm at submit, #1695/#1767), so cap by lodge capacity.
+    if (guests.length >= lodgeCapacity) return;
     setGuests([
       ...guests,
       {
@@ -233,13 +233,9 @@ export default function AdminBookPage() {
       }
     }
 
-    // Retroactive bookings can exceed live availability — over-capacity becomes
-    // a warn-and-confirm at submit, not a hard block here (#1695).
-    if (!isRetroactive && guests.length > availableBeds) {
-      setError(`Only ${availableBeds} beds available for your dates`);
-      return;
-    }
-
+    // Admin creates can exceed live availability — over-capacity becomes a
+    // warn-and-confirm at submit, not a hard block here (#1695/#1767). The
+    // warning banner above the guest list flags the shortfall.
     setError("");
     setPriceLoading(true);
     const checkInStr = formatLocalDateOnly(checkIn!);
@@ -506,6 +502,7 @@ export default function AdminBookPage() {
               selectedCheckOut={checkOut}
               lodgeId={lodgeId}
               allowPastDates={allowPastDates}
+              allowFullDates
             />
           </CardContent>
         </Card>
@@ -527,10 +524,10 @@ export default function AdminBookPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {isRetroactive && guests.length > availableBeds && (
+            {guests.length > availableBeds && (
               <div className="rounded-md bg-orange-50 p-3 text-sm text-orange-800">
-                This retroactive booking exceeds the {availableBeds} bed
-                {availableBeds === 1 ? "" : "s"} available for these past dates.
+                This booking exceeds the {availableBeds} bed
+                {availableBeds === 1 ? "" : "s"} available for these dates.
                 You can still create it \u2014 you will confirm the over-capacity
                 override at the final step.
               </div>
@@ -560,8 +557,7 @@ export default function AdminBookPage() {
                         }
                         size="sm"
                         disabled={
-                          alreadyAdded ||
-                          (!isRetroactive && guests.length >= availableBeds)
+                          alreadyAdded || guests.length >= lodgeCapacity
                         }
                         onClick={() => addFamilyMemberAsGuest(fm)}
                       >
@@ -576,7 +572,7 @@ export default function AdminBookPage() {
             <GuestForm
               guests={guests}
               onGuestsChange={setGuests}
-              maxGuests={isRetroactive ? lodgeCapacity : availableBeds}
+              maxGuests={lodgeCapacity}
             />
             <div className="flex justify-between pt-4">
               <Button variant="outline" onClick={() => setStep("dates")}>

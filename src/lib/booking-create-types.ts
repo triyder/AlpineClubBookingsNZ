@@ -81,12 +81,21 @@ export interface ConfirmedBookingInput extends BaseInput {
   paymentMethod?: BookingPaymentMethod;
   internetBankingSettings?: InternetBankingPaymentSettingsValues;
   // Retroactive booking (#1695). Honoured only for on-behalf creates: the
-  // check-in may fall in the past (up to RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS),
-  // over-capacity nights become warn-and-confirm, and the member email is a
-  // per-create choice. Absent/false keeps the member flow byte-identical.
+  // check-in may fall in the past (up to RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS)
+  // and the member email is a per-create choice. Absent/false keeps the member
+  // flow byte-identical. Over-capacity warn-and-confirm covers every on-behalf
+  // create, past or future (#1767).
   allowPastDates?: boolean;
   confirmOverCapacity?: boolean;
   notifyMember?: boolean;
+  /**
+   * Set ONLY by the POST /api/bookings route when the caller opted into the
+   * waitlist fallback (#1767). Suppresses the on-behalf over-capacity
+   * warn-and-confirm so the capacityExceeded outcome still reaches the
+   * route's waitlist fall-through instead of aborting with a 409 confirm
+   * prompt. Never exposed as an API field.
+   */
+  waitlistIntent?: boolean;
   /**
    * Internal inherited-stay marker (#1695 H1 fix): set ONLY by callers that
    * join an existing, already-validated stay envelope — group join (whole-stay

@@ -259,7 +259,12 @@ with zero deltas) or `recalculate` (the standard reprice with locked-period
 clamps lifted). An over-capacity override is warn-and-confirm: the first apply
 raises `OverCapacityConfirmationRequiredError` (409,
 `OVER_CAPACITY_CONFIRM_REQUIRED`) and only proceeds when resubmitted with
-`confirmOverCapacity: true`, recording `capacityOverridden`. Every override move
+`confirmOverCapacity: true`, recording `capacityOverridden`. The same
+warn-and-confirm contract covers **every admin on-behalf create** — past-dated
+(#1695) and future-dated (#1767) — except a create that opted into the
+waitlist fallback (which keeps the capacity-exceeded outcome so the
+WAITLISTED booking is created instead); a member self-create keeps the hard
+capacity block and can never overbook. Every override move
 is audited as `booking.modify.admin_override` (including the admin's explicit
 member-notification choice, `notifyMember`) and linked, best-effort, to the
 booking's most recent APPROVED-but-unlinked change request that the move
