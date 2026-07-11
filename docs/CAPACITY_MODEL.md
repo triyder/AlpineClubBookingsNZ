@@ -39,7 +39,14 @@ ceiling bump:
   (`checkCapacityForPartnerSharedAdmission`, `src/lib/capacity.ts`) can use
   the slots; every public/member/system path keeps reading the unchanged
   base `getLodgeCapacity`. An ordinary guest can never be admitted into
-  partner headroom. Initiation is admin-only (#1746).
+  partner headroom. Initiation is admin-only (#1746): the admin edit-booking
+  panel offers the confirmed partners of the booking's member guests as
+  "partner (shares a double bed)" quick-adds (server-computed,
+  `listBookingPartnerSharingCandidates` in `double-bed-sharing.ts`), and the
+  modify/modify-quote routes accept the matching `partnerSharedGuests` flags
+  from admins only — gated at route AND service, so the reserved slots are
+  unreachable from member self-service. A rejected flag surfaces the check's
+  reason verbatim and never falls back into the #1668 overbook confirm.
 - **Bounded:** at most `activeDoubleBedCount` shared admissions per night.
   Each admitted sharer must hold a CONFIRMED partner link with a member
   staying every requested night (`mayShareDoubleBed` stays the single source

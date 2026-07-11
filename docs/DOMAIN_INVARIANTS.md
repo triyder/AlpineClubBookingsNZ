@@ -115,7 +115,12 @@ Future reviews and issues should cite this file when proposing changes.
   feasible pairing always exists, modulo the documented #1668 forced-overbook
   residual), and capped by an explicit `LodgeSettings.capacity`, which limits
   *people*, so a `capped_beds` lodge gets no headroom (see
-  docs/CAPACITY_MODEL.md, "Partner-shared double-bed headroom"). A DOUBLE
+  docs/CAPACITY_MODEL.md, "Partner-shared double-bed headroom"). Initiation
+  is admin-only (#1746): the `partnerSharedGuests` flags on the booking
+  modify routes are rejected for non-admin actors at BOTH route and service,
+  the edit panel's quick-add candidates are server-computed
+  (`listBookingPartnerSharingCandidates`), and the public wizard carries no
+  shared-slot affordance. A DOUBLE
   holding a second occupant
   cannot be retyped to a non-double until that occupant is removed. Whenever a
   shared double loses its primary — a board delete (#1743), a board move of the

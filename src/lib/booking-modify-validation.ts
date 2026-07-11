@@ -73,6 +73,10 @@ export type BatchModifyInput = {
   // Owner decision (#1668 review): the admin chooses per override edit whether
   // the member receives the change-notification email. Absent = notify.
   notifyMember?: boolean;
+  // Admin-only (#1746): flags a proposed member guest as the second occupant
+  // of a shared double with their CONFIRMED partner, routing capacity through
+  // the #1745 reserved-slot admission check. Rejected for non-admin actors.
+  partnerSharedGuests?: Array<{ memberId: string; partnerMemberId: string }>;
 };
 
 export type BookingModificationSettlementMethod = "card" | "credit";

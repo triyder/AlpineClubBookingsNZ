@@ -104,6 +104,20 @@ interface NewGuest {
   stayEnd?: string;
   // Explicit included nights (issue #713), set in the multi date range grid.
   nights?: string[];
+  // #1746 (admin only): this guest is added as the second occupant of a
+  // shared double with their confirmed partner (a member already on the
+  // booking) — capacity runs through the reserved partner slots.
+  partnerSharedWithMemberId?: string;
+}
+
+// Server-computed partner-sharer quick-add candidate (#1746): a confirmed
+// partner of a member already on the booking.
+interface PartnerSharingCandidate {
+  id: string;
+  firstName: string;
+  lastName: string;
+  partnerOfMemberId: string;
+  partnerOfName: string;
 }
 
 interface ItemizedChange {
@@ -131,6 +145,8 @@ interface QuoteResult {
   netChargeCents: number;
   settlementOptions: SettlementOptions | null;
   capacityAvailable: boolean;
+  // #1746: why a partner-shared admission was rejected (shown verbatim).
+  partnerSharedReason?: string | null;
   promoStillValid: boolean;
   promoValidation: {
     valid: boolean;
@@ -249,6 +265,11 @@ export function EditBookingPanel({
     )
   );
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  // #1746: partner-sharer quick-adds (admin fetch only — the member family
+  // route never returns them, so this stays empty for members).
+  const [partnerCandidates, setPartnerCandidates] = useState<
+    PartnerSharingCandidate[]
+  >([]);
   const [promoAction, setPromoAction] = useState<
     { type: "keep" } | { type: "remove" } | { type: "new"; code: string }
   >({ type: "keep" });
@@ -342,6 +363,7 @@ export function EditBookingPanel({
       .then((data) => {
         if (!cancelled) {
           setFamilyMembers(data.familyMembers || []);
+          setPartnerCandidates(data.partnerSharingCandidates || []);
         }
       })
       .catch(() => {
@@ -631,6 +653,17 @@ export function EditBookingPanel({
     if (effectiveCheckOut !== booking.checkOut) body.checkOut = effectiveCheckOut;
     if (addedGuests.length > 0) {
       body.addGuests = rangeAwareAddedGuests;
+      // #1746: partner-sharer flags for admin-added partner guests still in
+      // the proposal — capacity then runs through the reserved double slots.
+      const partnerSharedGuests = addedGuests
+        .filter((g) => g.memberId && g.partnerSharedWithMemberId)
+        .map((g) => ({
+          memberId: g.memberId as string,
+          partnerMemberId: g.partnerSharedWithMemberId as string,
+        }));
+      if (partnerSharedGuests.length > 0) {
+        body.partnerSharedGuests = partnerSharedGuests;
+      }
     }
     if (removedGuestIds.size > 0) {
       body.removeGuestIds = Array.from(removedGuestIds);
@@ -784,6 +817,30 @@ export function EditBookingPanel({
         ageTier: familyMember.ageTier,
         isMember: true,
         memberId: familyMember.id,
+        ...(perGuestDatesEnabled && !isInProgressEdit
+          ? { stayStart: checkIn, stayEnd: checkOut }
+          : {}),
+      },
+    ]);
+  }
+
+  function handleAddPartnerCandidate(candidate: PartnerSharingCandidate) {
+    const alreadyAdded = booking.guests.some((guest) => guest.memberId === candidate.id)
+      || addedGuests.some((guest) => guest.memberId === candidate.id);
+    if (alreadyAdded) {
+      return;
+    }
+
+    setAddedGuests((prev) => [
+      ...prev,
+      {
+        key: crypto.randomUUID(),
+        firstName: candidate.firstName,
+        lastName: candidate.lastName,
+        ageTier: "ADULT" as AgeTier,
+        isMember: true,
+        memberId: candidate.id,
+        partnerSharedWithMemberId: candidate.partnerOfMemberId,
         ...(perGuestDatesEnabled && !isInProgressEdit
           ? { stayStart: checkIn, stayEnd: checkOut }
           : {}),
@@ -1141,6 +1198,38 @@ export function EditBookingPanel({
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {partnerCandidates.length > 0 && !overrideEnabled && (
+            <div className="space-y-2 rounded-md border border-dashed p-3">
+              <p className="text-sm font-medium text-muted-foreground">
+                Add a partner (shares a double bed)
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {partnerCandidates.map((candidate) => {
+                  const alreadyAdded = booking.guests.some((guest) => guest.memberId === candidate.id)
+                    || addedGuests.some((guest) => guest.memberId === candidate.id);
+                  return (
+                    <Button
+                      key={candidate.id}
+                      type="button"
+                      variant={alreadyAdded ? "secondary" : "outline"}
+                      size="sm"
+                      disabled={alreadyAdded}
+                      onClick={() => handleAddPartnerCandidate(candidate)}
+                    >
+                      {alreadyAdded ? "\u2713 " : "+ "}
+                      {candidate.firstName} {candidate.lastName} \u2014 partner of {candidate.partnerOfName}
+                    </Button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                A partner can be added even when the lodge is full by beds:
+                they use a reserved double-bed slot (one per double) and must
+                then be placed as the second occupant on the allocation board.
+              </p>
             </div>
           )}
 
@@ -1599,7 +1688,9 @@ export function EditBookingPanel({
 
             {quote && !quote.capacityAvailable && !overCapacityConfirmActive && (
               <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-                <p className="font-medium">Not enough beds available</p>
+                <p className="font-medium">
+                  {quote.partnerSharedReason ?? "Not enough beds available"}
+                </p>
                 {quote.nightDetails && (
                   <ul className="mt-1 list-disc pl-4">
                     {quote.nightDetails

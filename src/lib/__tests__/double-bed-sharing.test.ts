@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { mayShareDoubleBed } from "@/lib/double-bed-sharing";
+import {
+  listBookingPartnerSharingCandidates,
+  mayShareDoubleBed,
+} from "@/lib/double-bed-sharing";
 import { canonicalPartnerPair } from "@/lib/member-partner-link-shared";
 
 type FakeMember = {
@@ -111,5 +114,122 @@ describe("mayShareDoubleBed", () => {
     const db = fakeDb([adult("a")]);
     await expect(mayShareDoubleBed("", "b", db)).resolves.toBe(false);
     expect(db.member.findMany as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+});
+
+describe("listBookingPartnerSharingCandidates", () => {
+  type FakeGuest = {
+    memberId: string | null;
+    firstName: string;
+    lastName: string;
+  };
+
+  function candidatesDb(
+    guests: FakeGuest[],
+    links: FakePartnerLink[],
+    members: Array<FakeMember & { firstName: string; lastName: string }>,
+  ) {
+    return {
+      bookingGuest: {
+        findMany: vi.fn(async () =>
+          guests.filter((guest) => guest.memberId !== null),
+        ),
+      },
+      memberPartnerLink: {
+        findMany: vi.fn(
+          async (args: {
+            where: {
+              OR: Array<
+                | { memberAId: { in: string[] } }
+                | { memberBId: { in: string[] } }
+              >;
+            };
+          }) => {
+            const inA = (args.where.OR[0] as { memberAId: { in: string[] } })
+              .memberAId.in;
+            return links.filter(
+              (candidate) =>
+                candidate.status === "CONFIRMED" &&
+                (inA.includes(candidate.memberAId) ||
+                  inA.includes(candidate.memberBId)),
+            );
+          },
+        ),
+      },
+      member: {
+        findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
+          members.filter(
+            (member) =>
+              args.where.id.in.includes(member.id) &&
+              member.active &&
+              member.ageTier === "ADULT",
+          ),
+        ),
+      },
+    } as unknown as NonNullable<
+      Parameters<typeof listBookingPartnerSharingCandidates>[1]
+    >;
+  }
+
+  const guest = (memberId: string | null, name: string): FakeGuest => ({
+    memberId,
+    firstName: name,
+    lastName: "Guest",
+  });
+  const namedAdult = (id: string, name: string) => ({
+    ...adult(id),
+    firstName: name,
+    lastName: "Member",
+  });
+
+  it("offers the confirmed partner of a booking member with the anchor named", async () => {
+    const db = candidatesDb(
+      [guest("m-anna", "Anna")],
+      [link("m-anna", "m-ben", "CONFIRMED")],
+      [namedAdult("m-ben", "Ben")],
+    );
+    const candidates = await listBookingPartnerSharingCandidates("b1", db);
+    expect(candidates).toEqual([
+      {
+        id: "m-ben",
+        firstName: "Ben",
+        lastName: "Member",
+        partnerOfMemberId: "m-anna",
+        partnerOfName: "Anna Guest",
+      },
+    ]);
+  });
+
+  it("offers nothing when the partner is already a guest on the booking", async () => {
+    const db = candidatesDb(
+      [guest("m-anna", "Anna"), guest("m-ben", "Ben")],
+      [link("m-anna", "m-ben", "CONFIRMED")],
+      [namedAdult("m-ben", "Ben")],
+    );
+    await expect(
+      listBookingPartnerSharingCandidates("b1", db),
+    ).resolves.toEqual([]);
+  });
+
+  it("drops partners who are no longer active adults", async () => {
+    const db = candidatesDb(
+      [guest("m-anna", "Anna")],
+      [link("m-anna", "m-ben", "CONFIRMED")],
+      [{ ...namedAdult("m-ben", "Ben"), active: false }],
+    );
+    await expect(
+      listBookingPartnerSharingCandidates("b1", db),
+    ).resolves.toEqual([]);
+  });
+
+  it("returns empty without link queries when the booking has no member guests", async () => {
+    const db = candidatesDb([guest(null, "Walkin")], [], []);
+    await expect(
+      listBookingPartnerSharingCandidates("b1", db),
+    ).resolves.toEqual([]);
+    expect(
+      (db as unknown as { memberPartnerLink: { findMany: ReturnType<typeof vi.fn> } })
+        .memberPartnerLink.findMany,
+    ).not.toHaveBeenCalled();
   });
 });

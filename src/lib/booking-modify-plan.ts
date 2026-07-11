@@ -31,7 +31,10 @@ import {
   loadCancellationPolicy,
 } from "@/lib/cancellation";
 import { calculateChangeFee } from "@/lib/change-fee";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  checkCapacityForGuestRanges,
+  checkCapacityForPartnerSharedAdmission,
+} from "@/lib/capacity";
 import {
   OverCapacityConfirmationRequiredError,
   overCapacityNights,
@@ -627,6 +630,82 @@ function splitContiguousNights(
   return { priceCents: totalCents, perNightCents, nightDates };
 }
 
+/**
+ * Split a proposed guest set into admin-flagged partner-sharers and ordinary
+ * guests (matched by memberId) and run the #1745 reserved-slot admission
+ * check (#1746). Shared by the modify service (which throws on rejection)
+ * and the modify-quote preview (which reports the outcome): one splitter, so
+ * preview and apply can never disagree on who counts as a sharer.
+ *
+ * A flagged memberId that matches no proposed guest throws — a sharer flag
+ * must always attach to a real member guest in the change. A member holding
+ * several ranges (data error) matches once; later duplicates stay ordinary
+ * so they cannot widen the shared claim.
+ */
+export async function resolvePartnerSharedCapacity(params: {
+  lodgeId: string;
+  rangeStart: Date;
+  rangeEnd: Date;
+  proposedRanges: Array<{
+    stayStart?: Date | null;
+    stayEnd?: Date | null;
+    nights?: Date[];
+    memberId?: string | null;
+  }>;
+  partnerSharedGuests: Array<{ memberId: string; partnerMemberId: string }>;
+  excludeBookingId: string;
+  tx?: Prisma.TransactionClient;
+}): Promise<Awaited<ReturnType<typeof checkCapacityForPartnerSharedAdmission>>> {
+  const sharerByMemberId = new Map(
+    params.partnerSharedGuests.map((sharer) => [sharer.memberId, sharer]),
+  );
+  if (sharerByMemberId.size !== params.partnerSharedGuests.length) {
+    // Two flags for one member would otherwise collapse last-wins; reject so
+    // a malformed caller payload can never silently change which partner an
+    // admission is checked against.
+    throw new ApiError(
+      "The same guest was flagged as a partner-sharer more than once.",
+      400,
+    );
+  }
+  const matchedSharerIds = new Set<string>();
+  const ordinary: typeof params.proposedRanges = [];
+  const sharers: Array<{
+    range: (typeof params.proposedRanges)[number];
+    memberId: string;
+    partnerMemberId: string;
+  }> = [];
+  for (const range of params.proposedRanges) {
+    const sharer = range.memberId ? sharerByMemberId.get(range.memberId) : undefined;
+    if (sharer && !matchedSharerIds.has(sharer.memberId)) {
+      matchedSharerIds.add(sharer.memberId);
+      sharers.push({
+        range,
+        memberId: sharer.memberId,
+        partnerMemberId: sharer.partnerMemberId,
+      });
+    } else {
+      ordinary.push(range);
+    }
+  }
+  if (matchedSharerIds.size !== sharerByMemberId.size) {
+    throw new ApiError(
+      "A guest flagged as a partner-sharer is not part of this change (they must be a member guest on the booking).",
+      400,
+    );
+  }
+
+  return checkCapacityForPartnerSharedAdmission(
+    params.lodgeId,
+    params.rangeStart,
+    params.rangeEnd,
+    ordinary,
+    sharers,
+    params.excludeBookingId,
+    params.tx,
+  );
+}
+
 export async function calculateModifiedPricing(
   tx: Prisma.TransactionClient,
   {
@@ -643,6 +722,7 @@ export async function calculateModifiedPricing(
     seasonRateData,
     adminOverride = false,
     confirmOverCapacity = false,
+    partnerSharedGuests = [],
   }: {
     booking: LoadedBookingForModify;
     bookingId: string;
@@ -672,6 +752,15 @@ export async function calculateModifiedPricing(
     // confirmOverCapacity is set, and capacityOverridden is reported back.
     adminOverride?: boolean;
     confirmOverCapacity?: boolean;
+    // Partner-shared admission (#1746, admin-only — routes must gate it):
+    // each entry flags a proposed guest (matched by memberId) as the second
+    // occupant of a shared double with their CONFIRMED partner. Capacity then
+    // runs through checkCapacityForPartnerSharedAdmission — reserved slots
+    // above the base ceiling, one per active DOUBLE (#1745) — instead of the
+    // ordinary check. Fail-loud: a rejection throws with the check's reason
+    // and never falls back to the #1668 overbook path (leave sharers
+    // unflagged to overbook the blunt way).
+    partnerSharedGuests?: Array<{ memberId: string; partnerMemberId: string }>;
   },
 ): Promise<PricingResult> {
   const seasonYear = getSeasonYear(newCheckIn);
@@ -720,36 +809,66 @@ export async function calculateModifiedPricing(
   }
 
   const pricingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
-  const capacity = skipBookingLifecycleRules
-    ? { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] }
-    : inProgressPlan && editableFrom
-      ? await checkCapacityForGuestRanges(
-          pricingLodgeId,
-          editableFrom,
-          newCheckOut,
-          inProgressPlan.capacityGuestRanges,
-          bookingId,
-          tx,
-        )
-      : await checkCapacityForGuestRanges(
-          pricingLodgeId,
-          newCheckIn,
-          newCheckOut,
-          policyAdjustedGuestsForPricing,
-          bookingId,
-          tx,
-        );
+  let capacity: Awaited<ReturnType<typeof checkCapacityForGuestRanges>>;
   let capacityOverridden = false;
-  if (!capacity.available) {
-    if (!adminOverride) {
-      throw new ApiError("Not enough beds available for these changes", 400);
+  if (skipBookingLifecycleRules) {
+    capacity = { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] };
+  } else if (partnerSharedGuests.length > 0) {
+    // Partner-shared admission (#1746): fail-loud on any rejection — the
+    // #1668 overbook path stays a deliberately separate, unflagged action.
+    const shared = await resolvePartnerSharedCapacity({
+      lodgeId: pricingLodgeId,
+      rangeStart: inProgressPlan && editableFrom ? editableFrom : newCheckIn,
+      rangeEnd: newCheckOut,
+      proposedRanges:
+        inProgressPlan && editableFrom
+          ? inProgressPlan.capacityGuestRanges
+          : policyAdjustedGuestsForPricing,
+      partnerSharedGuests,
+      excludeBookingId: bookingId,
+      tx,
+    });
+    if (!shared.available) {
+      throw new ApiError(
+        shared.reason ?? "Not enough partner-shared capacity for these changes",
+        400,
+      );
     }
-    if (!confirmOverCapacity) {
-      throw new OverCapacityConfirmationRequiredError(overCapacityNights(capacity));
+    capacity = {
+      available: true,
+      minAvailable: shared.minAvailable,
+      nightDetails: shared.nightDetails,
+    };
+  } else {
+    capacity =
+      inProgressPlan && editableFrom
+        ? await checkCapacityForGuestRanges(
+            pricingLodgeId,
+            editableFrom,
+            newCheckOut,
+            inProgressPlan.capacityGuestRanges,
+            bookingId,
+            tx,
+          )
+        : await checkCapacityForGuestRanges(
+            pricingLodgeId,
+            newCheckIn,
+            newCheckOut,
+            policyAdjustedGuestsForPricing,
+            bookingId,
+            tx,
+          );
+    if (!capacity.available) {
+      if (!adminOverride) {
+        throw new ApiError("Not enough beds available for these changes", 400);
+      }
+      if (!confirmOverCapacity) {
+        throw new OverCapacityConfirmationRequiredError(overCapacityNights(capacity));
+      }
+      // Admin explicitly confirmed the overbooking; proceed and report it so the
+      // caller can audit capacityOverridden.
+      capacityOverridden = true;
     }
-    // Admin explicitly confirmed the overbooking; proceed and report it so the
-    // caller can audit capacityOverridden.
-    capacityOverridden = true;
   }
 
   let priceBreakdown: PricingResult["priceBreakdown"];

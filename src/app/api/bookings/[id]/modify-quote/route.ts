@@ -62,6 +62,7 @@ import {
   resolveGuestNameUpdates,
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
+  resolvePartnerSharedCapacity,
 } from "@/lib/booking-modify";
 import {
   buildInProgressGuestRangePlan,
@@ -124,6 +125,17 @@ const modifyQuoteSchema = z.object({
   adminOverride: z.boolean().optional(),
   pricingMode: z.enum(["shift", "recalculate"]).optional(),
   confirmOverCapacity: z.boolean().optional(),
+  // Admin-only (#1746): mirror of the apply route's partner-sharer flags so
+  // the preview reflects the #1745 reserved-slot outcome.
+  partnerSharedGuests: z
+    .array(
+      z.object({
+        memberId: z.string().min(1),
+        partnerMemberId: z.string().min(1),
+      }),
+    )
+    .max(10)
+    .optional(),
 });
 
 const OVERRIDE_DATE_ONLY_QUOTE_FIELDS = [
@@ -133,6 +145,8 @@ const OVERRIDE_DATE_ONLY_QUOTE_FIELDS = [
   "guestUpdates",
   "promoCode",
   "removePromoCode",
+  // #1746: partner-shared flags ride guest changes, never a date override.
+  "partnerSharedGuests",
 ] as const;
 
 type StayRangeInput = {
@@ -307,6 +321,14 @@ export async function POST(
       { status: 403 },
     );
   }
+  // #1746: partner-shared placement is admin-initiated by owner decision.
+  if (parsed.data.partnerSharedGuests?.length && !isAdmin) {
+    return NextResponse.json(
+      { error: "Partner-shared placement is not available for this account" },
+      { status: 403 },
+    );
+  }
+  const partnerSharedGuests = isAdmin ? (parsed.data.partnerSharedGuests ?? []) : [];
   const adminOverride = isAdmin && Boolean(parsed.data.adminOverride);
   if (adminOverride && !pricingMode) {
     return NextResponse.json(
@@ -872,23 +894,63 @@ export async function POST(
   }
 
   // Capacity check (exclude current booking)
-  const capacity = skipBookingLifecycleRules
-    ? { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] }
-    : inProgressPlan && editableFrom
-      ? await checkCapacityForGuestRanges(
-          bookingLodgeId,
-          editableFrom,
-          newCheckOut,
-          inProgressPlan.capacityGuestRanges,
-          bookingId
-        )
-      : await checkCapacityForGuestRanges(
-          bookingLodgeId,
-          newCheckIn,
-          newCheckOut,
-          policyAdjustedGuestsForPricing,
-          bookingId
+  // #1746: with admin-flagged partner-sharers the preview runs the same
+  // reserved-slot split the apply service uses (resolvePartnerSharedCapacity),
+  // reporting the outcome + reason instead of the ordinary capacity verdict.
+  let partnerSharedReason: string | null = null;
+  let capacity: Awaited<ReturnType<typeof checkCapacityForGuestRanges>>;
+  if (skipBookingLifecycleRules) {
+    capacity = { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] };
+  } else if (partnerSharedGuests.length > 0) {
+    let shared;
+    try {
+      shared = await resolvePartnerSharedCapacity({
+        lodgeId: bookingLodgeId,
+        rangeStart: inProgressPlan && editableFrom ? editableFrom : newCheckIn,
+        rangeEnd: newCheckOut,
+        proposedRanges:
+          inProgressPlan && editableFrom
+            ? inProgressPlan.capacityGuestRanges
+            : policyAdjustedGuestsForPricing,
+        partnerSharedGuests,
+        excludeBookingId: bookingId,
+      });
+    } catch (error) {
+      // Mirror the apply route's status for splitter input errors (an
+      // unmatched or duplicated sharer flag) — a 400-class payload must not
+      // 500 the preview while 400ing the apply.
+      if (error instanceof ApiError) {
+        return NextResponse.json(
+          { error: error.message },
+          { status: error.status },
         );
+      }
+      throw error;
+    }
+    partnerSharedReason = shared.available ? null : shared.reason;
+    capacity = {
+      available: shared.available,
+      minAvailable: shared.minAvailable,
+      nightDetails: shared.nightDetails,
+    };
+  } else {
+    capacity =
+      inProgressPlan && editableFrom
+        ? await checkCapacityForGuestRanges(
+            bookingLodgeId,
+            editableFrom,
+            newCheckOut,
+            inProgressPlan.capacityGuestRanges,
+            bookingId
+          )
+        : await checkCapacityForGuestRanges(
+            bookingLodgeId,
+            newCheckIn,
+            newCheckOut,
+            policyAdjustedGuestsForPricing,
+            bookingId
+          );
+  }
 
   // Calculate new total price
   let newTotalPriceCents: number;
@@ -1242,9 +1304,13 @@ export async function POST(
     promoStillValid,
     promoValidation,
     itemizedChanges,
+    // #1746: why the partner-shared admission rejected — the UI shows this
+    // verbatim; a partner-shared preview never offers the #1668 overbook
+    // confirm (leave sharers unflagged to overbook the blunt way).
+    ...(partnerSharedReason !== null ? { partnerSharedReason } : {}),
     // Issue #1668: under an admin override an over-capacity target does not hard
     // block — the UI keys its explicit confirm control off this flag.
-    ...(adminOverride && !capacity.available
+    ...(adminOverride && !capacity.available && partnerSharedGuests.length === 0
       ? { overCapacityConfirmRequired: true }
       : {}),
     ...(capacity.available

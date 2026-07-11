@@ -73,6 +73,17 @@ const batchModifySchema = z.object({
   pricingMode: z.enum(["shift", "recalculate"]).optional(),
   confirmOverCapacity: z.boolean().optional(),
   notifyMember: z.boolean().optional(),
+  // Admin-only (#1746): flag proposed member guests as partner-sharers so
+  // capacity runs through the #1745 reserved double-bed slots.
+  partnerSharedGuests: z
+    .array(
+      z.object({
+        memberId: z.string().min(1),
+        partnerMemberId: z.string().min(1),
+      }),
+    )
+    .max(10)
+    .optional(),
 });
 
 const OVERRIDE_DATE_ONLY_FIELDS = [
@@ -83,6 +94,8 @@ const OVERRIDE_DATE_ONLY_FIELDS = [
   "promoCode",
   "promoGuestIndexes",
   "removePromoCode",
+  // #1746: partner-shared flags ride guest changes, never a date override.
+  "partnerSharedGuests",
 ] as const;
 
 export async function PUT(
@@ -140,6 +153,13 @@ export async function PUT(
   if (hasOverrideFlags && actorRole !== "ADMIN") {
     return NextResponse.json(
       { error: "Admin override is not available for this account" },
+      { status: 403 },
+    );
+  }
+  // #1746: partner-shared placement is admin-initiated by owner decision.
+  if (parsed.data.partnerSharedGuests?.length && actorRole !== "ADMIN") {
+    return NextResponse.json(
+      { error: "Partner-shared placement is not available for this account" },
       { status: 403 },
     );
   }

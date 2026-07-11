@@ -32,6 +32,7 @@ export {
   PAID_NAME_TYPO_ONLY_MESSAGE,
   prepareGuestPlan,
   resolveGuestNameUpdates,
+  resolvePartnerSharedCapacity,
   type GuestPlan,
   type PricingResult,
   type PromoChangeResult,
