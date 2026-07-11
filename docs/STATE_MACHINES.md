@@ -777,10 +777,10 @@ target confirms from profile -> CONFIRMED (one-confirmed-partner invariant re-ch
 target declines -> row hard-deleted (no email), initiator may re-request
 initiator withdraws own PENDING -> row hard-deleted
 family-group ADMIN declares a NO-LOGIN adult member of their group -> CONFIRMED in one step (no consent round-trip; "one login manages the family")
-admin assigns directly (admin member-detail card) -> CONFIRMED immediately, assignedByAdminId recorded; an existing PENDING for the pair is promoted
+admin assigns directly (admin member-detail card) -> CONFIRMED immediately, assignedByAdminId recorded; an existing PENDING for the pair is promoted; both members emailed unless the admin chose not to notify (#1769a)
 unregistered partner claims a createPartnerLink invite token -> CONFIRMED inside the claim transaction (claim = consent)
 either CONFIRMED partner removes the link -> row hard-deleted, other partner emailed
-admin removes any link -> row hard-deleted, both partners emailed when it was CONFIRMED
+admin removes any link -> row hard-deleted, both partners emailed when it was CONFIRMED unless the admin chose not to notify (#1769a); a PENDING removal emails no one
 CONFIRMED link deleted (either dissolve path) -> pair's FUTURE shared double-bed second-occupant allocations swept back to the awaiting-allocation queue in the same transaction (#1756; both bookings audited, admins alerted post-commit)
 member deactivated / anonymised / re-tiered off ADULT -> same sweep, single-member scope (either side of the shared bed)
 ```

@@ -1419,7 +1419,9 @@ transactions cannot deadlock) and backstopped by two raw partial unique indexes
 documented in `prisma/partial-unique-indexes.tsv`); both members must be ADULT
 and active; consent is required from the other member unless (a) an admin
 assigns the link directly (`assignedByAdminId` recorded, CONFIRMED
-immediately), (b) the target has **no login** and the initiator is a
+immediately; both members are then emailed unless the assigning admin chose
+not to notify — the suppression is audited `notifyMember: false`, #1769a),
+(b) the target has **no login** and the initiator is a
 family-group ADMIN of a group containing the target ("one login manages the
 family" — a login-holding target always consents personally, and the no-login
 target's address is emailed that the link was recorded), or (c) the link
@@ -1432,7 +1434,10 @@ confirmed that a fresh request could not create. Declined, withdrawn, and
 dissolved links are
 hard-deleted — history lives in the audit log — so the same pair can re-form
 later without tripping the pair-unique constraint; either partner may dissolve
-a CONFIRMED link unilaterally (the other is emailed). When a link becomes
+a CONFIRMED link unilaterally (the other is emailed); an admin removing a
+CONFIRMED link likewise emails both members unless the admin chose not to
+notify (suppression audited `notifyMember: false`, #1769a), while a
+still-PENDING admin removal emails no one. When a link becomes
 CONFIRMED, all other PENDING requests involving either member are pruned in the
 same transaction. A member may have at most one outstanding outgoing PENDING
 request. The member-facing request API accepts an arbitrary target only by

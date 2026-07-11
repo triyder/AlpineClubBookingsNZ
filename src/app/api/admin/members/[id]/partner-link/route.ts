@@ -27,6 +27,8 @@ export async function GET(
 
 const assignSchema = z.object({
   partnerMemberId: z.string().min(1, "Partner member is required"),
+  // #1769a: absent/undefined = notify (default), false = suppress the emails.
+  notifyMember: z.boolean().optional(),
 });
 
 /**
@@ -62,6 +64,7 @@ export async function POST(
     adminMemberId: guard.session.user.id,
     memberOneId: memberId,
     memberTwoId: parsed.data.partnerMemberId,
+    notifyMember: parsed.data.notifyMember,
   });
 
   if (!result.ok) {
@@ -91,6 +94,24 @@ export async function DELETE(
     return NextResponse.json({ error: "Partner link id required" }, { status: 400 });
   }
 
+  // #1769a: an optional JSON body carries the admin's notify choice for a
+  // CONFIRMED removal. A bodyless DELETE (pending removal) must still succeed,
+  // so a missing/invalid-JSON body is treated as an empty object.
+  const deleteSchema = z.object({ notifyMember: z.boolean().optional() });
+  let rawBody: unknown = {};
+  try {
+    rawBody = await req.json();
+  } catch {
+    rawBody = {};
+  }
+  const parsedBody = deleteSchema.safeParse(rawBody);
+  if (!parsedBody.success) {
+    return NextResponse.json(
+      { error: "Validation failed", details: parsedBody.error.flatten().fieldErrors },
+      { status: 422 }
+    );
+  }
+
   // memberScopeId restricts the delete to links involving this member so the
   // URL shape (member-scoped resource) cannot be bypassed with a foreign
   // link id.
@@ -99,6 +120,7 @@ export async function DELETE(
     adminMemberId: guard.session.user.id,
     linkId,
     memberScopeId: memberId,
+    notifyMember: parsedBody.data.notifyMember,
   });
 
   if (!result.ok) {

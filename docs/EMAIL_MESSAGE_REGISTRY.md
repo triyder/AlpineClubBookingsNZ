@@ -1386,7 +1386,8 @@ Triggers and frequency:
 - A partner-link reaches `CONFIRMED` (#1742): the requested member accepts (the
   initiator is emailed), an unregistered partner claims a `createPartnerLink`
   invite token (the inviter is emailed), or an admin assigns the link directly
-  (both members are emailed, once if they share an address).
+  (both members are emailed, once if they share an address) unless the admin
+  chose not to notify (#1769a).
 - Sent once per confirmation per distinct recipient address.
 
 ### partner-link-removed
@@ -1413,8 +1414,8 @@ Triggers and frequency:
 
 - A `CONFIRMED` partner link is removed (#1742): one partner dissolves it (the
   other partner is emailed) or an admin removes it (both members are emailed,
-  once if they share an address). Declining or withdrawing a still-pending
-  request sends no email.
+  once if they share an address) unless the admin chose not to notify (#1769a).
+  Declining or withdrawing a still-pending request sends no email.
 - Sent once per removal per distinct recipient address.
 
 ### membership-cancellation-submitted

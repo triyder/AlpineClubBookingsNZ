@@ -4,6 +4,19 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Admin can choose whether to email members when assigning or removing a
+  partner link (#1769a).** The Partner card on `/admin/members/[id]` now asks,
+  per action, whether the members receive the standard partner-relationship
+  email — a two-button dialog ("Assign/Remove and email members" vs "…without
+  emailing"), reusing the retroactive-create / cancel notify pattern
+  (#1695/#1705). The default is to notify; suppressing is recorded in the audit
+  log as `notifyMember: false`. The dialog appears only when an email would
+  otherwise be sent: assign always, remove only for a CONFIRMED link — removing
+  a still-pending link emails no one, so it removes directly and records no
+  notify field. Member-facing partner flows (request/confirm/dissolve/invite
+  claim, and the family one-step declare) keep their existing always-notify
+  behaviour; the broader admin-email sweep is tracked separately as #1769b.
+
 - **Admin book-on-behalf can overbook with an explicit confirmation (#1767).**
   A forward-dated on-behalf create that exceeds lodge capacity now follows the
   same warn-and-confirm contract as retroactive creates and admin date edits

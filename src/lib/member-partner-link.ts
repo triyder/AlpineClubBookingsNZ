@@ -967,6 +967,10 @@ export async function adminAssignPartnerLink(params: {
   adminMemberId: string;
   memberOneId: string;
   memberTwoId: string;
+  // #1769a: admin per-action email choice. Absent/undefined = notify (default);
+  // false = suppress the member emails. Only recorded in the audit when a
+  // notification was actually suppressed.
+  notifyMember?: boolean;
 }): Promise<PartnerLinkActionResult> {
   if (params.memberOneId === params.memberTwoId) {
     return { ok: false, status: 422, error: "A member cannot partner themselves." };
@@ -1073,6 +1077,10 @@ export async function adminAssignPartnerLink(params: {
     };
   }
 
+  // #1769a: only record the notify choice when a member email was actually
+  // suppressed — an assign always sends unless the admin opted out.
+  const notifyAuditFields = params.notifyMember === false ? { notifyMember: false } : {};
+
   logAudit({
     action: "MEMBER_PARTNER_LINK_ADMIN_ASSIGNED",
     memberId: params.adminMemberId,
@@ -1088,11 +1096,13 @@ export async function adminAssignPartnerLink(params: {
       memberTwoId: memberTwo.id,
       promotedPendingRequest: result.promoted,
       prunedPendingCount: result.prunedCount,
+      ...notifyAuditFields,
     }),
     metadata: {
       memberOneId: memberOne.id,
       memberTwoId: memberTwo.id,
       promotedPendingRequest: result.promoted,
+      ...notifyAuditFields,
     },
   });
 
@@ -1106,13 +1116,17 @@ export async function adminAssignPartnerLink(params: {
     "Partner link assigned by admin"
   );
 
-  notifyBothPartners(
-    sendPartnerLinkConfirmedEmail,
-    memberOne,
-    memberTwo,
-    result.linkId,
-    "Failed to send partner link confirmed email"
-  );
+  // #1769a: assign always emails both members unless the admin chose not to
+  // notify (default is notify; the suppression is audited above).
+  if (params.notifyMember !== false) {
+    notifyBothPartners(
+      sendPartnerLinkConfirmedEmail,
+      memberOne,
+      memberTwo,
+      result.linkId,
+      "Failed to send partner link confirmed email"
+    );
+  }
 
   return {
     ok: true,
@@ -1133,6 +1147,10 @@ export async function adminRemovePartnerLink(params: {
   adminMemberId: string;
   linkId: string;
   memberScopeId?: string;
+  // #1769a: admin per-action email choice. Only meaningful when a CONFIRMED
+  // link is removed (a PENDING removal emails no one either way); absent =
+  // notify (default), false = suppress the removal emails.
+  notifyMember?: boolean;
 }): Promise<PartnerLinkActionResult> {
   const link = await prisma.memberPartnerLink.findFirst({
     where: {
@@ -1177,6 +1195,12 @@ export async function adminRemovePartnerLink(params: {
     return { ok: false, status: 409, error: "Partner link not found or already changed." };
   }
 
+  // #1769a: honesty rule — only record the notify choice when a removal email
+  // was actually suppressed. A PENDING removal emails no one, so it never
+  // records a notifyMember field even if the flag was threaded through.
+  const notifyAuditFields =
+    wasConfirmed && params.notifyMember === false ? { notifyMember: false } : {};
+
   logAudit({
     action: "MEMBER_PARTNER_LINK_ADMIN_REMOVED",
     memberId: params.adminMemberId,
@@ -1194,11 +1218,14 @@ export async function adminRemovePartnerLink(params: {
       memberAId: link.memberA.id,
       memberBId: link.memberB.id,
       wasConfirmed,
+      ...notifyAuditFields,
     }),
-    metadata: { linkId: link.id, wasConfirmed },
+    metadata: { linkId: link.id, wasConfirmed, ...notifyAuditFields },
   });
 
-  if (wasConfirmed) {
+  // #1769a: a CONFIRMED removal emails both members unless the admin chose not
+  // to notify (default is notify); a PENDING removal never emails.
+  if (wasConfirmed && params.notifyMember !== false) {
     notifyBothPartners(
       sendPartnerLinkRemovedEmail,
       link.memberA,

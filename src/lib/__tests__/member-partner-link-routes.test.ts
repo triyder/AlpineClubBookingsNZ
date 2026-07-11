@@ -340,11 +340,41 @@ describe("POST /api/admin/members/[id]/partner-link", () => {
       { params: Promise.resolve({ id: "member-a" }) }
     );
     expect(res.status).toBe(201);
+    // #1769a: no notifyMember in the body → threaded through as undefined
+    // (default = notify).
     expect(adminAssignPartnerLink).toHaveBeenCalledWith({
       adminMemberId: "admin-1",
       memberOneId: "member-a",
       memberTwoId: "member-b",
+      notifyMember: undefined,
     });
+  });
+
+  it("threads notifyMember: false through to the service (#1769a)", async () => {
+    vi.mocked(adminAssignPartnerLink).mockResolvedValue({
+      ok: true,
+      linkId: "link-1",
+      status: "CONFIRMED",
+      message: "assigned",
+    });
+
+    const res = await adminPostPartnerLink(
+      makeAdminPost({ partnerMemberId: "member-b", notifyMember: false }),
+      { params: Promise.resolve({ id: "member-a" }) }
+    );
+    expect(res.status).toBe(201);
+    expect(adminAssignPartnerLink).toHaveBeenCalledWith(
+      expect.objectContaining({ notifyMember: false })
+    );
+  });
+
+  it("rejects a non-boolean notifyMember with 422 (#1769a)", async () => {
+    const res = await adminPostPartnerLink(
+      makeAdminPost({ partnerMemberId: "member-b", notifyMember: "false" }),
+      { params: Promise.resolve({ id: "member-a" }) }
+    );
+    expect(res.status).toBe(422);
+    expect(adminAssignPartnerLink).not.toHaveBeenCalled();
   });
 });
 
@@ -353,6 +383,17 @@ describe("DELETE /api/admin/members/[id]/partner-link", () => {
     return new NextRequest(
       `http://localhost/api/admin/members/member-a/partner-link?id=${linkId}`,
       { method: "DELETE" }
+    );
+  }
+
+  function makeDeleteRequestWithBody(linkId: string, body: Record<string, unknown>) {
+    return new NextRequest(
+      `http://localhost/api/admin/members/member-a/partner-link?id=${linkId}`,
+      {
+        method: "DELETE",
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+      }
     );
   }
 
@@ -368,11 +409,45 @@ describe("DELETE /api/admin/members/[id]/partner-link", () => {
       params: Promise.resolve({ id: "member-a" }),
     });
     expect(res.status).toBe(200);
+    // #1769a: a bodyless DELETE (silent pending removal) threads notifyMember
+    // through as undefined.
     expect(adminRemovePartnerLink).toHaveBeenCalledWith({
       adminMemberId: "admin-1",
       linkId: "link-1",
       memberScopeId: "member-a",
+      notifyMember: undefined,
     });
+  });
+
+  it("threads notifyMember: false from the request body (#1769a)", async () => {
+    vi.mocked(adminRemovePartnerLink).mockResolvedValue({
+      ok: true,
+      linkId: "link-1",
+      status: "REMOVED",
+      message: "removed",
+    });
+
+    const res = await adminDeletePartnerLink(
+      makeDeleteRequestWithBody("link-1", { notifyMember: false }),
+      { params: Promise.resolve({ id: "member-a" }) }
+    );
+    expect(res.status).toBe(200);
+    expect(adminRemovePartnerLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        linkId: "link-1",
+        memberScopeId: "member-a",
+        notifyMember: false,
+      })
+    );
+  });
+
+  it("rejects a non-boolean notifyMember body with 422 (#1769a)", async () => {
+    const res = await adminDeletePartnerLink(
+      makeDeleteRequestWithBody("link-1", { notifyMember: "false" }),
+      { params: Promise.resolve({ id: "member-a" }) }
+    );
+    expect(res.status).toBe(422);
+    expect(adminRemovePartnerLink).not.toHaveBeenCalled();
   });
 
   it("maps a scope miss (foreign link id) to 404", async () => {

@@ -6,6 +6,14 @@ import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { HeartHandshake, Trash2 } from "lucide-react"
@@ -50,6 +58,17 @@ export function MemberPartnerLinkCard({
   const [saving, setSaving] = useState(false)
   const [removingId, setRemovingId] = useState<string | null>(null)
   const [error, setError] = useState("")
+  // #1769a: which action is waiting on the admin's notify-or-not choice, and
+  // whether the dialog is open. Only assign and CONFIRMED-remove open it — a
+  // PENDING remove sends no email so it never asks. The choice is kept set
+  // while the dialog fades out (Radix keeps the content mounted through its
+  // exit animation) so the copy never flickers to the other action's wording.
+  const [notifyChoice, setNotifyChoice] = useState<
+    | { kind: "assign"; partnerMemberId: string }
+    | { kind: "remove"; linkId: string }
+    | null
+  >(null)
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false)
 
   // partnerLinkEligibleFor filters server-side (active adults, not this
   // member, no existing confirmed partner) so a page of results is never
@@ -75,21 +94,24 @@ export function MemberPartnerLinkCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberId])
 
-  async function handleAssign(partnerMemberId: string) {
+  async function performAssign(partnerMemberId: string, notifyMember: boolean) {
     setError("")
     setSaving(true)
     try {
       const res = await fetch(`/api/admin/members/${memberId}/partner-link`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ partnerMemberId }),
+        body: JSON.stringify({ partnerMemberId, notifyMember }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         setError(data.error || "Failed to assign partner")
         return
       }
-      toast.success(data.message || "Partner assigned")
+      toast.success(
+        (data.message || "Partner assigned") +
+          (notifyMember === false ? " The members were not emailed." : "")
+      )
       setAssignOpen(false)
       setSearch("")
       await loadState()
@@ -98,23 +120,71 @@ export function MemberPartnerLinkCard({
     }
   }
 
-  async function handleRemove(linkId: string) {
+  // #1769a: a CONFIRMED link removal emails both members, so it routes through
+  // the notify-choice dialog; a PENDING removal emails no one, so it removes
+  // directly (no dialog, no notifyMember flag).
+  function handleRemove(linkId: string, confirmed: boolean) {
+    if (confirmed) {
+      openNotifyChoice({ kind: "remove", linkId })
+    } else {
+      void performRemove(linkId)
+    }
+  }
+
+  // #1769a: open the notify-choice dialog for a given action.
+  function openNotifyChoice(
+    choice:
+      | { kind: "assign"; partnerMemberId: string }
+      | { kind: "remove"; linkId: string }
+  ) {
+    setNotifyChoice(choice)
+    setNotifyDialogOpen(true)
+  }
+
+  async function performRemove(linkId: string, notifyMember?: boolean) {
     setError("")
     setRemovingId(linkId)
     try {
       const res = await fetch(
         `/api/admin/members/${memberId}/partner-link?id=${encodeURIComponent(linkId)}`,
-        { method: "DELETE" }
+        {
+          method: "DELETE",
+          // Only send a body when there is a notify choice to convey; a bodyless
+          // DELETE preserves today's silent PENDING removal.
+          ...(notifyMember !== undefined
+            ? {
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ notifyMember }),
+              }
+            : {}),
+        }
       )
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         setError(data.error || "Failed to remove partner link")
         return
       }
-      toast.success(data.message || "Partner link removed")
+      toast.success(
+        (data.message || "Partner link removed") +
+          (notifyMember === false ? " The members were not emailed." : "")
+      )
       await loadState()
     } finally {
       setRemovingId(null)
+    }
+  }
+
+  // #1769a: dispatch the pending notify choice to the right action. Close the
+  // dialog without clearing the choice, so the content keeps its wording while
+  // it fades out.
+  function confirmNotify(notify: boolean) {
+    const choice = notifyChoice
+    setNotifyDialogOpen(false)
+    if (!choice) return
+    if (choice.kind === "assign") {
+      void performAssign(choice.partnerMemberId, notify)
+    } else {
+      void performRemove(choice.linkId, notify)
     }
   }
 
@@ -164,7 +234,7 @@ export function MemberPartnerLinkCard({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => handleRemove(link.id)}
+              onClick={() => handleRemove(link.id, confirmed)}
               disabled={removingId === link.id}
             >
               <Trash2 className="h-4 w-4 mr-1" />
@@ -236,7 +306,16 @@ export function MemberPartnerLinkCard({
                         </p>
                         <p className="text-xs text-slate-500">{candidate.email}</p>
                       </div>
-                      <Button size="sm" disabled={saving} onClick={() => handleAssign(candidate.id)}>
+                      <Button
+                        size="sm"
+                        disabled={saving}
+                        onClick={() =>
+                          openNotifyChoice({
+                            kind: "assign",
+                            partnerMemberId: candidate.id,
+                          })
+                        }
+                      >
                         {saving ? "Assigning..." : "Assign"}
                       </Button>
                     </div>
@@ -254,6 +333,51 @@ export function MemberPartnerLinkCard({
           )}
         </div>
       </CardContent>
+
+      {/* #1769a: per-action member-email choice, mirroring the #1695/#1705
+          pattern. Shown only when an email would otherwise be sent (assign
+          always; remove only for a CONFIRMED link). Both choices complete the
+          action; the choice itself is recorded in the audit log. */}
+      <Dialog
+        open={notifyDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !saving && removingId === null) setNotifyDialogOpen(false)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {notifyChoice?.kind === "remove"
+                ? "Email the members about this removal?"
+                : "Email the members about this partnership?"}
+            </DialogTitle>
+            <DialogDescription>
+              {notifyChoice?.kind === "remove"
+                ? "The partnership is removed either way. Choose whether the members receive the standard partner-relationship removal email — your choice is recorded in the audit log."
+                : "The partnership is recorded either way. Choose whether the members receive the standard partner-relationship email — your choice is recorded in the audit log."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              disabled={saving || removingId !== null}
+              onClick={() => confirmNotify(false)}
+            >
+              {notifyChoice?.kind === "remove"
+                ? "Remove without emailing"
+                : "Assign without emailing"}
+            </Button>
+            <Button
+              disabled={saving || removingId !== null}
+              onClick={() => confirmNotify(true)}
+            >
+              {notifyChoice?.kind === "remove"
+                ? "Remove and email members"
+                : "Assign and email members"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }
