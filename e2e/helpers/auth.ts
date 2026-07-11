@@ -77,8 +77,16 @@ export async function submitLoginForm(
   page: Page,
   email: string,
   password: string = DEMO_PASSWORD,
+  // Override the synthetic client IP for this login. Every login for a given
+  // email otherwise shares one deterministic IP bucket, and the login limiter
+  // allows only 10 per 15 min (rateLimiters.login). A persona reused by more
+  // than 10 specs in a single ~7-min suite run exhausts that bucket, so a spec
+  // that would push a heavily-shared persona (E2E_ADMIN) past the ceiling can
+  // pass its own IP to log in from a private bucket instead. Must stay outside
+  // syntheticClientIp's 10.99.0.0/16 range to avoid colliding with a real one.
+  clientIp: string = syntheticClientIp(email),
 ): Promise<void> {
-  await page.setExtraHTTPHeaders({ "x-forwarded-for": syntheticClientIp(email) });
+  await page.setExtraHTTPHeaders({ "x-forwarded-for": clientIp });
   // /login now redirects authenticated visitors straight to their
   // destination, so a persona re-login in a warm context would never see the
   // form. Start every password sign-in from an anonymous state.
@@ -158,8 +166,14 @@ async function verifyTotp(page: Page, secret: string): Promise<void> {
 // /dashboard. Scoped-role personas (finance/lodge/admin officers) can land
 // elsewhere, so specs that log in as arbitrary personas use this instead of
 // signIn. Enrollment secrets are persisted under e2e/.auth for later logins.
-export async function loginPersona(page: Page, email: string): Promise<void> {
-  await submitLoginForm(page, email);
+export async function loginPersona(
+  page: Page,
+  email: string,
+  // See submitLoginForm: pass a private IP bucket for a persona this spec would
+  // otherwise push past the shared login rate-limit ceiling.
+  clientIp?: string,
+): Promise<void> {
+  await submitLoginForm(page, email, DEMO_PASSWORD, clientIp);
 
   if (page.url().includes("/login/enroll")) {
     await enrollTotp(page, email);

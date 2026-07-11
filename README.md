@@ -22,9 +22,10 @@ recommended reading paths.
   assignment), and membership nomination workflows with reminder and admin
   recovery paths
 - Bed-capacity booking flow with date-only New Zealand lodge nights, per-guest
-  stay ranges, waitlist, non-member holds, booking changes, cancellation rules,
-  refunds, credits, promo codes, Stripe payments, and Xero-backed Internet
-  Banking invoice payments
+  stay ranges, admin-placed partner second-occupants sharing a double bed (a
+  reserved capacity slot per double, admin-only), waitlist, non-member holds,
+  booking changes, cancellation rules, refunds, credits, promo codes, Stripe
+  payments, and Xero-backed Internet Banking invoice payments
 - Admin tools for members, shared-email-aware CSV import, bookings, bed
   allocation, payments, seasons, policies, reports, email, audit logs, issue
   reports, waitlist, lodge settings, Xero operations, and hut leaders, with
