@@ -45,7 +45,12 @@ import {
 import { hashActionToken } from "@/lib/action-tokens";
 
 const RAW_TOKEN = "a".repeat(64);
-const NOW = new Date("2026-07-10T00:00:00.000Z");
+// Anchored to the real clock, not a fixed date: getPartnerInviteTokenForClaim
+// compares expiresAt against a real `new Date()`, so a hardcoded NOW turned
+// the default +24h fixture into a time bomb (the suite went red repo-wide
+// when 2026-07-11T00:00Z passed). Every fixture derives from NOW, so the
+// relative expiry/claim assertions are unaffected.
+const NOW = new Date();
 
 function tokenRow(overrides: Record<string, unknown> = {}) {
   return {
