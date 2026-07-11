@@ -4,6 +4,19 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Admin can choose whether to email guests when sending the chore roster
+  (#1785, part of the #1769b sweep).** The "Email Roster to Guests" action on
+  `/admin/roster` now asks, per send, whether to email — a two-button dialog
+  ("Email guests the roster" vs "Don’t email — keep existing links"), reusing
+  the retroactive-create / cancel / partner-link notify pattern
+  (#1695/#1705/#1769a). The default is to notify: every affected guest is
+  emailed a fresh 48-hour chore link, reissuing tokens exactly as before.
+  Suppressing skips the whole send **and** leaves existing guest chore
+  tokens/links intact — no token deletion, no new tokens, no email — so
+  previously-emailed links keep working; the suppression is recorded in the
+  audit log as `notifyMember: false` (`ADMIN_CHORE_ROSTER_EMAIL_SUPPRESSED`).
+  The per-member `choreRoster` opt-out still applies on top of the notify path.
+
 - **Email message registry completeness pass (#1780 docs child).**
   `docs/EMAIL_MESSAGE_REGISTRY.md` now documents the 12 live templates it was
   missing: `two-factor-code`, `booking-review-approved` /

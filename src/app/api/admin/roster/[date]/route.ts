@@ -157,6 +157,7 @@ export async function PUT(
     dateString: parsedParams.data.date,
     data: parsedBody.data,
     lodgeId: lodge.lodgeId,
+    adminMemberId: guard.session.user.id,
   })
   return NextResponse.json(result.body, result.init)
 }

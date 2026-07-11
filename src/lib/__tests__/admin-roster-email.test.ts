@@ -9,6 +9,7 @@ const mockShouldSendChoreRoster = vi.fn();
 const mockCreateGuestChoreToken = vi.fn();
 const mockMemberCount = vi.fn();
 const mockLodgeFindFirst = vi.fn();
+const mockLogAudit = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
@@ -62,6 +63,10 @@ vi.mock("@/lib/email", () => ({
 
 vi.mock("@/lib/guest-chore-token", () => ({
   createGuestChoreToken: mockCreateGuestChoreToken,
+}));
+
+vi.mock("@/lib/audit", () => ({
+  logAudit: mockLogAudit,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -222,6 +227,144 @@ describe("PUT /api/admin/roster/[date] email action", () => {
     // No token churn and no send for a suppressed recipient.
     expect(mockGuestTokenDeleteMany).not.toHaveBeenCalled();
     expect(mockCreateGuestChoreToken).not.toHaveBeenCalled();
+    expect(mockSendChoreRosterEmail).not.toHaveBeenCalled();
+  });
+
+  // #1785: the default (absent notifyMember) send is byte-identical to today —
+  // tokens are reissued, the email is sent, and NO notifyMember audit record is
+  // written (audit only-when-suppressed).
+  it("sends and reissues tokens by default (absent notifyMember) and writes no audit record (#1785)", async () => {
+    mockChoreAssignmentFindMany.mockResolvedValue([
+      {
+        choreTemplate: { name: "Kitchen", description: null },
+        bookingGuest: {
+          id: "guest-1",
+          firstName: "Alice",
+          lastName: "Smith",
+          member: {
+            email: "alice@test.com",
+            inheritEmailFromId: null,
+            inheritEmailFrom: null,
+          },
+        },
+      },
+    ]);
+    mockSendChoreRosterEmail.mockResolvedValue(undefined);
+
+    const { PUT } = await import("@/app/api/admin/roster/[date]/route");
+    const req = new NextRequest("http://localhost/api/admin/roster/2026-04-10", {
+      method: "PUT",
+      body: JSON.stringify({ action: "email" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await PUT(req, { params: Promise.resolve({ date: "2026-04-10" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.sent).toBeGreaterThanOrEqual(1);
+    expect(mockGuestTokenDeleteMany).toHaveBeenCalled();
+    expect(mockCreateGuestChoreToken).toHaveBeenCalled();
+    expect(mockSendChoreRosterEmail).toHaveBeenCalled();
+    // The notify path never audits a notifyMember choice.
+    expect(mockLogAudit).not.toHaveBeenCalled();
+  });
+
+  // #1785: notifyMember:false suppresses the entire batch — no token deletion,
+  // no new tokens, no sends — leaving existing chore links valid, and records a
+  // single audit event carrying notifyMember:false.
+  it("suppresses the whole send with notifyMember:false, leaves tokens untouched, and audits notifyMember:false (#1785)", async () => {
+    mockChoreAssignmentFindMany.mockResolvedValue([
+      {
+        choreTemplate: { name: "Kitchen", description: null },
+        bookingGuest: {
+          id: "guest-1",
+          firstName: "Alice",
+          lastName: "Smith",
+          member: {
+            email: "alice@test.com",
+            inheritEmailFromId: null,
+            inheritEmailFrom: null,
+          },
+        },
+      },
+    ]);
+    mockSendChoreRosterEmail.mockResolvedValue(undefined);
+
+    const { PUT } = await import("@/app/api/admin/roster/[date]/route");
+    const req = new NextRequest("http://localhost/api/admin/roster/2026-04-10", {
+      method: "PUT",
+      body: JSON.stringify({ action: "email", notifyMember: false }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await PUT(req, { params: Promise.resolve({ date: "2026-04-10" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.suppressed).toBe(true);
+    expect(body.sent).toBe(0);
+    // No send and no token churn — existing guest chore links remain valid.
+    expect(mockSendChoreRosterEmail).not.toHaveBeenCalled();
+    expect(mockGuestTokenDeleteMany).not.toHaveBeenCalled();
+    expect(mockCreateGuestChoreToken).not.toHaveBeenCalled();
+    // Exactly one audit record, carrying the suppression and the admin actor.
+    expect(mockLogAudit).toHaveBeenCalledTimes(1);
+    const auditArg = mockLogAudit.mock.calls[0][0];
+    expect(auditArg.action).toBe("ADMIN_CHORE_ROSTER_EMAIL_SUPPRESSED");
+    expect(auditArg.memberId).toBe("admin1");
+    expect(auditArg.metadata.notifyMember).toBe(false);
+  });
+
+  // #1785: notifyMember:true is the explicit notify path — it sends and, like
+  // the default, writes no notifyMember audit field.
+  it("sends with notifyMember:true and writes no audit record (#1785)", async () => {
+    mockChoreAssignmentFindMany.mockResolvedValue([
+      {
+        choreTemplate: { name: "Kitchen", description: null },
+        bookingGuest: {
+          id: "guest-1",
+          firstName: "Alice",
+          lastName: "Smith",
+          member: {
+            email: "alice@test.com",
+            inheritEmailFromId: null,
+            inheritEmailFrom: null,
+          },
+        },
+      },
+    ]);
+    mockSendChoreRosterEmail.mockResolvedValue(undefined);
+
+    const { PUT } = await import("@/app/api/admin/roster/[date]/route");
+    const req = new NextRequest("http://localhost/api/admin/roster/2026-04-10", {
+      method: "PUT",
+      body: JSON.stringify({ action: "email", notifyMember: true }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await PUT(req, { params: Promise.resolve({ date: "2026-04-10" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.sent).toBeGreaterThanOrEqual(1);
+    expect(mockSendChoreRosterEmail).toHaveBeenCalled();
+    expect(mockLogAudit).not.toHaveBeenCalled();
+  });
+
+  // #1785: a non-boolean notifyMember is rejected at the route by the
+  // discriminated-union schema — no send occurs.
+  it("rejects a non-boolean notifyMember with 400 at the route (#1785)", async () => {
+    const { PUT } = await import("@/app/api/admin/roster/[date]/route");
+    const req = new NextRequest("http://localhost/api/admin/roster/2026-04-10", {
+      method: "PUT",
+      body: JSON.stringify({ action: "email", notifyMember: "false" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await PUT(req, { params: Promise.resolve({ date: "2026-04-10" }) });
+
+    expect(res.status).toBe(400);
     expect(mockSendChoreRosterEmail).not.toHaveBeenCalled();
   });
 });
