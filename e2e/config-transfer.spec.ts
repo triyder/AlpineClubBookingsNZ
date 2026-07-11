@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { loginPersona } from "./helpers/auth";
+import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
 
 // Configuration Export & Import (config transfer) round trip: a full admin
@@ -10,9 +10,11 @@ import { E2E_ADMIN } from "./helpers/fixtures";
 
 test.describe.configure({ mode: "serial" });
 
-test("export → re-upload → dry-run → apply round trip", async ({ page }) => {
-  await loginPersona(page, E2E_ADMIN.email);
+// Reuse the E2E admin session saved once in auth.setup.ts instead of a fresh
+// per-spec login (#1779).
+test.use({ storageState: storageStatePath(E2E_ADMIN.email) });
 
+test("export → re-upload → dry-run → apply round trip", async ({ page }) => {
   await page.goto("/admin/config-transfer");
   await expect(
     page.getByRole("heading", { name: /configuration export & import/i }),

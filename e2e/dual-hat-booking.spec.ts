@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { loginPersona } from "./helpers/auth";
+import { loginPersona, storageStatePath } from "./helpers/auth";
 import {
   bookSelfToReviewStep,
   confirmBookingToPaymentStep,
@@ -44,16 +44,22 @@ test("a dual-hat admin books their own stay through the member wizard", async ({
   await confirmBookingToPaymentStep(page);
 });
 
-test("an admin-only account is still redirected to Book on Behalf", async ({
-  page,
-}) => {
-  await loginPersona(page, E2E_ADMIN.email);
+// The admin-only account never exercises the login flow here — it only checks
+// portal routing — so reuse the E2E admin session saved once in auth.setup.ts
+// instead of a fresh per-spec login (#1779). The other two tests keep their own
+// fresh logins: each drives a different persona on its own rate-limit bucket.
+test.describe("admin-only routing", () => {
+  test.use({ storageState: storageStatePath(E2E_ADMIN.email) });
 
-  await page.goto("/book");
-  await expect(page).toHaveURL(/\/admin\/book/);
-  await expect(
-    page.getByRole("heading", { name: "Book on Behalf of Member" }),
-  ).toBeVisible();
+  test("an admin-only account is still redirected to Book on Behalf", async ({
+    page,
+  }) => {
+    await page.goto("/book");
+    await expect(page).toHaveURL(/\/admin\/book/);
+    await expect(
+      page.getByRole("heading", { name: "Book on Behalf of Member" }),
+    ).toBeVisible();
+  });
 });
 
 test("a booking officer completes an on-behalf booking draft", async ({

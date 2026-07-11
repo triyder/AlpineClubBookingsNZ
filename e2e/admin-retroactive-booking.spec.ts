@@ -1,5 +1,5 @@
 import { type BrowserContext, expect, test, type Page } from "@playwright/test";
-import { loginPersona, storageStatePath } from "./helpers/auth";
+import { storageStatePath } from "./helpers/auth";
 import { personas } from "./helpers/personas";
 import { E2E_ADMIN } from "./helpers/fixtures";
 import { calendarDayLabel } from "./helpers/stay-dates";
@@ -119,9 +119,11 @@ test.beforeAll(async ({ browser }) => {
     storageState: storageStatePath(personas.booker.email),
   });
 
-  adminContext = await browser.newContext();
-  const adminPage = await adminContext.newPage();
-  await loginPersona(adminPage, E2E_ADMIN.email);
+  // Reuse the E2E admin session saved once in auth.setup.ts instead of a fresh
+  // per-spec login (#1779).
+  adminContext = await browser.newContext({
+    storageState: storageStatePath(E2E_ADMIN.email),
+  });
 
   // A retroactive (cross-month) create can trigger the reconcile sweep to
   // auto-place bookings lodge-wide; disable auto-allocation for this spec so it
@@ -135,7 +137,6 @@ test.beforeAll(async ({ browser }) => {
     disabled.ok(),
     `disable auto-allocation (${disabled.status()})`,
   ).toBeTruthy();
-  await adminPage.close();
 });
 
 test.afterAll(async () => {

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { loginPersona } from "./helpers/auth";
+import { loginPersona, storageStatePath } from "./helpers/auth";
 import {
   E2E_ADMIN,
   NOMINATOR_TWO,
@@ -33,8 +33,8 @@ test.describe.configure({ mode: "serial" });
 test("member cancels a paid booking for account credit and the money outcome is recorded", async ({
   browser,
 }) => {
-  // A fresh Nadia login enrolls TOTP on a clean database; the admin login below
-  // usually only verifies (a prior spec enrolled E2E_ADMIN), but budget for both.
+  // A fresh Nadia login enrolls TOTP on a clean database; the admin context
+  // below reuses the shared E2E_ADMIN session (no login). Budget generously.
   test.setTimeout(180_000);
 
   // ── Member: cancel the paid booking, holding the amount as account credit ──
@@ -99,9 +99,12 @@ test("member cancels a paid booking for account credit and the money outcome is 
   await memberContext.close();
 
   // ── Admin: the credit settlement lands in the payments ledger ──
-  const adminContext = await browser.newContext();
+  // Reuse the E2E admin session saved once in auth.setup.ts instead of a fresh
+  // per-spec login (#1779).
+  const adminContext = await browser.newContext({
+    storageState: storageStatePath(E2E_ADMIN.email),
+  });
   const adminPage = await adminContext.newPage();
-  await loginPersona(adminPage, E2E_ADMIN.email);
 
   // The payments page defaults its "last updated" window's To-bound to the
   // BROWSER's local date, while the server interprets that bound as

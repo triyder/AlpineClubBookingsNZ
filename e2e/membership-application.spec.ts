@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { loginPersona } from "./helpers/auth";
+import { loginPersona, storageStatePath } from "./helpers/auth";
 import {
   E2E_ADMIN,
   MEMBERSHIP_APPLICANT,
@@ -82,9 +82,12 @@ test("nominator two agrees and the application moves to committee", async ({
 test("an admin approves the application and the applicant becomes a member", async ({
   browser,
 }) => {
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await loginPersona(page, E2E_ADMIN.email);
+  // Reuse the E2E admin session saved once in auth.setup.ts instead of a fresh
+  // per-spec login (#1779). This test drives the admin API directly, so it
+  // needs the session cookies but no page.
+  const context = await browser.newContext({
+    storageState: storageStatePath(E2E_ADMIN.email),
+  });
 
   // Approve via the review endpoint. Xero is absent, so skip the entrance-fee
   // invoice (a CREATE would only queue an outbox row that never sends).

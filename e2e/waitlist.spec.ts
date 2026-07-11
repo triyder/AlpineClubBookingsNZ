@@ -1,5 +1,5 @@
 import { type BrowserContext, expect, test } from "@playwright/test";
-import { loginPersona } from "./helpers/auth";
+import { loginPersona, storageStatePath } from "./helpers/auth";
 import {
   E2E_ADMIN,
   WAITLIST_FULL_WINDOW,
@@ -34,18 +34,19 @@ let memberContext: BrowserContext;
 let adminContext: BrowserContext;
 
 test.beforeAll(async ({ browser }) => {
-  // Two fresh logins incl. first-time two-factor enrollment: needs more than
-  // the default 90s hook budget on a loaded CI runner.
+  // One fresh login (WAITLISTER) incl. possible first-time two-factor
+  // enrollment: needs more than the default 90s hook budget on a loaded runner.
   test.setTimeout(240_000);
   memberContext = await browser.newContext();
   const memberPage = await memberContext.newPage();
   await loginPersona(memberPage, WAITLISTER.email);
   await memberPage.close();
 
-  adminContext = await browser.newContext();
-  const adminPage = await adminContext.newPage();
-  await loginPersona(adminPage, E2E_ADMIN.email);
-  await adminPage.close();
+  // Reuse the E2E admin session saved once in auth.setup.ts instead of a fresh
+  // per-spec login (#1779).
+  adminContext = await browser.newContext({
+    storageState: storageStatePath(E2E_ADMIN.email),
+  });
 });
 
 test.afterAll(async () => {

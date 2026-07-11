@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { loginPersona } from "./helpers/auth";
+import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN, WAITLISTER } from "./helpers/fixtures";
 
 // High row (docs/END_TO_END_TEST_MATRIX.md): access-role *management* — the
@@ -16,6 +16,10 @@ import { E2E_ADMIN, WAITLISTER } from "./helpers/fixtures";
 // in as her (IB, membership-application, waitlist).
 test.describe.configure({ mode: "serial" });
 
+// Reuse the E2E admin session saved once in auth.setup.ts instead of a fresh
+// per-spec login (#1779).
+test.use({ storageState: storageStatePath(E2E_ADMIN.email) });
+
 // Run-unique so a manual re-run against a non-reseeded DB never collides on the
 // role label. Reused for every locator/assertion below.
 const roleLabel = `E2E Bookings Viewer ${Date.now()}`;
@@ -23,9 +27,9 @@ const roleLabel = `E2E Bookings Viewer ${Date.now()}`;
 test("a full admin creates, edits, assigns a custom access role and sees the effect", async ({
   page,
 }) => {
-  // A fresh E2E_ADMIN login may enroll TOTP on a clean database.
+  // Generous timeout: the journey spans role create → edit → assign → verify
+  // across several admin pages.
   test.setTimeout(180_000);
-  await loginPersona(page, E2E_ADMIN.email);
 
   // ── Create the role ──
   await page.goto("/admin/access-roles");

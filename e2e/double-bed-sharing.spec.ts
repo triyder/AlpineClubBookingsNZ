@@ -1,5 +1,5 @@
 import { type BrowserContext, expect, test } from "@playwright/test";
-import { loginPersona } from "./helpers/auth";
+import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
 import { overrideModules, setModuleSettings, type ModuleSettings } from "./helpers/modules";
 
@@ -287,17 +287,14 @@ async function deriveHoldingWindows(): Promise<void> {
 }
 
 test.beforeAll(async ({ browser }) => {
-  // A fresh E2E_ADMIN login may enroll TOTP on a clean database.
   test.setTimeout(180_000);
-  adminContext = await browser.newContext();
-  const adminPage = await adminContext.newPage();
-  // E2E_ADMIN is logged in by ~10 other admin specs, which fully consume its
-  // shared login bucket (rateLimiters.login = 10 / 15 min, keyed per synthetic
-  // IP-per-email). Adding this spec's login to that bucket would push the tail
-  // spec (waitlist) past the ceiling and stall its beforeAll to a timeout, so
-  // log in from a private IP bucket outside syntheticClientIp's 10.99.0.0/16.
-  await loginPersona(adminPage, E2E_ADMIN.email, "10.88.7.47");
-  await adminPage.close();
+  // Reuse the E2E admin session saved once in auth.setup.ts instead of a fresh
+  // per-spec login (#1779). This spec's admin login previously needed a private
+  // IP bucket ("10.88.7.47") to avoid tipping the shared E2E_ADMIN login bucket
+  // past its ceiling; reusing storageState removes that fragility entirely.
+  adminContext = await browser.newContext({
+    storageState: storageStatePath(E2E_ADMIN.email),
+  });
 
   // Disable auto-allocation so nothing auto-places a bed under our manual
   // board steps (schema default is true; restored in afterAll).

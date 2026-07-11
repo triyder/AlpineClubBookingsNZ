@@ -1,5 +1,4 @@
 import { type BrowserContext, expect, test, type Page } from "@playwright/test";
-import { loginPersona } from "./helpers/auth";
 import { bookSelfToReviewStep, confirmBookingToPaymentStep } from "./helpers/booking";
 import { personas } from "./helpers/personas";
 import { E2E_ADMIN } from "./helpers/fixtures";
@@ -113,18 +112,15 @@ async function adminShiftTo(
 }
 
 test.beforeAll(async ({ browser }) => {
-  // A fresh admin login (incl. first-time two-factor enrollment) needs more than
-  // the default hook budget on a loaded runner.
-  test.setTimeout(240_000);
-
   memberContext = await browser.newContext({
     storageState: storageStatePath(personas.booker.email),
   });
 
-  adminContext = await browser.newContext();
-  const adminPage = await adminContext.newPage();
-  await loginPersona(adminPage, E2E_ADMIN.email);
-  await adminPage.close();
+  // Reuse the E2E admin session saved once in auth.setup.ts instead of a fresh
+  // per-spec login (#1779).
+  adminContext = await browser.newContext({
+    storageState: storageStatePath(E2E_ADMIN.email),
+  });
 });
 
 test.afterAll(async () => {

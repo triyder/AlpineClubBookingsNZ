@@ -709,6 +709,44 @@ describe("adminAssignPartnerLink", () => {
     );
   });
 
+  it("suppresses the emails and audits the choice when notifyMember is false (#1769a)", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.memberPartnerLink.create).mockResolvedValue({ id: "link-1" } as never);
+
+    const result = await adminAssignPartnerLink({
+      adminMemberId: "admin-1",
+      memberOneId: adultB.id,
+      memberTwoId: adultA.id,
+      notifyMember: false,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+    const call = vi
+      .mocked(logAudit)
+      .mock.calls.find((c) => c[0].action === "MEMBER_PARTNER_LINK_ADMIN_ASSIGNED")?.[0];
+    expect(call?.metadata).toMatchObject({ notifyMember: false });
+  });
+
+  it("emails both and records no notify field when notifyMember is true (#1769a)", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.memberPartnerLink.create).mockResolvedValue({ id: "link-1" } as never);
+
+    const result = await adminAssignPartnerLink({
+      adminMemberId: "admin-1",
+      memberOneId: adultB.id,
+      memberTwoId: adultA.id,
+      notifyMember: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sendPartnerLinkConfirmedEmail).toHaveBeenCalledTimes(2);
+    const call = vi
+      .mocked(logAudit)
+      .mock.calls.find((c) => c[0].action === "MEMBER_PARTNER_LINK_ADMIN_ASSIGNED")?.[0];
+    expect(call?.metadata).not.toHaveProperty("notifyMember");
+  });
+
   it("promotes an existing pending request instead of duplicating", async () => {
     mockMemberLookup([adultA, adultB]);
     vi.mocked(prisma.memberPartnerLink.findUnique).mockResolvedValue({
@@ -824,6 +862,81 @@ describe("adminRemovePartnerLink", () => {
 
     expect(result.ok).toBe(true);
     expect(sendPartnerLinkRemovedEmail).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the removal emails and audits the choice for a CONFIRMED link (#1769a)", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "CONFIRMED",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    const result = await adminRemovePartnerLink({
+      adminMemberId: "admin-1",
+      linkId: "link-1",
+      notifyMember: false,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sendPartnerLinkRemovedEmail).not.toHaveBeenCalled();
+    const call = vi
+      .mocked(logAudit)
+      .mock.calls.find((c) => c[0].action === "MEMBER_PARTNER_LINK_ADMIN_REMOVED")?.[0];
+    expect(call?.metadata).toMatchObject({ notifyMember: false });
+  });
+
+  it("emails both and records no notify field for a CONFIRMED remove with notifyMember true (#1769a)", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "CONFIRMED",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    const result = await adminRemovePartnerLink({
+      adminMemberId: "admin-1",
+      linkId: "link-1",
+      notifyMember: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sendPartnerLinkRemovedEmail).toHaveBeenCalledTimes(2);
+    const call = vi
+      .mocked(logAudit)
+      .mock.calls.find((c) => c[0].action === "MEMBER_PARTNER_LINK_ADMIN_REMOVED")?.[0];
+    expect(call?.metadata).not.toHaveProperty("notifyMember");
+  });
+
+  it("records no notify field for a PENDING removal even when notifyMember is false (#1769a honesty rule)", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "PENDING",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    const result = await adminRemovePartnerLink({
+      adminMemberId: "admin-1",
+      linkId: "link-1",
+      notifyMember: false,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sendPartnerLinkRemovedEmail).not.toHaveBeenCalled();
+    const call = vi
+      .mocked(logAudit)
+      .mock.calls.find((c) => c[0].action === "MEMBER_PARTNER_LINK_ADMIN_REMOVED")?.[0];
+    expect(call?.metadata).not.toHaveProperty("notifyMember");
   });
 
   it("sweeps the pair's future shared-double allocations on admin dissolve (#1756)", async () => {
