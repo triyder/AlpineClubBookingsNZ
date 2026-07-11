@@ -12,6 +12,9 @@ All notable public reference-release changes should be recorded here.
   group-booking settlement/join messages (`group-booking-join-verification`,
   `group-settlement-receipt`, `group-join-settled`,
   `group-settlement-expired`, `group-join-released`, `group-join-cancelled`).
+  These senders are hardcoded (no admin-editable template), so they live in a
+  new "Hardcoded Messages" section outside the `###` sections that the
+  registry contract test keeps in sync with `EMAIL_TEMPLATE_DEFINITIONS`.
   Docs-only; no behaviour change.
 
 - **A deliberately over-capacity booking is no longer destroyed when payment

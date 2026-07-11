@@ -8,6 +8,14 @@ and most HTML bodies are in
 route, refund appeal admin route, admin bulk communications route, and email
 retry cron.
 
+Two tiers are documented. The `###` entries under "Exact Messages" are the
+admin-editable templates registered in `EMAIL_TEMPLATE_DEFINITIONS`
+(`src/lib/email-message-registry.ts`); a contract test
+(`src/lib/__tests__/email-message-registry.test.ts`) keeps that list and those
+sections in exact sync. The `####` entries under "Hardcoded Messages (Not In
+The Admin-Editable Registry)" are live senders whose wording is fixed in code
+and cannot be edited from `/admin/notifications`.
+
 This audit covers mail sent by this repository through its Nodemailer/SES path.
 I did not find a repo path that instructs Xero to email invoices; any Xero-side
 invoice email would be outside this repo's sender inventory.
@@ -267,32 +275,6 @@ Triggers and frequency:
 
 - Same `POST /api/auth/request-email-change` request as above.
 - Sent to the old email address once per successful request.
-
-### two-factor-code
-
-Subject:
-
-```text
-Your {{CLUB_NAME}} two-factor code
-```
-
-Body:
-
-```text
-Two-factor code
-
-Hi {{firstName}},
-
-Use this code to finish signing in to your {{CLUB_NAME}} booking account:
-
-{{code}}
-
-This code expires on {{expiresAt}}. If you did not try to sign in, change your password and contact the club.
-```
-
-Triggers and frequency:
-
-- `POST /api/auth/2fa/email/send`: when a member with email two-factor enabled requests a sign-in code during login. Per request; codes expire after 10 minutes. Rate limited (shared two-factor limiter).
 
 ### booking-confirmed
 
@@ -568,62 +550,6 @@ Triggers and frequency:
   `notifyMember`); the standalone guest-remove route honours the same flag for
   admins (#1705). "Without emailing" skips this email and records
   `notifyMember: false` in the audit metadata; member self-edits always send.
-
-### booking-review-approved
-
-Subject:
-
-```text
-Your booking has been approved - {{CLUB_LODGE_NAME}}
-```
-
-Body:
-
-```text
-Booking Approved
-
-Hi {{firstName}}, an admin has approved your booking. You can now complete payment to confirm it.
-
-Check-in: {{checkIn}}
-Check-out: {{checkOut}}
-
-Note from admin: {{adminNotes}} [only when adminNotes is non-empty]
-
-Complete Payment: {{BASE_URL}}/bookings/{{bookingId}}
-```
-
-Triggers and frequency:
-
-- `POST /api/admin/bookings/[id]/review` (approve): when an admin approves a booking held for review (minors flow), releasing it for payment. One email per approval decision, to the booking owner.
-
-### booking-review-rejected
-
-Subject:
-
-```text
-Your booking could not be approved - {{CLUB_LODGE_NAME}}
-```
-
-Body:
-
-```text
-Booking Declined
-
-Hi {{firstName}}, an admin has reviewed your booking and was not able to approve it. The booking has been cancelled — no payment was taken.
-
-Check-in: {{checkIn}}
-Check-out: {{checkOut}}
-
-Reason from admin: {{adminNotes}} [only when adminNotes is non-empty]
-
-You are welcome to make a new booking that includes an adult guest, or contact the club to discuss.
-
-Make a New Booking: {{BASE_URL}}/book
-```
-
-Triggers and frequency:
-
-- `POST /api/admin/bookings/[id]/review` (reject): when an admin declines a booking held for review (minors flow); the booking is cancelled and no payment is taken. One email per rejection decision, to the booking owner.
 
 ### checkin-reminder
 
@@ -1059,35 +985,6 @@ Triggers and frequency:
 
 - Admin rejects a membership application.
 - One email per rejected application.
-
-### induction-sign-off-request
-
-Subject:
-
-```text
-Lodge induction sign-off for {{inducteeName}} — {{CLUB_NAME}}
-```
-
-Body:
-
-```text
-Lodge Induction Sign-Off Request
-
-Hi {{signerName}},
-
-{{inducteeName}} needs their {{CLUB_NAME}} lodge induction signed off, and you can do this as their {{signerRoleLabel}}.
-
-Once you have taken them through the lodge induction checklist and you are satisfied they are competent, please sign in and confirm the sign-off on your induction page.
-
-You will need to sign in before you can complete the sign-off.
-
-Open My Induction Page: {{inductionUrl}}
-```
-
-Triggers and frequency:
-
-- `POST /api/admin/inductions`: when an admin assigns induction sign-off signers. One email per assigned signer with an email address.
-- Membership application approval (`approveMemberApplication` in `src/lib/nomination.ts`): sign-off requests also go out automatically to the assigned signers when an application is approved.
 
 ### family-group-invitation
 
@@ -2883,7 +2780,131 @@ Triggers and frequency:
 
 - `POST /api/cron` (confirm-pending job): when a request-origin booking (no saved card) reaches its hold deadline unpaid; the hold is extended and admins are alerted instead of auto-charging. Per hold-expiry check on an unpaid request booking. Sent to admins who opt in to the "Public booking requests" notification.
 
-### school-attendee-confirmation
+## Hardcoded Messages (Not In The Admin-Editable Registry)
+
+The following messages are live senders whose subject and body wording are
+fixed in code (`src/lib/email/*.ts` plus `src/lib/email-templates.ts`). They
+have no `EMAIL_TEMPLATE_DEFINITIONS` entry in
+`src/lib/email-message-registry.ts`, so `/admin/notifications` cannot edit
+their wording. The sync contract test
+(`src/lib/__tests__/email-message-registry.test.ts`) keeps the `###` sections
+above in exact lockstep with the editable registry — these entries use `####`
+headings so they stay out of that contract. Do not promote one to `###`
+without also registering it for admin editing (that is feature work, not a
+docs change).
+
+#### two-factor-code
+
+Subject:
+
+```text
+Your {{CLUB_NAME}} two-factor code
+```
+
+Body:
+
+```text
+Two-factor code
+
+Hi {{firstName}},
+
+Use this code to finish signing in to your {{CLUB_NAME}} booking account:
+
+{{code}}
+
+This code expires on {{expiresAt}}. If you did not try to sign in, change your password and contact the club.
+```
+
+Triggers and frequency:
+
+- `POST /api/auth/2fa/email/send`: when a member with email two-factor enabled requests a sign-in code during login. Per request; codes expire after 10 minutes. Rate limited (shared two-factor limiter).
+
+#### booking-review-approved
+
+Subject:
+
+```text
+Your booking has been approved - {{CLUB_LODGE_NAME}}
+```
+
+Body:
+
+```text
+Booking Approved
+
+Hi {{firstName}}, an admin has approved your booking. You can now complete payment to confirm it.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+
+Note from admin: {{adminNotes}} [only when adminNotes is non-empty]
+
+Complete Payment: {{BASE_URL}}/bookings/{{bookingId}}
+```
+
+Triggers and frequency:
+
+- `POST /api/admin/bookings/[id]/review` (approve): when an admin approves a booking held for review (minors flow), releasing it for payment. One email per approval decision, to the booking owner.
+
+#### booking-review-rejected
+
+Subject:
+
+```text
+Your booking could not be approved - {{CLUB_LODGE_NAME}}
+```
+
+Body:
+
+```text
+Booking Declined
+
+Hi {{firstName}}, an admin has reviewed your booking and was not able to approve it. The booking has been cancelled — no payment was taken.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+
+Reason from admin: {{adminNotes}} [only when adminNotes is non-empty]
+
+You are welcome to make a new booking that includes an adult guest, or contact the club to discuss.
+
+Make a New Booking: {{BASE_URL}}/book
+```
+
+Triggers and frequency:
+
+- `POST /api/admin/bookings/[id]/review` (reject): when an admin declines a booking held for review (minors flow); the booking is cancelled and no payment is taken. One email per rejection decision, to the booking owner.
+
+#### induction-sign-off-request
+
+Subject:
+
+```text
+Lodge induction sign-off for {{inducteeName}} — {{CLUB_NAME}}
+```
+
+Body:
+
+```text
+Lodge Induction Sign-Off Request
+
+Hi {{signerName}},
+
+{{inducteeName}} needs their {{CLUB_NAME}} lodge induction signed off, and you can do this as their {{signerRoleLabel}}.
+
+Once you have taken them through the lodge induction checklist and you are satisfied they are competent, please sign in and confirm the sign-off on your induction page.
+
+You will need to sign in before you can complete the sign-off.
+
+Open My Induction Page: {{inductionUrl}}
+```
+
+Triggers and frequency:
+
+- `POST /api/admin/inductions`: when an admin assigns induction sign-off signers. One email per assigned signer with an email address.
+- Membership application approval (`approveMemberApplication` in `src/lib/nomination.ts`): sign-off requests also go out automatically to the assigned signers when an application is approved.
+
+#### school-attendee-confirmation
 
 Subject:
 
@@ -2919,7 +2940,7 @@ Triggers and frequency:
 - `POST /api/cron` (school-attendee-confirmations job): prompts school contacts whose converted booking still lists placeholder attendees ahead of check-in; marked as a reminder after the first send. The tokenized link is rotated on every send.
 - `POST /api/admin/booking-requests/[id]/resend-attendee-confirmation`: explicit admin resend button. One email per send, to the school contact.
 
-### admin-school-manual-invoice
+#### admin-school-manual-invoice
 
 Subject:
 
@@ -2948,7 +2969,7 @@ Triggers and frequency:
 
 - School booking-request conversion (`src/lib/school-booking-request.ts`): when an approved school request converts to a confirmed booking while the Xero module is off, so no invoice was raised automatically. The named school/contact is the party to invoice — the email itself goes to admins. Per conversion. Sent to admins who opt in to the "Public booking requests" notification.
 
-### group-booking-join-verification
+#### group-booking-join-verification
 
 Subject:
 
@@ -2979,7 +3000,7 @@ Triggers and frequency:
 
 - Non-member group join (`src/lib/group-booking.ts`): when a non-member uses a join code to claim a spot on a group booking, they must confirm their email before the join proceeds. Link expires after 48 hours. One email per join attempt.
 
-### group-settlement-receipt
+#### group-settlement-receipt
 
 Subject:
 
@@ -3008,7 +3029,7 @@ Triggers and frequency:
 
 - Group settlement success (`src/lib/group-settlement.ts`, Stripe webhook path): after an organiser-pays combined payment settles. One receipt to the organiser per settlement.
 
-### group-join-settled
+#### group-join-settled
 
 Subject:
 
@@ -3034,7 +3055,7 @@ Triggers and frequency:
 
 - Same group settlement success as `group-settlement-receipt`: one email per joiner booking covered by the organiser's settled payment.
 
-### group-settlement-expired
+#### group-settlement-expired
 
 Subject:
 
@@ -3063,7 +3084,7 @@ Triggers and frequency:
 
 - `POST /api/cron` (group-settlement-reaper job): when an organiser's started combined payment is not completed in time and the held joiner beds are released. One email to the organiser per expired settlement.
 
-### group-join-released
+#### group-join-released
 
 Subject:
 
@@ -3090,7 +3111,7 @@ Triggers and frequency:
 
 - Same group-settlement-reaper sweep as `group-settlement-expired`: one email per joiner whose held bed was released; the joiner's booking returns to awaiting payment.
 
-### group-join-cancelled
+#### group-join-cancelled
 
 Subject:
 
