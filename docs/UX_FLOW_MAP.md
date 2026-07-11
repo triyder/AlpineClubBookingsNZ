@@ -93,6 +93,11 @@ shadcn neutral (epic #1800). The foundation (#1801) establishes:
 - **A11y baseline:** a global `prefers-reduced-motion: reduce` guard collapses
   animation/transition duration + delay, and both app shells have a
   skip-to-content link targeting `#main-content`.
+- **List loading/empty primitives (#1803):** use the shared `Spinner`
+  (`src/components/ui/spinner.tsx`; `role="status"` with an sr-only label, and
+  it degrades to a static indicator under reduced motion) and `EmptyState`
+  (`src/components/ui/empty-state.tsx`; icon + heading + one-line direction +
+  optional action) instead of bare `Loading…`/`No results` text.
 
 Later epic issues build on these primitives; do not re-introduce hardcoded
 status hex, `bg-white`, or `text-slate-*` on app surfaces.

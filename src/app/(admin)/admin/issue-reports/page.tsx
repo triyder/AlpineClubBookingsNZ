@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   ExternalLink,
   Eye,
-  LoaderCircle,
   RotateCcw,
   Trash2,
 } from "lucide-react";
@@ -20,6 +19,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Dialog,
   DialogContent,
@@ -227,14 +228,17 @@ export default function AdminIssueReportsPage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex items-center gap-2 py-4 text-sm text-slate-500">
-              <LoaderCircle className="h-4 w-4 animate-spin" />
-              Loading reports...
+            <div className="flex justify-center py-4">
+              <Spinner size="sm" label="Loading reports…" />
             </div>
           ) : null}
           {error ? <p className="py-4 text-sm text-red-600">{error}</p> : null}
           {!loading && data?.reports.length === 0 ? (
-            <p className="py-4 text-sm text-slate-500">No issue reports found.</p>
+            <EmptyState
+              icon={Bug}
+              title="No issue reports found"
+              description="Reports submitted from the site will appear here. Adjust the status filter to widen the view."
+            />
           ) : null}
           {!loading && data && data.reports.length > 0 ? (
             <div className="divide-y">
