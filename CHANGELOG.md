@@ -10,8 +10,8 @@ All notable public reference-release changes should be recorded here.
   admin alert, and the six group-booking settlement/join notices gained
   `EMAIL_TEMPLATE_DEFINITIONS` entries, so admins can reword them like the rest
   of the registry. Delivery stays **locked to always-send** for all 11 (they are
-  member-facing and several carry action links, so they can never be
-  content-only'd or disabled), and absent an override the shipped wording is
+  member- or admin-facing and several carry action links or are operationally
+  required, so they can never be content-only'd or disabled), and absent an override the shipped wording is
   unchanged. The school-attendee confirmation's `{{token}}` is now threaded into
   its template data so an override renders the confirm link. `two-factor-code`
   stays hardcoded by design (auth-critical). No money, booking capacity, or

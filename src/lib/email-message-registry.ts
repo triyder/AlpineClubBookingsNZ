@@ -51,10 +51,17 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "website-contact",
   "admin-booking-request-pending",
   "admin-booking-request-hold-expired",
+  "admin-school-manual-invoice",
 ]);
 
+// Admin/system templates whose delivery mode admins must NOT be able to change.
+// admin-school-manual-invoice (#1797) is admin-facing so it classifies as an
+// admin alert, but disabling it would let an approved school booking go
+// un-invoiced — a money risk — so it is locked to always-send like
+// admin-email-failure, matching the pre-#1797 hardcoded behaviour.
 const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-email-failure",
+  "admin-school-manual-invoice",
 ]);
 
 const CONTENT_ONLY_DEFAULT_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([

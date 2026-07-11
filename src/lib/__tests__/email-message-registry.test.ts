@@ -268,6 +268,18 @@ describe("newly-registered hardcoded email templates (#1797)", () => {
   it("does not confuse two-factor-code as editable (stays hardcoded)", () => {
     expect(getEmailTemplateDefinition("two-factor-code")).toBeUndefined();
   });
+
+  it("classifies admin-school-manual-invoice as an admin alert but keeps it delivery-locked", () => {
+    // It ships via sendToAdmins, so it must classify as an admin alert like its
+    // siblings (audience "admin") rather than "member". It stays in
+    // LOCKED_DELIVERY_TEMPLATE_NAMES so admins still cannot disable it —
+    // disabling would let an approved school booking go un-invoiced (#1797).
+    const definition = getEmailTemplateDefinition("admin-school-manual-invoice");
+    if (!definition) throw new Error("missing admin-school-manual-invoice");
+    expect(definition.audience).toBe("admin");
+    expect(definition.deliveryEditable).toBe(false);
+    expect(getDefaultDeliveryMode("admin-school-manual-invoice")).toBe("always");
+  });
 });
 
 describe("render path for newly-registered action-link templates (#1797)", () => {
