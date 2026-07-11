@@ -1243,7 +1243,12 @@ export async function approveMemberApplication(
   applicationId: string,
   adminMemberId: string,
   adminNotes?: string | null,
-  entranceFeeInvoiceDecision?: EntranceFeeInvoiceApprovalDecision | null
+  entranceFeeInvoiceDecision?: EntranceFeeInvoiceApprovalDecision | null,
+  // #1786: admin per-action email choice. Absent/undefined = notify (default);
+  // false = suppress the applicant-facing approval notice. Gates only that
+  // applicant email — the induction sign-off requests below are token-bearing
+  // requests to the assigned signers and always send.
+  notifyMember?: boolean
 ) {
   const application = await prisma.memberApplication.findUnique({
     where: { id: applicationId },
@@ -1525,16 +1530,22 @@ export async function approveMemberApplication(
     });
   }
 
-  try {
-    await sendMembershipApplicationApprovedEmail({
-      email: approved.applicantMember.email,
-      firstName: approved.applicantMember.firstName,
-      token: passwordSetupToken,
-      adminNotes: cleanNullableString(adminNotes),
-    });
-  } catch (err) {
-    logger.error({ err, applicationId }, "Failed to send approved membership email");
-    warnings.push("The approval email could not be sent automatically");
+  // #1786: the applicant approval notice carries the password-setup link and is
+  // gated by the admin's per-action notify choice (default is notify). The
+  // induction sign-off requests below are token-bearing requests to the assigned
+  // signers and stay always-send, regardless of this choice.
+  if (notifyMember !== false) {
+    try {
+      await sendMembershipApplicationApprovedEmail({
+        email: approved.applicantMember.email,
+        firstName: approved.applicantMember.firstName,
+        token: passwordSetupToken,
+        adminNotes: cleanNullableString(adminNotes),
+      });
+    } catch (err) {
+      logger.error({ err, applicationId }, "Failed to send approved membership email");
+      warnings.push("The approval email could not be sent automatically");
+    }
   }
 
   // Create the new member's lodge induction record and ask their nominators to
@@ -1617,6 +1628,12 @@ export async function approveMemberApplication(
       });
   }
 
+  // #1786: honesty rule — only record the notify choice when the applicant
+  // approval email was actually suppressed. The send is otherwise unconditional
+  // (the applicant email is a required application field), so no would-have-sent
+  // guard is needed. A notify/default choice records no notifyMember field.
+  const notifyAuditFields = notifyMember === false ? { notifyMember: false } : {};
+
   logAudit({
     action: "MEMBERSHIP_APPLICATION_APPROVED",
     memberId: adminMemberId,
@@ -1625,6 +1642,7 @@ export async function approveMemberApplication(
       applicantMemberId: approved.applicantMember.id,
       createdMemberCount: approved.createdMemberIds.length,
       postApprovalWarnings: warnings,
+      ...notifyAuditFields,
     }),
   });
 
@@ -1648,7 +1666,10 @@ function isRejectableApplicationStatus(status: ApplicationStatus): boolean {
 export async function rejectMemberApplication(
   applicationId: string,
   adminMemberId: string,
-  adminNotes?: string | null
+  adminNotes?: string | null,
+  // #1786: admin per-action email choice. Absent/undefined = notify (default);
+  // false = suppress the applicant-facing rejection notice.
+  notifyMember?: boolean
 ) {
   const application = await prisma.memberApplication.findUnique({
     where: { id: applicationId },
@@ -1702,15 +1723,24 @@ export async function rejectMemberApplication(
     });
   });
 
-  try {
-    await sendMembershipApplicationRejectedEmail({
-      email: rejected.applicantEmail,
-      firstName: rejected.applicantFirstName,
-      adminNotes: cleanNullableString(adminNotes),
-    });
-  } catch (err) {
-    logger.error({ err, applicationId }, "Failed to send rejected membership email");
+  // #1786: applicant rejection notice — gated by the admin's per-action notify
+  // choice (default is notify).
+  if (notifyMember !== false) {
+    try {
+      await sendMembershipApplicationRejectedEmail({
+        email: rejected.applicantEmail,
+        firstName: rejected.applicantFirstName,
+        adminNotes: cleanNullableString(adminNotes),
+      });
+    } catch (err) {
+      logger.error({ err, applicationId }, "Failed to send rejected membership email");
+    }
   }
+
+  // #1786: honesty rule — record the notify choice only when the applicant
+  // rejection email was actually suppressed (the send is otherwise
+  // unconditional). A notify/default choice records no notifyMember field.
+  const notifyAuditFields = notifyMember === false ? { notifyMember: false } : {};
 
   logAudit({
     action: "MEMBERSHIP_APPLICATION_REJECTED",
@@ -1718,6 +1748,7 @@ export async function rejectMemberApplication(
     targetId: applicationId,
     details: JSON.stringify({
       applicantEmail: rejected.applicantEmail,
+      ...notifyAuditFields,
     }),
   });
 
