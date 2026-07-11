@@ -30,6 +30,13 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    // #1756: successful deactivations sweep future shared-double placements
+    // inside the mutation transaction; empty by default so the guard tests
+    // stay a no-op sweep.
+    bedAllocation: {
+      findMany: vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
     xeroContactCache: { findUnique: vi.fn().mockResolvedValue(null) },
     $transaction: vi.fn(),
@@ -60,6 +67,7 @@ vi.mock("@/lib/booking-cancel", () => ({
 vi.mock("@/lib/email", () => ({
   sendAccountDeletionApprovedEmail: vi.fn().mockResolvedValue(undefined),
   sendAccountDeletionRejectedEmail: vi.fn().mockResolvedValue(undefined),
+  sendAdminPartnerShareSweptAlert: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/audit", () => ({
   buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
@@ -147,6 +155,7 @@ function mockTransaction() {
       },
       familyGroupMember: { deleteMany: prisma.familyGroupMember.deleteMany },
       bookingGuest: { updateMany: prisma.bookingGuest.updateMany },
+      bedAllocation: (prisma as any).bedAllocation,
       deletionRequest: { update: prisma.deletionRequest.update },
       auditLog: { create: prisma.auditLog.create },
     }),

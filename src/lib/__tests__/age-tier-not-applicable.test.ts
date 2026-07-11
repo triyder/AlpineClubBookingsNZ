@@ -146,6 +146,13 @@ function mockUpdateTransaction() {
         deleteMany: prisma.memberAccessRole.deleteMany,
       },
       familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      // #1756: an ADULT→NOT_APPLICABLE reclassification (org member) counts
+      // as leaving the ADULT tier, so the shared-double sweep runs inside the
+      // transaction; no rows here, so it is a no-op.
+      bedAllocation: {
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
       auditLog: { create: prisma.auditLog.create },
     }),
   );

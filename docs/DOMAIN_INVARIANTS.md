@@ -92,9 +92,26 @@ Future reviews and issues should cite this file when proposing changes.
   `double-bed-sharing.ts`. A PENDING link grants nothing; both members must
   also still be ACTIVE adults at placement time. (#1744 swapped this signal in
   for the interim same-`FamilyGroup` rule, which wrongly permitted e.g. a
-  parent and an adult child.) Eligibility is enforced at **placement time
-  only**: dissolving a link, deactivating a member, or a tier correction does
-  not sweep already-placed second occupants (#1756). Only an admin adds the second occupant on the board,
+  parent and an adult child.) The precondition is enforced at placement time
+  AND swept when it later breaks (#1756): **no future `isSecondOccupant`
+  allocation may outlive its partner link or the active-adult precondition**.
+  Dissolving a CONFIRMED link (`removeOwnPartnerLink` /
+  `adminRemovePartnerLink`), deactivating a member (member edit, bulk update,
+  or account-deletion anonymisation), or correcting an ADULT to a minor/N-A
+  tier runs `sweepFuturePartnerSharedAllocations`
+  (`bed-allocation-lifecycle.ts`) in the SAME transaction as the breaking
+  event: the pair's future (tonight onwards, NZ date-only) second-occupant
+  rows are deleted back to the awaiting-allocation queue — never the primary,
+  so the sweep cannot orphan anyone and needs no promotion pass — with a
+  `BED_ALLOCATION_PARTNER_SHARE_SWEPT` audit row against BOTH bookings and a
+  post-commit admin alert (`admin-partner-share-swept`, "Booking review
+  required" preference). A dissolve sweeps only bed-nights whose two occupants
+  are exactly the dissolved pair; deactivation/tier change sweeps any future
+  shared bed-night involving the member on either side. Past lodge nights are
+  history and stay untouched, and the sweep is idempotent (a second run finds
+  nothing). Membership cancellation and archive need no sweep call: approval
+  is blocked while ANY future booking or member guest appearance exists, so a
+  cancellable member cannot occupy a future shared bed-night. Only an admin adds the second occupant on the board,
   and only onto a bed whose primary already **holds capacity** — so displacement
   can never move the primary out from under the partner. Auto-allocation never
   creates a second occupant; every other bed type stays exactly one occupant per

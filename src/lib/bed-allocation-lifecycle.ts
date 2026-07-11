@@ -12,6 +12,7 @@ import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
+  getTodayDateOnly,
 } from "@/lib/date-only";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
@@ -772,4 +773,337 @@ export async function reconcileBedAllocationsForBooking({
     : 0;
 
   return { enabled: true, deletedCount, createdCount, promotedCount };
+}
+
+// ---------------------------------------------------------------------------
+// Stale partner-share sweep (#1756)
+//
+// Placement-time eligibility (mayShareDoubleBed) blocks NEW second occupants
+// once a partner link dissolves or a member stops being an active adult, but
+// rows placed while the pair qualified used to outlive those events. This
+// sweep removes the affected pair's FUTURE (tonight onwards, NZ date-only —
+// the same `stayDate >= getTodayDateOnly()` window as the bed deactivate
+// guard) shared-double second-occupant rows, returning those guest-nights to
+// the awaiting-allocation queue; past lodge nights are history and stay
+// untouched. Only the `isSecondOccupant=true` row is ever deleted — the
+// primary keeps their bed — so the sweep can never orphan a partner and needs
+// no promotion pass (contrast the #1750 primary-removal paths). Callers run it
+// on the same transaction as the event that broke the pair (link delete /
+// member deactivation) and alert admins after commit
+// (`sendAdminPartnerShareSweptAlert`). Not gated on the Bed Allocation module
+// toggle: a stale row is invalid whether or not the board is currently
+// enabled, and with the module unused the candidate set is simply empty.
+// ---------------------------------------------------------------------------
+
+export type PartnerSharedSweepReason =
+  | "partner_link_dissolved"
+  | "member_deactivated"
+  | "member_age_tier_changed";
+
+const PARTNER_SHARE_SWEEP_REASON_LABELS: Record<PartnerSharedSweepReason, string> = {
+  partner_link_dissolved: "Partner link dissolved",
+  member_deactivated: "Member deactivated",
+  member_age_tier_changed: "Member is no longer an adult",
+};
+
+/** Human phrase for a sweep reason, shared by the audit rows and admin alert. */
+export function describePartnerSharedSweepReason(
+  reason: PartnerSharedSweepReason,
+): string {
+  return PARTNER_SHARE_SWEEP_REASON_LABELS[reason];
+}
+
+export interface SweptPartnerSharedAllocation {
+  allocationId: string;
+  // The second occupant's booking (the removed row's side).
+  bookingId: string;
+  bookingGuestId: string;
+  bedId: string;
+  roomId: string;
+  stayDate: Date;
+  secondOccupantMemberId: string | null;
+  secondOccupantName: string;
+  // The bed-night's surviving primary — often a DIFFERENT booking (sharing
+  // eligibility is member-level). Null only for an already-orphaned second
+  // occupant swept via the single-member scope.
+  primaryBookingId: string | null;
+  primaryMemberId: string | null;
+  primaryName: string | null;
+}
+
+const SWEEP_ALLOCATION_SELECT = {
+  id: true,
+  bookingId: true,
+  bookingGuestId: true,
+  bedId: true,
+  roomId: true,
+  stayDate: true,
+  bookingGuest: {
+    select: { memberId: true, firstName: true, lastName: true },
+  },
+} as const;
+
+type SweepAllocationRow = Prisma.BedAllocationGetPayload<{
+  select: typeof SWEEP_ALLOCATION_SELECT;
+}>;
+
+function sweepBedNightKey(bedId: string, stayDate: Date): string {
+  return `${bedId}:${formatDateOnly(stayDate)}`;
+}
+
+function sweepGuestName(guest: { firstName: string; lastName: string }): string {
+  return `${guest.firstName} ${guest.lastName}`.trim();
+}
+
+/** Distinct swept lodge nights, ascending — for the admin alert. */
+export function partnerShareSweepNights(
+  swept: SweptPartnerSharedAllocation[],
+): Date[] {
+  const byKey = new Map<string, Date>();
+  for (const row of swept) {
+    byKey.set(formatDateOnly(row.stayDate), row.stayDate);
+  }
+  return [...byKey.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, date]) => date);
+}
+
+/**
+ * The other member(s) of the swept bed-nights, for the deactivation/tier-change
+ * call sites where the counterpart is only known from the rows themselves
+ * (dissolve call sites already hold both partners' names).
+ */
+export function partnerShareSweepCounterpartNames(
+  swept: SweptPartnerSharedAllocation[],
+  memberId: string,
+): string {
+  const names = new Set<string>();
+  for (const row of swept) {
+    if (row.secondOccupantMemberId !== memberId && row.secondOccupantName) {
+      names.add(row.secondOccupantName);
+    }
+    if (row.primaryMemberId !== memberId && row.primaryName) {
+      names.add(row.primaryName);
+    }
+  }
+  return [...names].join(", ") || "Unknown member";
+}
+
+async function recordPartnerShareSweepAudits(
+  db: BedAllocationLifecycleDb,
+  swept: SweptPartnerSharedAllocation[],
+  reason: PartnerSharedSweepReason,
+): Promise<void> {
+  // One audit row per affected booking SIDE — the second occupant's booking
+  // and the primary's booking when they differ (a couple sharing within one
+  // booking gets a single row) — grouped so a multi-night sweep records a
+  // nights list rather than a row per night.
+  interface SweepAuditGroup {
+    bookingId: string;
+    role: "second_occupant" | "primary";
+    counterpartBookingId: string | null;
+    stayDates: string[];
+    allocationIds: string[];
+  }
+  const groups = new Map<string, SweepAuditGroup>();
+  const add = (
+    bookingId: string,
+    role: SweepAuditGroup["role"],
+    counterpartBookingId: string | null,
+    row: SweptPartnerSharedAllocation,
+  ) => {
+    const key = `${bookingId}:${role}:${counterpartBookingId ?? "none"}`;
+    const group =
+      groups.get(key) ??
+      { bookingId, role, counterpartBookingId, stayDates: [], allocationIds: [] };
+    group.stayDates.push(formatDateOnly(row.stayDate));
+    group.allocationIds.push(row.allocationId);
+    groups.set(key, group);
+  };
+  for (const row of swept) {
+    add(row.bookingId, "second_occupant", row.primaryBookingId, row);
+    if (row.primaryBookingId && row.primaryBookingId !== row.bookingId) {
+      add(row.primaryBookingId, "primary", row.bookingId, row);
+    }
+  }
+
+  const reasonLabel = describePartnerSharedSweepReason(reason).toLowerCase();
+  for (const group of groups.values()) {
+    // Best-effort, mirroring recordPartnerPromotionAudit: an audit-write
+    // failure must never roll back a committed sweep. There is no acting
+    // member — the removal is a system consequence of the pair breaking — so
+    // this is a "lodge" system event recorded against each affected booking.
+    try {
+      await createAuditLog(
+        {
+          action: "BED_ALLOCATION_PARTNER_SHARE_SWEPT",
+          category: "lodge",
+          entityType: "Booking",
+          entityId: group.bookingId,
+          targetId: group.bookingId,
+          outcome: "success",
+          summary:
+            group.role === "second_occupant"
+              ? `Second occupant removed from shared double bed back to the awaiting-allocation queue (${reasonLabel})`
+              : `This booking's shared double bed lost its second occupant to the stale partner-share sweep (${reasonLabel})`,
+          metadata: {
+            issue: 1756,
+            reason,
+            role: group.role,
+            counterpartBookingId: group.counterpartBookingId,
+            stayDates: group.stayDates,
+            allocationIds: group.allocationIds,
+          },
+        },
+        db,
+      );
+    } catch (err) {
+      logger.error(
+        { err, group, reason },
+        "Failed to record partner share sweep audit",
+      );
+    }
+  }
+}
+
+/**
+ * Sweep the FUTURE shared-double second-occupant allocations of a broken
+ * partner pair (#1756). Idempotent and safe on empty sets: a second run finds
+ * no candidate rows and writes nothing.
+ *
+ * Scopes:
+ * - `partnerMemberId` present (partner-link dissolve): only bed-nights whose
+ *   two occupants are exactly this pair are swept — a stale bed-night the
+ *   member shares with someone ELSE belongs to that other pair's own
+ *   dissolve/deactivation event, not this one.
+ * - `partnerMemberId` absent (deactivation / ADULT→minor tier correction):
+ *   every future shared bed-night involving the member on EITHER side goes —
+ *   as the second occupant they are removed themselves; as the primary their
+ *   partner's second-occupant row is removed (the primary keeps the bed).
+ *
+ * Returns the removed rows so the caller can alert admins after its
+ * transaction commits (external calls stay outside the transaction).
+ */
+export async function sweepFuturePartnerSharedAllocations(params: {
+  memberId: string;
+  partnerMemberId?: string;
+  reason: PartnerSharedSweepReason;
+  db?: BedAllocationLifecycleDb;
+}): Promise<SweptPartnerSharedAllocation[]> {
+  const db = params.db ?? prisma;
+  const today = getTodayDateOnly();
+  const scopeIds = params.partnerMemberId
+    ? [params.memberId, params.partnerMemberId]
+    : [params.memberId];
+
+  // Second-occupant rows where a scoped member IS the second occupant.
+  const candidates = new Map<string, SweepAllocationRow>();
+  const secondRows = await db.bedAllocation.findMany({
+    where: {
+      isSecondOccupant: true,
+      stayDate: { gte: today },
+      bookingGuest: { memberId: { in: scopeIds } },
+    },
+    select: SWEEP_ALLOCATION_SELECT,
+  });
+  for (const row of secondRows) {
+    candidates.set(row.id, row);
+  }
+
+  // Single-member scope only: the member may instead hold the PRIMARY side of
+  // a shared double, in which case the partner sitting with them is the row to
+  // remove. (On a pair dissolve the first query already saw whichever member
+  // of the pair is the second occupant.)
+  if (!params.partnerMemberId) {
+    const primaryBedNights = await db.bedAllocation.findMany({
+      where: {
+        isSecondOccupant: false,
+        stayDate: { gte: today },
+        bookingGuest: { memberId: params.memberId },
+      },
+      select: { bedId: true, stayDate: true },
+    });
+    if (primaryBedNights.length > 0) {
+      const partneredRows = await db.bedAllocation.findMany({
+        where: {
+          isSecondOccupant: true,
+          OR: primaryBedNights.map((night) => ({
+            bedId: night.bedId,
+            stayDate: night.stayDate,
+          })),
+        },
+        select: SWEEP_ALLOCATION_SELECT,
+      });
+      for (const row of partneredRows) {
+        candidates.set(row.id, row);
+      }
+    }
+  }
+
+  if (candidates.size === 0) {
+    return [];
+  }
+
+  // The primary occupant on each candidate bed-night: verifies the exact pair
+  // on a dissolve and names the cross-booking side of the audit trail.
+  const primaries = await db.bedAllocation.findMany({
+    where: {
+      isSecondOccupant: false,
+      OR: [...candidates.values()].map((row) => ({
+        bedId: row.bedId,
+        stayDate: row.stayDate,
+      })),
+    },
+    select: SWEEP_ALLOCATION_SELECT,
+  });
+  const primaryByBedNight = new Map(
+    primaries.map((row) => [sweepBedNightKey(row.bedId, row.stayDate), row]),
+  );
+
+  const targets: SweptPartnerSharedAllocation[] = [];
+  for (const row of candidates.values()) {
+    const primary =
+      primaryByBedNight.get(sweepBedNightKey(row.bedId, row.stayDate)) ?? null;
+    if (params.partnerMemberId) {
+      const occupantIds = new Set([
+        row.bookingGuest.memberId,
+        primary?.bookingGuest.memberId ?? null,
+      ]);
+      if (
+        !occupantIds.has(params.memberId) ||
+        !occupantIds.has(params.partnerMemberId)
+      ) {
+        continue;
+      }
+    }
+    targets.push({
+      allocationId: row.id,
+      bookingId: row.bookingId,
+      bookingGuestId: row.bookingGuestId,
+      bedId: row.bedId,
+      roomId: row.roomId,
+      stayDate: row.stayDate,
+      secondOccupantMemberId: row.bookingGuest.memberId,
+      secondOccupantName: sweepGuestName(row.bookingGuest),
+      primaryBookingId: primary?.bookingId ?? null,
+      primaryMemberId: primary?.bookingGuest.memberId ?? null,
+      primaryName: primary ? sweepGuestName(primary.bookingGuest) : null,
+    });
+  }
+  if (targets.length === 0) {
+    return [];
+  }
+
+  // Idempotent, race-safe delete: id-scoped AND re-checking isSecondOccupant,
+  // so a row concurrently removed (or promoted to primary by an unrelated
+  // #1750 repair) is skipped rather than a primary ever being deleted.
+  await db.bedAllocation.deleteMany({
+    where: {
+      id: { in: targets.map((target) => target.allocationId) },
+      isSecondOccupant: true,
+    },
+  });
+
+  await recordPartnerShareSweepAudits(db, targets, params.reason);
+  return targets;
 }

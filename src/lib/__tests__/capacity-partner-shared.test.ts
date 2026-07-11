@@ -451,6 +451,59 @@ describe("checkCapacityForPartnerSharedAdmission", () => {
     expect(three.reason).toMatch(/slots are taken/i);
   });
 
+  it("keeps reserved-slot accounting correct after a #1756 stale-pair sweep", async () => {
+    // The sweep deletes the pair's BedAllocation placement but deliberately
+    // NOT the second occupant's BookingGuest row, and shared-slot accounting
+    // is occupancy-derived (guest-nights above base) — never allocation-
+    // derived. So post-sweep, while the swept guest still sits on their
+    // booking in the awaiting-allocation queue, the slot they mis-held stays
+    // visibly consumed: a NEW couple must be refused (no phantom double-grant
+    // of the reserved slot), exactly the conservative #1668-style treatment.
+    // Base 4 + 1 double; 5 guest-nights = base full + the swept guest still
+    // occupying the lodge's only shared slot.
+    const occupiedPostSweep = fakeDb({
+      bookings: [fullStayBooking(5)],
+      partnerGuestRows: partnerCoverageFullStay,
+    });
+    const refused = await checkCapacityForPartnerSharedAdmission(
+      LODGE,
+      CHECK_IN,
+      CHECK_OUT,
+      [],
+      [sharerFullStay],
+      undefined,
+      occupiedPostSweep,
+    );
+    expect(refused.available).toBe(false);
+    expect(refused.nightDetails[0]).toMatchObject({ sharedSlotsUsed: 1 });
+    // The headroom resolver reads bed inventory + ceiling only — untouched by
+    // any BedAllocation delete, so the sweep cannot corrupt it.
+    expect(refused.partnerSharedHeadroom).toBe(1);
+
+    // Once the admin resolves the queue entry (removes the swept guest from
+    // the booking), the occupancy drops back to base and the reserved slot
+    // frees for the next couple.
+    const resolvedPostSweep = fakeDb({
+      bookings: [fullStayBooking(4)],
+      partnerGuestRows: partnerCoverageFullStay,
+    });
+    const admitted = await checkCapacityForPartnerSharedAdmission(
+      LODGE,
+      CHECK_IN,
+      CHECK_OUT,
+      [],
+      [sharerFullStay],
+      undefined,
+      resolvedPostSweep,
+    );
+    expect(admitted.available).toBe(true);
+    expect(
+      admitted.nightDetails.every(
+        (night) => night.sharedSlotsUsed === 0 && night.sharedSlotsNeeded === 1,
+      ),
+    ).toBe(true);
+  });
+
   it("rejects a sharer when the lodge has no shareable doubles", async () => {
     const db = fakeDb({
       doubles: 0,

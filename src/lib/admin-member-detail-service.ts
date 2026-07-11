@@ -76,6 +76,14 @@ import {
   getAdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { serializeSeasonalMembershipAssignment } from "@/lib/seasonal-membership-assignments";
+import {
+  describePartnerSharedSweepReason,
+  partnerShareSweepCounterpartNames,
+  partnerShareSweepNights,
+  sweepFuturePartnerSharedAllocations,
+  type SweptPartnerSharedAllocation,
+} from "@/lib/bed-allocation-lifecycle";
+import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -1060,6 +1068,17 @@ export async function updateAdminMember(params: {
     }
   }
 
+  // #1756: deactivation — or an ADULT → minor/N-A tier correction (the same
+  // defect class: the pair no longer satisfies mayShareDoubleBed) — breaks the
+  // double-bed sharing precondition, so the member's FUTURE shared-double
+  // placements are swept inside the update transaction below. Computed here,
+  // after the DOB/org blocks have finalised updateData.ageTier.
+  const tierLeavesAdult =
+    existing.ageTier === "ADULT" &&
+    typeof updateData.ageTier === "string" &&
+    updateData.ageTier !== "ADULT";
+  let sweptShares: SweptPartnerSharedAllocation[] = [];
+
   try {
     const existingAuditRecord = {
       ...(existing as unknown as Record<string, unknown>),
@@ -1142,6 +1161,20 @@ export async function updateAdminMember(params: {
         },
       });
 
+      // #1756: sweep the member's future shared-double placements in the same
+      // transaction as the deactivate / tier change; the removed second
+      // occupants return to the awaiting-allocation queue (audited against
+      // both bookings inside the sweep) and admins are alerted post-commit.
+      if (deactivatesTarget || tierLeavesAdult) {
+        sweptShares = await sweepFuturePartnerSharedAllocations({
+          memberId: id,
+          reason: deactivatesTarget
+            ? "member_deactivated"
+            : "member_age_tier_changed",
+          db: tx,
+        });
+      }
+
       if (nextAccessRoles) {
         const assignmentRows = accessRoleAssignmentRowsFromTokens(
           nextAccessRoles,
@@ -1212,6 +1245,24 @@ export async function updateAdminMember(params: {
         accessRoles: nextAccessRoles ?? resolveAccessRoleTokens(updatedMember),
       };
     });
+
+    if (sweptShares.length > 0) {
+      // Post-commit, fire-and-forget: the sweep already committed with the
+      // member update, so a failed alert only loses the nudge.
+      sendAdminPartnerShareSweptAlert({
+        memberName: `${existing.firstName} ${existing.lastName}`.trim(),
+        partnerName: partnerShareSweepCounterpartNames(sweptShares, id),
+        reason: describePartnerSharedSweepReason(
+          deactivatesTarget ? "member_deactivated" : "member_age_tier_changed",
+        ),
+        nights: partnerShareSweepNights(sweptShares),
+      }).catch((err) => {
+        logger.error(
+          { err, memberId: id, sweptCount: sweptShares.length },
+          "Failed to send partner share sweep alert",
+        );
+      });
+    }
 
     const hasMappedContactUpdate = updated.xeroContactId
       ? hasMemberXeroContactChanges(existing, updated)
