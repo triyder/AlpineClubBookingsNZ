@@ -282,12 +282,16 @@ export function FamilyGroupRequestReviewSection({
       });
 
       // #1789: reflect the email choice after an emailing decision. On a
-      // GROUP_CREATE approval the partner invitation is always sent, so say so
-      // when the requester notice was suppressed.
+      // GROUP_CREATE approval the requester notice is the only email the choice
+      // suppresses — the token-bearing partner invitation is never gated by it
+      // (it is sent when the partner is still eligible, skipped otherwise). Word
+      // the note so it states the invariant (unaffected by this choice) rather
+      // than asserting an invite definitely went out, since the client does not
+      // know whether approval-time eligibility skipped it.
       if (notifyMember === false) {
         const partnerNote =
           request.type === "GROUP_CREATE" && action === "approve" && request.invitedMemberId
-            ? " Any partner invitation was still sent."
+            ? " Any partner invitation is unaffected by this choice."
             : "";
         toast.success(
           `Request ${action === "approve" ? "approved" : "rejected"} — the member was not emailed.${partnerNote}`
