@@ -32,7 +32,7 @@ export function DatesStep({
       </CardHeader>
       <CardContent className="space-y-4">
         {subscriptionUnpaid ? (
-          <p className="text-sm text-amber-700 py-8 text-center">
+          <p className="text-sm text-warning py-8 text-center">
             Booking is disabled until your subscription is paid.
           </p>
         ) : (
