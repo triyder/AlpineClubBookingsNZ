@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 describe("ConfirmPendingGuestsButton", () => {
-  it("does not POST until the confirmation dialog is accepted, and states the charge amount", async () => {
+  it("does not POST until the confirmation dialog is accepted, then asks the email choice and POSTs it (#1769b)", async () => {
     const fetchMock = stubFetch({ ok: true, body: { success: true } });
     render(
       <ConfirmPendingGuestsButton
@@ -54,7 +54,7 @@ describe("ConfirmPendingGuestsButton", () => {
       screen.getByRole("button", { name: "Confirm pending guests" })
     );
 
-    // Dialog is open; nothing has been POSTed yet.
+    // Consequence dialog is open; nothing has been POSTed yet.
     expect(fetchMock).not.toHaveBeenCalled();
     const dialog = screen.getByRole("dialog");
     expect(
@@ -63,13 +63,86 @@ describe("ConfirmPendingGuestsButton", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Charge and confirm" }));
 
+    // A charged-card booking sends a confirmation email, so the email-choice
+    // dialog opens next — still no POST until the admin picks.
+    const emailButton = await screen.findByRole("button", {
+      name: "Confirm and email member",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.click(emailButton);
+
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/bookings/b1/confirm-pending-guests",
-      expect.objectContaining({ method: "POST" })
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ notifyMember: true }),
+      })
     );
     await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it("POSTs notifyMember:false and reflects the choice in the toast when the admin declines the email (#1769b)", async () => {
+    const fetchMock = stubFetch({ ok: true, body: { success: true } });
+    render(
+      <ConfirmPendingGuestsButton
+        bookingId="b1"
+        hasSavedPaymentMethod
+        finalPriceCents={10000}
+      />
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirm pending guests" })
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Charge and confirm" }));
+
+    const noEmailButton = await screen.findByRole("button", {
+      name: "Confirm without emailing",
+    });
+    fireEvent.click(noEmailButton);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/bookings/b1/confirm-pending-guests",
+      expect.objectContaining({
+        body: JSON.stringify({ notifyMember: false }),
+      })
+    );
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(
+        "Pending guests confirmed. The member was not emailed."
+      )
+    );
+  });
+
+  it("POSTs directly with no email-choice dialog on the payment-owed branch (#1769b)", async () => {
+    const fetchMock = stubFetch({ ok: true, body: { success: true } });
+    render(
+      <ConfirmPendingGuestsButton
+        bookingId="b1"
+        hasSavedPaymentMethod={false}
+        finalPriceCents={10000}
+      />
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirm pending guests" })
+    );
+    // No card + priced → moves to payment-owed, emails no one → plain Confirm.
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // No email-choice dialog was shown, and the POST carries no notify field.
+    expect(
+      screen.queryByRole("button", { name: "Confirm and email member" })
+    ).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/bookings/b1/confirm-pending-guests",
+      expect.objectContaining({ body: JSON.stringify({}) })
+    );
   });
 
   it("does not POST when the dialog is cancelled", async () => {
@@ -115,6 +188,11 @@ describe("ConfirmPendingGuestsButton", () => {
       screen.getByRole("button", { name: "Confirm pending guests" })
     );
     fireEvent.click(screen.getByRole("button", { name: "Charge and confirm" }));
+
+    const emailButton = await screen.findByRole("button", {
+      name: "Confirm and email member",
+    });
+    fireEvent.click(emailButton);
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(

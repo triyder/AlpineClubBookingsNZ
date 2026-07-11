@@ -500,4 +500,106 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
   });
+
+  // #1769b (#1705 semantics): the admin's per-action member-email choice. The
+  // confirmation email only sends on the two paths that become PAID — the
+  // zero-amount (paid_zero) and charged-card (paid_charged) outcomes — so the
+  // audit records `notifyMember: false` only there. The payment-owed and
+  // failure outcomes send no email and record no notify field.
+  describe("member-email notify choice (#1769b)", () => {
+    it("emails and records no notify field by default on the $0 path", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        makeBooking({ finalPriceCents: 0 })
+      );
+
+      const res = await POST(makeRequest(), { params });
+
+      expect(res.status).toBe(200);
+      expect(mocks.sendConfirmedEmail).toHaveBeenCalledTimes(1);
+      const metadata = mocks.createStructuredAuditLog.mock.calls[0][0].metadata;
+      expect(metadata).toMatchObject({ outcome: "paid_zero" });
+      expect(metadata).not.toHaveProperty("notifyMember");
+    });
+
+    it("suppresses the email and records notifyMember:false on the $0 path", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        makeBooking({ finalPriceCents: 0 })
+      );
+
+      const res = await POST(makeRequest({ notifyMember: false }), { params });
+
+      expect(res.status).toBe(200);
+      expect(mocks.sendConfirmedEmail).not.toHaveBeenCalled();
+      const metadata = mocks.createStructuredAuditLog.mock.calls[0][0].metadata;
+      expect(metadata).toMatchObject({
+        outcome: "paid_zero",
+        notifyMember: false,
+      });
+    });
+
+    it("emails and records no notify field when notifyMember is true on the $0 path", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        makeBooking({ finalPriceCents: 0 })
+      );
+
+      const res = await POST(makeRequest({ notifyMember: true }), { params });
+
+      expect(res.status).toBe(200);
+      expect(mocks.sendConfirmedEmail).toHaveBeenCalledTimes(1);
+      const metadata = mocks.createStructuredAuditLog.mock.calls[0][0].metadata;
+      expect(metadata).not.toHaveProperty("notifyMember");
+    });
+
+    it("suppresses the email and records notifyMember:false on the charged-card path", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+      mocks.chargePaymentMethod.mockResolvedValue({
+        id: "pi_1",
+        status: "succeeded",
+        amount: 10000,
+        payment_method: "pm_1",
+      });
+      mocks.markBookingPaymentSucceeded.mockResolvedValue({ outcome: "paid" });
+
+      const res = await POST(makeRequest({ notifyMember: false }), { params });
+
+      expect(res.status).toBe(200);
+      expect(mocks.sendConfirmedEmail).not.toHaveBeenCalled();
+      const chargedCall = mocks.createStructuredAuditLog.mock.calls.find(
+        (call) => call[0].metadata?.outcome === "paid_charged"
+      );
+      expect(chargedCall?.[0].metadata).toMatchObject({
+        outcome: "paid_charged",
+        notifyMember: false,
+      });
+    });
+
+    it("records NO notify field on the payment-owed path even when notifyMember:false", async () => {
+      // Priced booking with no saved card moves to payment-owed and emails no
+      // one, so a suppression there is not real — no field is recorded.
+      mocks.bookingFindUnique.mockResolvedValue(makeBooking({ payment: null }));
+
+      const res = await POST(makeRequest({ notifyMember: false }), { params });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({ status: "PAYMENT_PENDING", charged: false });
+      expect(mocks.sendConfirmedEmail).not.toHaveBeenCalled();
+      const metadata = mocks.createStructuredAuditLog.mock.calls[0][0].metadata;
+      expect(metadata).toMatchObject({ outcome: "payment_owed" });
+      expect(metadata).not.toHaveProperty("notifyMember");
+    });
+
+    it("rejects a non-boolean notifyMember with 400 and no side effects", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        makeBooking({ finalPriceCents: 0 })
+      );
+
+      const res = await POST(makeRequest({ notifyMember: "false" }), { params });
+
+      expect(res.status).toBe(400);
+      expect(mocks.bookingFindUnique).not.toHaveBeenCalled();
+      expect(mocks.sendConfirmedEmail).not.toHaveBeenCalled();
+      expect(mocks.createStructuredAuditLog).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -86,6 +86,11 @@ const addGuestsSchema = z.object({
     )
     .min(1)
     .max(200),
+  // #1769b (#1705 semantics): per-action member-email choice on this
+  // dual-actor route. Absent = notify (default); false suppresses the
+  // booking-modified email. Only an admin actor may carry it (403 gate
+  // below); a non-boolean value is rejected with the schema 400.
+  notifyMember: z.boolean().optional(),
 });
 
 type PromoRedemptionWithTargets = {
@@ -160,6 +165,19 @@ export async function POST(
       { status: 400 }
     );
   }
+
+  // #1769b (#1705 semantics): only an admin actor may carry the per-action
+  // member-email choice on this dual-actor route. A member self-service caller
+  // carrying the flag is refused, so a member can never suppress their own
+  // booking-modified email; member behaviour is otherwise unchanged.
+  if (parsed.data.notifyMember !== undefined && !isAdmin) {
+    return NextResponse.json(
+      { error: "Admin override is not available for this account" },
+      { status: 403 }
+    );
+  }
+  // Absent for any non-admin caller (defence in depth behind the 403 gate).
+  const notifyMember = isAdmin ? parsed.data.notifyMember : undefined;
 
   const { guests: newGuests } = parsed.data;
   const payloadCapacity = await getDefaultLodgeCapacity();
@@ -723,6 +741,11 @@ export async function POST(
         addedGuests: result.addedGuestNames,
         priceDiffCents: result.priceDiffCents,
         newGuestCount: result.booking.guests.length,
+        // #1769b honesty rule: the guest-add modified email always sends when a
+        // member exists, so record the notify choice whenever it was
+        // suppressed (notifyMember === false already implies admin via the 403
+        // gate above).
+        ...(notifyMember === false ? { notifyMember: false } : {}),
       },
       ipAddress,
     });
@@ -747,7 +770,7 @@ export async function POST(
     const member = await prisma.member.findUnique({
       where: { id: result.booking.memberId },
     });
-    if (member) {
+    if (member && notifyMember !== false) {
       sendBookingModifiedEmail({
         email: member.email,
         firstName: member.firstName,

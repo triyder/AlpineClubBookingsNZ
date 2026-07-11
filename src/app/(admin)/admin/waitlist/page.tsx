@@ -43,6 +43,10 @@ interface WaitlistEntry {
   waitlistOfferExpiresAt: string | null;
   requiresAdminReview: boolean;
   adminReviewReason: string | null;
+  // #1769b: the review outcome disambiguates whether a force-confirm lands PAID
+  // (and emails the member). A $0 no-adult booking that is APPROVED lands PAID
+  // even though requiresAdminReview is still set, so the notify dialog must show.
+  adminReviewStatus: string | null;
   finalPriceCents: number;
   createdAt: string;
   offerEmailDelivery: OfferEmailDelivery | null;
@@ -58,6 +62,10 @@ interface ForceConfirmReport {
   // check-out has already passed — the admin just created an unpaid finished
   // stay and should hear about it at creation, not discover it on the queue.
   unpaidFinishedStay: boolean;
+  // #1769b: the admin's per-action email choice, when one was offered. null
+  // means no choice was made (the force-confirm never sends an email, e.g. a
+  // priced or parked-for-review outcome). false = the member was not emailed.
+  notifiedMember: boolean | null;
 }
 
 function parsePositiveInteger(value: string | null, fallback: number) {
@@ -199,7 +207,15 @@ export default function AdminWaitlistPage() {
   const [overbookDialog, setOverbookDialog] = useState<{
     bookingId: string;
     dates: string[];
+    // #1769b: carry the admin's email choice through a capacity-exceeded retry
+    // so the overbook confirm preserves it.
+    notifyMember?: boolean;
   } | null>(null);
+  // #1769b: the per-action email-choice dialog, shown before a force-confirm
+  // that would actually send the member a confirmation email.
+  const [notifyDialog, setNotifyDialog] = useState<{ bookingId: string } | null>(
+    null
+  );
   const [forceConfirmReport, setForceConfirmReport] =
     useState<ForceConfirmReport | null>(null);
   const [error, setError] = useState("");
@@ -331,20 +347,28 @@ export default function AdminWaitlistPage() {
     });
   }
 
-  async function handleForceConfirm(bookingId: string, allowOverbook = false) {
+  async function handleForceConfirm(
+    bookingId: string,
+    allowOverbook = false,
+    notifyMember?: boolean
+  ) {
     setForceConfirming(bookingId);
     setError("");
 
     const res = await fetch(`/api/admin/bookings/${bookingId}/force-confirm`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ allowOverbook }),
+      body: JSON.stringify({
+        allowOverbook,
+        ...(notifyMember !== undefined ? { notifyMember } : {}),
+      }),
     });
 
     const data = await res.json();
 
     if (res.ok && data.success) {
       setOverbookDialog(null);
+      setNotifyDialog(null);
       setForceConfirmReport({
         bookingId,
         status: readString(data.status),
@@ -352,11 +376,14 @@ export default function AdminWaitlistPage() {
         overbookDates: readStringArray(data.overbookDates),
         auditAction: readString(data.auditAction),
         unpaidFinishedStay: data.unpaidFinishedStay === true,
+        notifiedMember: notifyMember ?? null,
       });
       await loadEntries();
     } else if (data.error === "CAPACITY_EXCEEDED" && data.overbookDates) {
       setForceConfirmReport(null);
-      setOverbookDialog({ bookingId, dates: data.overbookDates });
+      setNotifyDialog(null);
+      // Preserve the admin's email choice into the overbook retry (#1769b).
+      setOverbookDialog({ bookingId, dates: data.overbookDates, notifyMember });
     } else {
       setForceConfirmReport(null);
       setError(data.error || "Failed to force-confirm booking");
@@ -394,6 +421,23 @@ export default function AdminWaitlistPage() {
               already finished. It now appears on the{" "}
               <span className="font-medium">Unpaid Finished Stays</span> queue
               — follow up on payment or settle the booking.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* #1769b: honest post-action copy when the admin suppressed the
+          confirmation email. The booking still landed PAID; only the member
+          email was skipped, and the choice is in the audit log. */}
+      {forceConfirmReport?.notifiedMember === false && (
+        <Card className="border-emerald-200 bg-emerald-50">
+          <CardContent className="pt-6 space-y-1">
+            <p className="font-medium text-emerald-900">
+              Booking force-confirmed
+            </p>
+            <p className="text-sm text-emerald-800">
+              The member was not emailed — your choice is recorded in the audit
+              log.
             </p>
           </CardContent>
         </Card>
@@ -498,12 +542,60 @@ export default function AdminWaitlistPage() {
               </Button>
               <Button
                 variant="destructive"
-                onClick={() => handleForceConfirm(overbookDialog.bookingId, true)}
+                onClick={() =>
+                  handleForceConfirm(
+                    overbookDialog.bookingId,
+                    true,
+                    overbookDialog.notifyMember
+                  )
+                }
                 disabled={forceConfirming === overbookDialog.bookingId}
               >
                 {forceConfirming === overbookDialog.bookingId
                   ? "Confirming..."
                   : "Confirm Anyway (Overbook)"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* #1769b (#1705 pattern): a force-confirm that lands PAID ($0 + review
+          resolved) sends the member a confirmation email. The admin chooses,
+          per action, whether that email is sent; both choices confirm the
+          booking identically and the choice is recorded in the audit log.
+          Shown only when an email would actually be sent. */}
+      {notifyDialog && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="pt-6 space-y-3">
+            <p className="font-medium text-amber-900">
+              Email the member about this confirmation?
+            </p>
+            <p className="text-sm text-amber-800">
+              Force-confirming this booking confirms it as paid. Choose whether
+              the member receives the standard booking confirmation email — your
+              choice is recorded in the audit log.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <Button variant="outline" onClick={() => setNotifyDialog(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  handleForceConfirm(notifyDialog.bookingId, false, false)
+                }
+                disabled={forceConfirming === notifyDialog.bookingId}
+              >
+                Confirm without emailing
+              </Button>
+              <Button
+                onClick={() =>
+                  handleForceConfirm(notifyDialog.bookingId, false, true)
+                }
+                disabled={forceConfirming === notifyDialog.bookingId}
+              >
+                Confirm and email member
               </Button>
             </div>
           </CardContent>
@@ -614,7 +706,20 @@ export default function AdminWaitlistPage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => handleForceConfirm(entry.id)}
+                        onClick={() =>
+                          // #1769b: a force-confirm only emails the member when
+                          // it lands PAID ($0 stay with admin review resolved).
+                          // Offer the email choice only then; otherwise
+                          // force-confirm proceeds directly, exactly as before.
+                          // A no-adult booking that is already APPROVED still
+                          // carries requiresAdminReview but lands PAID, so treat
+                          // APPROVED as resolved (matches the route's gate).
+                          entry.finalPriceCents === 0 &&
+                          (!entry.requiresAdminReview ||
+                            entry.adminReviewStatus === "APPROVED")
+                            ? setNotifyDialog({ bookingId: entry.id })
+                            : handleForceConfirm(entry.id)
+                        }
                         disabled={forceConfirming === entry.id}
                       >
                         {forceConfirming === entry.id ? "..." : "Force Confirm"}

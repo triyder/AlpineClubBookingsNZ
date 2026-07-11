@@ -385,4 +385,93 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
       });
     });
   });
+
+  // #1769b (#1705 semantics): the admin's per-action member-email choice. The
+  // confirmation email only sends when the force-confirm lands PAID (a $0 stay
+  // with review resolved and capacity available), so that is the only outcome a
+  // suppression is real — the audit records `notifyMember: false` only there.
+  describe("member-email notify choice (#1769b)", () => {
+    function zeroDollarBooking(overrides: Record<string, unknown> = {}) {
+      return { ...waitlistBooking(), finalPriceCents: 0, ...overrides };
+    }
+
+    beforeEach(() => {
+      mocks.checkCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 3,
+        nightDetails: [],
+      });
+      mocks.tx.booking.findUnique.mockResolvedValue(zeroDollarBooking());
+      mocks.tx.payment.upsert.mockResolvedValue({});
+      mocks.sendBookingConfirmedEmail.mockResolvedValue(undefined);
+    });
+
+    it("emails the member and records no notify field by default (lands PAID)", async () => {
+      const response = await POST(forceConfirmRequest({}), routeParams());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.status).toBe("PAID");
+      expect(mocks.sendBookingConfirmedEmail).toHaveBeenCalledTimes(1);
+      const metadata =
+        mocks.tx.auditLog.create.mock.calls[0][0].data.metadata;
+      expect(metadata).not.toHaveProperty("notifyMember");
+    });
+
+    it("suppresses the email and records notifyMember:false when notifyMember is false", async () => {
+      const response = await POST(
+        forceConfirmRequest({ notifyMember: false }),
+        routeParams(),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.sendBookingConfirmedEmail).not.toHaveBeenCalled();
+      const metadata =
+        mocks.tx.auditLog.create.mock.calls[0][0].data.metadata;
+      expect(metadata).toMatchObject({ notifyMember: false });
+    });
+
+    it("emails and records no notify field when notifyMember is true", async () => {
+      const response = await POST(
+        forceConfirmRequest({ notifyMember: true }),
+        routeParams(),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.sendBookingConfirmedEmail).toHaveBeenCalledTimes(1);
+      const metadata =
+        mocks.tx.auditLog.create.mock.calls[0][0].data.metadata;
+      expect(metadata).not.toHaveProperty("notifyMember");
+    });
+
+    it("rejects a non-boolean notifyMember with 400 and runs no transaction", async () => {
+      const response = await POST(
+        forceConfirmRequest({ notifyMember: "false" }),
+        routeParams(),
+      );
+
+      expect(response.status).toBe(400);
+      expect(mocks.transaction).not.toHaveBeenCalled();
+      expect(mocks.sendBookingConfirmedEmail).not.toHaveBeenCalled();
+    });
+
+    it("records NO notify field on a priced force-confirm that lands PAYMENT_PENDING even with notifyMember:false", async () => {
+      // Priced booking never lands PAID, so no confirmation email is sent and a
+      // suppression there is not real — the honesty rule records no field.
+      mocks.tx.booking.findUnique.mockResolvedValue(waitlistBooking());
+
+      const response = await POST(
+        forceConfirmRequest({ notifyMember: false }),
+        routeParams(),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.status).toBe("PAYMENT_PENDING");
+      expect(mocks.sendBookingConfirmedEmail).not.toHaveBeenCalled();
+      const metadata =
+        mocks.tx.auditLog.create.mock.calls[0][0].data.metadata;
+      expect(metadata).not.toHaveProperty("notifyMember");
+    });
+  });
 });

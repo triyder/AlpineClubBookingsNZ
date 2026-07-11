@@ -18,6 +18,11 @@ import { z } from "zod";
 
 const forceConfirmSchema = z.object({
   allowOverbook: z.boolean().optional(),
+  // #1769b (#1705 semantics): per-action member-email choice. This route is
+  // requireAdmin()-only, so no actor gate is needed. Absent = notify (default);
+  // false suppresses the confirmation email (only reachable when the booking
+  // lands PAID). A non-boolean value is rejected with 400.
+  notifyMember: z.boolean().optional(),
 });
 
 function formatOverbookDate(night: NightAvailability) {
@@ -44,7 +49,14 @@ export async function POST(
 
   const body = await request.json().catch(() => ({}));
   const parsed = forceConfirmSchema.safeParse(body);
-  const allowOverbook = parsed.success ? parsed.data.allowOverbook : false;
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid input", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+  const allowOverbook = parsed.data.allowOverbook ?? false;
+  const notifyMember = parsed.data.notifyMember;
   const auditRequest = getAuditRequestContext(request);
 
   try {
@@ -174,6 +186,14 @@ export async function POST(
         nextStatus === BookingStatus.PAYMENT_PENDING &&
         booking.checkOut.getTime() <= getTodayDateOnly().getTime();
 
+      // #1769b honesty rule: record the notify choice only when a member email
+      // was actually suppressed. The confirmation email only sends when the
+      // booking lands PAID, so that is the only outcome a suppression is real.
+      const notifyAuditFields =
+        nextStatus === BookingStatus.PAID && notifyMember === false
+          ? { notifyMember: false }
+          : {};
+
       await createAuditLog(
         {
           action: auditAction,
@@ -214,6 +234,7 @@ export async function POST(
             guestCount: booking.guests.length,
             finalPriceCents: booking.finalPriceCents,
             parkedForAdminReview: nextStatus === BookingStatus.AWAITING_REVIEW,
+            ...notifyAuditFields,
           },
           requestId: auditRequest?.id,
           ipAddress: auditRequest?.ipAddress,
@@ -244,7 +265,7 @@ export async function POST(
 
     const { booking, overbooked, overbookDates, auditAction, status, unpaidFinishedStay } = result;
 
-    if (status === BookingStatus.PAID) {
+    if (status === BookingStatus.PAID && notifyMember !== false) {
       sendBookingConfirmedEmail(
         booking.member.email,
         booking.member.firstName,

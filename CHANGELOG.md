@@ -4,6 +4,25 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Admin can choose whether to email members on force-confirm,
+  confirm-pending-guests, and admin guest-add (#1769b).** Part of #1780 /
+  #1769b, extending the #1705 cancel notify pattern to three more admin
+  booking actions. The waitlist "Force Confirm" and the "Confirm pending guests
+  now" tool now ask, per action, whether the member receives the standard
+  booking-confirmation email — a two-button dialog ("Confirm and email member"
+  vs "Confirm without emailing") shown only when an email would actually be
+  sent (a force-confirm that lands PAID, i.e. a $0 stay with review resolved;
+  and the confirm-pending zero-amount or charged-card outcomes). The
+  admin-actor guest-add route (`POST /api/bookings/[id]/guests`) honours the
+  same `notifyMember` flag at the route level (no admin UI caller). The default
+  is to notify; "without emailing" skips the email and records
+  `notifyMember: false` in the audit metadata (recorded only on the outcomes
+  that truly send, per the honesty rule). A non-admin caller carrying the flag
+  on the guest-add route is refused with a 403, so a member can never suppress
+  their own booking email; member self-service behaviour is otherwise
+  unchanged. Booking capacity, charges, and settlement are identical either
+  way — only the member email differs.
+
 - **Admin can choose whether to email guests when sending the chore roster
   (#1785, part of the #1769b sweep).** The "Email Roster to Guests" action on
   `/admin/roster` now asks, per send, whether to email — a two-button dialog

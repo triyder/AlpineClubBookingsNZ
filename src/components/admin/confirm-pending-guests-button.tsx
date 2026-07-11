@@ -5,6 +5,14 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useConfirm } from "@/components/confirm-dialog";
 import { formatCents } from "@/lib/utils";
 
@@ -23,12 +31,20 @@ export function ConfirmPendingGuestsButton({
   const { confirm, confirmDialog } = useConfirm();
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
+  // #1769b: the admin's explicit email-choice dialog, shown only when this
+  // confirmation would actually send the member a confirmation email.
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
 
   // Mirror the server's branch order: a zero-dollar booking is confirmed at no
   // charge regardless of a card on file; otherwise a saved card is charged, and
   // without one the booking moves to payment-owed.
   const isZeroDollar = finalPriceCents === 0;
   const willCharge = !isZeroDollar && hasSavedPaymentMethod;
+  // #1769b honesty rule: the confirmation email sends when the booking becomes
+  // PAID — the zero-dollar (paid_zero) and charged-card (paid_charged) paths.
+  // The priced-without-card path moves to payment-owed and emails no one, so it
+  // skips the notify dialog and confirms directly.
+  const willEmail = isZeroDollar || hasSavedPaymentMethod;
   const consequence = isZeroDollar
     ? "This will confirm the booking at no charge."
     : hasSavedPaymentMethod
@@ -43,6 +59,16 @@ export function ConfirmPendingGuestsButton({
     });
     if (!confirmed) return;
 
+    // When a confirmation email would be sent, ask the admin whether to send
+    // it; otherwise confirm directly (today's behaviour on the no-email path).
+    if (willEmail) {
+      setNotifyDialogOpen(true);
+      return;
+    }
+    void performConfirm();
+  }
+
+  async function performConfirm(notifyMember?: boolean) {
     setConfirming(true);
     setError("");
 
@@ -52,12 +78,18 @@ export function ConfirmPendingGuestsButton({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
+          body: JSON.stringify(
+            notifyMember !== undefined ? { notifyMember } : {}
+          ),
         }
       );
 
       if (res.ok) {
-        toast.success("Pending guests confirmed.");
+        toast.success(
+          notifyMember === false
+            ? "Pending guests confirmed. The member was not emailed."
+            : "Pending guests confirmed."
+        );
         router.refresh();
         return;
       }
@@ -103,6 +135,43 @@ export function ConfirmPendingGuestsButton({
           {confirming ? "Confirming..." : "Confirm pending guests"}
         </Button>
       </CardContent>
+
+      {/* #1769b (#1705 pattern): the admin chooses, per confirmation, whether
+          the member is emailed. Both choices confirm the booking identically;
+          the choice itself is recorded in the audit log. Shown only when a
+          confirmation email would actually be sent. */}
+      <Dialog open={notifyDialogOpen} onOpenChange={setNotifyDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Email the member about this confirmation?</DialogTitle>
+            <DialogDescription>
+              The booking will be confirmed either way{willCharge
+                ? ", and the saved card is charged regardless"
+                : ""}. Choose whether the member receives the standard booking
+              confirmation email — your choice is recorded in the audit log.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setNotifyDialogOpen(false);
+                void performConfirm(false);
+              }}
+            >
+              Confirm without emailing
+            </Button>
+            <Button
+              onClick={() => {
+                setNotifyDialogOpen(false);
+                void performConfirm(true);
+              }}
+            >
+              Confirm and email member
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

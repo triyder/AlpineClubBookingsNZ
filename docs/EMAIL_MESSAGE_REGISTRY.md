@@ -320,6 +320,16 @@ Triggers and frequency:
 - Pending-booking cron when a held pending booking reaches its deadline, capacity is still available, and payment succeeds or price is zero.
 - Waitlist offer confirmation when it becomes paid without payment collection.
 - Admin force-confirm of a waitlisted booking when final status is `PAID`.
+- Admin "confirm pending guests now" tool when the booking becomes `PAID` (the
+  zero-amount `paid_zero` or charged-card `paid_charged` outcome).
+- The admin force-confirm and confirm-pending-guests sends now honour a
+  per-action member-email choice (#1769b, #1705 semantics): the admin may choose
+  "Confirm without emailing", which skips this email and records
+  `notifyMember: false` in the audit metadata — recorded only on the outcomes
+  that actually send (the PAID force-confirm and the `paid_zero`/`paid_charged`
+  confirm-pending outcomes). The default is to notify; every other outcome
+  (priced force-confirm, `payment_owed`, charge failures) sends no email and
+  records no notify field.
 - One email per successful confirmation event. No template-level dedupe was found.
 
 ### booking-pending
@@ -548,7 +558,10 @@ Triggers and frequency:
 - One email per successful modification request.
 - Admin / Booking Officer edits carry an explicit per-edit choice (#1696,
   `notifyMember`); the standalone guest-remove route honours the same flag for
-  admins (#1705). "Without emailing" skips this email and records
+  admins (#1705), and the admin guest-add route
+  (`POST /api/bookings/[id]/guests`) honours it too (#1769b) — a non-admin
+  caller carrying the flag is refused with a 403, so a member can never suppress
+  their own edit email. "Without emailing" skips this email and records
   `notifyMember: false` in the audit metadata; member self-edits always send.
 
 ### checkin-reminder

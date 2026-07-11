@@ -116,6 +116,10 @@ export async function GET(request: NextRequest) {
     waitlistOfferExpiresAt: b.waitlistOfferExpiresAt?.toISOString() || null,
     requiresAdminReview: b.requiresAdminReview,
     adminReviewReason: b.adminReviewReason,
+    // #1769b: the client needs the review outcome to know whether a force-confirm
+    // will land PAID (and email the member). A no-adult booking that is already
+    // APPROVED force-confirms to PAID despite requiresAdminReview still being set.
+    adminReviewStatus: b.adminReviewStatus,
     finalPriceCents: b.finalPriceCents,
     createdAt: b.createdAt.toISOString(),
     offerEmailDelivery: offerEmailDeliveries.get(b.id) ?? null,
