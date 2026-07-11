@@ -4,6 +4,20 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Auto bed allocation no longer strands large groups (#1768).** The split
+  fallback used to cap rooms-with-minors at the booking's adult count — a
+  school group with two teachers filled exactly two rooms and reported the
+  remaining students `NO_BED_AVAILABLE` with rooms empty. Minors now overflow
+  into rooms of their own once the booking has an adult on-site that night
+  (the Phase-0 night-level rule is unchanged), SCHOOL-request bookings room
+  their teachers together and students separately, and a new hard invariant
+  is enforced on every placement path in both directions: a room-night
+  holding one booking's minors never also holds another booking's adult —
+  displacement evicts a conflicting provisional booking whole or backs off,
+  relocation falls back to unallocating rather than moving anyone beside a
+  stranger, and persisted violations surface as a `MINOR_ADULT_MIX` board
+  warning.
+
 - **Admins can add a confirmed partner to a full lodge (#1746, completing the
   double-bed epic #1741).** The admin edit-booking panel now offers the
   confirmed partners of a booking's member guests as "partner (shares a

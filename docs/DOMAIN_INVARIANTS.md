@@ -85,6 +85,22 @@ Future reviews and issues should cite this file when proposing changes.
   envelope. Existing allocation rows are never rewritten by planning — only
   provisional displacement moves rows — and re-planning a fully-allocated
   state is a no-op.
+- **Cross-booking age mix (#1768, owner-set):** a room-night containing minors
+  from booking X must never also contain an adult from a DIFFERENT booking —
+  planner-enforced in both placement directions on every path (whole-stay,
+  per-night split, adult spread, displacement eviction/relocation), including
+  against pre-existing `occupiedBedNights`; an occupant row with no booking
+  attribution conservatively blocks minors (counted as an unknown adult) but
+  not adults. Same-booking mixing is unrestricted, and minors-only ROOMS are
+  allowed: the booking-level rule stays night-scoped (Phase 0
+  `NO_BOOKING_ADULT` — a minor needs a same-booking adult on-site that night,
+  not in the same room), so a large group's minors overflow into rooms of
+  their own instead of being capped at one room per adult. SCHOOL-request
+  bookings (`isSchoolGroup`, from the origin/held `BookingRequest.type`)
+  prefer adults together and students separate. The planner never rewrites
+  persisted violations (manual/legacy rows) — the board surfaces them as
+  `MINOR_ADULT_MIX` warnings; the manual board itself is warned, not blocked
+  (a follow-up owner decision may harden it).
 - **Double-bed shared occupancy (#1701):** a `DOUBLE` bed may hold two occupants
   on a night — one primary and one second occupant — when they are declared
   partners: two `ADULT` members holding a **CONFIRMED** `MemberPartnerLink`

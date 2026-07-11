@@ -66,6 +66,14 @@ export interface BedAllocationBooking {
    * classify bookings.
    */
   holdsCapacity?: boolean;
+  /**
+   * School/organisation booking (#1768): derived by the loaders from the
+   * booking's origin/held BookingRequest type (SCHOOL, #709). The split
+   * fallback then groups the booking's adults together and its minors
+   * separately (students in their own rooms), instead of the family
+   * one-adult-per-room pairing. Undefined = family behaviour.
+   */
+  isSchoolGroup?: boolean;
 }
 
 interface OccupiedBedNight {
@@ -407,6 +415,11 @@ interface OccupantInfo {
   stayExtendsBeyondWindow: boolean;
 }
 
+interface RoomNightAgeCounts {
+  adults: number;
+  minors: number;
+}
+
 interface PlannerState {
   activeRooms: SortedRoomWithBeds[];
   /** Every active bed (all rooms) — the NO_ACTIVE_BEDS vs NO_BED_AVAILABLE signal. */
@@ -427,6 +440,131 @@ interface PlannerState {
   allocations: BedAllocationCandidate[];
   unallocatedGuestNights: UnallocatedGuestNight[];
   displacementByGuestNight: Map<string, BedAllocationDisplacement>;
+  /**
+   * Live room-night age composition (#1768): roomId|date → bookingId →
+   * {adults, minors}, maintained at every occupancy COMMIT (seeding, new
+   * allocations, evictions, relocation re-adds) and never inside trial or
+   * rollback paths. Backs the owner's hard invariant: a room-night holding
+   * minors from booking X never also holds an adult from a different booking
+   * — in either placement direction. Occupant rows without a bookingId are
+   * keyed "" (unknown): they can never be evicted, and an unknown row with no
+   * age tier counts as an adult (blocking minors, not adults — conservative).
+   */
+  roomNightAgeMix: Map<string, Map<string, RoomNightAgeCounts>>;
+  /**
+   * Seed-only snapshot of the unknown (no-bookingId) occupant rows, kept so
+   * the test-only recount assertion can rebuild the composition index from
+   * scratch. Never mutated after seeding.
+   */
+  unknownRoomNightRows: Array<{
+    roomId: string;
+    stayDate: string;
+    isAdult: boolean;
+  }>;
+}
+
+function roomNightMixKey(roomId: string, stayDate: string) {
+  return `${roomId}:${stayDate}`;
+}
+
+/**
+ * Adjusts the live composition index for one occupant row (#1768). `delta`
+ * is +1 on commit (seed, allocation, relocation re-add) and -1 on eviction.
+ * Rows whose room cannot be resolved are skipped — they cannot collide with
+ * planner placements, which only ever use active-room beds.
+ */
+function trackRoomNightOccupant(
+  state: PlannerState,
+  roomId: string,
+  stayDate: string,
+  bookingId: string | null,
+  ageTier: BedAllocationAgeTier | null | undefined,
+  delta: 1 | -1,
+) {
+  if (!roomId) return;
+  const key = roomNightMixKey(roomId, stayDate);
+  const bookingKey = bookingId ?? "";
+  let byBooking = state.roomNightAgeMix.get(key);
+  if (!byBooking) {
+    if (delta < 0) return;
+    byBooking = new Map();
+    state.roomNightAgeMix.set(key, byBooking);
+  }
+  let counts = byBooking.get(bookingKey);
+  if (!counts) {
+    if (delta < 0) return;
+    counts = { adults: 0, minors: 0 };
+    byBooking.set(bookingKey, counts);
+  }
+  if (isAdultAgeTier(ageTier)) {
+    counts.adults += delta;
+  } else {
+    counts.minors += delta;
+  }
+  if (counts.adults <= 0 && counts.minors <= 0) {
+    byBooking.delete(bookingKey);
+    if (byBooking.size === 0) state.roomNightAgeMix.delete(key);
+  }
+}
+
+/**
+ * Whether placing a MINOR of `bookingId` into this room-night would break the
+ * cross-booking invariant (#1768): true when any OTHER booking (or an unknown
+ * occupant) holds an adult there.
+ */
+function roomNightBlocksMinors(
+  state: PlannerState,
+  roomId: string,
+  stayDate: string,
+  bookingId: string,
+): boolean {
+  const byBooking = state.roomNightAgeMix.get(roomNightMixKey(roomId, stayDate));
+  if (!byBooking) return false;
+  for (const [key, counts] of byBooking) {
+    if (key !== bookingId && counts.adults > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether placing an ADULT of `bookingId` into this room-night would break the
+ * cross-booking invariant (#1768): true when any OTHER booking (or an unknown
+ * occupant) holds a minor there.
+ */
+function roomNightBlocksAdults(
+  state: PlannerState,
+  roomId: string,
+  stayDate: string,
+  bookingId: string,
+): boolean {
+  const byBooking = state.roomNightAgeMix.get(roomNightMixKey(roomId, stayDate));
+  if (!byBooking) return false;
+  for (const [key, counts] of byBooking) {
+    if (key !== bookingId && counts.minors > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * The OTHER bookings (or "" for unknown occupants) contributing `tier` rows to
+ * this room-night (#1768). The per-night displacement path may only evict its
+ * way past a composition conflict when this list is exactly the one booking
+ * being evicted.
+ */
+function otherRoomNightBookingsWith(
+  state: PlannerState,
+  roomId: string,
+  stayDate: string,
+  bookingId: string,
+  tier: keyof RoomNightAgeCounts,
+): string[] {
+  const byBooking = state.roomNightAgeMix.get(roomNightMixKey(roomId, stayDate));
+  if (!byBooking) return [];
+  const conflicting: string[] = [];
+  for (const [key, counts] of byBooking) {
+    if (key !== bookingId && counts[tier] > 0) conflicting.push(key);
+  }
+  return conflicting;
 }
 
 function setOccupant(state: PlannerState, info: OccupantInfo) {
@@ -492,15 +630,15 @@ function roomHasAvailableBeds(
 }
 
 function createAllocation(
+  state: PlannerState,
   bookingId: string,
   guest: PartyGuest,
   bed: BedAllocationBed,
   stayDate: string,
-  occupied: Set<string>,
-  allocatedGuestNights: Set<string>,
 ): BedAllocationCandidate {
-  occupied.add(occupiedKey(bed.id, stayDate));
-  allocatedGuestNights.add(guestNightKey(guest.id, stayDate));
+  state.occupied.add(occupiedKey(bed.id, stayDate));
+  state.allocatedGuestNights.add(guestNightKey(guest.id, stayDate));
+  trackRoomNightOccupant(state, bed.roomId, stayDate, bookingId, guest.ageTier, 1);
 
   return {
     bookingId,
@@ -513,24 +651,15 @@ function createAllocation(
 }
 
 function allocateGuestsToBeds(
+  state: PlannerState,
   bookingId: string,
   guests: PartyGuest[],
   beds: BedAllocationBed[],
   stayDate: string,
-  occupied: Set<string>,
-  allocatedGuestNights: Set<string>,
-  allocations: BedAllocationCandidate[],
 ) {
   for (let index = 0; index < guests.length; index += 1) {
-    allocations.push(
-      createAllocation(
-        bookingId,
-        guests[index],
-        beds[index],
-        stayDate,
-        occupied,
-        allocatedGuestNights,
-      ),
+    state.allocations.push(
+      createAllocation(state, bookingId, guests[index], beds[index], stayDate),
     );
   }
 }
@@ -553,39 +682,38 @@ function addUnallocatedGuestNights(
 }
 
 function tryAllocateWholeBookingNight(
+  state: PlannerState,
   bookingId: string,
   guests: PartyGuest[],
   stayDate: string,
   rooms: SortedRoomWithBeds[],
-  occupied: Set<string>,
-  allocatedGuestNights: Set<string>,
-  allocations: BedAllocationCandidate[],
   existingAdultRooms: Set<string>,
 ): boolean {
   const hasMinor = guests.some((guest) => !isAdultGuest(guest));
   const hasAdult = guests.some(isAdultGuest);
 
-  if (hasMinor && !hasAdult && existingAdultRooms.size === 0) {
-    return false;
-  }
+  // A minors-only party may take a room of its own (#1768); rooms already
+  // holding this booking's adults tonight stay preferred (family cohesion).
+  const orderedRooms =
+    hasMinor && !hasAdult
+      ? [
+          ...rooms.filter((room) => existingAdultRooms.has(room.id)),
+          ...rooms.filter((room) => !existingAdultRooms.has(room.id)),
+        ]
+      : rooms;
 
-  for (const room of rooms) {
-    if (hasMinor && !hasAdult && !existingAdultRooms.has(room.id)) {
+  for (const room of orderedRooms) {
+    if (hasMinor && roomNightBlocksMinors(state, room.id, stayDate, bookingId)) {
+      continue;
+    }
+    if (hasAdult && roomNightBlocksAdults(state, room.id, stayDate, bookingId)) {
       continue;
     }
 
-    const availableBeds = roomHasAvailableBeds(room, stayDate, occupied);
+    const availableBeds = roomHasAvailableBeds(room, stayDate, state.occupied);
 
     if (availableBeds.length >= guests.length) {
-      allocateGuestsToBeds(
-        bookingId,
-        guests,
-        availableBeds,
-        stayDate,
-        occupied,
-        allocatedGuestNights,
-        allocations,
-      );
+      allocateGuestsToBeds(state, bookingId, guests, availableBeds, stayDate);
       return true;
     }
   }
@@ -593,71 +721,75 @@ function tryAllocateWholeBookingNight(
   return false;
 }
 
-function allocateAdultsAcrossBeds(
-  bookingId: string,
-  adults: PartyGuest[],
-  availableBeds: BedAllocationBed[],
-  stayDate: string,
-  occupied: Set<string>,
-  allocatedGuestNights: Set<string>,
-  allocations: BedAllocationCandidate[],
-  unallocatedGuestNights: UnallocatedGuestNight[],
-  unallocatedReason: UnallocatedGuestNight["reason"],
-) {
-  const allocatedAdults = adults.slice(0, availableBeds.length);
-  const unallocatedAdults = adults.slice(availableBeds.length);
+interface SplitRoomAvailability {
+  roomId: string;
+  roomIndex: number;
+  beds: BedAllocationBed[];
+  /** No other booking's adult in this room-night — minors may enter (#1768). */
+  allowsMinors: boolean;
+  /** No other booking's minor in this room-night — adults may enter (#1768). */
+  allowsAdults: boolean;
+}
 
-  allocateGuestsToBeds(
-    bookingId,
-    allocatedAdults,
-    availableBeds.slice(0, allocatedAdults.length),
-    stayDate,
-    occupied,
-    allocatedGuestNights,
-    allocations,
-  );
-  addUnallocatedGuestNights(
-    bookingId,
-    unallocatedAdults,
-    stayDate,
-    unallocatedReason,
-    unallocatedGuestNights,
-  );
+/**
+ * First-fit guests into rooms, consuming beds from the shared per-room
+ * availability view (so later steps never reuse a bed). Guests that do not
+ * fit stay in `guests` for the caller to report.
+ */
+function fillRoomsWithGuests(
+  state: PlannerState,
+  bookingId: string,
+  guests: PartyGuest[],
+  roomsAvailability: SplitRoomAvailability[],
+  stayDate: string,
+) {
+  for (const room of roomsAvailability) {
+    if (guests.length === 0) break;
+    if (room.beds.length === 0) continue;
+    const take = Math.min(guests.length, room.beds.length);
+    allocateGuestsToBeds(
+      state,
+      bookingId,
+      guests.splice(0, take),
+      room.beds.splice(0, take),
+      stayDate,
+    );
+  }
 }
 
 function allocateSplitBookingNight(
-  bookingId: string,
+  state: PlannerState,
+  booking: BedAllocationBooking,
   guests: PartyGuest[],
   stayDate: string,
   rooms: SortedRoomWithBeds[],
-  beds: BedAllocationBed[],
-  occupied: Set<string>,
-  allocatedGuestNights: Set<string>,
-  allocations: BedAllocationCandidate[],
-  unallocatedGuestNights: UnallocatedGuestNight[],
   existingAdultRooms: Set<string>,
 ) {
+  const bookingId = booking.id;
   const adults = guests.filter(isAdultGuest);
   const minors = guests.filter((guest) => !isAdultGuest(guest));
-  const roomAvailability = rooms
+  const reason = allocationReasonForNoBed(state.allBeds);
+  const roomAvailability: SplitRoomAvailability[] = rooms
     .map((room, roomIndex) => ({
       roomId: room.id,
       roomIndex,
-      beds: roomHasAvailableBeds(room, stayDate, occupied),
+      beds: roomHasAvailableBeds(room, stayDate, state.occupied),
+      allowsMinors: !roomNightBlocksMinors(state, room.id, stayDate, bookingId),
+      allowsAdults: !roomNightBlocksAdults(state, room.id, stayDate, bookingId),
     }))
     .filter((room) => room.beds.length > 0);
+  const roomsAllowingAdults = () =>
+    roomAvailability.filter((room) => room.allowsAdults);
 
   if (minors.length === 0) {
-    allocateAdultsAcrossBeds(
+    const remaining = [...adults];
+    fillRoomsWithGuests(state, bookingId, remaining, roomsAllowingAdults(), stayDate);
+    addUnallocatedGuestNights(
       bookingId,
-      adults,
-      roomAvailability.flatMap((room) => room.beds),
+      remaining,
       stayDate,
-      occupied,
-      allocatedGuestNights,
-      allocations,
-      unallocatedGuestNights,
-      allocationReasonForNoBed(beds),
+      reason,
+      state.unallocatedGuestNights,
     );
     return;
   }
@@ -668,81 +800,133 @@ function allocateSplitBookingNight(
       minors,
       stayDate,
       "NO_BOOKING_ADULT",
-      unallocatedGuestNights,
+      state.unallocatedGuestNights,
     );
     return;
   }
 
   const remainingAdults = [...adults];
   const remainingMinors = [...minors];
-  const roomsWithExistingAdults = roomAvailability
-    .filter((room) => existingAdultRooms.has(room.roomId))
-    .sort((a, b) => a.roomIndex - b.roomIndex);
 
-  for (const room of roomsWithExistingAdults) {
-    if (remainingMinors.length === 0) break;
+  if (booking.isSchoolGroup !== true) {
+    // Family preference: minors join rooms already holding this booking's
+    // adults tonight first.
+    const roomsWithExistingAdults = roomAvailability
+      .filter((room) => existingAdultRooms.has(room.roomId) && room.allowsMinors)
+      .sort((a, b) => a.roomIndex - b.roomIndex);
 
-    const roomMinors = remainingMinors.splice(0, room.beds.length);
-    const roomBeds = room.beds.splice(0, roomMinors.length);
+    for (const room of roomsWithExistingAdults) {
+      if (remainingMinors.length === 0) break;
 
-    allocateGuestsToBeds(
+      const roomMinors = remainingMinors.splice(0, room.beds.length);
+      const roomBeds = room.beds.splice(0, roomMinors.length);
+
+      allocateGuestsToBeds(state, bookingId, roomMinors, roomBeds, stayDate);
+    }
+
+    // One adult per room with minors, while both remain (#1768: adults
+    // running out no longer strands the leftover minors — they overflow into
+    // minors-only rooms below).
+    const pairedRooms = roomAvailability
+      .filter(
+        (room) =>
+          room.beds.length >= 2 && room.allowsMinors && room.allowsAdults,
+      )
+      .sort((a, b) => {
+        const capacityDiff = b.beds.length - a.beds.length;
+        return capacityDiff !== 0 ? capacityDiff : a.roomIndex - b.roomIndex;
+      });
+
+    for (const room of pairedRooms) {
+      if (remainingAdults.length === 0 || remainingMinors.length === 0) break;
+
+      const adult = remainingAdults.shift();
+      if (!adult) break;
+
+      const roomMinors = remainingMinors.splice(0, room.beds.length - 1);
+      const roomGuests = [adult, ...roomMinors];
+      const roomBeds = room.beds.splice(0, roomGuests.length);
+
+      allocateGuestsToBeds(state, bookingId, roomGuests, roomBeds, stayDate);
+    }
+
+    fillRoomsWithGuests(
+      state,
       bookingId,
-      roomMinors,
-      roomBeds,
+      remainingAdults,
+      roomsAllowingAdults(),
       stayDate,
-      occupied,
-      allocatedGuestNights,
-      allocations,
     );
+  } else if (remainingAdults.length > 0) {
+    // School/organisation grouping (#1768, owner decision): the booking's
+    // adults room together — the smallest room fitting them all, else spread
+    // first-fit — and the students take their own rooms below.
+    const adultRoom = roomAvailability
+      .filter(
+        (room) =>
+          room.allowsAdults && room.beds.length >= remainingAdults.length,
+      )
+      .sort(
+        (a, b) => a.beds.length - b.beds.length || a.roomIndex - b.roomIndex,
+      )[0];
+    if (adultRoom) {
+      const roomAdults = remainingAdults.splice(0);
+      allocateGuestsToBeds(
+        state,
+        bookingId,
+        roomAdults,
+        adultRoom.beds.splice(0, roomAdults.length),
+        stayDate,
+      );
+    } else {
+      fillRoomsWithGuests(
+        state,
+        bookingId,
+        remainingAdults,
+        roomsAllowingAdults(),
+        stayDate,
+      );
+    }
   }
 
-  const roomsForMinors = roomAvailability
-    .filter((room) => room.beds.length >= 2)
-    .sort((a, b) => {
-      const capacityDiff = b.beds.length - a.beds.length;
-      return capacityDiff !== 0 ? capacityDiff : a.roomIndex - b.roomIndex;
-    });
-
-  for (const room of roomsForMinors) {
-    if (remainingAdults.length === 0 || remainingMinors.length === 0) break;
-
-    const adult = remainingAdults.shift();
-    if (!adult) break;
-
-    const roomMinors = remainingMinors.splice(0, room.beds.length - 1);
-    const roomGuests = [adult, ...roomMinors];
-    const roomBeds = room.beds.splice(0, roomGuests.length);
-
-    allocateGuestsToBeds(
-      bookingId,
-      roomGuests,
-      roomBeds,
+  // Minors-only overflow (#1768) — the stranding fix: leftover minors fill
+  // rooms of their own instead of going unallocated. Families prefer rooms
+  // holding this booking's adults tonight; school groups prefer the opposite
+  // (students separate from the teachers). Both orders are deterministic.
+  if (remainingMinors.length > 0) {
+    const adultRoomsNow = adultRoomsForBookingNight(
+      booking,
       stayDate,
-      occupied,
-      allocatedGuestNights,
-      allocations,
+      existingAdultRooms,
+      state.allocations,
     );
+    const overflowRooms = roomAvailability
+      .filter((room) => room.allowsMinors)
+      .sort((a, b) => {
+        const aAdult = adultRoomsNow.has(a.roomId) ? 1 : 0;
+        const bAdult = adultRoomsNow.has(b.roomId) ? 1 : 0;
+        const preference =
+          booking.isSchoolGroup === true ? aAdult - bAdult : bAdult - aAdult;
+        if (preference !== 0) return preference;
+        const capacityDiff = b.beds.length - a.beds.length;
+        return capacityDiff !== 0 ? capacityDiff : a.roomIndex - b.roomIndex;
+      });
+    fillRoomsWithGuests(state, bookingId, remainingMinors, overflowRooms, stayDate);
   }
 
-  const leftoverBeds = roomAvailability.flatMap((room) => room.beds);
-  allocateAdultsAcrossBeds(
+  addUnallocatedGuestNights(
     bookingId,
     remainingAdults,
-    leftoverBeds,
     stayDate,
-    occupied,
-    allocatedGuestNights,
-    allocations,
-    unallocatedGuestNights,
-    allocationReasonForNoBed(beds),
+    reason,
+    state.unallocatedGuestNights,
   );
-
   addUnallocatedGuestNights(
     bookingId,
     remainingMinors,
     stayDate,
-    allocationReasonForNoBed(beds),
-    unallocatedGuestNights,
+    reason,
+    state.unallocatedGuestNights,
   );
 }
 
@@ -898,21 +1082,31 @@ function orderedCandidateRooms(
 
 /**
  * Whether `room` can host the whole demanded stay in FREE space: for every
- * night, at least as many free beds as demanded guests, and (when
- * `coverageBookingId` is given) every minors-only night covered by an existing
- * adult allocation of that booking in THIS room. Re-planning a displaced
- * booking passes null — the whole party moves together, so coverage cannot get
- * worse than it already was.
+ * night, at least as many free beds as demanded guests, and the cross-booking
+ * age-mix invariant holds (#1768) — a night bringing minors is blocked by any
+ * OTHER booking's adult already in the room, and a night bringing adults is
+ * blocked by any other booking's minor. A minors-only night no longer needs
+ * this booking's own adult in the room (minors-only rooms are allowed; the
+ * night-level adult-coverage rule stays with Phase 0).
  */
 function roomHostsWholeStay(
   state: PlannerState,
   room: SortedRoomWithBeds,
   demand: BookingStayDemand,
-  coverageBookingId: string | null,
+  bookingId: string,
   bedNightUsable?: (bedId: string, night: string) => boolean,
 ): boolean {
   for (const night of demand.nights) {
     const guests = demand.guestsByNight.get(night) ?? [];
+    if (guests.length === 0) continue;
+    const hasAdult = guests.some(isAdultGuest);
+    const hasMinor = guests.some((guest) => !isAdultGuest(guest));
+    if (hasMinor && roomNightBlocksMinors(state, room.id, night, bookingId)) {
+      return false;
+    }
+    if (hasAdult && roomNightBlocksAdults(state, room.id, night, bookingId)) {
+      return false;
+    }
     let free = 0;
     for (const bed of room.beds) {
       const usable = bedNightUsable
@@ -921,18 +1115,6 @@ function roomHostsWholeStay(
       if (usable) free += 1;
     }
     if (free < guests.length) return false;
-
-    if (coverageBookingId !== null) {
-      const hasAdult = guests.some(isAdultGuest);
-      const hasMinor = guests.some((guest) => !isAdultGuest(guest));
-      if (
-        hasMinor &&
-        !hasAdult &&
-        !liveExistingAdultRoomIds(state, coverageBookingId, night).has(room.id)
-      ) {
-        return false;
-      }
-    }
   }
   return true;
 }
@@ -1048,6 +1230,14 @@ function placePartyInRoom(
     state.allocatedGuestNights.add(
       guestNightKey(assignment.guest.id, assignment.stayDate),
     );
+    trackRoomNightOccupant(
+      state,
+      room.id,
+      assignment.stayDate,
+      booking.id,
+      assignment.guest.ageTier,
+      1,
+    );
     state.allocations.push({
       bookingId: booking.id,
       bookingGuestId: assignment.guest.id,
@@ -1086,6 +1276,14 @@ function evictBooking(
     const key = occupiedKey(row.bedId, row.stayDate);
     state.occupied.delete(key);
     state.occupantByKey.delete(key);
+    trackRoomNightOccupant(
+      state,
+      row.roomId,
+      row.stayDate,
+      row.bookingId,
+      row.ageTier,
+      -1,
+    );
   }
   state.occupantsByBooking.delete(bookingId);
   return { bookingId, rows };
@@ -1203,7 +1401,7 @@ function relocateOrUnallocateBooking(
   const destination = ordered.find(
     (room) =>
       room.id !== excludedRoomId &&
-      roomHostsWholeStay(state, room, demand, null, bedNightUsable),
+      roomHostsWholeStay(state, room, demand, bookingId, bedNightUsable),
   );
 
   if (!destination) {
@@ -1248,6 +1446,14 @@ function relocateOrUnallocateBooking(
       roomId: destination.id,
       bedId: assignment.bed.id,
     });
+    trackRoomNightOccupant(
+      state,
+      destination.id,
+      assignment.stayDate,
+      original.bookingId,
+      original.ageTier,
+      1,
+    );
     if (original.bedId !== assignment.bed.id) {
       upsertDisplacement(state.displacementByGuestNight, {
         type: "MOVE",
@@ -1279,67 +1485,110 @@ function planEvictionsForRoom(
   demand: BookingStayDemand,
   room: SortedRoomWithBeds,
 ): string[] | null {
+  // Cross-booking age-mix invariant (#1768): a booking already mixing the
+  // opposite tier into a demanded night MUST be evicted for this room to be
+  // feasible — or, when it cannot be (unknown occupant, held, approved,
+  // window-clipped), the room is infeasible. The demand's own rows never
+  // conflict with themselves, and a minors-only night no longer requires this
+  // booking's own adult in the room (minors-only rooms are allowed).
+  const mandatory = new Set<string>();
+  for (const night of demand.nights) {
+    const guests = demand.guestsByNight.get(night) ?? [];
+    if (guests.length === 0) continue;
+    const hasAdult = guests.some(isAdultGuest);
+    const hasMinor = guests.some((guest) => !isAdultGuest(guest));
+    const byBooking = state.roomNightAgeMix.get(
+      roomNightMixKey(room.id, night),
+    );
+    if (!byBooking) continue;
+    for (const [key, counts] of byBooking) {
+      if (key === booking.id) continue;
+      const conflicts =
+        (hasMinor && counts.adults > 0) || (hasAdult && counts.minors > 0);
+      if (!conflicts) continue;
+      if (key === "") return null;
+      mandatory.add(key);
+    }
+  }
+  for (const id of mandatory) {
+    if (!isBookingWhollyDisplaceable(state, id)) return null;
+  }
+
   const shortfalls = new Map<string, number>();
   for (const night of demand.nights) {
     const guests = demand.guestsByNight.get(night) ?? [];
-    const hasAdult = guests.some(isAdultGuest);
-    const hasMinor = guests.some((guest) => !isAdultGuest(guest));
-    if (
-      hasMinor &&
-      !hasAdult &&
-      !liveExistingAdultRoomIds(state, booking.id, night).has(room.id)
-    ) {
-      return null;
-    }
     let free = 0;
     for (const bed of room.beds) {
       if (!state.occupied.has(occupiedKey(bed.id, night))) free += 1;
     }
     if (guests.length > free) shortfalls.set(night, guests.length - free);
   }
-  if (shortfalls.size === 0) return [];
-
-  const candidateIds = new Set<string>();
-  for (const night of shortfalls.keys()) {
-    for (const bed of room.beds) {
-      const occupant = state.occupantByKey.get(occupiedKey(bed.id, night));
-      if (occupant && occupant.bookingId !== booking.id) {
-        candidateIds.add(occupant.bookingId);
-      }
-    }
-  }
-
-  const evictable = [...candidateIds]
-    .filter((id) => isBookingWhollyDisplaceable(state, id))
-    .map((id) => {
-      const rows = state.occupantsByBooking.get(id);
-      const first = rows?.values().next().value as OccupantInfo | undefined;
-      return { id, createdAtMs: first?.bookingCreatedAtMs ?? 0 };
-    })
-    .sort(
-      (a, b) => b.createdAtMs - a.createdAtMs || b.id.localeCompare(a.id),
-    );
 
   const remaining = new Map(shortfalls);
   const chosen: string[] = [];
-  for (const candidate of evictable) {
-    if (![...remaining.values()].some((deficit) => deficit > 0)) break;
-    const rows = state.occupantsByBooking.get(candidate.id);
-    if (!rows) continue;
-    let helps = false;
-    for (const row of rows.values()) {
-      if (row.roomId === room.id && (remaining.get(row.stayDate) ?? 0) > 0) {
-        helps = true;
-        break;
-      }
-    }
-    if (!helps) continue;
-    chosen.push(candidate.id);
+  const creditRoomRows = (id: string) => {
+    const rows = state.occupantsByBooking.get(id);
+    if (!rows) return;
     for (const row of rows.values()) {
       const deficit = remaining.get(row.stayDate);
       if (row.roomId === room.id && deficit !== undefined) {
         remaining.set(row.stayDate, deficit - 1);
       }
+    }
+  };
+  // Composition-mandated evictions come first, in the same newest-first order
+  // as optional ones (#1677 pin); their freed beds count against the night
+  // shortfalls like any other eviction.
+  const mandatoryOrdered = [...mandatory]
+    .map((id) => {
+      const rows = state.occupantsByBooking.get(id);
+      const first = rows?.values().next().value as OccupantInfo | undefined;
+      return { id, createdAtMs: first?.bookingCreatedAtMs ?? 0 };
+    })
+    .sort((a, b) => b.createdAtMs - a.createdAtMs || b.id.localeCompare(a.id));
+  for (const { id } of mandatoryOrdered) {
+    chosen.push(id);
+    creditRoomRows(id);
+  }
+
+  if ([...remaining.values()].some((deficit) => deficit > 0)) {
+    const candidateIds = new Set<string>();
+    for (const [night, deficit] of remaining) {
+      if (deficit <= 0) continue;
+      for (const bed of room.beds) {
+        const occupant = state.occupantByKey.get(occupiedKey(bed.id, night));
+        if (occupant && occupant.bookingId !== booking.id) {
+          candidateIds.add(occupant.bookingId);
+        }
+      }
+    }
+
+    const evictable = [...candidateIds]
+      .filter((id) => !mandatory.has(id))
+      .filter((id) => isBookingWhollyDisplaceable(state, id))
+      .map((id) => {
+        const rows = state.occupantsByBooking.get(id);
+        const first = rows?.values().next().value as OccupantInfo | undefined;
+        return { id, createdAtMs: first?.bookingCreatedAtMs ?? 0 };
+      })
+      .sort(
+        (a, b) => b.createdAtMs - a.createdAtMs || b.id.localeCompare(a.id),
+      );
+
+    for (const candidate of evictable) {
+      if (![...remaining.values()].some((deficit) => deficit > 0)) break;
+      const rows = state.occupantsByBooking.get(candidate.id);
+      if (!rows) continue;
+      let helps = false;
+      for (const row of rows.values()) {
+        if (row.roomId === room.id && (remaining.get(row.stayDate) ?? 0) > 0) {
+          helps = true;
+          break;
+        }
+      }
+      if (!helps) continue;
+      chosen.push(candidate.id);
+      creditRoomRows(candidate.id);
     }
   }
   if ([...remaining.values()].some((deficit) => deficit > 0)) return null;
@@ -1388,6 +1637,7 @@ function placeGuestNight(
 ) {
   state.occupied.add(occupiedKey(bed.id, stayDate));
   state.allocatedGuestNights.add(guestNightKey(guest.id, stayDate));
+  trackRoomNightOccupant(state, room.id, stayDate, booking.id, guest.ageTier, 1);
   state.allocations.push({
     bookingId: booking.id,
     bookingGuestId: guest.id,
@@ -1406,8 +1656,12 @@ function placeGuestNight(
  * night) is used first; otherwise the first bed held by a WHOLLY-displaceable
  * provisional booking is claimed — that booking's entire stay is then moved to
  * one other room or wholly unallocated. A provisional stay is never
- * night-split by any path. A held minor may only land in a room that has one
- * of its own booking's adults that night.
+ * night-split by any path. Cross-booking age mix (#1768): a held minor may
+ * only land where no OTHER booking's adult is present that night (rooms with
+ * this booking's own adults are preferred, not required), a held adult only
+ * where no other booking's minor is — and the eviction path may claim an
+ * occupied bed only when evicting that occupant's booking removes the
+ * conflict entirely.
  */
 function tryDisplaceForHeldGuestNight(
   state: PlannerState,
@@ -1416,21 +1670,27 @@ function tryDisplaceForHeldGuestNight(
   stayDate: string,
   candidateRooms: SortedRoomWithBeds[],
 ): boolean {
-  let allowedRooms = candidateRooms;
-  if (!isAdultGuest(guest)) {
+  const isMinor = !isAdultGuest(guest);
+  let orderedRooms = candidateRooms;
+  if (isMinor) {
     const adultRooms = adultRoomsForBookingNight(
       booking,
       stayDate,
       liveExistingAdultRoomIds(state, booking.id, stayDate),
       state.allocations,
     );
-    if (adultRooms.size === 0) {
-      return false;
-    }
-    allowedRooms = candidateRooms.filter((room) => adultRooms.has(room.id));
+    orderedRooms = [
+      ...candidateRooms.filter((room) => adultRooms.has(room.id)),
+      ...candidateRooms.filter((room) => !adultRooms.has(room.id)),
+    ];
   }
+  const blocked = (roomId: string) =>
+    isMinor
+      ? roomNightBlocksMinors(state, roomId, stayDate, booking.id)
+      : roomNightBlocksAdults(state, roomId, stayDate, booking.id);
 
-  for (const room of allowedRooms) {
+  for (const room of orderedRooms) {
+    if (blocked(room.id)) continue;
     for (const bed of room.beds) {
       if (!state.occupied.has(occupiedKey(bed.id, stayDate))) {
         placeGuestNight(state, booking, guest, room, bed, stayDate);
@@ -1439,11 +1699,22 @@ function tryDisplaceForHeldGuestNight(
     }
   }
 
-  for (const room of allowedRooms) {
+  for (const room of orderedRooms) {
     for (const bed of room.beds) {
       const occupant = state.occupantByKey.get(occupiedKey(bed.id, stayDate));
       if (!occupant || occupant.bookingId === booking.id) continue;
       if (!isBookingWhollyDisplaceable(state, occupant.bookingId)) continue;
+      // Evicting this occupant must clear the room-night's composition
+      // conflict for the incoming guest: any conflicting row from a booking
+      // OTHER than the one being evicted keeps the room off-limits.
+      const conflicting = otherRoomNightBookingsWith(
+        state,
+        room.id,
+        stayDate,
+        booking.id,
+        isMinor ? "adults" : "minors",
+      );
+      if (conflicting.some((id) => id !== occupant.bookingId)) continue;
 
       const snapshot = evictBooking(state, occupant.bookingId);
       placeGuestNight(state, booking, guest, room, bed, stayDate);
@@ -1453,6 +1724,75 @@ function tryDisplaceForHeldGuestNight(
   }
 
   return false;
+}
+
+/**
+ * Test-only bookkeeping check (#1768): rebuilds the room-night age-mix index
+ * from scratch (seeded unknown rows + live occupant rows + this run's new
+ * allocations) and throws when the incrementally-maintained index disagrees —
+ * the composition guards are only as sound as the index's symmetry across
+ * seed/allocate/evict/relocate/rollback, so every planner test exercises this.
+ */
+function assertRoomNightAgeMixConsistent(
+  state: PlannerState,
+  guestAgeTierById: Map<string, BedAllocationAgeTier | null | undefined>,
+) {
+  const expected = new Map<string, Map<string, RoomNightAgeCounts>>();
+  const add = (
+    roomId: string,
+    stayDate: string,
+    bookingKey: string,
+    isAdult: boolean,
+  ) => {
+    if (!roomId) return;
+    const key = roomNightMixKey(roomId, stayDate);
+    let byBooking = expected.get(key);
+    if (!byBooking) {
+      byBooking = new Map();
+      expected.set(key, byBooking);
+    }
+    let counts = byBooking.get(bookingKey);
+    if (!counts) {
+      counts = { adults: 0, minors: 0 };
+      byBooking.set(bookingKey, counts);
+    }
+    if (isAdult) counts.adults += 1;
+    else counts.minors += 1;
+  };
+
+  for (const row of state.unknownRoomNightRows) {
+    add(row.roomId, row.stayDate, "", row.isAdult);
+  }
+  for (const row of state.occupantByKey.values()) {
+    add(row.roomId, row.stayDate, row.bookingId, isAdultAgeTier(row.ageTier));
+  }
+  for (const allocation of state.allocations) {
+    add(
+      allocation.roomId,
+      allocation.stayDate,
+      allocation.bookingId,
+      isAdultAgeTier(guestAgeTierById.get(allocation.bookingGuestId)),
+    );
+  }
+
+  const describe = (map: Map<string, Map<string, RoomNightAgeCounts>>) =>
+    [...map.entries()]
+      .map(
+        ([key, byBooking]) =>
+          `${key}=[${[...byBooking.entries()]
+            .map(([id, counts]) => `${id || '""'}:a${counts.adults}m${counts.minors}`)
+            .sort()
+            .join(",")}]`,
+      )
+      .sort()
+      .join(" ");
+  const actualText = describe(state.roomNightAgeMix);
+  const expectedText = describe(expected);
+  if (actualText !== expectedText) {
+    throw new Error(
+      `bed-allocation roomNightAgeMix out of sync\n expected: ${expectedText}\n actual:   ${actualText}`,
+    );
+  }
 }
 
 /**
@@ -1501,6 +1841,8 @@ export function buildFirstFitBedAllocationPlan({
     allocations: [],
     unallocatedGuestNights: [],
     displacementByGuestNight: new Map(),
+    roomNightAgeMix: new Map(),
+    unknownRoomNightRows: [],
   };
 
   // Age-tier fallback for occupant rows that do not carry their own tier:
@@ -1525,14 +1867,32 @@ export function buildFirstFitBedAllocationPlan({
         guestNightKey(night.bookingGuestId, stayDate),
       );
     }
-    if (!night.bookingId || !night.bookingGuestId) continue;
+    if (!night.bookingId || !night.bookingGuestId) {
+      // Unknown occupant (#1768): tracked under the "" booking key so the
+      // composition guards stay conservative — a tierless row counts as an
+      // adult (blocks minors, never evictable).
+      const roomId = night.roomId ?? bedRoomIds.get(night.bedId) ?? "";
+      trackRoomNightOccupant(state, roomId, stayDate, null, night.ageTier, 1);
+      if (roomId) {
+        state.unknownRoomNightRows.push({
+          roomId,
+          stayDate,
+          isAdult: isAdultAgeTier(night.ageTier),
+        });
+      }
+      continue;
+    }
+    const roomId = night.roomId ?? bedRoomIds.get(night.bedId) ?? "";
+    const ageTier =
+      night.ageTier ?? guestAgeTierById.get(night.bookingGuestId) ?? null;
+    trackRoomNightOccupant(state, roomId, stayDate, night.bookingId, ageTier, 1);
     setOccupant(state, {
       bookingId: night.bookingId,
       bookingGuestId: night.bookingGuestId,
-      roomId: night.roomId ?? bedRoomIds.get(night.bedId) ?? "",
+      roomId,
       bedId: night.bedId,
       stayDate,
-      ageTier: night.ageTier ?? guestAgeTierById.get(night.bookingGuestId) ?? null,
+      ageTier,
       holdsCapacity: night.holdsCapacity === true,
       isApproved: Boolean(night.approvedAt),
       bookingCreatedAtMs: night.bookingCreatedAt
@@ -1613,26 +1973,20 @@ export function buildFirstFitBedAllocationPlan({
         stayDate,
       );
       const placedWhole = tryAllocateWholeBookingNight(
+        state,
         booking.id,
         guests,
         stayDate,
         candidateRooms,
-        state.occupied,
-        state.allocatedGuestNights,
-        state.allocations,
         existingAdultRooms,
       );
       if (!placedWhole) {
         allocateSplitBookingNight(
-          booking.id,
+          state,
+          booking,
           guests,
           stayDate,
           candidateRooms,
-          state.allBeds,
-          state.occupied,
-          state.allocatedGuestNights,
-          state.allocations,
-          state.unallocatedGuestNights,
           existingAdultRooms,
         );
       }
@@ -1672,6 +2026,13 @@ export function buildFirstFitBedAllocationPlan({
         displacement.fromBedId === displacement.toBedId
       ),
   );
+
+  // The index must stay derivable from the committed state — cheap enough to
+  // verify on every test run, where any evict/relocate/rollback asymmetry
+  // would otherwise ship a silent composition-guard hole.
+  if (process.env.NODE_ENV === "test") {
+    assertRoomNightAgeMixConsistent(state, guestAgeTierById);
+  }
 
   const plan: BedAllocationPlan = {
     allocations: state.allocations,

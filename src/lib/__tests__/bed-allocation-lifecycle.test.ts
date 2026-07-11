@@ -392,6 +392,93 @@ describe("bed allocation lifecycle", () => {
     });
   });
 
+  it("threads the SCHOOL request marker: teachers auto-fill together, students separately (#1768)", async () => {
+    const roomOf = (id: string, sortOrder: number) => ({
+      id,
+      name: `Room ${id}`,
+      sortOrder,
+      active: true,
+      beds: [1, 2, 3, 4].map((n) => ({
+        id: `bed-${id}-${n}`,
+        roomId: id,
+        name: `${id}${n}`,
+        sortOrder: n,
+        active: true,
+      })),
+    });
+    const db = makeDb({
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+      },
+      lodgeRoom: {
+        findMany: vi
+          .fn()
+          .mockResolvedValue([roomOf("room-a", 1), roomOf("room-b", 2)]),
+      },
+    });
+    const guest = (id: string, ageTier: string) => ({
+      id,
+      bookingId: "booking-school",
+      ageTier,
+      stayStart: parseDateOnly("2026-07-01"),
+      stayEnd: parseDateOnly("2026-07-02"),
+    });
+    const guests = [
+      guest("teacher-1", "ADULT"),
+      guest("teacher-2", "ADULT"),
+      guest("student-1", "YOUTH"),
+      guest("student-2", "CHILD"),
+      guest("student-3", "YOUTH"),
+    ];
+    db.booking.findUnique.mockResolvedValue({
+      id: "booking-school",
+      status: BookingStatus.PAID,
+      deletedAt: null,
+      checkIn: parseDateOnly("2026-07-01"),
+      checkOut: parseDateOnly("2026-07-02"),
+      guests,
+    });
+    db.booking.findMany.mockResolvedValue([
+      {
+        id: "booking-school",
+        createdAt: new Date("2026-06-01T00:00:00.000Z"),
+        status: BookingStatus.PAID,
+        checkIn: parseDateOnly("2026-07-01"),
+        checkOut: parseDateOnly("2026-07-02"),
+        requestedRoomId: null,
+        originBookingRequest: { id: "req-1", type: "SCHOOL" },
+        heldForBookingRequest: null,
+        guests,
+      },
+    ]);
+    db.bedAllocation.createMany.mockResolvedValue({ count: 5 });
+
+    await reconcileBedAllocationsForBooking({
+      bookingId: "booking-school",
+      db: db as any,
+    });
+
+    const created = db.bedAllocation.createMany.mock.calls[0][0].data as Array<{
+      bookingGuestId: string;
+      roomId: string;
+    }>;
+    expect(created).toHaveLength(5);
+    const teacherRooms = new Set(
+      created
+        .filter((row) => row.bookingGuestId.startsWith("teacher-"))
+        .map((row) => row.roomId),
+    );
+    const studentRooms = new Set(
+      created
+        .filter((row) => row.bookingGuestId.startsWith("student-"))
+        .map((row) => row.roomId),
+    );
+    expect(teacherRooms.size).toBe(1);
+    for (const roomId of studentRooms) {
+      expect(teacherRooms.has(roomId)).toBe(false);
+    }
+  });
+
   it("prunes nights dropped by a booking date change without re-allocating when auto-allocation is off (issue #816)", async () => {
     // Booking moved from 07-01..07-06 to 07-03..07-06: the first two nights are
     // no longer part of the stay and their allocations must be pruned. Auto

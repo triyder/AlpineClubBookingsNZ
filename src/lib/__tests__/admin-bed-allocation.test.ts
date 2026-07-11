@@ -128,6 +128,104 @@ describe("admin bed allocation", () => {
     ]);
   });
 
+  it("warns when a room-night mixes one booking's minors with another booking's adults (MINOR_ADULT_MIX, #1768)", () => {
+    const base = {
+      guestName: "Guest",
+      roomId: "room-a",
+      roomName: "Room A",
+      bedName: "A1",
+      stayDate: "2026-07-01",
+      source: "MANUAL" as const,
+      approvedAt: null,
+      approvedByName: null,
+      bookingStatus: "CONFIRMED",
+      holdsCapacity: true,
+    };
+    const warnings = buildBedAllocationWarnings({
+      allocations: [
+        {
+          ...base,
+          id: "allocation-1",
+          bookingId: "booking-kids",
+          bookingGuestId: "child-1",
+          guestAgeTier: "CHILD",
+          bedId: "bed-a1",
+        },
+        {
+          ...base,
+          id: "allocation-2",
+          bookingId: "booking-kids",
+          bookingGuestId: "adult-own",
+          guestAgeTier: "ADULT",
+          bedId: "bed-a2",
+        },
+        {
+          ...base,
+          id: "allocation-3",
+          bookingId: "booking-stranger",
+          bookingGuestId: "adult-stranger",
+          guestAgeTier: "ADULT",
+          bedId: "bed-a3",
+        },
+      ],
+    });
+
+    const mixWarnings = warnings.filter(
+      (warning) => warning.type === "MINOR_ADULT_MIX",
+    );
+    expect(mixWarnings).toEqual([
+      {
+        id: "MINOR_ADULT_MIX:room-a:2026-07-01",
+        type: "MINOR_ADULT_MIX",
+        severity: "warning",
+        bookingId: "booking-kids",
+        stayDate: "2026-07-01",
+        roomId: "room-a",
+        message:
+          "Room A on 2026-07-01 mixes minors with adults from a different booking.",
+      },
+    ]);
+  });
+
+  it("raises no MINOR_ADULT_MIX when the only adults in the room-night belong to the minors' own booking", () => {
+    const base = {
+      guestName: "Guest",
+      roomId: "room-a",
+      roomName: "Room A",
+      bedName: "A1",
+      stayDate: "2026-07-01",
+      source: "AUTO" as const,
+      approvedAt: null,
+      approvedByName: null,
+      bookingStatus: "CONFIRMED",
+      holdsCapacity: true,
+    };
+    const warnings = buildBedAllocationWarnings({
+      allocations: [
+        {
+          ...base,
+          id: "allocation-1",
+          bookingId: "booking-family",
+          bookingGuestId: "child-1",
+          guestAgeTier: "CHILD",
+          bedId: "bed-a1",
+        },
+        {
+          ...base,
+          id: "allocation-2",
+          bookingId: "booking-family",
+          bookingGuestId: "adult-1",
+          guestAgeTier: "ADULT",
+          bedId: "bed-a2",
+        },
+      ],
+    });
+
+    expect(
+      warnings.filter((warning) => warning.type === "MINOR_ADULT_MIX"),
+    ).toEqual([]);
+  });
+
   it("warns once, stay-level, when a booking's rooms change between nights (ROOM_SWITCH, #1677)", () => {
     const allocation = (overrides: {
       bookingId: string;
@@ -1892,6 +1990,101 @@ describe("bed allocation board lodge scope (ADR-003)", () => {
       }),
     ).rejects.toThrow("Bed belongs to a different lodge than the booking");
     expect(upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("getBedAllocationDashboard school-group threading (#1768)", () => {
+  it("suggests teachers together and students separately for a SCHOOL-request booking", async () => {
+    const range = parseBedAllocationDateRange({
+      from: "2026-07-01",
+      to: "2026-07-02",
+    });
+    const room = (id: string, sortOrder: number) => ({
+      id,
+      name: `Room ${id}`,
+      sortOrder,
+      active: true,
+      notes: null,
+      lodgeId: null,
+      beds: [1, 2, 3, 4].map((n) => ({
+        id: `bed-${id}-${n}`,
+        roomId: id,
+        name: `${id}${n}`,
+        sortOrder: n,
+        active: true,
+        bedType: "SINGLE",
+        bunkGroup: null,
+      })),
+    });
+    const guest = (id: string, ageTier: string) => ({
+      id,
+      bookingId: "booking-school",
+      firstName: id,
+      lastName: "Test",
+      ageTier,
+      stayStart: parseDateOnly("2026-07-01"),
+      stayEnd: parseDateOnly("2026-07-02"),
+    });
+    const db = {
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({
+          autoAllocationEnabled: true,
+          updatedByMemberId: null,
+          updatedAt: parseDateOnly("2026-06-30"),
+        }),
+      },
+      lodgeRoom: {
+        findMany: vi.fn().mockResolvedValue([room("ra", 1), room("rb", 2)]),
+      },
+      booking: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "booking-school",
+            status: "PAID",
+            createdAt: new Date("2026-06-01T00:00:00.000Z"),
+            checkIn: parseDateOnly("2026-07-01"),
+            checkOut: parseDateOnly("2026-07-02"),
+            lodgeId: null,
+            requestedRoomId: null,
+            parentBookingId: null,
+            originBookingRequest: { id: "req-1", type: "SCHOOL" },
+            heldForBookingRequest: null,
+            requestedRoom: null,
+            member: { firstName: "Org", lastName: "Contact", email: "s@x.nz" },
+            guests: [
+              guest("teacher-1", "ADULT"),
+              guest("teacher-2", "ADULT"),
+              guest("student-1", "YOUTH"),
+              guest("student-2", "YOUTH"),
+              guest("student-3", "CHILD"),
+            ],
+          },
+        ]),
+      },
+      bedAllocation: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+
+    const dashboard = await getBedAllocationDashboard({
+      range,
+      db: db as never,
+    });
+
+    const teacherRooms = new Set(
+      dashboard.suggestedAllocations
+        .filter((a) => a.bookingGuestId.startsWith("teacher-"))
+        .map((a) => a.roomId),
+    );
+    const studentRooms = new Set(
+      dashboard.suggestedAllocations
+        .filter((a) => a.bookingGuestId.startsWith("student-"))
+        .map((a) => a.roomId),
+    );
+    expect(dashboard.suggestedAllocations).toHaveLength(5);
+    expect(dashboard.suggestedUnallocatedGuestNights).toEqual([]);
+    expect(teacherRooms.size).toBe(1);
+    for (const roomId of studentRooms) {
+      expect(teacherRooms.has(roomId)).toBe(false);
+    }
   });
 });
 

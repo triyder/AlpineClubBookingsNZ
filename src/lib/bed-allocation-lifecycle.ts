@@ -423,9 +423,12 @@ async function autoAllocateMissingBedNights({
         checkIn: true,
         checkOut: true,
         // #1387: classify each booking Held vs Provisional so the planner can
-        // give capacity-holding bookings first claim on beds.
+        // give capacity-holding bookings first claim on beds. The request
+        // `type` marks SCHOOL groups (#1768) — adults together, students
+        // separate — including a SCHOOL request's pre-approval held booking.
         status: true,
-        originBookingRequest: { select: { id: true } },
+        originBookingRequest: { select: { id: true, type: true } },
+        heldForBookingRequest: { select: { type: true } },
         adminCapacityHoldAt: true,
         // Whole-stay planning (issue #1677): load every guest of an
         // overlapping booking, not just the reconcile-range slice — guest
@@ -554,6 +557,11 @@ async function autoAllocateMissingBedNights({
               isRequestConverted: Boolean(booking.originBookingRequest),
               hasAdminCapacityHold: Boolean(booking.adminCapacityHoldAt),
             }),
+            // SCHOOL request bookings (#1768): adults room together,
+            // students separately.
+            isSchoolGroup:
+              booking.originBookingRequest?.type === "SCHOOL" ||
+              booking.heldForBookingRequest?.type === "SCHOOL",
             guests,
           }
         : null;

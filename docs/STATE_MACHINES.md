@@ -606,7 +606,31 @@ reported `NO_BOOKING_ADULT` and removed from demand):
 3. **Per-night split fallback** — the legacy whole-night/split logic for
    bookings no single room can host, reported in
    `BedAllocationPlan.roomContinuityFallbackBookingIds`; held-booking
-   displacement here still uses the whole-booking primitive.
+   displacement here still uses the whole-booking primitive. Within a night
+   (#1768): minors join rooms already holding the booking's adults, one adult
+   then heads each further room with minors while adults last (family
+   pairing), leftover adults spread first-fit, and remaining minors **overflow
+   into rooms of their own** — the booking's adult count no longer caps how
+   many rooms its minors may fill (pre-#1768 a school group with two teachers
+   got exactly two rooms and stranded the rest as `NO_BED_AVAILABLE`). A
+   booking created from a SCHOOL request (`isSchoolGroup`, derived from the
+   origin or held `BookingRequest.type`) inverts the pairing preference:
+   its adults room together (one room when they fit) and its students take
+   their own rooms.
+
+**Cross-booking age-mix invariant (#1768, all phases and both placement
+directions):** a room-night holding minors from booking X never also holds an
+adult from a DIFFERENT booking — the planner neither places a minor beside
+another booking's adult nor an adult beside another booking's minor,
+displacement evicts a conflicting provisional booking whole (or deems the room
+infeasible when it cannot), a relocated booking is never MOVEd into a
+conflicting room-night (it is wholly UNALLOCATEd instead), and an occupant row
+with no booking attribution conservatively blocks minors but not adults.
+Persisted rows that already violate the invariant (manual moves, pre-#1768
+plans) surface on the board as `MINOR_ADULT_MIX` warnings rather than being
+rewritten. Same-booking mixing is unrestricted — Phase 0 remains the
+night-level adult-coverage rule, and minors-only ROOMS are allowed whenever
+the booking has an adult on-site that night.
 
 Reconciliation widens its loads to the envelope of every booking overlapping
 the reconcile range (`min(checkIn) .. max(checkOut)` union the range) so the
@@ -618,7 +642,9 @@ allocated night for a guest reassigns that guest's visible allocated nights to
 the target bed while preserving each date-only lodge night. Later-night moves
 remain single-night adjustments. The board's "Run Auto Allocation" uses the
 same whole-stay planner without displacement, and the board raises a
-stay-level `ROOM_SWITCH` warning when a booking's rooms change between nights.
+stay-level `ROOM_SWITCH` warning when a booking's rooms change between nights,
+plus a `MINOR_ADULT_MIX` warning on any persisted room-night that mixes one
+booking's minors with another booking's adults (#1768).
 
 To verify: approval status representation, conflict handling, per-night guest
 uniqueness, room continuity and whole-booking displacement behavior, and
