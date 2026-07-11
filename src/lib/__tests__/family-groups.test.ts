@@ -78,6 +78,11 @@ import {
   syncManagedXeroContactGroupForMember,
   updateXeroContact,
 } from "@/lib/xero";
+import {
+  sendChildRequestApprovedEmail,
+  sendChildRequestRejectedEmail,
+} from "@/lib/email";
+import { logAudit } from "@/lib/audit";
 
 const mockedAuth = vi.mocked(auth);
 const mockedPrisma = vi.mocked(prisma, true);
@@ -1665,6 +1670,195 @@ describe("Admin Family Group Join Requests", () => {
       const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
       const res = await PUT(makeReq("/api/admin/family-groups/requests", "PUT", { requestId: "req-1", action: "approve" }));
       expect(res.status).toBe(422);
+    });
+
+    // #1789: admin per-decision member-email choice threaded through the route
+    // into the CHILD_REQUEST decision sends.
+    describe("notifyMember choice (#1789)", () => {
+      function childRequestFindUnique() {
+        mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue({
+          id: "req-child-1",
+          familyGroupId: "fg1",
+          requesterId: "parent-1",
+          status: "PENDING",
+          type: "CHILD_REQUEST",
+          childFirstName: "Sam",
+          childLastName: "Smith",
+          requester: {
+            id: "parent-1",
+            firstName: "Alice",
+            lastName: "Smith",
+            email: "alice@test.com",
+            active: true,
+            ageTier: "ADULT",
+            inheritEmailFromId: null,
+          },
+          familyGroup: { id: "fg1", name: "Smith Family" },
+        } as any);
+      }
+
+      function mockChildApproveTransaction() {
+        mockedPrisma.member.findUnique.mockResolvedValue({
+          id: "child-1",
+          active: true,
+          ageTier: "INFANT",
+          parentMemberId: null,
+          secondaryParentId: null,
+          inheritEmailFromId: null,
+          parent: null,
+          secondaryParent: null,
+          dependents: [],
+          secondaryDependents: [],
+        } as any);
+        const txUpdate = vi.fn();
+        mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
+          callback({
+            member: {
+              findUnique: vi.fn().mockResolvedValue({
+                id: "parent-1",
+                ageTier: "ADULT",
+                parentMemberId: null,
+                secondaryParentId: null,
+                inheritEmailFromId: null,
+              }),
+              update: vi.fn(),
+            },
+            familyGroupMember: { upsert: vi.fn() },
+            familyGroupJoinRequest: { update: txUpdate },
+          })
+        );
+        return { txUpdate };
+      }
+
+      it("rejects a non-boolean notifyMember at the route with 422 (existing parse)", async () => {
+        mockedAuth.mockResolvedValue(adminSession);
+        const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+        const res = await PUT(
+          makeReq("/api/admin/family-groups/requests", "PUT", {
+            requestId: "req-child-1",
+            action: "approve",
+            notifyMember: "false",
+          })
+        );
+        expect(res.status).toBe(422);
+        expect(mockedPrisma.familyGroupJoinRequest.findUnique).not.toHaveBeenCalled();
+      });
+
+      it("CHILD_REQUEST approve (default) emails the requester and records no notify field", async () => {
+        mockedAuth.mockResolvedValue(adminSession);
+        childRequestFindUnique();
+        const { txUpdate } = mockChildApproveTransaction();
+
+        const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+        const res = await PUT(
+          makeReq("/api/admin/family-groups/requests", "PUT", {
+            requestId: "req-child-1",
+            action: "approve",
+            linkedMemberId: "child-1",
+          })
+        );
+
+        expect(res.status).toBe(200);
+        expect(txUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ status: "APPROVED" }),
+          })
+        );
+        expect(sendChildRequestApprovedEmail).toHaveBeenCalledWith(
+          "alice@test.com",
+          "Alice",
+          "Sam Smith",
+          "Smith Family"
+        );
+        const approvedAudit = vi
+          .mocked(logAudit)
+          .mock.calls.find((c) => c[0].action === "FAMILY_GROUP_CHILD_REQUEST_APPROVED")?.[0];
+        expect(approvedAudit?.metadata).not.toHaveProperty("notifyMember");
+      });
+
+      it("CHILD_REQUEST approve with notifyMember false suppresses the email, still links the member, and audits the choice", async () => {
+        mockedAuth.mockResolvedValue(adminSession);
+        childRequestFindUnique();
+        const { txUpdate } = mockChildApproveTransaction();
+
+        const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+        const res = await PUT(
+          makeReq("/api/admin/family-groups/requests", "PUT", {
+            requestId: "req-child-1",
+            action: "approve",
+            linkedMemberId: "child-1",
+            notifyMember: false,
+          })
+        );
+
+        expect(res.status).toBe(200);
+        // Child link state change is still applied.
+        expect(txUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ status: "APPROVED", linkedMemberId: "child-1" }),
+          })
+        );
+        expect(sendChildRequestApprovedEmail).not.toHaveBeenCalled();
+        const approvedAudit = vi
+          .mocked(logAudit)
+          .mock.calls.find((c) => c[0].action === "FAMILY_GROUP_CHILD_REQUEST_APPROVED")?.[0];
+        expect(approvedAudit?.metadata).toMatchObject({ notifyMember: false });
+      });
+
+      it("CHILD_REQUEST reject (default) emails the requester and records no notify field", async () => {
+        mockedAuth.mockResolvedValue(adminSession);
+        childRequestFindUnique();
+        mockedPrisma.familyGroupJoinRequest.update.mockResolvedValue({} as any);
+
+        const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+        const res = await PUT(
+          makeReq("/api/admin/family-groups/requests", "PUT", {
+            requestId: "req-child-1",
+            action: "reject",
+            rejectionReason: "Not eligible",
+          })
+        );
+
+        expect(res.status).toBe(200);
+        expect(sendChildRequestRejectedEmail).toHaveBeenCalledWith(
+          "alice@test.com",
+          "Alice",
+          "Sam Smith",
+          "Not eligible"
+        );
+        const rejectedAudit = vi
+          .mocked(logAudit)
+          .mock.calls.find((c) => c[0].action === "FAMILY_GROUP_CHILD_REQUEST_REJECTED")?.[0];
+        expect(rejectedAudit?.metadata).not.toHaveProperty("notifyMember");
+      });
+
+      it("CHILD_REQUEST reject with notifyMember false suppresses the email, still rejects, and audits the choice", async () => {
+        mockedAuth.mockResolvedValue(adminSession);
+        childRequestFindUnique();
+        mockedPrisma.familyGroupJoinRequest.update.mockResolvedValue({} as any);
+
+        const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+        const res = await PUT(
+          makeReq("/api/admin/family-groups/requests", "PUT", {
+            requestId: "req-child-1",
+            action: "reject",
+            notifyMember: false,
+          })
+        );
+
+        expect(res.status).toBe(200);
+        // Reject state change still applied.
+        expect(mockedPrisma.familyGroupJoinRequest.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ status: "REJECTED" }),
+          })
+        );
+        expect(sendChildRequestRejectedEmail).not.toHaveBeenCalled();
+        const rejectedAudit = vi
+          .mocked(logAudit)
+          .mock.calls.find((c) => c[0].action === "FAMILY_GROUP_CHILD_REQUEST_REJECTED")?.[0];
+        expect(rejectedAudit?.metadata).toMatchObject({ notifyMember: false });
+      });
     });
   });
 });

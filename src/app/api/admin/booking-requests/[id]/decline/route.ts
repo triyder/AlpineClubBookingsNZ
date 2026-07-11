@@ -10,6 +10,11 @@ import { getClientIp } from "@/lib/rate-limit";
 
 const declineSchema = z.object({
   reason: z.string().max(2000).optional().nullable(),
+  // #1791: admin per-action email choice. Absent/undefined = notify the
+  // requester (default), false = suppress the decline email; non-boolean 400s
+  // via this parse. Only the decline email is gated — approve/quote emails
+  // carry the payment/quote link and stay always-send.
+  notifyMember: z.boolean().optional(),
 });
 
 export async function POST(
@@ -41,6 +46,9 @@ export async function POST(
       requestId: id,
       adminMemberId: session.user.id,
       reason: parsed.data.reason,
+      // #1791: thread the admin's notify choice through to gate the decline
+      // email; absent = notify (default).
+      notifyMember: parsed.data.notifyMember,
       // #1365: declining releases any capacity hold via cancelBooking, which
       // needs the actor's client IP for its cancellation audit.
       ipAddress: getClientIp(req),

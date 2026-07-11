@@ -1,9 +1,18 @@
 "use client"
 
 import Link from "next/link"
+import { useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Archive } from "lucide-react"
 import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers"
@@ -33,7 +42,11 @@ interface MemberLifecycleCardProps {
   onChangeCancellationReason: (value: string) => void
   onSubmitArchive: () => void
   onSubmitCancellation: () => void
-  onReviewArchive: (requestId: string, action: "approve" | "reject") => void
+  onReviewArchive: (
+    requestId: string,
+    action: "approve" | "reject",
+    notifyMember?: boolean,
+  ) => void
   className?: string
 }
 
@@ -60,6 +73,39 @@ export function MemberLifecycleCard({
   onReviewArchive,
   className,
 }: MemberLifecycleCardProps) {
+  // #1788: which archive review is waiting on the admin's notify-or-not choice.
+  // The dialog only opens when an email would actually send (the target member
+  // has an address on file); a member with no email reviews directly with no
+  // flag. The choice is kept set while the dialog fades out (Radix keeps the
+  // content mounted through its exit animation) so the copy never flickers.
+  const memberHasEmail = Boolean(member.email)
+  const [notifyChoice, setNotifyChoice] = useState<{
+    requestId: string
+    action: "approve" | "reject"
+  } | null>(null)
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false)
+
+  function startReview(requestId: string, action: "approve" | "reject") {
+    if (memberHasEmail) {
+      setNotifyChoice({ requestId, action })
+      setNotifyDialogOpen(true)
+    } else {
+      // Nothing to email — perform directly, no notify flag, no dialog.
+      onReviewArchive(requestId, action)
+    }
+  }
+
+  // #1788: dispatch the pending choice. Close the dialog without clearing the
+  // choice so the content keeps its wording while it fades out.
+  function confirmNotify(notifyMember: boolean) {
+    const choice = notifyChoice
+    setNotifyDialogOpen(false)
+    if (!choice) return
+    onReviewArchive(choice.requestId, choice.action, notifyMember)
+  }
+
+  const isReviewing = Boolean(archiveActionLoading)
+
   return (
     <Card className={className}>
       <CardHeader>
@@ -180,7 +226,7 @@ export function MemberLifecycleCard({
                       variant="outline"
                       size="sm"
                       disabled={Boolean(archiveActionLoading)}
-                      onClick={() => onReviewArchive(pendingArchiveRequest.id, "reject")}
+                      onClick={() => startReview(pendingArchiveRequest.id, "reject")}
                     >
                       {archiveActionLoading === `reject:${pendingArchiveRequest.id}` ? "Rejecting..." : "Reject"}
                     </Button>
@@ -188,7 +234,7 @@ export function MemberLifecycleCard({
                       variant="destructive"
                       size="sm"
                       disabled={Boolean(archiveActionLoading)}
-                      onClick={() => onReviewArchive(pendingArchiveRequest.id, "approve")}
+                      onClick={() => startReview(pendingArchiveRequest.id, "approve")}
                     >
                       {archiveActionLoading === `approve:${pendingArchiveRequest.id}` ? "Archiving..." : "Approve Archive"}
                     </Button>
@@ -256,6 +302,53 @@ export function MemberLifecycleCard({
           </div>
         )}
       </CardContent>
+
+      {/* #1788: per-review member-email choice, mirroring the #1705/#1769a
+          pattern. Shown only when the target member has an address on file;
+          both choices complete the review and the choice is recorded in the
+          audit log. Archive approve and reject are handled identically — only
+          the wording changes. */}
+      <Dialog
+        open={notifyDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !isReviewing) setNotifyDialogOpen(false)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {notifyChoice?.action === "approve"
+                ? "Email the member about this archive?"
+                : "Email the member about this decision?"}
+            </DialogTitle>
+            <DialogDescription>
+              {notifyChoice?.action === "approve"
+                ? "The member is archived either way. Choose whether they receive the standard archive-completed email — your choice is recorded in the audit log."
+                : "The archive request is rejected either way. Choose whether the member receives the standard rejection email — your choice is recorded in the audit log."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              disabled={isReviewing}
+              onClick={() => confirmNotify(false)}
+            >
+              {notifyChoice?.action === "approve"
+                ? "Archive without emailing"
+                : "Reject without emailing"}
+            </Button>
+            <Button
+              variant={notifyChoice?.action === "approve" ? "destructive" : "default"}
+              disabled={isReviewing}
+              onClick={() => confirmNotify(true)}
+            >
+              {notifyChoice?.action === "approve"
+                ? "Archive and email member"
+                : "Reject and email member"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }

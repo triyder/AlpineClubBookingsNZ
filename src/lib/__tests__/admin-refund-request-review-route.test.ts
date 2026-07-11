@@ -363,4 +363,210 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     );
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
+
+  // #1792: admin per-action member-email choice. `notifyMember` gates ONLY the
+  // outcome notice — the refund decision, ledger/aggregate math, and Stripe/Xero
+  // work are byte-identical regardless of the choice, and the suppression is
+  // recorded honestly (only when there was an email to suppress).
+  describe("notifyMember email choice (#1792)", () => {
+    function putRequest(body: Record<string, unknown>) {
+      return new NextRequest(
+        "http://localhost/api/admin/refund-requests/refund_1",
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "x-forwarded-for": "127.0.0.1",
+          },
+          body: JSON.stringify(body),
+        }
+      );
+    }
+
+    // The exact refund the approve path always issues; asserted identical for
+    // both the default (notify) and the suppress (notifyMember:false) cases so a
+    // suppressed notice can never change what money moves.
+    const EXPECTED_REFUND = {
+      paymentId: "payment_1",
+      amountCents: 2500,
+      allocation: [{ paymentTransactionId: "txn_1", amountCents: 2500 }],
+      metadata: {
+        bookingId: "booking_1",
+        reason: "refund_appeal_approved",
+        refundRequestId: "refund_1",
+      },
+      idempotencyKeyPrefix: "refund_request_refund_1",
+    };
+
+    function auditMetadata(action: string) {
+      return mocks.createAuditLog.mock.calls.find(
+        (c) => (c[0] as { action?: string } | undefined)?.action === action
+      )?.[0]?.metadata as Record<string, unknown> | undefined;
+    }
+
+    it("approve without the flag emails the member and records no notify field", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+
+      const response = await PUT(
+        putRequest({ status: "APPROVED", approvedAmountCents: 2500 }),
+        { params: Promise.resolve({ id: "refund_1" }) }
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+      expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(EXPECTED_REFUND);
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalled();
+      expect(auditMetadata("refund-request.approve")).not.toHaveProperty(
+        "notifyMember"
+      );
+    });
+
+    it("approve with notifyMember:false suppresses the email, audits the choice, and moves money identically", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+
+      const response = await PUT(
+        putRequest({
+          status: "APPROVED",
+          approvedAmountCents: 2500,
+          notifyMember: false,
+        }),
+        { params: Promise.resolve({ id: "refund_1" }) }
+      );
+
+      expect(response.status).toBe(200);
+      // No outcome notice went out...
+      expect(mocks.sendEmail).not.toHaveBeenCalled();
+      // ...but the refund and credit note are byte-identical to the default case.
+      expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(EXPECTED_REFUND);
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+        "payment_1",
+        2500,
+        { createdByMemberId: "admin_1" }
+      );
+      expect(auditMetadata("refund-request.approve")).toMatchObject({
+        bookingId: "booking_1",
+        approvedAmountCents: 2500,
+        notifyMember: false,
+      });
+    });
+
+    it("approve with notifyMember:true emails the member and records no notify field", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+
+      const response = await PUT(
+        putRequest({
+          status: "APPROVED",
+          approvedAmountCents: 2500,
+          notifyMember: true,
+        }),
+        { params: Promise.resolve({ id: "refund_1" }) }
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+      expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(EXPECTED_REFUND);
+      expect(auditMetadata("refund-request.approve")).not.toHaveProperty(
+        "notifyMember"
+      );
+    });
+
+    it("rejects a non-boolean notifyMember on approve with 400 and touches no money", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+
+      const response = await PUT(
+        putRequest({
+          status: "APPROVED",
+          approvedAmountCents: 2500,
+          notifyMember: "false",
+        }),
+        { params: Promise.resolve({ id: "refund_1" }) }
+      );
+
+      expect(response.status).toBe(400);
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mocks.refundRequestUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.sendEmail).not.toHaveBeenCalled();
+      expect(mocks.createAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("reject without the flag emails the member and records no notify field", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+
+      const response = await PUT(putRequest({ status: "REJECTED" }), {
+        params: Promise.resolve({ id: "refund_1" }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+      // Reject never refunds; only the claiming updateMany runs.
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mocks.refundRequestUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "refund_1", status: "PENDING" },
+          data: expect.objectContaining({
+            status: "REJECTED",
+            approvedAmountCents: 0,
+          }),
+        })
+      );
+      expect(auditMetadata("refund-request.reject")).not.toHaveProperty(
+        "notifyMember"
+      );
+    });
+
+    it("reject with notifyMember:false suppresses the email, audits the choice, and applies the decision identically", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+
+      const response = await PUT(
+        putRequest({ status: "REJECTED", notifyMember: false }),
+        { params: Promise.resolve({ id: "refund_1" }) }
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.sendEmail).not.toHaveBeenCalled();
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mocks.refundRequestUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "refund_1", status: "PENDING" },
+          data: expect.objectContaining({
+            status: "REJECTED",
+            approvedAmountCents: 0,
+          }),
+        })
+      );
+      expect(auditMetadata("refund-request.reject")).toMatchObject({
+        bookingId: "booking_1",
+        notifyMember: false,
+      });
+    });
+
+    it("reject with notifyMember:true emails the member and records no notify field", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+
+      const response = await PUT(
+        putRequest({ status: "REJECTED", notifyMember: true }),
+        { params: Promise.resolve({ id: "refund_1" }) }
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+      expect(auditMetadata("refund-request.reject")).not.toHaveProperty(
+        "notifyMember"
+      );
+    });
+
+    it("rejects a non-boolean notifyMember on reject with 400 and makes no decision", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+
+      const response = await PUT(
+        putRequest({ status: "REJECTED", notifyMember: 0 }),
+        { params: Promise.resolve({ id: "refund_1" }) }
+      );
+
+      expect(response.status).toBe(400);
+      expect(mocks.refundRequestUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.sendEmail).not.toHaveBeenCalled();
+      expect(mocks.createAuditLog).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -595,6 +595,11 @@ export async function declineBookingRequest(input: {
   requestId: string;
   adminMemberId: string;
   reason?: string | null;
+  // #1791: admin per-action email choice. Absent/undefined = notify the
+  // requester (default); false = suppress the decline email. The recipient
+  // (request.contactEmail) is always present, so decline always sends unless
+  // the admin opted out — the suppression is recorded in the audit log.
+  notifyMember?: boolean;
   ipAddress?: string;
 }) {
   const request = await prisma.bookingRequest.findUnique({
@@ -658,21 +663,34 @@ export async function declineBookingRequest(input: {
     );
   }
 
-  try {
-    await sendBookingRequestDeclinedEmail({
-      email: request.contactEmail,
-      firstName: request.contactFirstName,
-      checkIn: request.checkIn,
-      checkOut: request.checkOut,
-      reason: declineReason,
-      lodgeId: request.lodgeId ?? null,
-    });
-  } catch (err) {
-    logger.error(
-      { err, bookingRequestId: request.id },
-      "Failed to send booking request declined email"
-    );
+  // #1791: decline always emails the requester unless the admin chose not to
+  // notify (default is notify; the suppression is audited below). Only the
+  // decline email is gated — the approve/quote path emails carry the
+  // payment/quote link and stay always-send.
+  if (input.notifyMember !== false) {
+    try {
+      await sendBookingRequestDeclinedEmail({
+        email: request.contactEmail,
+        firstName: request.contactFirstName,
+        checkIn: request.checkIn,
+        checkOut: request.checkOut,
+        reason: declineReason,
+        lodgeId: request.lodgeId ?? null,
+      });
+    } catch (err) {
+      logger.error(
+        { err, bookingRequestId: request.id },
+        "Failed to send booking request declined email"
+      );
+    }
   }
+
+  // #1791: honesty rule — record the notify choice only when a requester email
+  // was actually suppressed. `request.contactEmail` is a non-nullable field, so
+  // the decline path always sends unless the admin opted out; there is no
+  // email-presence guard to fold in.
+  const notifyAuditFields =
+    input.notifyMember === false ? { notifyMember: false } : {};
 
   logAudit({
     action: "booking_request.declined",
@@ -684,7 +702,7 @@ export async function declineBookingRequest(input: {
     category: "booking",
     outcome: "success",
     summary: "Booking request declined",
-    metadata: { reason: declineReason },
+    metadata: { reason: declineReason, ...notifyAuditFields },
   });
 
   // #1365 (F18): a declined request that still holds capacity — a held

@@ -4,6 +4,24 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Admin email-notify choice extended across the remaining admin-initiated
+  member emails (#1780 / #1769b, completing the sweep).** The canonical
+  `notifyMember` two-button pattern (#1705/#1769a) now covers: membership
+  application approve/reject (#1786), membership cancellation review
+  approve/reject (#1787), member archive review + account-deletion reject
+  (#1788), family-group child-request & group-create approve/reject (#1789),
+  booking review (minors) approve/reject (#1790), public booking-request
+  decline (#1791), and refund-appeal approve/reject (#1792). Each admin decision
+  now asks, per action, whether the affected member/applicant/requester receives
+  the standard outcome email — default is to notify; "without emailing" skips
+  the send and records `notifyMember: false` in the audit metadata, recorded
+  only on paths that would truly have emailed (honesty rule). Token-bearing and
+  pipeline-critical sends keep always-send: membership-application induction
+  sign-off requests, the family group-create partner invite, booking-request
+  approve/quote links, and the account-deletion approval receipt. Member
+  self-service flows and admin-facing alerts are untouched. No money, booking
+  capacity, or provider (Stripe/Xero) behaviour changes.
+
 - **Manual-board `MINOR_ADULT_MIX` warning-only behaviour documented as
   intended.** The deferred owner decision from #1768/PR #1775 is closed:
   automated placement paths enforce the cross-booking minor/adult invariant

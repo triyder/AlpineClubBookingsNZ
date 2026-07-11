@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { FamilyGroupRequestReviewCard } from "@/components/admin/family-groups/request-review-card";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   buildInitialRequestNotificationParents,
   buildInitialRequestSelections,
@@ -10,6 +20,14 @@ import {
   type FamilyGroupRequest,
   type RequestMemberMatch,
 } from "@/lib/admin-family-group-ui-helpers";
+
+// #1789: only the CHILD_REQUEST and GROUP_CREATE decisions email the requester
+// (approve and reject alike), so only those actions open the notify-choice
+// dialog. ADULT_REQUEST / JOIN_REQUEST / REMOVAL_REQUEST send no requester
+// decision email, so they submit directly without asking.
+function requestActionEmailsMember(type: FamilyGroupRequest["type"]): boolean {
+  return type === "CHILD_REQUEST" || type === "GROUP_CREATE";
+}
 
 export interface FamilyGroupRequestReviewSectionProps {
   requests: FamilyGroupRequest[];
@@ -54,6 +72,15 @@ export function FamilyGroupRequestReviewSection({
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [requestSearchingId, setRequestSearchingId] = useState<string | null>(null);
   const [requestSubmittingId, setRequestSubmittingId] = useState<string | null>(null);
+  // #1789: the approve/reject action whose member-email choice is pending, and
+  // whether the choice dialog is open. Only emailing decisions (CHILD_REQUEST /
+  // GROUP_CREATE) populate this; the choice is kept set while the dialog fades
+  // out so the copy never flickers to a stale action's wording.
+  const [notifyChoice, setNotifyChoice] = useState<{
+    request: FamilyGroupRequest;
+    action: "approve" | "reject";
+  } | null>(null);
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
 
   // Re-seed defaults whenever the request list is (re)loaded. Merging with the
   // current maps preserves any in-flight edits for requests that are still
@@ -151,7 +178,10 @@ export function FamilyGroupRequestReviewSection({
     }
   }
 
-  async function handleRequest(request: FamilyGroupRequest, action: "approve" | "reject") {
+  // Validate the action, then either open the member-email choice dialog (for
+  // emailing decisions) or submit straight away (#1789). Non-emailing decisions
+  // never carry a notifyMember flag.
+  function handleRequest(request: FamilyGroupRequest, action: "approve" | "reject") {
     clearRequestError(request.id);
 
     const linkedMemberId = requestSelections[request.id];
@@ -165,6 +195,33 @@ export function FamilyGroupRequestReviewSection({
       }));
       return;
     }
+
+    if (requestActionEmailsMember(request.type)) {
+      setNotifyChoice({ request, action });
+      setNotifyDialogOpen(true);
+      return;
+    }
+
+    void submitRequest(request, action);
+  }
+
+  // #1789: dispatch the pending notify choice. Close the dialog without clearing
+  // the choice so the content keeps its wording while it fades out.
+  function confirmNotify(notifyMember: boolean) {
+    const choice = notifyChoice;
+    setNotifyDialogOpen(false);
+    if (!choice) return;
+    void submitRequest(choice.request, choice.action, notifyMember);
+  }
+
+  async function submitRequest(
+    request: FamilyGroupRequest,
+    action: "approve" | "reject",
+    notifyMember?: boolean
+  ) {
+    const linkedMemberId = requestSelections[request.id];
+    const needsMemberSelection =
+      request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
 
     setRequestSubmittingId(request.id);
 
@@ -188,6 +245,9 @@ export function FamilyGroupRequestReviewSection({
           ...(action === "reject" && requestNotes[request.id]?.trim()
             ? { rejectionReason: requestNotes[request.id].trim() }
             : {}),
+          // Only carry the flag when a choice was made (emailing decisions); an
+          // omitted flag threads as undefined and the server defaults to notify.
+          ...(notifyMember !== undefined ? { notifyMember } : {}),
         }),
       });
 
@@ -220,6 +280,27 @@ export function FamilyGroupRequestReviewSection({
         delete next[request.id];
         return next;
       });
+
+      // #1789: reflect the email choice after an emailing decision. On a
+      // GROUP_CREATE approval the requester notice is the only email the choice
+      // suppresses — the token-bearing partner invitation is never gated by it
+      // (it is sent when the partner is still eligible, skipped otherwise). Word
+      // the note so it states the invariant (unaffected by this choice) rather
+      // than asserting an invite definitely went out, since the client does not
+      // know whether approval-time eligibility skipped it.
+      if (notifyMember === false) {
+        const partnerNote =
+          request.type === "GROUP_CREATE" && action === "approve" && request.invitedMemberId
+            ? " Any partner invitation is unaffected by this choice."
+            : "";
+        toast.success(
+          `Request ${action === "approve" ? "approved" : "rejected"} — the member was not emailed.${partnerNote}`
+        );
+      } else if (notifyMember === true) {
+        toast.success(
+          `Request ${action === "approve" ? "approved" : "rejected"} and the member was emailed.`
+        );
+      }
 
       await onReviewed();
     } finally {
@@ -278,6 +359,55 @@ export function FamilyGroupRequestReviewSection({
           onReject={() => handleRequest(request, "reject")}
         />
       ))}
+
+      {/* #1789: per-decision member-email choice, mirroring the #1705/#1769a
+          pattern. Shown only when the decision would email the requester
+          (CHILD_REQUEST / GROUP_CREATE). Both choices complete the decision; the
+          choice itself is recorded in the audit log. On a GROUP_CREATE approval
+          the token-bearing partner invitation is always sent regardless. */}
+      <Dialog
+        open={notifyDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && requestSubmittingId === null) setNotifyDialogOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {notifyChoice?.action === "reject"
+                ? "Email the member about this rejection?"
+                : "Email the member about this approval?"}
+            </DialogTitle>
+            <DialogDescription>
+              {notifyChoice?.request.type === "GROUP_CREATE" &&
+              notifyChoice?.action === "approve"
+                ? "The family group is created either way. Choose whether the requester receives the standard approval email. Any pending partner invitation is always sent so the invited partner can join — your choice is recorded in the audit log."
+                : notifyChoice?.action === "reject"
+                  ? "The request is rejected either way. Choose whether the member receives the standard rejection email — your choice is recorded in the audit log."
+                  : "The request is approved either way. Choose whether the member receives the standard approval email — your choice is recorded in the audit log."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              disabled={requestSubmittingId !== null}
+              onClick={() => confirmNotify(false)}
+            >
+              {notifyChoice?.action === "reject"
+                ? "Reject without emailing"
+                : "Approve without emailing"}
+            </Button>
+            <Button
+              disabled={requestSubmittingId !== null}
+              onClick={() => confirmNotify(true)}
+            >
+              {notifyChoice?.action === "reject"
+                ? "Reject and email member"
+                : "Approve and email member"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

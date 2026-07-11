@@ -1053,6 +1053,68 @@ describe("declineBookingRequest", () => {
     });
     expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
   });
+
+  // #1791: admin per-decline requester-email choice — absent = notify (default),
+  // false = suppress (recorded in the audit), true = notify (no audit field).
+  describe("notify choice (#1791)", () => {
+    function primeDecline() {
+      mockedFindUnique
+        .mockResolvedValueOnce(baseRequest({ status: BookingRequestStatus.PRICED }) as never)
+        .mockResolvedValueOnce(baseRequest({ status: BookingRequestStatus.DECLINED }) as never);
+      mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    }
+
+    function declinedAuditCall() {
+      return mockedLogAudit.mock.calls.find(
+        ([arg]) => arg.action === "booking_request.declined"
+      );
+    }
+
+    it("emails the requester and records no notify field when the choice is omitted (default)", async () => {
+      primeDecline();
+
+      await declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" });
+
+      expect(mockedSendDeclined).toHaveBeenCalledTimes(1);
+      const auditCall = declinedAuditCall();
+      expect(auditCall).toBeDefined();
+      expect(auditCall![0].metadata).not.toHaveProperty("notifyMember");
+    });
+
+    it("suppresses the requester email when notifyMember is false, still declines, and audits the choice", async () => {
+      primeDecline();
+
+      const updated = await declineBookingRequest({
+        requestId: "req-1",
+        adminMemberId: "admin-1",
+        notifyMember: false,
+      });
+
+      expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
+      expect(mockedSendDeclined).not.toHaveBeenCalled();
+      expect(mockedLogAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "booking_request.declined",
+          metadata: expect.objectContaining({ notifyMember: false }),
+        })
+      );
+    });
+
+    it("emails the requester and records no notify field when notifyMember is true", async () => {
+      primeDecline();
+
+      await declineBookingRequest({
+        requestId: "req-1",
+        adminMemberId: "admin-1",
+        notifyMember: true,
+      });
+
+      expect(mockedSendDeclined).toHaveBeenCalledTimes(1);
+      const auditCall = declinedAuditCall();
+      expect(auditCall).toBeDefined();
+      expect(auditCall![0].metadata).not.toHaveProperty("notifyMember");
+    });
+  });
 });
 
 describe("approveBookingRequest", () => {

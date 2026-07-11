@@ -72,6 +72,12 @@ export const reviewFamilyGroupRequestSchema = z.object({
   inheritEmailFromId: z.string().optional().nullable().or(z.literal("")),
   createNewMember: z.boolean().optional(),
   rejectionReason: z.string().max(500).optional(),
+  // #1789: admin per-decision member-email choice. Absent/undefined = notify
+  // (default), false = suppress the requester's decision email. Only gates the
+  // requester-facing CHILD_REQUEST and GROUP_CREATE decision emails; the
+  // token-bearing partner invite on GROUP_CREATE approval is always sent (the
+  // invited partner cannot join without it).
+  notifyMember: z.boolean().optional(),
 });
 
 export type ReviewFamilyGroupRequestInput = z.infer<
@@ -411,6 +417,7 @@ export async function reviewAdminFamilyGroupRequest(params: {
       adminMemberId,
       action,
       rejectionReason,
+      notifyMember: data.notifyMember,
       request: {
         id: request.id,
         familyGroupId: request.familyGroupId,
@@ -821,6 +828,17 @@ export async function reviewAdminFamilyGroupRequest(params: {
             ? "FAMILY_GROUP_REMOVAL_REQUEST_APPROVED"
             : "FAMILY_GROUP_JOIN_APPROVED";
 
+    // #1789 honesty rule: only record the notify choice when a requester email
+    // was actually suppressed. Only the CHILD_REQUEST approval sends a
+    // requester email from this path, so the field is recorded only when that
+    // send would otherwise have fired.
+    const childApproveNotifyAuditFields =
+      request.type === "CHILD_REQUEST" &&
+      request.requester &&
+      data.notifyMember === false
+        ? { notifyMember: false }
+        : {};
+
     logAudit({
       action: auditAction,
       memberId: adminMemberId,
@@ -839,6 +857,7 @@ export async function reviewAdminFamilyGroupRequest(params: {
           request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST"
             ? affectedMemberId
             : undefined,
+        ...childApproveNotifyAuditFields,
       }),
       metadata: {
         familyGroupId: request.familyGroupId,
@@ -847,6 +866,7 @@ export async function reviewAdminFamilyGroupRequest(params: {
           request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST"
             ? affectedMemberId
             : null,
+        ...childApproveNotifyAuditFields,
       },
     });
 
@@ -861,7 +881,13 @@ export async function reviewAdminFamilyGroupRequest(params: {
       "Family group request approved"
     );
 
-    if (request.type === "CHILD_REQUEST" && request.requester) {
+    // #1789: the requester's decision email is suppressed when the admin chose
+    // not to notify (default = notify).
+    if (
+      request.type === "CHILD_REQUEST" &&
+      request.requester &&
+      data.notifyMember !== false
+    ) {
       const childName = getRequestName(request);
       sendChildRequestApprovedEmail(
         request.requester.email,
@@ -891,6 +917,16 @@ export async function reviewAdminFamilyGroupRequest(params: {
             ? "FAMILY_GROUP_REMOVAL_REQUEST_REJECTED"
             : "FAMILY_GROUP_JOIN_REJECTED";
 
+    // #1789 honesty rule: only the CHILD_REQUEST rejection sends a requester
+    // email from this path, so record the suppression only when that send would
+    // otherwise have fired.
+    const childRejectNotifyAuditFields =
+      request.type === "CHILD_REQUEST" &&
+      request.requester &&
+      data.notifyMember === false
+        ? { notifyMember: false }
+        : {};
+
     logAudit({
       action: auditAction,
       memberId: adminMemberId,
@@ -906,11 +942,13 @@ export async function reviewAdminFamilyGroupRequest(params: {
         requestId,
         requestType: request.type,
         rejectionReason: rejectionReason || undefined,
+        ...childRejectNotifyAuditFields,
       }),
       metadata: {
         familyGroupId: request.familyGroupId,
         requestType: request.type,
         rejectionReason: rejectionReason || null,
+        ...childRejectNotifyAuditFields,
       },
     });
 
@@ -919,7 +957,13 @@ export async function reviewAdminFamilyGroupRequest(params: {
       "Family group request rejected"
     );
 
-    if (request.type === "CHILD_REQUEST" && request.requester) {
+    // #1789: the requester's rejection email is suppressed when the admin chose
+    // not to notify (default = notify).
+    if (
+      request.type === "CHILD_REQUEST" &&
+      request.requester &&
+      data.notifyMember !== false
+    ) {
       const childName = getRequestName(request);
       sendChildRequestRejectedEmail(
         request.requester.email,
@@ -947,6 +991,10 @@ async function reviewGroupCreateRequest(params: {
   adminMemberId: string;
   action: "approve" | "reject";
   rejectionReason?: string;
+  // #1789: admin per-decision email choice. Absent/undefined = notify
+  // (default), false = suppress the requester's decision email. The
+  // token-bearing partner invite sent on approval is never gated by this.
+  notifyMember?: boolean;
   request: {
     id: string;
     familyGroupId: string;
@@ -969,6 +1017,11 @@ async function reviewGroupCreateRequest(params: {
   const groupName = request.familyGroup?.name ?? "Unnamed Group";
   const requesterName =
     `${request.requester.firstName} ${request.requester.lastName}`.trim();
+  // #1789 honesty rule: the requester's approval/rejection email always sends
+  // on this path unless the admin opted out, so record the notify choice only
+  // when it was suppressed. The partner invite send is unaffected.
+  const notifyAuditFields =
+    params.notifyMember === false ? { notifyMember: false } : {};
 
   if (action === "approve") {
     if (
@@ -1121,6 +1174,7 @@ async function reviewGroupCreateRequest(params: {
         partnerInviteSkipped: Boolean(request.invitedMemberId && !invitationId),
         partnerInviteSkippedReason,
         invitationId,
+        ...notifyAuditFields,
       }),
       metadata: {
         familyGroupId: request.familyGroupId,
@@ -1129,6 +1183,7 @@ async function reviewGroupCreateRequest(params: {
         partnerInviteSkipped: Boolean(request.invitedMemberId && !invitationId),
         partnerInviteSkippedReason,
         invitationId,
+        ...notifyAuditFields,
       },
     });
 
@@ -1168,13 +1223,18 @@ async function reviewGroupCreateRequest(params: {
       });
     }
 
-    sendGroupCreateApprovedEmail(
-      request.requester.email,
-      request.requester.firstName,
-      groupName
-    ).catch((err) => {
-      logger.error({ err, requestId }, "Failed to send group create approved email");
-    });
+    // #1789: the requester's approval email is suppressed when the admin chose
+    // not to notify (default = notify). The partner invite above is always sent
+    // regardless — the invited partner cannot join without its token.
+    if (params.notifyMember !== false) {
+      sendGroupCreateApprovedEmail(
+        request.requester.email,
+        request.requester.firstName,
+        groupName
+      ).catch((err) => {
+        logger.error({ err, requestId }, "Failed to send group create approved email");
+      });
+    }
 
     logger.info(
       {
@@ -1285,6 +1345,7 @@ async function reviewGroupCreateRequest(params: {
       rejectionReason: rejectionReason || undefined,
       cascadeRejectedChildRequestIds,
       revokedPartnerInviteTokenIds: revokedPartnerInviteTokens.map((t) => t.id),
+      ...notifyAuditFields,
     }),
     metadata: {
       familyGroupId: request.familyGroupId,
@@ -1292,17 +1353,22 @@ async function reviewGroupCreateRequest(params: {
       rejectionReason: rejectionReason || null,
       cascadeRejectedChildRequestIds,
       revokedPartnerInviteTokenIds: revokedPartnerInviteTokens.map((t) => t.id),
+      ...notifyAuditFields,
     },
   });
 
-  sendGroupCreateRejectedEmail(
-    request.requester.email,
-    request.requester.firstName,
-    groupName,
-    rejectionReason || undefined
-  ).catch((err) => {
-    logger.error({ err, requestId }, "Failed to send group create rejected email");
-  });
+  // #1789: the requester's rejection email is suppressed when the admin chose
+  // not to notify (default = notify).
+  if (params.notifyMember !== false) {
+    sendGroupCreateRejectedEmail(
+      request.requester.email,
+      request.requester.firstName,
+      groupName,
+      rejectionReason || undefined
+    ).catch((err) => {
+      logger.error({ err, requestId }, "Failed to send group create rejected email");
+    });
+  }
 
   logger.info(
     {

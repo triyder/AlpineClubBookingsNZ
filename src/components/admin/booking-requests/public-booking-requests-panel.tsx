@@ -8,6 +8,14 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   AdminViewOnlyNotice,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
@@ -329,6 +337,12 @@ export function PublicBookingRequestsPanel({
   const [ownerChoices, setOwnerChoices] = useState<Record<string, OwnerContactChoice>>({});
   // Request id whose "Release hold" action is awaiting inline confirmation.
   const [releaseConfirmId, setReleaseConfirmId] = useState<string | null>(null);
+  // #1791: the request awaiting the admin's decline notify-or-not choice, and
+  // whether the choice dialog is open. Declining always emails the requester
+  // (contactEmail is always present), so the dialog is shown on every decline.
+  const [declineChoice, setDeclineChoice] =
+    useState<PublicBookingRequestData | null>(null);
+  const [declineDialogOpen, setDeclineDialogOpen] = useState(false);
   const [error, setError] = useState("");
 
   function ownerChoiceFor(requestId: string): OwnerContactChoice {
@@ -836,7 +850,26 @@ export function PublicBookingRequestsPanel({
     }
   }
 
-  async function handleDecline(request: PublicBookingRequestData) {
+  // #1791: open the notify-choice dialog for a decline. Declining always emails
+  // the requester unless the admin opts out, so this is shown on every decline.
+  function openDeclineChoice(request: PublicBookingRequestData) {
+    setDeclineChoice(request);
+    setDeclineDialogOpen(true);
+  }
+
+  // #1791: dispatch the pending decline with the admin's notify choice. Close
+  // the dialog first so it does not linger while the request runs.
+  function confirmDecline(notifyRequester: boolean) {
+    const request = declineChoice;
+    setDeclineDialogOpen(false);
+    if (!request) return;
+    void performDecline(request, notifyRequester);
+  }
+
+  async function performDecline(
+    request: PublicBookingRequestData,
+    notifyRequester: boolean,
+  ) {
     setActioningId(request.id);
     setError("");
     try {
@@ -844,13 +877,20 @@ export function PublicBookingRequestsPanel({
       const response = await fetch(`/api/admin/booking-requests/${request.id}/decline`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason: reason || undefined }),
+        body: JSON.stringify({
+          reason: reason || undefined,
+          // #1791: absent = notify (default); false = suppress the decline email.
+          notifyMember: notifyRequester,
+        }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.error || "Failed to decline request");
       }
-      toast.success("Request declined");
+      toast.success(
+        "Request declined" +
+          (notifyRequester ? "" : " The requester was not emailed."),
+      );
       await fetchRequests();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to decline request");
@@ -1423,7 +1463,7 @@ export function PublicBookingRequestsPanel({
                         <Button
                           size="sm"
                           variant="destructive"
-                          onClick={() => handleDecline(request)}
+                          onClick={() => openDeclineChoice(request)}
                           disabled={isActioning}
                         >
                           Decline
@@ -1527,6 +1567,44 @@ export function PublicBookingRequestsPanel({
           })}
         </div>
       )}
+
+      {/* #1791: per-decline requester-email choice, mirroring the #1705/#1769a
+          pattern. Declining always emails the requester (contactEmail is always
+          present), so the dialog is shown on every decline. Both choices decline
+          the request; the choice itself is recorded in the audit log. */}
+      <Dialog
+        open={declineDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) setDeclineDialogOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Email the requester about this decline?</DialogTitle>
+            <DialogDescription>
+              The request is declined either way. Choose whether the requester
+              receives the standard decline email — your choice is recorded in
+              the audit log.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              disabled={actioningId !== null}
+              onClick={() => confirmDecline(false)}
+            >
+              Decline without emailing
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={actioningId !== null}
+              onClick={() => confirmDecline(true)}
+            >
+              Decline and email requester
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

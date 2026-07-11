@@ -87,6 +87,11 @@ type LifecycleReviewInput = {
   action: "approve" | "reject";
   reviewNote?: string | null;
   ipAddress?: string | null;
+  // #1788: admin per-review email choice. Absent/undefined = notify (default);
+  // false = suppress the member-facing email. Only honoured by the ARCHIVE
+  // review (which emails the target member); the DELETE review's admin-facing
+  // emails always send regardless of this flag.
+  notifyMember?: boolean;
 };
 
 export type SerializedMemberLifecycleActionRequest = {
@@ -1150,6 +1155,7 @@ export async function reviewMemberArchiveRequest({
   action,
   reviewNote,
   ipAddress,
+  notifyMember,
 }: LifecycleReviewInput) {
   const note = cleanText(reviewNote);
   const request = await loadArchiveRequestById(requestId);
@@ -1177,6 +1183,16 @@ export async function reviewMemberArchiveRequest({
       email: true,
     },
   });
+
+  // #1788 honesty rule — the target member is only emailed when they exist and
+  // have an address on file (archive never mutates email, so this pre-transaction
+  // value is valid for both the reject and approve post-commit sends). Record the
+  // suppression in the audit ONLY on a path that truly would have sent; a member
+  // with no email sends nothing either way, so no notify field is written. The
+  // per-send gate is written inline (`targetMember?.email && notifyMember !==
+  // false`) so the send callbacks narrow `targetMember` to non-null.
+  const notifyAuditFields =
+    targetMember?.email && notifyMember === false ? { notifyMember: false } : {};
 
   if (action === "reject") {
     const rejected = await prisma.$transaction(async (tx) => {
@@ -1208,6 +1224,7 @@ export async function reviewMemberArchiveRequest({
           metadata: {
             action: MemberLifecycleAction.ARCHIVE,
             requestReason: request.reason,
+            ...notifyAuditFields,
           },
           ipAddress,
         },
@@ -1217,7 +1234,9 @@ export async function reviewMemberArchiveRequest({
       return reviewed;
     });
 
-    if (targetMember) {
+    // #1788: notify the target member unless the admin opted out (default is
+    // notify; the suppression is audited above).
+    if (targetMember?.email && notifyMember !== false) {
       await sendLifecycleEmailSafely(
         "Failed to send member archive rejection email",
         { requestId: request.id, memberId: request.memberId },
@@ -1324,6 +1343,7 @@ export async function reviewMemberArchiveRequest({
           action: MemberLifecycleAction.ARCHIVE,
           requestReason: request.reason,
           ...linkCleanupCounts,
+          ...notifyAuditFields,
         },
         ipAddress,
       },
@@ -1333,7 +1353,9 @@ export async function reviewMemberArchiveRequest({
     return reviewed;
   });
 
-  if (targetMember) {
+  // #1788: notify the target member unless the admin opted out (default is
+  // notify; the suppression is audited above).
+  if (targetMember?.email && notifyMember !== false) {
     await sendLifecycleEmailSafely(
       "Failed to send member archive approval email",
       { requestId: request.id, memberId: request.memberId },

@@ -968,8 +968,15 @@ This setup link expires in 7 days.
 
 Triggers and frequency:
 
-- Admin approves a membership application.
-- One email per approved applicant.
+- Admin approves a membership application, unless the admin chose not to notify
+  (#1786).
+- One email per approved applicant. The approval notice carries the
+  account-setup (password) link, so suppressing it also withholds that link (the
+  setup token is still created; the member recovers it via an admin resend or
+  forgot-password). A suppressed send is recorded in the approval audit's
+  `details` as `notifyMember: false`.
+- The induction sign-off request emails fired on approval are token-bearing
+  signer requests and always send regardless of the notify choice.
 
 ### membership-application-rejected
 
@@ -997,8 +1004,10 @@ If you would like more information, please contact the club directly.
 
 Triggers and frequency:
 
-- Admin rejects a membership application.
-- One email per rejected application.
+- Admin rejects a membership application, unless the admin chose not to notify
+  (#1786).
+- One email per rejected application; a suppressed notice is recorded in the
+  rejection audit's `details` as `notifyMember: false`.
 
 ### family-group-invitation
 
@@ -1106,7 +1115,8 @@ You can now include them when making bookings.
 
 Triggers and frequency:
 
-- Admin approves a `CHILD_REQUEST` family-group request.
+- Admin approves a `CHILD_REQUEST` family-group request, unless the admin chose
+  not to notify (suppression audited `notifyMember: false`, #1789).
 - Sent to the requester once per approval.
 
 ### child-request-rejected
@@ -1135,7 +1145,8 @@ If you have questions, please contact the club.
 
 Triggers and frequency:
 
-- Admin rejects a `CHILD_REQUEST` family-group request.
+- Admin rejects a `CHILD_REQUEST` family-group request, unless the admin chose
+  not to notify (suppression audited `notifyMember: false`, #1789).
 - Sent to the requester once per rejection.
 
 ### admin-family-group-request
@@ -1250,9 +1261,13 @@ Any partner invitation has been sent for them to accept from their profile, and 
 
 Triggers and frequency:
 
-- Admin approves a group creation request (`GROUP_CREATE`).
+- Admin approves a group creation request (`GROUP_CREATE`), unless the admin
+  chose not to notify the requester (suppression audited `notifyMember: false`,
+  #1789).
 - Sent to the requester once per approval. When the request named a partner,
-  the auto-filed invite reuses the `family-group-invitation` template.
+  the auto-filed invite reuses the `family-group-invitation` template and is
+  sent regardless of the notify choice — the invited partner cannot join
+  without its token (#1789).
 
 ### family-group-create-rejected
 
@@ -1280,9 +1295,10 @@ If you have questions, please contact the club.
 
 Triggers and frequency:
 
-- Admin rejects a group creation request (`GROUP_CREATE`); bundled pending
-  infant/child/youth requests are cascade-rejected in the same review without
-  separate child-rejection emails.
+- Admin rejects a group creation request (`GROUP_CREATE`), unless the admin
+  chose not to notify (suppression audited `notifyMember: false`, #1789);
+  bundled pending infant/child/youth requests are cascade-rejected in the same
+  review without separate child-rejection emails.
 - Sent to the requester once per rejection.
 
 ### partner-invite
@@ -1535,7 +1551,9 @@ Admin note: {{adminNote}} [only when adminNote exists]
 
 Triggers and frequency:
 
-- Admin approves and locally processes a membership cancellation participant.
+- Admin approves and locally processes a membership cancellation participant,
+  unless the reviewing admin chose not to notify (suppression audited
+  `notifyMember: false`, #1787).
 - Sent once per approved participant. Email failure is logged but does not block local cancellation processing.
 - No Xero credit note, contact group, or archive action is performed by this email path.
 
@@ -1567,7 +1585,8 @@ This membership remains active.
 
 Triggers and frequency:
 
-- Admin rejects a membership cancellation participant.
+- Admin rejects a membership cancellation participant, unless the reviewing
+  admin chose not to notify (suppression audited `notifyMember: false`, #1787).
 - Sent once per rejected participant.
 
 ### admin-membership-cancellation-request
@@ -1691,6 +1710,9 @@ Triggers and frequency:
 
 - Admin approves an account deletion request.
 - Sent before anonymisation, once per approval attempt. Email failure is logged but does not block deletion.
+- Deliberately always-send with no admin notify choice: the member requested
+  deletion, cannot log in afterward to check, and this is the final privacy
+  receipt (owner-ratified always-send, #1788).
 
 ### account-deletion-rejected
 
@@ -1718,8 +1740,9 @@ If you have questions about this decision, please contact the club directly.
 
 Triggers and frequency:
 
-- Admin rejects an account deletion request.
-- Sent once per rejection.
+- Admin rejects an account deletion request, unless the admin chose not to
+  notify (suppression audited `notifyMember: false`, #1788).
+- Sent once per rejection when notifying.
 
 ### admin-account-deletion-requested
 
@@ -1813,7 +1836,9 @@ Archive preserves booking, payment, Xero, and audit history while removing the r
 
 Triggers and frequency:
 
-- Second admin approves an archive lifecycle request.
+- Second admin approves an archive lifecycle request, unless the approving admin
+  chose not to notify (suppression audited `notifyMember: false`, #1788); a
+  member with no email on file is never emailed and records no notify field.
 - Sent once to the archived member. Email failure is logged but does not block archival.
 
 ### member-archive-rejected
@@ -1843,7 +1868,9 @@ Review note: {{reviewNote}} [only when reviewNote exists]
 
 Triggers and frequency:
 
-- Second admin rejects an archive lifecycle request.
+- Second admin rejects an archive lifecycle request, unless the reviewing admin
+  chose not to notify (suppression audited `notifyMember: false`, #1788); a
+  member with no email on file is never emailed and records no notify field.
 - Sent once to the member whose archive was rejected. Email failure is logged but does not block rejection.
 
 ### admin-member-delete-requested
@@ -2488,7 +2515,10 @@ If you have questions, contact the club at {{SUPPORT_EMAIL}}.
 
 Triggers and frequency:
 
-- Admin approves or rejects a pending refund appeal.
+- Admin approves or rejects a pending refund appeal, unless the admin chose not
+  to notify (suppression audited `notifyMember: false`, #1792). The refund
+  execution, ledger/aggregate math, and Stripe/Xero effects are identical either
+  way — only the outcome notice is suppressed.
 - One email to the member per appeal review.
 
 ### admin-issue-report
@@ -2738,7 +2768,7 @@ If you have any questions, please contact the club at {{SUPPORT_EMAIL}}.
 
 Triggers and frequency:
 
-- `POST /api/admin/booking-requests/[id]/decline`: when a booking officer declines a verified or priced request. Per booking request decline.
+- `POST /api/admin/booking-requests/[id]/decline`: when a booking officer declines a verified or priced request, unless the admin chose not to notify the requester (suppression audited `notifyMember: false`, #1791). Per booking request decline. The booking-request approved and quote emails carry the payment/quote link and always send regardless of the notify choice.
 
 ### admin-booking-request-pending
 
@@ -2858,7 +2888,7 @@ Complete Payment: {{BASE_URL}}/bookings/{{bookingId}}
 
 Triggers and frequency:
 
-- `POST /api/admin/bookings/[id]/review` (approve): when an admin approves a booking held for review (minors flow), releasing it for payment. One email per approval decision, to the booking owner.
+- `POST /api/admin/bookings/[id]/review` (approve): when an admin approves a booking held for review (minors flow), releasing it for payment — unless the admin chose not to notify (suppression audited `notifyMember: false`, #1790). One email per approval decision, to the booking owner.
 
 #### booking-review-rejected
 
@@ -2887,7 +2917,7 @@ Make a New Booking: {{BASE_URL}}/book
 
 Triggers and frequency:
 
-- `POST /api/admin/bookings/[id]/review` (reject): when an admin declines a booking held for review (minors flow); the booking is cancelled and no payment is taken. One email per rejection decision, to the booking owner.
+- `POST /api/admin/bookings/[id]/review` (reject): when an admin declines a booking held for review (minors flow); the booking is cancelled and no payment is taken. The admin may choose not to notify (suppression audited `notifyMember: false`, #1790), which withholds only this review-declined notice — the separate cancellation email from the shared cancel flow is deliberately always-notify (#1730), so a suppressed reject still emails the member the cancellation. One email per rejection decision, to the booking owner.
 
 #### induction-sign-off-request
 

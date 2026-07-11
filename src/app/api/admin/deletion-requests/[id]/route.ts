@@ -34,6 +34,11 @@ import logger from "@/lib/logger";
 const actionSchema = z.object({
   action: z.enum(["approve", "reject"]),
   note: z.string().max(1000).optional(),
+  // #1788: absent/undefined = notify (default), false = suppress the member
+  // email. Only honoured on the REJECT path; the APPROVE path's final privacy
+  // receipt (sendAccountDeletionApprovedEmail) always sends regardless. A
+  // non-boolean value fails the parse below and returns 400.
+  notifyMember: z.boolean().optional(),
 });
 
 const CANCELLABLE_DELETION_BOOKING_STATUSES = [
@@ -51,7 +56,7 @@ export async function POST(
   const session = guard.session;
   const { id } = await params;
 
-  let body: { action: "approve" | "reject"; note?: string };
+  let body: { action: "approve" | "reject"; note?: string; notifyMember?: boolean };
   try {
     const raw = await request.json();
     body = actionSchema.parse(raw);
@@ -105,21 +110,34 @@ export async function POST(
         },
       });
 
+      // #1788 honesty rule — record the suppression in the audit ONLY on a path
+      // that truly would have sent. The member is emailed unless they have no
+      // address on file (member.email is a required field, so in practice this
+      // is always present) or the admin opted out.
+      const suppressedNotifyAudit =
+        member.email && body.notifyMember === false
+          ? { notifyMember: false }
+          : undefined;
+
       logAudit({
         action: "member.deletion_rejected",
         memberId: session.user.id,
         targetId: member.id,
         details: body.note ? `Note: ${body.note}` : "No note",
         ipAddress: ip,
+        ...(suppressedNotifyAudit ? { metadata: suppressedNotifyAudit } : {}),
       });
 
-      sendAccountDeletionRejectedEmail(
-        member.email,
-        member.firstName,
-        body.note ?? ""
-      ).catch((err) =>
-        logger.error({ err, memberId: member.id }, "Failed to send deletion rejected email")
-      );
+      // #1788: email the member unless the admin opted out (default = notify).
+      if (body.notifyMember !== false) {
+        sendAccountDeletionRejectedEmail(
+          member.email,
+          member.firstName,
+          body.note ?? ""
+        ).catch((err) =>
+          logger.error({ err, memberId: member.id }, "Failed to send deletion rejected email")
+        );
+      }
 
       return NextResponse.json({ message: "Deletion request rejected." });
     }

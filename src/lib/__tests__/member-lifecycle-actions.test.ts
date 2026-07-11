@@ -131,8 +131,16 @@ import {
 } from "@/lib/member-lifecycle-actions";
 import { DELETE as directDeleteMember } from "@/app/api/admin/members/[id]/route";
 import { createAuditLog } from "@/lib/audit";
+import {
+  sendAdminMemberDeleteRejectedEmail,
+  sendMemberArchiveApprovedEmail,
+  sendMemberArchiveRejectedEmail,
+} from "@/lib/email";
 
 const mockCreateAuditLog = vi.mocked(createAuditLog);
+const mockSendArchiveApproved = vi.mocked(sendMemberArchiveApprovedEmail);
+const mockSendArchiveRejected = vi.mocked(sendMemberArchiveRejectedEmail);
+const mockSendAdminDeleteRejected = vi.mocked(sendAdminMemberDeleteRejectedEmail);
 
 const now = new Date("2026-05-24T10:00:00.000Z");
 
@@ -475,6 +483,21 @@ describe("member delete lifecycle actions", () => {
     });
   });
 
+  it("still emails the requesting admin on a delete reject when notifyMember is false (#1788 carve-out)", async () => {
+    // The delete-flow emails go to the requesting admin, not the target member,
+    // so an archive-style suppression must never touch them.
+    const result = await reviewMemberDeleteRequest({
+      requestId: "request-1",
+      reviewedByMemberId: "admin-2",
+      action: "reject",
+      reviewNote: "Not now",
+      notifyMember: false,
+    });
+
+    expect(result.request.status).toBe("REJECTED");
+    expect(mockSendAdminDeleteRejected).toHaveBeenCalledTimes(1);
+  });
+
   it("blocks the legacy direct member DELETE endpoint", async () => {
     const response = await directDeleteMember();
 
@@ -710,6 +733,106 @@ describe("member archive lifecycle actions", () => {
         nulledInheritance: 2,
       }),
     );
+  });
+
+  // #1788: per-review member-email choice on the two target-member sends.
+  function archiveRejectedMetadata() {
+    return mockCreateAuditLog.mock.calls.find(
+      ([entry]) => entry.action === "member_lifecycle.archive_rejected",
+    )?.[0].metadata;
+  }
+
+  function archiveApprovedMetadata() {
+    return mockCreateAuditLog.mock.calls.find(
+      ([entry]) => entry.action === "member_lifecycle.archive_approved",
+    )?.[0].metadata;
+  }
+
+  it("emails the target member and records no notify field on a default reject (#1788)", async () => {
+    const result = await reviewMemberArchiveRequest({
+      requestId: "archive-request-1",
+      reviewedByMemberId: "admin-2",
+      action: "reject",
+      reviewNote: "Keep active",
+    });
+
+    expect(result.request.status).toBe("REJECTED");
+    expect(mockSendArchiveRejected).toHaveBeenCalledTimes(1);
+    expect(archiveRejectedMetadata()).not.toHaveProperty("notifyMember");
+  });
+
+  it("suppresses the reject email and audits the choice when notifyMember is false (#1788)", async () => {
+    const result = await reviewMemberArchiveRequest({
+      requestId: "archive-request-1",
+      reviewedByMemberId: "admin-2",
+      action: "reject",
+      notifyMember: false,
+    });
+
+    // The rejection state change is still applied.
+    expect(result.request.status).toBe("REJECTED");
+    expect(mockSendArchiveRejected).not.toHaveBeenCalled();
+    expect(archiveRejectedMetadata()).toMatchObject({ notifyMember: false });
+  });
+
+  it("emails and records no notify field on a reject with notifyMember true (#1788)", async () => {
+    await reviewMemberArchiveRequest({
+      requestId: "archive-request-1",
+      reviewedByMemberId: "admin-2",
+      action: "reject",
+      notifyMember: true,
+    });
+
+    expect(mockSendArchiveRejected).toHaveBeenCalledTimes(1);
+    expect(archiveRejectedMetadata()).not.toHaveProperty("notifyMember");
+  });
+
+  it("emails the target member and records no notify field on a default approve (#1788)", async () => {
+    await reviewMemberArchiveRequest({
+      requestId: "archive-request-1",
+      reviewedByMemberId: "admin-2",
+      action: "approve",
+    });
+
+    expect(mockSendArchiveApproved).toHaveBeenCalledTimes(1);
+    expect(archiveApprovedMetadata()).not.toHaveProperty("notifyMember");
+  });
+
+  it("suppresses the approve email, still archives, and audits the choice when notifyMember is false (#1788)", async () => {
+    const result = await reviewMemberArchiveRequest({
+      requestId: "archive-request-1",
+      reviewedByMemberId: "admin-2",
+      action: "approve",
+      notifyMember: false,
+    });
+
+    expect(result.request.status).toBe("APPROVED");
+    // The archive claim (state change) still runs regardless of the choice.
+    expect(mockPrisma.member.updateMany).toHaveBeenCalledWith({
+      where: { id: "member-1", archivedAt: null },
+      data: expect.objectContaining({
+        archivedAt: expect.any(Date),
+        active: false,
+        canLogin: false,
+      }),
+    });
+    expect(mockSendArchiveApproved).not.toHaveBeenCalled();
+    expect(archiveApprovedMetadata()).toMatchObject({ notifyMember: false });
+  });
+
+  it("records no notify field and sends nothing for a member with no email even when notifyMember is false (#1788 honesty rule)", async () => {
+    mockPrisma.member.findUnique.mockResolvedValue(archiveTarget({ email: "" }));
+
+    const result = await reviewMemberArchiveRequest({
+      requestId: "archive-request-1",
+      reviewedByMemberId: "admin-2",
+      action: "reject",
+      notifyMember: false,
+    });
+
+    expect(result.request.status).toBe("REJECTED");
+    expect(mockSendArchiveRejected).not.toHaveBeenCalled();
+    expect(archiveRejectedMetadata()).not.toHaveProperty("notifyMember");
   });
 });
 

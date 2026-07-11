@@ -362,7 +362,16 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
     // The single matching member is auto-seeded as the selection.
     expect(screen.getByTestId("selection-req-child").textContent).toBe("child-1");
 
+    // #1789: a CHILD_REQUEST decision emails the requester, so approve opens the
+    // notify-choice dialog first and does not PUT until a choice is made.
     fireEvent.click(screen.getByTestId("approve-req-child"));
+    expect(fetchMock).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByText("Email the member about this approval?")).toBeTruthy()
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve and email member" })
+    );
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0][0]).toBe("/api/admin/family-groups/requests");
@@ -372,6 +381,36 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       action: "approve",
       linkedMemberId: "child-1",
       inheritEmailFromId: "parent-1",
+      notifyMember: true,
+    });
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+  });
+
+  it("suppresses the requester email on 'Approve without emailing' (#1789)", async () => {
+    const onReviewed = vi.fn();
+    const fetchMock = stubFetch({ ok: true, body: { success: true } });
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[buildChildRequest({ matchingMembers: [buildMatch()] })]}
+        onReviewed={onReviewed}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("approve-req-child"));
+    await waitFor(() =>
+      expect(screen.getByText("Email the member about this approval?")).toBeTruthy()
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve without emailing" })
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchBody(fetchMock)).toEqual({
+      requestId: "req-child",
+      action: "approve",
+      linkedMemberId: "child-1",
+      inheritEmailFromId: "parent-1",
+      notifyMember: false,
     });
     await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
   });
@@ -389,6 +428,12 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       target: { value: "grandparent-1" },
     });
     fireEvent.click(screen.getByTestId("approve-req-child"));
+    await waitFor(() =>
+      expect(screen.getByText("Email the member about this approval?")).toBeTruthy()
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve and email member" })
+    );
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchBody(fetchMock).inheritEmailFromId).toBe("grandparent-1");
@@ -407,6 +452,12 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       target: { value: "__create__" },
     });
     fireEvent.click(screen.getByTestId("approve-req-child"));
+    await waitFor(() =>
+      expect(screen.getByText("Email the member about this approval?")).toBeTruthy()
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve and email member" })
+    );
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const body = fetchBody(fetchMock);
@@ -414,6 +465,7 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       requestId: "req-child",
       action: "approve",
       createNewMember: true,
+      notifyMember: true,
     });
     expect(body).not.toHaveProperty("linkedMemberId");
     expect(body).not.toHaveProperty("inheritEmailFromId");
@@ -433,6 +485,12 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       target: { value: "  Not eligible  " },
     });
     fireEvent.click(screen.getByTestId("reject-req-child"));
+    await waitFor(() =>
+      expect(screen.getByText("Email the member about this rejection?")).toBeTruthy()
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reject and email member" })
+    );
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("PUT");
@@ -440,6 +498,7 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       requestId: "req-child",
       action: "reject",
       rejectionReason: "Not eligible",
+      notifyMember: true,
     });
     await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
   });
@@ -454,10 +513,20 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
     );
 
     fireEvent.click(screen.getByTestId("reject-req-child"));
+    await waitFor(() =>
+      expect(screen.getByText("Email the member about this rejection?")).toBeTruthy()
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reject and email member" })
+    );
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const body = fetchBody(fetchMock);
-    expect(body).toEqual({ requestId: "req-child", action: "reject" });
+    expect(body).toEqual({
+      requestId: "req-child",
+      action: "reject",
+      notifyMember: true,
+    });
     expect(body).not.toHaveProperty("rejectionReason");
   });
 
@@ -472,6 +541,12 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
     );
 
     fireEvent.click(screen.getByTestId("approve-req-child"));
+    await waitFor(() =>
+      expect(screen.getByText("Email the member about this approval?")).toBeTruthy()
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve and email member" })
+    );
 
     await waitFor(() =>
       expect(screen.getByTestId("error-req-child").textContent).toBe("Conflict")
@@ -490,6 +565,12 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
     );
 
     fireEvent.click(screen.getByTestId("approve-req-child"));
+    await waitFor(() =>
+      expect(screen.getByText("Email the member about this approval?")).toBeTruthy()
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve and email member" })
+    );
 
     await waitFor(() =>
       expect(screen.getByTestId("error-req-child").textContent).toBe(
@@ -497,5 +578,75 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       )
     );
     expect(onReviewed).not.toHaveBeenCalled();
+  });
+});
+
+describe("FamilyGroupRequestReviewSection - notify choice dialog (#1789)", () => {
+  function buildGroupCreateRequest(
+    overrides: Partial<FamilyGroupRequest> = {}
+  ): FamilyGroupRequest {
+    return {
+      id: "req-gc",
+      type: "GROUP_CREATE",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      requester: { ...REQUESTER },
+      familyGroup: { id: "group-new", name: "Parent Family", members: [] },
+      matchingMembers: [],
+      ...overrides,
+    };
+  }
+
+  it("shows partner-invite-truthful copy on a GROUP_CREATE approval and threads notifyMember: false", async () => {
+    const fetchMock = stubFetch({ ok: true, body: { success: true } });
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[buildGroupCreateRequest({ invitedMemberId: "partner-1" })]}
+        onReviewed={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("approve-req-gc"));
+    // No PUT until the admin answers the dialog.
+    expect(fetchMock).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByText("Email the member about this approval?")).toBeTruthy()
+    );
+    // The copy stays truthful: the requester notice can be suppressed, but the
+    // partner invitation is always sent.
+    expect(
+      screen.getByText(/partner invitation is always sent/i)
+    ).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve without emailing" })
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchBody(fetchMock)).toEqual({
+      requestId: "req-gc",
+      action: "approve",
+      notifyMember: false,
+    });
+  });
+
+  it("submits a non-emailing decision directly, with no dialog and no notifyMember flag", async () => {
+    const fetchMock = stubFetch({ ok: true, body: { success: true } });
+    render(
+      <FamilyGroupRequestReviewSection
+        requests={[
+          buildChildRequest({ id: "req-join", type: "JOIN_REQUEST" }),
+        ]}
+        onReviewed={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("approve-req-join"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // The notify dialog never appears for a request type that emails no one.
+    expect(screen.queryByText("Email the member about this approval?")).toBeNull();
+    const body = fetchBody(fetchMock);
+    expect(body).toEqual({ requestId: "req-join", action: "approve" });
+    expect(body).not.toHaveProperty("notifyMember");
   });
 });

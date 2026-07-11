@@ -452,6 +452,7 @@ export async function reviewMembershipCancellationParticipant({
   adminMemberId,
   adminNote,
   ipAddress,
+  notifyMember,
 }: {
   requestId: string;
   participantId: string;
@@ -459,6 +460,10 @@ export async function reviewMembershipCancellationParticipant({
   adminMemberId: string;
   adminNote?: string | null;
   ipAddress?: string | null;
+  // #1787: admin per-action email choice. Absent/undefined = notify (default);
+  // false = suppress the member outcome email. Only recorded in the audit when
+  // a notification was actually suppressed.
+  notifyMember?: boolean;
 }) {
   const note = cleanText(adminNote);
   const participant = await loadParticipantForReview(requestId, participantId);
@@ -503,6 +508,13 @@ export async function reviewMembershipCancellationParticipant({
   } else {
     assertParticipantCanBeRejected(participant);
   }
+
+  // #1787: honesty rule — only record the notify choice when an outcome email
+  // was actually suppressed. Both approve and reject unconditionally send an
+  // outcome email below (Member.email is non-nullable, no email-presence
+  // guard), so the sole discriminator is whether the admin opted out.
+  const notifyAuditFields =
+    notifyMember === false ? { notifyMember: false } : {};
 
   const now = new Date();
   await prisma.$transaction(async (tx) => {
@@ -603,6 +615,7 @@ export async function reviewMembershipCancellationParticipant({
           metadata: {
             participantId: participant.id,
             xeroCancellationDeferred: true,
+            ...notifyAuditFields,
           },
           ipAddress,
         },
@@ -635,7 +648,7 @@ export async function reviewMembershipCancellationParticipant({
           outcome: "success",
           summary: "Membership cancellation participant rejected",
           details: note,
-          metadata: { participantId: participant.id },
+          metadata: { participantId: participant.id, ...notifyAuditFields },
           ipAddress,
         },
         tx,
@@ -667,12 +680,16 @@ export async function reviewMembershipCancellationParticipant({
     }
   }
 
-  await sendCancellationOutcomeEmail({
-    action,
-    member: participant.member,
-    requestReason: participant.request.reason,
-    adminNote: note,
-  });
+  // #1787: send the member outcome email unless the admin chose not to notify
+  // (default is notify; the suppression is audited above).
+  if (notifyMember !== false) {
+    await sendCancellationOutcomeEmail({
+      action,
+      member: participant.member,
+      requestReason: participant.request.reason,
+      adminNote: note,
+    });
+  }
 
   const updatedRequest = await getAdminRequestById(participant.requestId);
   if (!updatedRequest) {

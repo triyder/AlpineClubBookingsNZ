@@ -24,6 +24,11 @@ const reviewSchema = z.object({
   decision: z.enum(["APPROVE", "REJECT"]),
   adminNotes: z.string().max(4000).optional().nullable(),
   entranceFeeInvoiceDecision: entranceFeeInvoiceDecisionSchema.optional().nullable(),
+  // #1786: admin per-action email choice. Absent/undefined = notify (default);
+  // false = suppress the applicant-facing approved/rejected notice. A
+  // non-boolean fails this parse and falls out as the route's 422 validation
+  // response. This route is requireAdmin()-gated, so the flag is admin-only.
+  notifyMember: z.boolean().optional(),
 });
 
 export async function PUT(
@@ -59,7 +64,8 @@ export async function PUT(
         id,
         session.user.id,
         parsed.data.adminNotes,
-        parsed.data.entranceFeeInvoiceDecision
+        parsed.data.entranceFeeInvoiceDecision,
+        parsed.data.notifyMember
       );
 
       return NextResponse.json({
@@ -73,7 +79,8 @@ export async function PUT(
     const result = await rejectMemberApplication(
       id,
       session.user.id,
-      parsed.data.adminNotes
+      parsed.data.adminNotes,
+      parsed.data.notifyMember
     );
 
     return NextResponse.json({

@@ -3,6 +3,14 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type ApplicationStatus =
   | "PENDING_NOMINATORS"
@@ -56,6 +64,15 @@ type ApplicationRecord = {
 };
 
 type NominatorSlot = "nominator1" | "nominator2";
+
+// #1786: a pending approve/reject waiting on the admin's notify-or-not choice.
+// The validated entrance-fee decision is captured here so the notify dialog only
+// opens once the approval form is valid, and performReview can reuse it verbatim.
+type ReviewChoice = {
+  applicationId: string;
+  decision: "APPROVE" | "REJECT";
+  entranceFeeInvoiceDecision: unknown;
+};
 
 type MemberSearchResult = {
   id: string;
@@ -124,6 +141,11 @@ export default function MemberApplicationsPage() {
   const [searchingReplacementKey, setSearchingReplacementKey] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  // #1786: which action is waiting on the admin's notify-or-not choice, and
+  // whether the dialog is open. The choice is kept set while the dialog fades
+  // out so its copy never flickers to the other action's wording.
+  const [reviewChoice, setReviewChoice] = useState<ReviewChoice | null>(null);
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
 
   async function loadApplications(nextFilter = filter) {
     setLoading(true);
@@ -179,52 +201,73 @@ export default function MemberApplicationsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
 
-  async function reviewApplication(
+  // #1786: validate the approval form (entrance-fee decision) up front, then
+  // open the notify-choice dialog. The applicant approved/rejected email always
+  // sends (the applicant email is a required field), so the dialog always shows.
+  function openReviewChoice(
     applicationId: string,
     decision: "APPROVE" | "REJECT"
   ) {
+    setError("");
+    setMessage("");
+
+    const entranceFeeDecision = entranceFeeDecisions[applicationId] ?? {
+      action: "CREATE",
+      amount: "",
+      narration: "",
+      reason: "",
+    };
+    let entranceFeeInvoiceDecision: unknown = undefined;
+
+    if (decision === "APPROVE") {
+      if (entranceFeeDecision.action === "SKIP") {
+        const reason = entranceFeeDecision.reason.trim();
+        if (!reason) {
+          setError("Enter a reason for not raising the entrance fee invoice.");
+          return;
+        }
+        entranceFeeInvoiceDecision = { action: "SKIP", reason };
+      } else {
+        const amountText = entranceFeeDecision.amount.trim();
+        let amountCents: number | undefined;
+        if (amountText) {
+          const parsedAmount = Number(amountText);
+          amountCents = Math.round(parsedAmount * 100);
+          if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || amountCents <= 0) {
+            setError("Enter a valid entrance fee amount, or leave it blank to use the configured amount.");
+            return;
+          }
+        }
+        entranceFeeInvoiceDecision = {
+          action: "CREATE",
+          ...(amountCents ? { amountCents } : {}),
+          ...(entranceFeeDecision.narration.trim()
+            ? { narration: entranceFeeDecision.narration.trim() }
+            : {}),
+        };
+      }
+    }
+
+    setReviewChoice({ applicationId, decision, entranceFeeInvoiceDecision });
+    setReviewDialogOpen(true);
+  }
+
+  // #1786: dispatch the pending review with the admin's notify choice. Close the
+  // dialog without clearing the choice so its wording holds through the fade-out.
+  function confirmReview(notifyMember: boolean) {
+    const choice = reviewChoice;
+    setReviewDialogOpen(false);
+    if (!choice) return;
+    void performReview(choice, notifyMember);
+  }
+
+  async function performReview(choice: ReviewChoice, notifyMember: boolean) {
+    const { applicationId, decision, entranceFeeInvoiceDecision } = choice;
     setSubmittingId(applicationId);
     setError("");
     setMessage("");
 
     try {
-      const entranceFeeDecision = entranceFeeDecisions[applicationId] ?? {
-        action: "CREATE",
-        amount: "",
-        narration: "",
-        reason: "",
-      };
-      let entranceFeeInvoiceDecision: unknown = undefined;
-
-      if (decision === "APPROVE") {
-        if (entranceFeeDecision.action === "SKIP") {
-          const reason = entranceFeeDecision.reason.trim();
-          if (!reason) {
-            setError("Enter a reason for not raising the entrance fee invoice.");
-            return;
-          }
-          entranceFeeInvoiceDecision = { action: "SKIP", reason };
-        } else {
-          const amountText = entranceFeeDecision.amount.trim();
-          let amountCents: number | undefined;
-          if (amountText) {
-            const parsedAmount = Number(amountText);
-            amountCents = Math.round(parsedAmount * 100);
-            if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || amountCents <= 0) {
-              setError("Enter a valid entrance fee amount, or leave it blank to use the configured amount.");
-              return;
-            }
-          }
-          entranceFeeInvoiceDecision = {
-            action: "CREATE",
-            ...(amountCents ? { amountCents } : {}),
-            ...(entranceFeeDecision.narration.trim()
-              ? { narration: entranceFeeDecision.narration.trim() }
-              : {}),
-          };
-        }
-      }
-
       const response = await fetch(`/api/admin/member-applications/${applicationId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -232,6 +275,7 @@ export default function MemberApplicationsPage() {
           decision,
           adminNotes: notes[applicationId] || "",
           entranceFeeInvoiceDecision,
+          notifyMember,
         }),
       });
       const data = await response.json();
@@ -245,10 +289,12 @@ export default function MemberApplicationsPage() {
         Array.isArray(data.warnings) && data.warnings.length > 0
           ? ` Warnings: ${data.warnings.join(". ")}`
           : "";
+      const suppressed =
+        notifyMember === false ? " The applicant was not emailed." : "";
       setMessage(
-        decision === "APPROVE"
+        (decision === "APPROVE"
           ? `Application approved.${warnings}`
-          : "Application rejected."
+          : "Application rejected.") + suppressed
       );
       await loadApplications(filter);
     } catch {
@@ -756,7 +802,7 @@ export default function MemberApplicationsPage() {
                     <Button
                       type="button"
                       disabled={submittingId === application.id}
-                      onClick={() => reviewApplication(application.id, "APPROVE")}
+                      onClick={() => openReviewChoice(application.id, "APPROVE")}
                     >
                       {submittingId === application.id ? "Working..." : "Approve"}
                     </Button>
@@ -764,7 +810,7 @@ export default function MemberApplicationsPage() {
                       type="button"
                       variant="outline"
                       disabled={submittingId === application.id}
-                      onClick={() => reviewApplication(application.id, "REJECT")}
+                      onClick={() => openReviewChoice(application.id, "REJECT")}
                     >
                       Reject
                     </Button>
@@ -793,7 +839,7 @@ export default function MemberApplicationsPage() {
                         type="button"
                         variant="outline"
                         disabled={submittingId === application.id}
-                        onClick={() => reviewApplication(application.id, "REJECT")}
+                        onClick={() => openReviewChoice(application.id, "REJECT")}
                       >
                         Reject application
                       </Button>
@@ -805,6 +851,52 @@ export default function MemberApplicationsPage() {
           ))}
         </div>
       )}
+
+      {/* #1786: per-action applicant-email choice, mirroring the #1769a pattern.
+          The applicant approved/rejected email always sends (the applicant email
+          is a required field), so the dialog always shows on approve and reject.
+          Both choices complete the review; the choice is recorded in the audit
+          log. */}
+      <Dialog
+        open={reviewDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && submittingId === null) setReviewDialogOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {reviewChoice?.decision === "REJECT"
+                ? "Email the applicant about this rejection?"
+                : "Email the applicant about this approval?"}
+            </DialogTitle>
+            <DialogDescription>
+              {reviewChoice?.decision === "REJECT"
+                ? "The application is rejected either way. Choose whether the applicant receives the standard rejection email — your choice is recorded in the audit log."
+                : "The application is approved either way. Choose whether the applicant receives the standard approval email, which carries their account-setup link — your choice is recorded in the audit log."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              disabled={submittingId !== null}
+              onClick={() => confirmReview(false)}
+            >
+              {reviewChoice?.decision === "REJECT"
+                ? "Reject without emailing"
+                : "Approve without emailing"}
+            </Button>
+            <Button
+              disabled={submittingId !== null}
+              onClick={() => confirmReview(true)}
+            >
+              {reviewChoice?.decision === "REJECT"
+                ? "Reject and email applicant"
+                : "Approve and email applicant"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

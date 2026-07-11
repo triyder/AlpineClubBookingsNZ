@@ -62,6 +62,10 @@ export function useMemberLifecycleActions({
   const handleReviewArchiveRequest = async (
     requestId: string,
     action: "approve" | "reject",
+    // #1788: absent = notify (default), false = suppress the member email. Only
+    // the two-button dialog passes an explicit value; a member with no email
+    // reviews directly with no flag.
+    notifyMember?: boolean,
   ) => {
     setArchiveActionLoading(`${action}:${requestId}`);
     setArchiveError("");
@@ -74,6 +78,7 @@ export function useMemberLifecycleActions({
           body: JSON.stringify({
             action,
             note: archiveReviewNotes[requestId]?.trim() || undefined,
+            ...(notifyMember === undefined ? {} : { notifyMember }),
           }),
         },
       );
@@ -87,7 +92,13 @@ export function useMemberLifecycleActions({
         delete next[requestId];
         return next;
       });
-      toast.success(action === "approve" ? "Member archived" : "Archive request rejected",);
+      const baseMessage =
+        action === "approve" ? "Member archived" : "Archive request rejected";
+      toast.success(
+        notifyMember === false
+          ? `${baseMessage}. The member was not emailed.`
+          : baseMessage,
+      );
       setLoading(true);
       await fetchMember();
     } catch (err) {

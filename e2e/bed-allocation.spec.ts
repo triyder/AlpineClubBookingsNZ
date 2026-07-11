@@ -64,6 +64,11 @@ test("an admin approves a review-flagged booking then allocates a bed to its gue
 
   // "Approve" (exact) so it never matches the "Approved" status-filter button.
   await page.getByRole("button", { name: "Approve", exact: true }).click();
+  // #1790: the approve action now opens a notify-choice dialog; confirm the
+  // default notify path ("Approve and email member") to complete the approval.
+  await page
+    .getByRole("button", { name: "Approve and email member" })
+    .click();
   await expect(page.getByText("Booking approved.")).toBeVisible();
 
   // ── Allocate Ken's guest to Bunk Room A / A1 via Select + Allocate ──

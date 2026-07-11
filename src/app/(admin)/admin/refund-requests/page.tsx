@@ -12,6 +12,14 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -131,6 +139,15 @@ export default function RefundRequestsPage() {
   const [approvedAmount, setApprovedAmount] = useState("")
   const [processingRefund, setProcessingRefund] = useState(false)
   const [error, setError] = useState("")
+  // #1792: the pending approve/reject action waiting on the admin's notify-or-not
+  // choice, plus whether the choice dialog is open. A refund appellant always has
+  // an email on file, so the dialog is shown for every approve and reject — the
+  // #1769a honesty rule ("only ask when an email would send") is satisfied here
+  // by the fact that an email always would.
+  const [notifyChoice, setNotifyChoice] = useState<
+    { id: string; status: "APPROVED" | "REJECTED" } | null
+  >(null)
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false)
   const currentRefundRequestsPath =
     filter === "PENDING" ? "/admin/refund-requests" : `/admin/refund-requests?status=${filter}`
 
@@ -178,7 +195,36 @@ export default function RefundRequestsPage() {
     fetchRequests()
   }, [fetchRequests])
 
-  async function handleRefundReview(id: string, status: "APPROVED" | "REJECTED") {
+  // #1792: open the notify-choice dialog for an approve/reject action. Approve
+  // validates the amount up front so the admin never gets the dialog then an
+  // error; reject has nothing to pre-validate.
+  function startRefundNotifyChoice(id: string, status: "APPROVED" | "REJECTED") {
+    setError("")
+    if (status === "APPROVED") {
+      const cents = Math.round(parseFloat(approvedAmount) * 100)
+      if (!cents || cents <= 0) {
+        setError("Please enter a valid refund amount")
+        return
+      }
+    }
+    setNotifyChoice({ id, status })
+    setNotifyDialogOpen(true)
+  }
+
+  // #1792: dispatch the pending notify choice. Close the dialog without clearing
+  // the choice so the copy keeps its wording while the dialog fades out.
+  function confirmNotify(notifyMember: boolean) {
+    const choice = notifyChoice
+    setNotifyDialogOpen(false)
+    if (!choice) return
+    void handleRefundReview(choice.id, choice.status, notifyMember)
+  }
+
+  async function handleRefundReview(
+    id: string,
+    status: "APPROVED" | "REJECTED",
+    notifyMember: boolean
+  ) {
     setProcessingRefund(true)
     setError("")
 
@@ -186,6 +232,8 @@ export default function RefundRequestsPage() {
       const body: Record<string, unknown> = {
         status,
         adminNotes: adminNotes || undefined,
+        // #1792: absent = notify (default), false = suppress the outcome email.
+        notifyMember,
       }
 
       if (status === "APPROVED") {
@@ -213,9 +261,10 @@ export default function RefundRequestsPage() {
       setAdminNotes("")
       setApprovedAmount("")
       toast.success(
-        status === "APPROVED"
+        (status === "APPROVED"
           ? "Refund approved and processed"
-          : "Appeal rejected"
+          : "Appeal rejected") +
+          (notifyMember === false ? " The member was not emailed." : "")
       )
       await fetchRequests()
     } catch (err) {
@@ -500,7 +549,7 @@ export default function RefundRequestsPage() {
                               <ViewOnlyActionButton
                                 canEdit={canEditFinance}
                                 size="sm"
-                                onClick={() => handleRefundReview(req.id, "APPROVED")}
+                                onClick={() => startRefundNotifyChoice(req.id, "APPROVED")}
                                 disabled={processingRefund}
                               >
                                 {processingRefund ? "Processing..." : "Approve & Refund"}
@@ -509,7 +558,7 @@ export default function RefundRequestsPage() {
                                 canEdit={canEditFinance}
                                 size="sm"
                                 variant="destructive"
-                                onClick={() => handleRefundReview(req.id, "REJECTED")}
+                                onClick={() => startRefundNotifyChoice(req.id, "REJECTED")}
                                 disabled={processingRefund}
                               >
                                 Reject
@@ -691,6 +740,48 @@ export default function RefundRequestsPage() {
           )}
         </div>
       )}
+
+      {/* #1792: per-action member-email choice, mirroring the #1695/#1705/#1769a
+          pattern. The refund decision is applied either way; the choice is
+          recorded in the audit log. A refund appellant always has an email on
+          file, so the dialog is shown for every approve and reject. */}
+      <Dialog
+        open={notifyDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !processingRefund) setNotifyDialogOpen(false)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {notifyChoice?.status === "REJECTED"
+                ? "Email the member about this decision?"
+                : "Email the member about this refund?"}
+            </DialogTitle>
+            <DialogDescription>
+              {notifyChoice?.status === "REJECTED"
+                ? "The appeal is rejected either way. Choose whether the member receives the standard refund-appeal outcome email — your choice is recorded in the audit log."
+                : "The refund is processed either way. Choose whether the member receives the standard refund-appeal outcome email — your choice is recorded in the audit log."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              disabled={processingRefund}
+              onClick={() => confirmNotify(false)}
+            >
+              {notifyChoice?.status === "REJECTED"
+                ? "Reject without emailing"
+                : "Approve without emailing"}
+            </Button>
+            <Button disabled={processingRefund} onClick={() => confirmNotify(true)}>
+              {notifyChoice?.status === "REJECTED"
+                ? "Reject and email member"
+                : "Approve and email member"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

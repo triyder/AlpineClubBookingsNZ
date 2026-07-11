@@ -488,4 +488,73 @@ describe("membership cancellation admin review", () => {
       });
     });
   });
+
+  describe("admin notify choice (#1787)", () => {
+    it("approve + notifyMember false: suppresses the email, audits the choice, still cancels the membership", async () => {
+      const result = await reviewMembershipCancellationParticipant({
+        requestId: "request-1",
+        participantId: "participant-1",
+        action: "approve",
+        adminMemberId: "admin-1",
+        adminNote: "Approved by committee",
+        notifyMember: false,
+      });
+
+      // Membership state change still applied.
+      expect(result.request.participants[0].status).toBe("CANCELLED");
+      expect(mocks.tx.member.update).toHaveBeenCalledWith({
+        where: { id: "member-1" },
+        data: expect.objectContaining({ active: false, canLogin: false }),
+      });
+      // No outcome email.
+      expect(mocks.sendApprovedEmail).not.toHaveBeenCalled();
+      // Suppression audited on the participant_cancelled record.
+      const call = mocks.createAuditLog.mock.calls.find(
+        (c) => c[0].action === "membership_cancellation.participant_cancelled",
+      )?.[0];
+      expect(call?.metadata).toMatchObject({ notifyMember: false });
+    });
+
+    it("approve + notifyMember true: emails the member and records no notify field", async () => {
+      await reviewMembershipCancellationParticipant({
+        requestId: "request-1",
+        participantId: "participant-1",
+        action: "approve",
+        adminMemberId: "admin-1",
+        notifyMember: true,
+      });
+
+      expect(mocks.sendApprovedEmail).toHaveBeenCalledTimes(1);
+      const call = mocks.createAuditLog.mock.calls.find(
+        (c) => c[0].action === "membership_cancellation.participant_cancelled",
+      )?.[0];
+      expect(call?.metadata).not.toHaveProperty("notifyMember");
+    });
+
+    it("reject + notifyMember false: suppresses the email, audits the choice, leaves the membership active", async () => {
+      mocks.tx.membershipCancellationRequestParticipant.findMany.mockResolvedValue([
+        { status: "REJECTED" },
+      ]);
+      mocks.requestFindUnique.mockResolvedValue(
+        adminRequest({ status: "REJECTED" }),
+      );
+
+      await reviewMembershipCancellationParticipant({
+        requestId: "request-1",
+        participantId: "participant-1",
+        action: "reject",
+        adminMemberId: "admin-1",
+        adminNote: "Not this time",
+        notifyMember: false,
+      });
+
+      // Reject never mutates the member.
+      expect(mocks.tx.member.update).not.toHaveBeenCalled();
+      expect(mocks.sendRejectedEmail).not.toHaveBeenCalled();
+      const call = mocks.createAuditLog.mock.calls.find(
+        (c) => c[0].action === "membership_cancellation.participant_rejected",
+      )?.[0];
+      expect(call?.metadata).toMatchObject({ notifyMember: false });
+    });
+  });
 });

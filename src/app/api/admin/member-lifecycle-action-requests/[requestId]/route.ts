@@ -11,6 +11,11 @@ import { requireAdmin } from "@/lib/session-guards";
 const reviewSchema = z.object({
   action: z.enum(["approve", "reject"]),
   note: z.string().max(1000).optional(),
+  // #1788: absent/undefined = notify (default), false = suppress the member
+  // email. Only honoured by ARCHIVE reviews; DELETE reviews ignore it (their
+  // emails go to the requesting admin and always send). A non-boolean value
+  // fails the parse below and returns 400.
+  notifyMember: z.boolean().optional(),
 });
 
 export async function PATCH(
@@ -36,6 +41,7 @@ export async function PATCH(
       action: body.action,
       reviewNote: body.note,
       ipAddress: getClientIp(request),
+      notifyMember: body.notifyMember,
     });
 
     return NextResponse.json(result);

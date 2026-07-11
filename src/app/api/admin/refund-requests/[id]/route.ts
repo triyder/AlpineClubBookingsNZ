@@ -26,6 +26,11 @@ const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
   adminNotes: z.string().max(2000).optional(),
   approvedAmountCents: z.number().int().min(0).optional(),
+  // #1792: admin per-action email choice. Absent/undefined = notify (default);
+  // false = suppress the member outcome email. A non-boolean is rejected 400 by
+  // this parse. Only affects the outcome notice — refund execution, ledger math,
+  // and Stripe/Xero are unchanged.
+  notifyMember: z.boolean().optional(),
 });
 
 export async function PUT(
@@ -65,7 +70,7 @@ export async function PUT(
     );
   }
 
-  const { status, adminNotes, approvedAmountCents } = parsed.data;
+  const { status, adminNotes, approvedAmountCents, notifyMember } = parsed.data;
   const booking = refundRequest.booking;
   const payment = booking.payment;
 
@@ -248,6 +253,13 @@ export async function PUT(
       );
     }
 
+    // #1792: resolve the member email BEFORE the audit so the notify choice can
+    // be recorded honestly. Only stamp notifyMember:false when there was an
+    // email to suppress; otherwise there was nothing to opt out of.
+    const memberEmail = booking.member.email || refundRequest.member.email;
+    const notifyAuditFields =
+      memberEmail && notifyMember === false ? { notifyMember: false } : {};
+
     await createAuditLog({
       action: "refund-request.approve",
       memberId: session.user.id,
@@ -262,15 +274,13 @@ export async function PUT(
       metadata: {
         bookingId: booking.id,
         approvedAmountCents,
+        ...notifyAuditFields,
       },
       ipAddress: req.headers.get("x-forwarded-for") ?? "unknown",
     });
 
-    // Email the member
-    const memberEmail =
-      booking.member.email ||
-      refundRequest.member.email;
-    if (memberEmail) {
+    // Email the member unless the admin chose not to notify (#1792).
+    if (memberEmail && notifyMember !== false) {
       sendEmail({
         to: memberEmail,
         subject: `Refund Appeal Approved — ${CLUB_BOOKINGS_NAME}`,
@@ -315,6 +325,13 @@ export async function PUT(
       );
     }
 
+    // #1792: resolve the member email BEFORE the audit so the notify choice can
+    // be recorded honestly. Only stamp notifyMember:false when there was an
+    // email to suppress; otherwise there was nothing to opt out of.
+    const memberEmail = booking.member.email || refundRequest.member.email;
+    const notifyAuditFields =
+      memberEmail && notifyMember === false ? { notifyMember: false } : {};
+
     await createAuditLog({
       action: "refund-request.reject",
       memberId: session.user.id,
@@ -329,15 +346,13 @@ export async function PUT(
       metadata: {
         bookingId: booking.id,
         adminNotes: adminNotes ?? null,
+        ...notifyAuditFields,
       },
       ipAddress: req.headers.get("x-forwarded-for") ?? "unknown",
     });
 
-    // Email the member
-    const memberEmail =
-      booking.member.email ||
-      refundRequest.member.email;
-    if (memberEmail) {
+    // Email the member unless the admin chose not to notify (#1792).
+    if (memberEmail && notifyMember !== false) {
       sendEmail({
         to: memberEmail,
         subject: `Refund Appeal Update — ${CLUB_BOOKINGS_NAME}`,

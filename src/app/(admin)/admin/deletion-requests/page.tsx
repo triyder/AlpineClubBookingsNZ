@@ -92,7 +92,10 @@ export default function DeletionRequestsPage() {
     fetchRequests();
   }, [fetchRequests]);
 
-  async function handleReview() {
+  // #1788: `notifyMember` is only meaningful on the reject path (the approve
+  // path always sends the final privacy receipt). Absent = notify (default),
+  // false = suppress the member email.
+  async function handleReview(notifyMember?: boolean) {
     if (!reviewDialog) return;
     setSubmitting(true);
     try {
@@ -104,6 +107,7 @@ export default function DeletionRequestsPage() {
           body: JSON.stringify({
             action: reviewDialog.action,
             note: reviewNote || undefined,
+            ...(notifyMember === undefined ? {} : { notifyMember }),
           }),
         }
       );
@@ -319,10 +323,15 @@ export default function DeletionRequestsPage() {
                   &apos;s account, cancel all future bookings, and deactivate
                   their login. This action cannot be undone.
                 </>
+              ) : reviewDialog?.request.member.email ? (
+                <>
+                  Choose below whether to email the member that their request
+                  was not approved — either way the request is rejected.
+                </>
               ) : (
                 <>
-                  The member will be notified that their request was not
-                  approved.
+                  The request will be rejected. This member has no email address
+                  on file, so no notification is sent.
                 </>
               )}
             </DialogDescription>
@@ -356,19 +365,39 @@ export default function DeletionRequestsPage() {
             >
               Cancel
             </Button>
-            <Button
-              variant={
-                reviewDialog?.action === "approve" ? "destructive" : "default"
-              }
-              onClick={handleReview}
-              disabled={submitting}
-            >
-              {submitting
-                ? "Processing..."
-                : reviewDialog?.action === "approve"
-                ? "Approve & Delete Account"
-                : "Reject Request"}
-            </Button>
+            {reviewDialog?.action === "approve" ? (
+              // The approve receipt always sends (the member asked for deletion
+              // and cannot log in afterwards), so no notify choice here.
+              <Button
+                variant="destructive"
+                onClick={() => handleReview()}
+                disabled={submitting}
+              >
+                {submitting ? "Processing..." : "Approve & Delete Account"}
+              </Button>
+            ) : reviewDialog?.request.member.email ? (
+              // #1788: reject with a member on file — two-button email choice.
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => handleReview(false)}
+                  disabled={submitting}
+                >
+                  {submitting ? "Processing..." : "Reject without emailing"}
+                </Button>
+                <Button
+                  onClick={() => handleReview(true)}
+                  disabled={submitting}
+                >
+                  {submitting ? "Processing..." : "Reject and email member"}
+                </Button>
+              </>
+            ) : (
+              // No address on file — nothing would send, so reject directly.
+              <Button onClick={() => handleReview()} disabled={submitting}>
+                {submitting ? "Processing..." : "Reject Request"}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

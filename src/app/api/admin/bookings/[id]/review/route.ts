@@ -19,6 +19,10 @@ const reviewSchema = z
     // Optional when approving; required when rejecting so the member always
     // gets a reason.
     adminNotes: z.string().trim().max(2000).optional().default(""),
+    // #1790: admin per-decision email choice. Absent/undefined = notify
+    // (default), false = suppress the member-facing review email. Both member
+    // sends here are unconditional, so a non-boolean is a 400 via this parse.
+    notifyMember: z.boolean().optional(),
   })
   .refine((data) => data.status === "APPROVED" || data.adminNotes.length > 0, {
     message: "Admin notes are required when rejecting",
@@ -67,6 +71,12 @@ export async function PATCH(
   const ipAddress =
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
 
+  // #1790: only record the notify choice when a member email was actually
+  // suppressed. Both review sends below are unconditional, so this reflects
+  // exactly whether the admin opted out.
+  const notifyAuditFields =
+    parsed.data.notifyMember === false ? { notifyMember: false } : {};
+
   if (parsed.data.status === "APPROVED") {
     // Atomic claim: only one admin can approve. Mirrors the change-request
     // pattern of updateMany guarded by the prior status.
@@ -102,17 +112,21 @@ export async function PATCH(
       },
     });
 
-    sendBookingReviewApprovedEmail({
-      email: booking.member.email,
-      firstName: booking.member.firstName,
-      checkIn: booking.checkIn,
-      checkOut: booking.checkOut,
-      adminNotes: parsed.data.adminNotes,
-      bookingId,
-      lodgeId: booking.lodgeId,
-    }).catch((err) =>
-      logger.error({ err, bookingId }, "Failed to send booking review approved email"),
-    );
+    // #1790: approve always emails the member unless the admin chose not to
+    // notify (default is notify; the suppression is audited below).
+    if (parsed.data.notifyMember !== false) {
+      sendBookingReviewApprovedEmail({
+        email: booking.member.email,
+        firstName: booking.member.firstName,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        adminNotes: parsed.data.adminNotes,
+        bookingId,
+        lodgeId: booking.lodgeId,
+      }).catch((err) =>
+        logger.error({ err, bookingId }, "Failed to send booking review approved email"),
+      );
+    }
 
     logAudit({
       action: "booking.review.approve",
@@ -125,7 +139,7 @@ export async function PATCH(
       outcome: "success",
       summary: "Admin approved booking awaiting review",
       details: parsed.data.adminNotes,
-      metadata: { decision: "APPROVED" },
+      metadata: { decision: "APPROVED", ...notifyAuditFields },
       ipAddress,
     });
 
@@ -186,16 +200,21 @@ export async function PATCH(
     );
   }
 
-  sendBookingReviewRejectedEmail({
-    email: booking.member.email,
-    firstName: booking.member.firstName,
-    checkIn: booking.checkIn,
-    checkOut: booking.checkOut,
-    adminNotes: parsed.data.adminNotes,
-    lodgeId: booking.lodgeId,
-  }).catch((err) =>
-    logger.error({ err, bookingId }, "Failed to send booking review rejected email"),
-  );
+  // #1790: reject always emails the member unless the admin chose not to
+  // notify (default is notify; the suppression is audited below). This gates
+  // only the rejection notice — the shared cancelBooking flow is untouched.
+  if (parsed.data.notifyMember !== false) {
+    sendBookingReviewRejectedEmail({
+      email: booking.member.email,
+      firstName: booking.member.firstName,
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      adminNotes: parsed.data.adminNotes,
+      lodgeId: booking.lodgeId,
+    }).catch((err) =>
+      logger.error({ err, bookingId }, "Failed to send booking review rejected email"),
+    );
+  }
 
   logAudit({
     action: "booking.review.reject",
@@ -208,7 +227,7 @@ export async function PATCH(
     outcome: "success",
     summary: "Admin rejected booking awaiting review",
     details: parsed.data.adminNotes,
-    metadata: { decision: "REJECTED" },
+    metadata: { decision: "REJECTED", ...notifyAuditFields },
     ipAddress,
   });
 

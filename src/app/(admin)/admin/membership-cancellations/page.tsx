@@ -13,6 +13,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -232,6 +240,17 @@ export default function MembershipCancellationsPage() {
   );
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  // #1787: which cancellation-review action is waiting on the admin's
+  // notify-or-not choice, and whether that dialog is open. Every approve and
+  // reject fires a member outcome email, so both route through this dialog. The
+  // choice is kept set while the dialog fades out so the copy never flickers to
+  // the other action's wording.
+  const [notifyChoice, setNotifyChoice] = useState<{
+    requestId: string;
+    participantId: string;
+    action: "approve" | "reject";
+  } | null>(null);
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
 
   const pendingSummary = useMemo(() => {
     const cancellationCount = data?.pendingCount ?? 0;
@@ -317,10 +336,35 @@ export default function MembershipCancellationsPage() {
     loadArchiveRequests();
   }, [loadArchiveRequests]);
 
+  // #1787: open the notify-choice dialog for a given cancellation-review action.
+  function openNotifyChoice(
+    requestId: string,
+    participantId: string,
+    action: "approve" | "reject",
+  ) {
+    setNotifyChoice({ requestId, participantId, action });
+    setNotifyDialogOpen(true);
+  }
+
+  // #1787: dispatch the pending choice. Close the dialog without clearing the
+  // choice so its wording holds while it fades out.
+  function confirmNotify(notifyMember: boolean) {
+    const choice = notifyChoice;
+    setNotifyDialogOpen(false);
+    if (!choice) return;
+    void reviewParticipant(
+      choice.requestId,
+      choice.participantId,
+      choice.action,
+      notifyMember,
+    );
+  }
+
   async function reviewParticipant(
     requestId: string,
     participantId: string,
     action: "approve" | "reject",
+    notifyMember?: boolean,
   ) {
     setSubmittingId(`${participantId}:${action}`);
     setError("");
@@ -335,6 +379,9 @@ export default function MembershipCancellationsPage() {
           body: JSON.stringify({
             action,
             note: notes[participantId] || undefined,
+            // #1787: only send the flag when a choice was made; omitting it
+            // preserves the default-notify behaviour server-side.
+            ...(notifyMember !== undefined ? { notifyMember } : {}),
           }),
         },
       );
@@ -344,10 +391,17 @@ export default function MembershipCancellationsPage() {
       }
 
       setNotes((prev) => ({ ...prev, [participantId]: "" }));
-      setMessage(
+      // #1787: when the admin chose "…without emailing", the standard
+      // notified copy would be untrue — state the recorded choice instead.
+      const emailSuppressed = notifyMember === false;
+      const base =
         action === "approve"
           ? "Membership cancellation approved and processed."
-          : "Membership cancellation participant rejected.",
+          : "Membership cancellation participant rejected.";
+      setMessage(
+        emailSuppressed
+          ? `${base} The member was not emailed — your choice is recorded in the audit log.`
+          : base,
       );
       await loadRequests();
     } catch (err) {
@@ -780,7 +834,7 @@ export default function MembershipCancellationsPage() {
                                   className="border-red-200 text-red-700 hover:bg-red-50"
                                   disabled={rejectDisabled}
                                   onClick={() =>
-                                    reviewParticipant(
+                                    openNotifyChoice(
                                       request.id,
                                       participant.id,
                                       "reject",
@@ -793,7 +847,7 @@ export default function MembershipCancellationsPage() {
                                 <Button
                                   disabled={approveDisabled}
                                   onClick={() =>
-                                    reviewParticipant(
+                                    openNotifyChoice(
                                       request.id,
                                       participant.id,
                                       "approve",
@@ -830,6 +884,51 @@ export default function MembershipCancellationsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* #1787: per-action member-email choice, mirroring the #1705/#1769a
+          pattern. Every approve and reject sends a member outcome email, so the
+          dialog is shown for both actions; either choice completes the review
+          and the choice itself is recorded in the audit log. */}
+      <Dialog
+        open={notifyDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && submittingId === null) setNotifyDialogOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {notifyChoice?.action === "reject"
+                ? "Email the member about this rejection?"
+                : "Email the member about this approval?"}
+            </DialogTitle>
+            <DialogDescription>
+              {notifyChoice?.action === "reject"
+                ? "The cancellation request is rejected either way. Choose whether the member receives the standard rejection email — your choice is recorded in the audit log."
+                : "The membership cancellation is approved and processed either way. Choose whether the member receives the standard approval email — your choice is recorded in the audit log."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              disabled={submittingId !== null}
+              onClick={() => confirmNotify(false)}
+            >
+              {notifyChoice?.action === "reject"
+                ? "Reject without emailing"
+                : "Approve without emailing"}
+            </Button>
+            <Button
+              disabled={submittingId !== null}
+              onClick={() => confirmNotify(true)}
+            >
+              {notifyChoice?.action === "reject"
+                ? "Reject and email member"
+                : "Approve and email member"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

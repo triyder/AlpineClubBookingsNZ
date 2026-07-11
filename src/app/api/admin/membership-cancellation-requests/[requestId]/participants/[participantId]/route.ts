@@ -11,6 +11,10 @@ import { requireAdmin } from "@/lib/session-guards";
 const reviewSchema = z.object({
   action: z.enum(["approve", "reject"]),
   note: z.string().max(1000).optional(),
+  // #1787: admin per-action email choice. Absent/undefined = notify (default),
+  // false = suppress the member outcome email. A non-boolean fails the parse
+  // below → 400 (requireAdmin already gates this to admins).
+  notifyMember: z.boolean().optional(),
 });
 
 export async function POST(
@@ -39,6 +43,7 @@ export async function POST(
       adminMemberId: session.user.id,
       adminNote: body.note,
       ipAddress: getClientIp(request),
+      notifyMember: body.notifyMember,
     });
 
     return NextResponse.json(result);

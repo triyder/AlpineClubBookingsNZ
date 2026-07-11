@@ -7,6 +7,14 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
@@ -105,6 +113,16 @@ export function BookingApprovalsPanel({
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [notesById, setNotesById] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  // #1790: which decision is waiting on the admin's notify-or-not choice, and
+  // whether the dialog is open. Both approve and reject always email the member
+  // (unconditional sends in the route), so the dialog is shown for both. The
+  // choice is kept set while the dialog fades out (Radix keeps the content
+  // mounted through its exit animation) so the copy never flickers to the other
+  // decision's wording.
+  const [notifyChoice, setNotifyChoice] = useState<
+    { bookingId: string; decision: "APPROVED" | "REJECTED" } | null
+  >(null);
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
   const currentPath = buildBookingApprovalsPath(
     basePath,
     fixedSearchParams,
@@ -139,19 +157,43 @@ export function BookingApprovalsPanel({
     router.replace(currentPath, { scroll: false });
   }, [currentPath, router]);
 
-  async function decideReview(bookingId: string, decision: "APPROVED" | "REJECTED") {
+  // #1790: validate the decision (reject needs admin notes) and then open the
+  // notify-choice dialog. Both decisions email the member either way, so the
+  // dialog always asks; the actual PATCH runs from confirmNotify.
+  function requestDecision(bookingId: string, decision: "APPROVED" | "REJECTED") {
     const adminNotes = notesById[bookingId]?.trim() ?? "";
     if (decision === "REJECTED" && !adminNotes) {
       setError("Please add admin notes before rejecting so the member gets a reason.");
       return;
     }
+    setError("");
+    setNotifyChoice({ bookingId, decision });
+    setNotifyDialogOpen(true);
+  }
+
+  // #1790: dispatch the pending decision with the admin's notify choice. Close
+  // the dialog without clearing the choice, so the content keeps its wording
+  // while it fades out.
+  function confirmNotify(notify: boolean) {
+    const choice = notifyChoice;
+    setNotifyDialogOpen(false);
+    if (!choice) return;
+    void performDecision(choice.bookingId, choice.decision, notify);
+  }
+
+  async function performDecision(
+    bookingId: string,
+    decision: "APPROVED" | "REJECTED",
+    notifyMember: boolean,
+  ) {
+    const adminNotes = notesById[bookingId]?.trim() ?? "";
     setReviewingId(bookingId);
     setError("");
     try {
       const response = await fetch(`/api/admin/bookings/${bookingId}/review`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: decision, adminNotes }),
+        body: JSON.stringify({ status: decision, adminNotes, notifyMember }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -162,7 +204,21 @@ export function BookingApprovalsPanel({
         delete next[bookingId];
         return next;
       });
-      toast.success(decision === "APPROVED" ? "Booking approved." : "Booking rejected and cancelled.");
+      // #1790 honesty: approve sends only the review-approved email, so
+      // suppressing it means no email at all. Reject also triggers the shared
+      // cancellation flow, whose cancellation notice is deliberately
+      // always-notify (#1730, DOMAIN_INVARIANTS), so a suppressed reject only
+      // withholds the review-declined explainer — the member is still emailed.
+      const suppressedNote =
+        notifyMember === false
+          ? decision === "APPROVED"
+            ? " The member was not emailed."
+            : " The review-declined email was not sent."
+          : "";
+      toast.success(
+        (decision === "APPROVED" ? "Booking approved." : "Booking rejected and cancelled.") +
+          suppressedNote,
+      );
       await fetchBookings();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to record decision");
@@ -328,7 +384,7 @@ export function BookingApprovalsPanel({
                       <div className="flex flex-wrap gap-2">
                         <ViewOnlyActionButton
                           canEdit={canEdit}
-                          onClick={() => decideReview(booking.id, "APPROVED")}
+                          onClick={() => requestDecision(booking.id, "APPROVED")}
                           disabled={reviewingId === booking.id}
                         >
                           Approve
@@ -336,7 +392,7 @@ export function BookingApprovalsPanel({
                         <ViewOnlyActionButton
                           canEdit={canEdit}
                           variant="destructive"
-                          onClick={() => decideReview(booking.id, "REJECTED")}
+                          onClick={() => requestDecision(booking.id, "REJECTED")}
                           disabled={reviewingId === booking.id}
                         >
                           Reject and cancel
@@ -350,6 +406,52 @@ export function BookingApprovalsPanel({
           })}
         </div>
       )}
+
+      {/* #1790: per-decision member-email choice, mirroring the #1695/#1705
+          pattern. Both approve and reject email the member either way, so the
+          dialog always asks; the choice itself is recorded in the audit log.
+          It suppresses only the review approval/rejection notice — the shared
+          cancellation flow behind a reject is unaffected. */}
+      <Dialog
+        open={notifyDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && reviewingId === null) setNotifyDialogOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {notifyChoice?.decision === "REJECTED"
+                ? "Email the member about this decline?"
+                : "Email the member about this approval?"}
+            </DialogTitle>
+            <DialogDescription>
+              {notifyChoice?.decision === "REJECTED"
+                ? "The booking is declined and cancelled either way, and the member always receives the standard cancellation notice. Choose whether they also receive the review-declined explainer email — your choice is recorded in the audit log."
+                : "The booking is approved either way. Choose whether the member receives the standard review-approved email — your choice is recorded in the audit log."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              disabled={reviewingId !== null}
+              onClick={() => confirmNotify(false)}
+            >
+              {notifyChoice?.decision === "REJECTED"
+                ? "Reject without emailing"
+                : "Approve without emailing"}
+            </Button>
+            <Button
+              disabled={reviewingId !== null}
+              onClick={() => confirmNotify(true)}
+            >
+              {notifyChoice?.decision === "REJECTED"
+                ? "Reject and email member"
+                : "Approve and email member"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

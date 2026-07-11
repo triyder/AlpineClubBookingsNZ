@@ -713,6 +713,26 @@ override requires an explicit `pricingMode`:
   cancel, and the cancellation emails sent by **deletion-request cleanup** —
   in each, the recipient is losing a booking they own, and a missed email
   risks a member arriving for a stay that no longer exists.
+  The #1780/#1769b sweep extends this same per-action choice to every remaining
+  admin-initiated member email — membership application approve/reject (#1786),
+  membership cancellation review (#1787), member archive review and
+  account-deletion reject (#1788), family-group child-request and group-create
+  approve/reject (#1789), booking review approve/reject (#1790), booking-request
+  decline (#1791), and refund-appeal approve/reject (#1792) — each
+  default-notify, admin-only (all `requireAdmin()` routes, so no non-admin can
+  carry the flag), and audited `notifyMember: false` only when a send is truly
+  suppressed (a would-not-send path — e.g. a member with no email on file, or a
+  refund appellant with no address — records no notify field). Five further
+  sends stay **deliberately always-notify** and outside the choice for the same
+  not-strandable-communication reason: the membership-application **induction
+  sign-off requests** (token-bearing signer requests), the family group-create
+  **partner invitation** (token-bearing; the partner cannot join without it),
+  the **account-deletion approval** privacy receipt (the member requested
+  deletion and cannot log in afterward), and the booking-request
+  **approved/quote** emails (they carry the payment/quote link). On a
+  booking-review **rejection** the shared cancellation email above (#1730) is
+  the always-notify send, so a suppressed reject still emails the member the
+  cancellation and withholds only the review-declined explainer.
 - **recalculate** — the existing full-reprice machinery with the locked-period
   clamps lifted, so locked-night pricing semantics are otherwise preserved
   (a night the guest already bought keeps its stored `BookingGuestNight` price).
