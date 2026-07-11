@@ -10,6 +10,7 @@ import {
 } from "@/lib/capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
+import { getTodayDateOnly } from "@/lib/date-only";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
@@ -154,6 +155,15 @@ export async function POST(
         ? "waitlist.force_confirmed_overbook"
         : "waitlist.force_confirmed";
 
+      // #1723 path 1 (owner decision B): a past-dated force-confirm that
+      // lands PAYMENT_PENDING creates a card obligation for a stay that has
+      // already finished. Allowed, but flagged at creation — in the audit
+      // trail and in the response — so the admin who just created it knows it
+      // now sits on the Unpaid Finished Stays queue.
+      const createdUnpaidFinishedStay =
+        nextStatus === BookingStatus.PAYMENT_PENDING &&
+        booking.checkOut.getTime() <= getTodayDateOnly().getTime();
+
       await createAuditLog(
         {
           action: auditAction,
@@ -169,13 +179,20 @@ export async function POST(
           summary: overbooked
             ? "Waitlist booking force-confirmed with overbook"
             : "Waitlist booking force-confirmed",
-          details:
+          details: [
             nextStatus === BookingStatus.AWAITING_REVIEW
               ? "Admin force-confirmed waitlisted booking but it was parked for admin review."
               : overbooked
                 ? "Admin force-confirmed waitlisted booking despite capacity being exceeded."
                 : "Admin force-confirmed waitlisted booking.",
+            ...(createdUnpaidFinishedStay
+              ? [
+                  "The stay's check-out date has already passed, so this created an unpaid finished stay; it appears on the Unpaid Finished Stays queue until payment is settled.",
+                ]
+              : []),
+          ].join(" "),
           metadata: {
+            createdUnpaidFinishedStay,
             previousStatus: booking.status,
             nextStatus,
             allowOverbook,
@@ -204,6 +221,7 @@ export async function POST(
         overbookDates,
         overbooked,
         status: nextStatus,
+        unpaidFinishedStay: createdUnpaidFinishedStay,
       };
     });
 
@@ -214,7 +232,7 @@ export async function POST(
       );
     }
 
-    const { booking, overbooked, overbookDates, auditAction, status } = result;
+    const { booking, overbooked, overbookDates, auditAction, status, unpaidFinishedStay } = result;
 
     if (status === BookingStatus.PAID) {
       sendBookingConfirmedEmail(
@@ -243,6 +261,7 @@ export async function POST(
       overbooked,
       overbookDates,
       status,
+      unpaidFinishedStay,
     });
   } catch (err) {
     logger.error({ err, bookingId }, "Failed to force-confirm waitlisted booking");

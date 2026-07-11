@@ -28,6 +28,7 @@ import {
   startOfDateOnlyForTimeZone,
 } from "@/lib/date-only";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
+import { buildAdditionalOwedWhere } from "@/lib/unpaid-finished-stays";
 import { prisma } from "@/lib/prisma";
 
 export type BookingSortBy = "member" | "lastUpdated" | "checkIn" | "guests" | "total" | "status";
@@ -80,6 +81,12 @@ export const adminBookingsQuerySchema = z.object({
   paymentSource: z.enum(paymentSourceFilters).optional().default("all"),
   xeroState: z.enum(xeroStateFilters).optional().default("all"),
   bedState: z.enum(["all", "unallocated", "partial", "complete", "warning"]).optional().default("all"),
+  // Unsettled upward-modification deltas (#1723): "owed" narrows to settled
+  // (CONFIRMED/PAID/COMPLETED) bookings whose additional card payment was
+  // never collected. The dashboard "Finished Stays With Unpaid Additions"
+  // card deep-links here as additionalOwed=owed&checkOutTo=<today>; the SQL
+  // fragment is shared with that card's count via unpaid-finished-stays.ts.
+  additionalOwed: z.enum(["all", "owed"]).optional().default("all"),
   changeState: z.enum(["all", "requiresReview", "pendingRequest", "hasModification", "creditGenerated"]).optional().default("all"),
   // Page number (1-based). Field-scoped `.catch(1)` so garbage (`page=abc`,
   // `0`, `-3`, `2.5`) coerces to page 1 instead of failing the whole parse and
@@ -298,6 +305,12 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
   if (Object.keys(checkInFilter).length > 0) where.checkIn = checkInFilter;
   if (Object.keys(checkOutFilter).length > 0) where.checkOut = checkOutFilter;
   if (Object.keys(updatedAtFilter).length > 0) where.updatedAt = updatedAtFilter;
+
+  // AND-composed so an explicit status/date choice in the same URL still
+  // narrows the result instead of being overwritten by the queue fragment.
+  if (query.additionalOwed === "owed") {
+    where.AND = [buildAdditionalOwedWhere()];
+  }
 
   if (query.lodgeId) {
     // Null-tolerant: bookings still missing a lodgeId (expand-release

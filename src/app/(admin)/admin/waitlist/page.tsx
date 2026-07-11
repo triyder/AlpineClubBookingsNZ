@@ -54,6 +54,10 @@ interface ForceConfirmReport {
   overbooked: boolean;
   overbookDates: string[];
   auditAction: string | null;
+  // #1723 path 1: the force-confirm landed PAYMENT_PENDING on a stay whose
+  // check-out has already passed — the admin just created an unpaid finished
+  // stay and should hear about it at creation, not discover it on the queue.
+  unpaidFinishedStay: boolean;
 }
 
 function parsePositiveInteger(value: string | null, fallback: number) {
@@ -347,6 +351,7 @@ export default function AdminWaitlistPage() {
         overbooked: data.overbooked === true,
         overbookDates: readStringArray(data.overbookDates),
         auditAction: readString(data.auditAction),
+        unpaidFinishedStay: data.unpaidFinishedStay === true,
       });
       await loadEntries();
     } else if (data.error === "CAPACITY_EXCEEDED" && data.overbookDates) {
@@ -373,6 +378,25 @@ export default function AdminWaitlistPage() {
 
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+      )}
+
+      {/* #1723 path 1 (owner decision B): allowed, but the admin is told at
+          creation that this booking is already an unpaid finished stay. */}
+      {forceConfirmReport?.unpaidFinishedStay && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="pt-6 space-y-2">
+            <p className="font-medium text-amber-900">
+              Unpaid finished stay created
+            </p>
+            <p className="text-sm text-amber-800">
+              This booking&apos;s check-out date has already passed, so
+              force-confirming it created a payment-pending stay that is
+              already finished. It now appears on the{" "}
+              <span className="font-medium">Unpaid Finished Stays</span> queue
+              — follow up on payment or settle the booking.
+            </p>
+          </CardContent>
+        </Card>
       )}
 
       {forceConfirmReport?.overbooked && (
