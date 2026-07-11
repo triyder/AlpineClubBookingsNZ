@@ -110,10 +110,13 @@ Future reviews and issues should cite this file when proposing changes.
   it (#1745): reserved (only `checkCapacityForPartnerSharedAdmission` on the
   admin-initiated partner flow may use it — every public/member/system path
   reads the unchanged base `getLodgeCapacity`), bounded (≤ active DOUBLE
-  count per night, so every admitted pair is always placeable), and capped by
-  an explicit `LodgeSettings.capacity`, which limits *people*, so a
-  `capped_beds` lodge gets no headroom (see docs/CAPACITY_MODEL.md, "Partner-
-  shared double-bed headroom"). A DOUBLE holding a second occupant
+  count per night, with the sharer's partner required to hold an ordinary
+  base-backed place — a sharer can never anchor another sharer — so a
+  feasible pairing always exists, modulo the documented #1668 forced-overbook
+  residual), and capped by an explicit `LodgeSettings.capacity`, which limits
+  *people*, so a `capped_beds` lodge gets no headroom (see
+  docs/CAPACITY_MODEL.md, "Partner-shared double-bed headroom"). A DOUBLE
+  holding a second occupant
   cannot be retyped to a non-double until that occupant is removed. Whenever a
   shared double loses its primary — a board delete (#1743), a board move of the
   primary onto another bed, or a cross-booking cancellation / reconcile prune

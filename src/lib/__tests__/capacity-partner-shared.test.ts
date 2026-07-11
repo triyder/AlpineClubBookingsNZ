@@ -339,21 +339,19 @@ describe("checkCapacityForPartnerSharedAdmission", () => {
     expect(result.reason).toMatch(/not staying on every night/i);
   });
 
-  it("uses a caller-supplied partner range instead of querying coverage", async () => {
-    const db = fakeDb({ bookings: [fullStayBooking(4)] });
+  it("anchors same-proposal coverage to a proposed guest carrying the partner's memberId", async () => {
+    // The sharer joins the partner's own booking: the booking is excluded
+    // from occupancy and its guests re-proposed, the partner row tagged with
+    // their memberId. 3 occupied + the partner = base full; sharer shares.
+    const db = fakeDb({ bookings: [fullStayBooking(3)] });
 
     const result = await checkCapacityForPartnerSharedAdmission(
       LODGE,
       CHECK_IN,
       CHECK_OUT,
-      [],
-      [
-        {
-          ...sharerFullStay,
-          partnerRange: { stayStart: CHECK_IN, stayEnd: CHECK_OUT },
-        },
-      ],
-      undefined,
+      [{ stayStart: CHECK_IN, stayEnd: CHECK_OUT, memberId: PARTNER }],
+      [sharerFullStay],
+      "booking-being-modified",
       db,
     );
 
@@ -362,6 +360,95 @@ describe("checkCapacityForPartnerSharedAdmission", () => {
       (db as { bookingGuest: { findMany: ReturnType<typeof vi.fn> } })
         .bookingGuest.findMany,
     ).not.toHaveBeenCalled();
+  });
+
+  it("rejects a couple encoded as two mutual sharers (no base-backed anchor)", async () => {
+    const db = fakeDb({
+      bookings: [fullStayBooking(4)],
+      partnerGuestRows: partnerCoverageFullStay,
+    });
+
+    const result = await checkCapacityForPartnerSharedAdmission(
+      LODGE,
+      CHECK_IN,
+      CHECK_OUT,
+      [],
+      [
+        sharerFullStay,
+        {
+          range: { stayStart: CHECK_IN, stayEnd: CHECK_OUT },
+          memberId: PARTNER,
+          partnerMemberId: SHARER,
+        },
+      ],
+      undefined,
+      db,
+    );
+
+    expect(result.available).toBe(false);
+    expect(result.reason).toMatch(/must hold an ordinary place/i);
+  });
+
+  it("rejects the same sharer proposed twice", async () => {
+    const db = fakeDb({
+      bookings: [],
+      partnerGuestRows: partnerCoverageFullStay,
+    });
+
+    const result = await checkCapacityForPartnerSharedAdmission(
+      LODGE,
+      CHECK_IN,
+      CHECK_OUT,
+      [],
+      [sharerFullStay, { ...sharerFullStay }],
+      undefined,
+      db,
+    );
+
+    expect(result.available).toBe(false);
+    expect(result.reason).toMatch(/more than once/i);
+  });
+
+  it("admits sharers up to the double count, then rejects the next", async () => {
+    // 2 doubles → headroom 2. Base full at 4. Coverage rows satisfy every
+    // partner (the coverage mock is per-query, not per-member).
+    const makeSharer = (index: number) => ({
+      range: { stayStart: CHECK_IN, stayEnd: CHECK_OUT },
+      memberId: `sharer-${index}`,
+      partnerMemberId: `partner-${index}`,
+    });
+
+    const two = await checkCapacityForPartnerSharedAdmission(
+      LODGE,
+      CHECK_IN,
+      CHECK_OUT,
+      [],
+      [makeSharer(1), makeSharer(2)],
+      undefined,
+      fakeDb({
+        doubles: 2,
+        bookings: [fullStayBooking(4)],
+        partnerGuestRows: partnerCoverageFullStay,
+      }),
+    );
+    expect(two.available).toBe(true);
+    expect(two.nightDetails.every((n) => n.sharedSlotsNeeded === 2)).toBe(true);
+
+    const three = await checkCapacityForPartnerSharedAdmission(
+      LODGE,
+      CHECK_IN,
+      CHECK_OUT,
+      [],
+      [makeSharer(1), makeSharer(2), makeSharer(3)],
+      undefined,
+      fakeDb({
+        doubles: 2,
+        bookings: [fullStayBooking(4)],
+        partnerGuestRows: partnerCoverageFullStay,
+      }),
+    );
+    expect(three.available).toBe(false);
+    expect(three.reason).toMatch(/slots are taken/i);
   });
 
   it("rejects a sharer when the lodge has no shareable doubles", async () => {

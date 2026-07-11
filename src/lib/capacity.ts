@@ -253,16 +253,18 @@ export async function checkCapacityForGuestRanges(
   };
 }
 
+// A proposed non-sharing guest. `memberId` (when the guest is a member) lets
+// a sharer's partner coverage be anchored to a guest in this same proposal —
+// the sharer-joins-the-partner's-own-booking case, where excludeBookingId
+// removes the partner's existing row from the occupancy query.
+export interface PartnerSharedProposedGuest extends GuestStayRange {
+  memberId?: string | null;
+}
+
 export interface PartnerSharedAdmissionSharer {
   range: GuestStayRange;
   memberId: string;
   partnerMemberId: string;
-  // When the partner's qualifying nights belong to the booking being modified
-  // in the SAME call — the usual case: the sharer is added to the partner's
-  // own booking, which excludeBookingId removes from the occupancy query —
-  // the caller passes them here. Otherwise coverage is read from the
-  // partner's capacity-holding bookings at this lodge.
-  partnerRange?: GuestStayRange;
 }
 
 export interface PartnerSharedNightDetail extends NightAvailability {
@@ -286,11 +288,20 @@ export interface PartnerSharedAdmissionResult {
  * slots. This variant admits `sharers` beyond that ceiling, one per active
  * DOUBLE bed (the partner-shared headroom, see docs/CAPACITY_MODEL.md),
  * under the owner-decided rule (#1745): a guest is admitted if a base slot
- * is free, OR they hold a CONFIRMED partner link with a member booked on
- * every night they stay AND a shared slot is free that night. Because every
- * shared admission maps to a distinct double, allocation can always place
- * each admitted pair. `ordinaryGuests` can never consume a shared slot —
- * the headroom is reserved, not a blanket bump.
+ * is free, OR they hold a CONFIRMED partner link with a member staying on
+ * every night they stay AND a shared slot is free that night.
+ * `ordinaryGuests` can never consume a shared slot — the headroom is
+ * reserved, not a blanket bump.
+ *
+ * Placeability: each shared admission maps to a distinct double ONLY when
+ * the sharer's partner holds an ordinary (base-backed) place. The guards
+ * below enforce the structural half of that — a sharer can never anchor
+ * another sharer, and same-proposal coverage must come from a non-sharing
+ * proposed guest — but a partner admitted above base through the #1668
+ * over-capacity override can still anchor a sharer; both are explicit admin
+ * overrides and the combination can exceed pairing feasibility (see
+ * docs/CAPACITY_MODEL.md). Placement itself stays the allocation board's
+ * job and may require moving unlocked allocations.
  *
  * Callers run inside the lodge capacity lock like every other admission
  * path (acquireLodgeCapacityLock) so shared slots cannot be double-admitted
@@ -300,7 +311,7 @@ export async function checkCapacityForPartnerSharedAdmission(
   lodgeId: string,
   checkIn: Date,
   checkOut: Date,
-  ordinaryGuests: GuestStayRange[],
+  ordinaryGuests: PartnerSharedProposedGuest[],
   sharers: PartnerSharedAdmissionSharer[],
   excludeBookingId?: string,
   tx?: TransactionClient
@@ -325,6 +336,38 @@ export async function checkCapacityForPartnerSharedAdmission(
     };
   }
 
+  function rejected(reason: string): PartnerSharedAdmissionResult {
+    return {
+      available: false,
+      reason,
+      minAvailable: 0,
+      partnerSharedHeadroom: headroom,
+      nightDetails: [],
+    };
+  }
+
+  // Structural placeability guards: a shared slot pairs the sharer with a
+  // base-backed partner, so a sharer can never anchor another sharer — a
+  // couple must be encoded as one ordinary guest (or existing booking) plus
+  // one sharer, never as two sharers. Duplicates would let one person
+  // consume two slots.
+  const sharerIds = new Set<string>();
+  for (const sharer of sharers) {
+    if (sharerIds.has(sharer.memberId)) {
+      return rejected(
+        "The same guest was proposed as a partner-sharer more than once."
+      );
+    }
+    sharerIds.add(sharer.memberId);
+  }
+  for (const sharer of sharers) {
+    if (sharerIds.has(sharer.partnerMemberId)) {
+      return rejected(
+        "Both members of a couple were proposed as partner-sharers. The partner must hold an ordinary place; only the second occupant is a sharer."
+      );
+    }
+  }
+
   // Every sharer pair must be eligible outright — an ineligible "sharer" must
   // not silently fall back to an ordinary slot the admin did not intend.
   for (const sharer of sharers) {
@@ -334,63 +377,80 @@ export async function checkCapacityForPartnerSharedAdmission(
       db
     );
     if (!eligible) {
-      return {
-        available: false,
-        reason:
-          "The guest and their partner do not hold a confirmed partner relationship (or are not both active adults).",
-        minAvailable: 0,
-        partnerSharedHeadroom: headroom,
-        nightDetails: [],
-      };
+      return rejected(
+        "The guest and their partner do not hold a confirmed partner relationship (or are not both active adults)."
+      );
     }
   }
 
   // Partner night coverage: a shared slot exists only on nights the partner
-  // is themselves staying. Read it from the partner's capacity-holding
-  // bookings unless the caller supplied the range (same-booking case).
+  // is themselves staying. Coverage comes from a non-sharing guest in this
+  // same proposal carrying the partner's memberId (the sharer-joins-the-
+  // partner's-own-booking case, where excludeBookingId removes the partner's
+  // existing row from occupancy), or from the partner's other capacity-
+  // holding bookings at this lodge. Never from an unverified caller claim.
   const coverageBySharer: Array<Set<string>> = [];
   for (const sharer of sharers) {
-    if (sharer.partnerRange) {
-      const covered = new Set<string>();
-      for (const night of nights) {
-        if (
-          countActiveGuestsForNight([sharer.partnerRange], night, envelope) > 0
-        ) {
-          covered.add(formatDateOnly(night));
-        }
+    const covered = new Set<string>();
+    const proposedPartnerRows = ordinaryGuests.filter(
+      (guest) => guest.memberId === sharer.partnerMemberId
+    );
+    for (const night of nights) {
+      if (
+        proposedPartnerRows.length > 0 &&
+        countActiveGuestsForNight(proposedPartnerRows, night, envelope) > 0
+      ) {
+        covered.add(formatDateOnly(night));
       }
-      coverageBySharer.push(covered);
-      continue;
     }
 
-    const partnerGuests = await db.bookingGuest.findMany({
-      where: {
-        memberId: sharer.partnerMemberId,
-        booking: {
-          lodgeId,
-          checkIn: { lt: exclusiveEnd },
-          checkOut: { gt: start },
-          // Nested under AND so the holding filter's top-level OR composes
-          // with the scope fields (same pitfall as the occupancy queries).
-          AND: [capacityHoldingBookingFilter()],
-          ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
+    // Only hit the database for nights the proposal itself does not cover.
+    const sharerNightsUncovered = nights.some(
+      (night) =>
+        countActiveGuestsForNight([sharer.range], night, envelope) > 0 &&
+        !covered.has(formatDateOnly(night))
+    );
+    if (sharerNightsUncovered) {
+      const partnerGuests = await db.bookingGuest.findMany({
+        where: {
+          memberId: sharer.partnerMemberId,
+          booking: {
+            lodgeId,
+            checkIn: { lt: exclusiveEnd },
+            checkOut: { gt: start },
+            // Nested under AND so the holding filter's top-level OR composes
+            // with the scope fields (same pitfall as the occupancy queries).
+            AND: [capacityHoldingBookingFilter()],
+            ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
+          },
         },
-      },
-      include: {
-        nights: true,
-        booking: { select: { checkIn: true, checkOut: true } },
-      },
-    });
-    const covered = new Set<string>();
-    for (const night of nights) {
-      const present = partnerGuests.some(
-        (guest) =>
-          countActiveGuestsForNight([guest], night, {
-            checkIn: guest.booking.checkIn,
-            checkOut: guest.booking.checkOut,
-          }) > 0
-      );
-      if (present) covered.add(formatDateOnly(night));
+        include: {
+          nights: true,
+          booking: { select: { checkIn: true, checkOut: true } },
+        },
+      });
+      const guestEnvelopes = partnerGuests.map((guest) => ({
+        guest,
+        checkInKey: formatDateOnlyForTimeZone(guest.booking.checkIn),
+        checkOutKey: formatDateOnlyForTimeZone(guest.booking.checkOut),
+      }));
+      for (const night of nights) {
+        const nightKey = formatDateOnly(night);
+        if (covered.has(nightKey)) continue;
+        // Gate on the booking envelope exactly like the occupancy index does,
+        // so a stray night row outside its booking window can never grant
+        // coverage occupancy would not count.
+        const present = guestEnvelopes.some(
+          (entry) =>
+            nightKey >= entry.checkInKey &&
+            nightKey < entry.checkOutKey &&
+            countActiveGuestsForNight([entry.guest], night, {
+              checkIn: entry.guest.booking.checkIn,
+              checkOut: entry.guest.booking.checkOut,
+            }) > 0
+        );
+        if (present) covered.add(nightKey);
+      }
     }
     coverageBySharer.push(covered);
   }
@@ -429,8 +489,11 @@ export async function checkCapacityForPartnerSharedAdmission(
       sharersPresent += 1;
     }
 
-    // Existing occupancy above the base ceiling is prior shared admissions;
-    // those slots stay consumed.
+    // Any existing occupancy above the base ceiling counts as consumed shared
+    // slots. Usually that IS prior shared admissions, but a #1668 forced
+    // overbook also lands here — deliberately conservative: forced overage
+    // shrinks what sharers may add (it can only mislabel the reason, never
+    // overbook further).
     const baseUsed = Math.min(occupied, baseCapacity);
     const sharedUsed = occupied - baseUsed;
 

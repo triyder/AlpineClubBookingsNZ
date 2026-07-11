@@ -258,6 +258,9 @@ export default function LodgeConfigurationHubPage() {
         setResolvedCapacity(refreshed.capacity.capacity ?? 0);
         setCapacitySource(refreshed.capacity.source ?? null);
         setActiveBedCount(refreshed.capacity.activeBedCount ?? 0);
+        // The saved capacity also moves the partner headroom (a cap at or
+        // below the bed count zeroes it) — keep the breakout in sync.
+        setPartnerSharedHeadroom(refreshed.capacity.partnerSharedHeadroom ?? 0);
       }
     } catch (err) {
       setCapacityMessage({

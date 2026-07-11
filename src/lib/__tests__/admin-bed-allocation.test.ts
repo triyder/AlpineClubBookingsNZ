@@ -1605,6 +1605,9 @@ describe("multi-lodge room scoping (phase 7)", () => {
     const payload = await getRoomsAndBedsConfiguration(db as never, "lodge-2");
 
     expect(getLodgePartnerSharedCapacityStatus).toHaveBeenCalledWith("lodge-2", db);
+    // The card reads the headroom straight off this payload (#1745).
+    expect(payload.capacity.partnerSharedHeadroom).toBe(0);
+    expect(payload.capacity.activeDoubleBedCount).toBe(0);
     // Rooms exist elsewhere in the club, so the empty selected lodge must
     // not offer the config import (it only seeds the first lodge).
     expect(payload.canImportFromConfig).toBe(false);

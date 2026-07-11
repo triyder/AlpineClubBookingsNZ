@@ -43,8 +43,18 @@ ceiling bump:
 - **Bounded:** at most `activeDoubleBedCount` shared admissions per night.
   Each admitted sharer must hold a CONFIRMED partner link with a member
   staying every requested night (`mayShareDoubleBed` stays the single source
-  of truth for the pair rule), so every shared admission maps to a distinct
-  double and allocation can always place every admitted pair.
+  of truth for the pair rule), and the partner must hold an ordinary,
+  base-backed place: a sharer can never anchor another sharer, coverage from
+  the same proposal must come from a non-sharing guest row carrying the
+  partner's memberId, and otherwise coverage is read from the partner's
+  capacity-holding bookings. Under those guards every shared admission maps
+  to a distinct double, so a feasible placement always exists — though
+  producing it stays the allocation board's job and may mean moving unlocked
+  allocations. Known residual: a partner admitted above base via the #1668
+  over-capacity override can anchor a sharer; combining the two admin
+  overrides can exceed pairing feasibility (both are explicit admin acts,
+  and forced overage otherwise only *shrinks* headroom — it counts as
+  consumed shared slots).
 - **Ceiling interplay (#1653):** an explicit `LodgeSettings.capacity` is a
   maximum *sleeping* capacity (fire/consent/licence) and binds people, not
   beds. Headroom is therefore
@@ -61,6 +71,14 @@ Per-night admission rule (owner decision, #1745): admit if a base slot is
 free, OR the guest is an eligible partner-sharer **and**
 `sharedSlotsUsed < partnerSharedHeadroom` for that night. Occupancy already
 above the base ceiling counts as used shared slots.
+
+Two conservative implementation choices sit on top of that decided rule
+(ratified via the #1745 PR review rather than the issue text): the ceiling
+interplay above (an explicit capacity always wins, so a capped lodge gets no
+headroom), and fail-loud sharers — a proposed sharer whose pair is not
+CONFIRMED-linked, or whose partner misses any requested night, rejects the
+whole proposal outright instead of silently falling back to an ordinary
+slot the admin did not intend.
 
 | Active beds | of which DOUBLE | Capacity set | Base figure | Partner headroom |
 |---|---|---|---|---|
@@ -113,10 +131,12 @@ keeps using the bed count unless a capacity is set.
 ## Admin surface
 
 On the lodge admin page (`/admin/lodges/[id]`) the **Capacity** card shows the
-resolved figure and its `source`, and the capacity field warns live when the
-value entered is below the active bed count (it will cap the lodge). The
-allocation board still shows all physical beds; a capped lodge simply leaves
-some beds unbooked.
+resolved figure and its `source` — with any partner-shared headroom broken
+out (`"10 beds + up to 1 partner spot"`, plus a short partner-only
+explainer; #1745) — and the capacity field warns live when the value entered
+is below the active bed count (it will cap the lodge). The allocation board
+still shows all physical beds; a capped lodge simply leaves some beds
+unbooked.
 
 ## Behaviour change (introduced with #1653)
 
