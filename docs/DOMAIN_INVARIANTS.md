@@ -103,9 +103,20 @@ Future reviews and issues should cite this file when proposing changes.
   a raw-SQL partial unique index (`WHERE "bedType" <> 'DOUBLE'`, recorded in
   `prisma/partial-unique-indexes.tsv`) caps every non-DOUBLE bed at exactly one;
   `BedAllocation.bedType` is a denormalized copy the partial index reads (a
-  partial index cannot join to `LodgeBed`). Capacity is unchanged — a shared
-  double is still ONE bed of nightly capacity and each occupant is a full
-  person-night (pricing/settlement untouched). A DOUBLE holding a second occupant
+  partial index cannot join to `LodgeBed`). The **base** capacity figure is
+  unchanged — a shared double is still ONE bed of `activeBedCount` and each
+  occupant is a full person-night (pricing/settlement untouched) — but each
+  active DOUBLE adds one **partner-shared slot** of admission headroom above
+  it (#1745): reserved (only `checkCapacityForPartnerSharedAdmission` on the
+  admin-initiated partner flow may use it — every public/member/system path
+  reads the unchanged base `getLodgeCapacity`), bounded (≤ active DOUBLE
+  count per night, with the sharer's partner required to hold an ordinary
+  base-backed place — a sharer can never anchor another sharer — so a
+  feasible pairing always exists, modulo the documented #1668 forced-overbook
+  residual), and capped by an explicit `LodgeSettings.capacity`, which limits
+  *people*, so a `capped_beds` lodge gets no headroom (see
+  docs/CAPACITY_MODEL.md, "Partner-shared double-bed headroom"). A DOUBLE
+  holding a second occupant
   cannot be retyped to a non-double until that occupant is removed. Whenever a
   shared double loses its primary — a board delete (#1743), a board move of the
   primary onto another bed, or a cross-booking cancellation / reconcile prune

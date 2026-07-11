@@ -1,11 +1,13 @@
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@prisma/client";
 import {
   canonicalPartnerPair,
   PARTNER_LINK_CONFIRMED,
 } from "@/lib/member-partner-link-shared";
 
-type DoubleBedSharingDb = typeof prisma | Prisma.TransactionClient;
+// Structural minimum rather than `typeof prisma | Prisma.TransactionClient`:
+// callers hold differently-Omitted transaction clients (e.g. capacity.ts's,
+// #1745), and all this module needs are these two delegates.
+type DoubleBedSharingDb = Pick<typeof prisma, "member" | "memberPartnerLink">;
 
 /**
  * Whether two members may share one DOUBLE bed for a night (#1701).

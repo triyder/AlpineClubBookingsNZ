@@ -4,6 +4,19 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Lodge capacity gains reserved partner-shared headroom (#1745, part of the
+  double-bed epic #1741).** Each active shareable `DOUBLE` bed now contributes
+  one admission slot **above** the base lodge capacity — reserved for a guest
+  whose CONFIRMED partner (#1742/#1744) holds an ordinary place on the same
+  nights, bounded by the double count per night, and never past an explicit
+  per-lodge capacity (a fire/licence people-ceiling zeroes the headroom, so a
+  capped lodge is unaffected). Public and member booking paths are untouched:
+  the base figure they read is unchanged, and only the admin-initiated
+  partner-shared admission check (`checkCapacityForPartnerSharedAdmission`;
+  initiation surface lands with #1746) can use the extra slots. The admin
+  lodge Capacity card breaks the figure out ("10 beds + up to 1 partner
+  spot") rather than showing a combined number.
+
 - Added the declared **Partner/Husband/Wife relationship** (#1742, part of the
   double-bed shared-occupancy epic #1741): a symmetric, consent-based
   `MemberPartnerLink` between two adult members with a request→confirm flow
@@ -21,8 +34,9 @@ All notable public reference-release changes should be recorded here.
   `partner-link-request`, `partner-link-confirmed`, `partner-link-removed`.
   Expand-only migration (`MemberPartnerLink` table +
   `PartnerInviteToken.createPartnerLink`). This link is the eligibility signal
-  the upcoming bed-share children build on; nothing in booking or capacity
-  consumes it yet. A by-email partner request always answers with the generic
+  the bed-share children consume: double-bed placement eligibility (#1744)
+  and the partner-shared capacity headroom (#1745) both read it via
+  `mayShareDoubleBed`. A by-email partner request always answers with the generic
   "If they're eligible, we've sent them a partner request." so a member cannot
   probe whether someone already has a confirmed partner (D9 owner decision);
   and the inviter of an unregistered declared partner can cancel their own

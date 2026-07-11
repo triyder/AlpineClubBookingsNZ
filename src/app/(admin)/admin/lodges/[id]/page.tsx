@@ -74,6 +74,9 @@ export default function LodgeConfigurationHubPage() {
   // Active bed inventory for this lodge, used to warn when the capacity is set
   // below the installed beds (it then caps the lodge — #1653).
   const [activeBedCount, setActiveBedCount] = useState<number | null>(null);
+  // Partner-shared double-bed slots on top of the base figure (#1745), shown
+  // broken out so an admin can see the extra is partner-only.
+  const [partnerSharedHeadroom, setPartnerSharedHeadroom] = useState(0);
   const [capacityOverride, setCapacityOverride] = useState("");
   const [savedCapacityOverride, setSavedCapacityOverride] = useState("");
   const [savingCapacity, setSavingCapacity] = useState(false);
@@ -159,6 +162,7 @@ export default function LodgeConfigurationHubPage() {
           setResolvedCapacity(data.capacity.capacity ?? 0);
           setCapacitySource(data.capacity.source ?? null);
           setActiveBedCount(data.capacity.activeBedCount ?? 0);
+          setPartnerSharedHeadroom(data.capacity.partnerSharedHeadroom ?? 0);
         }
       })
       .catch(() => {});
@@ -254,6 +258,9 @@ export default function LodgeConfigurationHubPage() {
         setResolvedCapacity(refreshed.capacity.capacity ?? 0);
         setCapacitySource(refreshed.capacity.source ?? null);
         setActiveBedCount(refreshed.capacity.activeBedCount ?? 0);
+        // The saved capacity also moves the partner headroom (a cap at or
+        // below the bed count zeroes it) — keep the breakout in sync.
+        setPartnerSharedHeadroom(refreshed.capacity.partnerSharedHeadroom ?? 0);
       }
     } catch (err) {
       setCapacityMessage({
@@ -412,10 +419,20 @@ export default function LodgeConfigurationHubPage() {
               {resolvedCapacity === null
                 ? "\u2014"
                 : `${resolvedCapacity} bed${resolvedCapacity === 1 ? "" : "s"}`}
+              {resolvedCapacity !== null && partnerSharedHeadroom > 0
+                ? ` + up to ${partnerSharedHeadroom} partner spot${partnerSharedHeadroom === 1 ? "" : "s"}`
+                : ""}
               {capacitySource
                 ? ` (from ${CAPACITY_SOURCE_LABELS[capacitySource] ?? capacitySource})`
                 : ""}
             </p>
+            {partnerSharedHeadroom > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Partner spots are second occupants of shareable double beds:
+                admin-placed, only for a guest whose confirmed partner stays
+                those nights, and never open to ordinary bookings.
+              </p>
+            )}
           </div>
           <div className="space-y-1 max-w-xs">
             <Label htmlFor="lodge-capacity-override">

@@ -1,6 +1,10 @@
 import { prisma } from "./prisma";
 import { capacityHoldingBookingFilter } from "@/lib/booking-status";
-import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import {
+  getLodgeCapacity,
+  getLodgePartnerSharedCapacityStatus,
+} from "@/lib/lodge-capacity";
+import { mayShareDoubleBed } from "@/lib/double-bed-sharing";
 import {
   eachDateOnlyInRange,
   formatDateOnly,
@@ -245,6 +249,295 @@ export async function checkCapacityForGuestRanges(
   return {
     available: minAvailable >= 0,
     minAvailable,
+    nightDetails,
+  };
+}
+
+// A proposed non-sharing guest. `memberId` (when the guest is a member) lets
+// a sharer's partner coverage be anchored to a guest in this same proposal —
+// the sharer-joins-the-partner's-own-booking case, where excludeBookingId
+// removes the partner's existing row from the occupancy query.
+export interface PartnerSharedProposedGuest extends GuestStayRange {
+  memberId?: string | null;
+}
+
+export interface PartnerSharedAdmissionSharer {
+  range: GuestStayRange;
+  memberId: string;
+  partnerMemberId: string;
+}
+
+export interface PartnerSharedNightDetail extends NightAvailability {
+  sharedSlotsUsed: number;
+  sharedSlotsNeeded: number;
+}
+
+export interface PartnerSharedAdmissionResult {
+  available: boolean;
+  reason: string | null;
+  minAvailable: number;
+  partnerSharedHeadroom: number;
+  nightDetails: PartnerSharedNightDetail[];
+}
+
+/**
+ * Admission check for admin-initiated partner-shared bookings (#1745).
+ *
+ * The base lodge ceiling (`getLodgeCapacity`) is untouched — public booking
+ * paths keep calling checkCapacityForGuestRanges and never see the extra
+ * slots. This variant admits `sharers` beyond that ceiling, one per active
+ * DOUBLE bed (the partner-shared headroom, see docs/CAPACITY_MODEL.md),
+ * under the owner-decided rule (#1745): a guest is admitted if a base slot
+ * is free, OR they hold a CONFIRMED partner link with a member staying on
+ * every night they stay AND a shared slot is free that night.
+ * `ordinaryGuests` can never consume a shared slot — the headroom is
+ * reserved, not a blanket bump.
+ *
+ * Placeability: each shared admission maps to a distinct double ONLY when
+ * the sharer's partner holds an ordinary (base-backed) place. The guards
+ * below enforce the structural half of that — a sharer can never anchor
+ * another sharer, and same-proposal coverage must come from a non-sharing
+ * proposed guest — but a partner admitted above base through the #1668
+ * over-capacity override can still anchor a sharer; both are explicit admin
+ * overrides and the combination can exceed pairing feasibility (see
+ * docs/CAPACITY_MODEL.md). Placement itself stays the allocation board's
+ * job and may require moving unlocked allocations.
+ *
+ * Callers run inside the lodge capacity lock like every other admission
+ * path (acquireLodgeCapacityLock) so shared slots cannot be double-admitted
+ * concurrently.
+ */
+export async function checkCapacityForPartnerSharedAdmission(
+  lodgeId: string,
+  checkIn: Date,
+  checkOut: Date,
+  ordinaryGuests: PartnerSharedProposedGuest[],
+  sharers: PartnerSharedAdmissionSharer[],
+  excludeBookingId?: string,
+  tx?: TransactionClient
+): Promise<PartnerSharedAdmissionResult> {
+  const db = tx ?? prisma;
+  const status = await getLodgePartnerSharedCapacityStatus(lodgeId, db);
+  const baseCapacity = status.capacity;
+  const headroom = status.partnerSharedHeadroom;
+
+  const start = normalizeDateOnlyForTimeZone(checkIn);
+  const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
+  const nights = eachDateOnlyInRange(start, exclusiveEnd);
+  const envelope = { checkIn: start, checkOut: exclusiveEnd };
+
+  if (nights.length === 0) {
+    return {
+      available: true,
+      reason: null,
+      minAvailable: Number.POSITIVE_INFINITY,
+      partnerSharedHeadroom: headroom,
+      nightDetails: [],
+    };
+  }
+
+  function rejected(reason: string): PartnerSharedAdmissionResult {
+    return {
+      available: false,
+      reason,
+      minAvailable: 0,
+      partnerSharedHeadroom: headroom,
+      nightDetails: [],
+    };
+  }
+
+  // Structural placeability guards: a shared slot pairs the sharer with a
+  // base-backed partner, so a sharer can never anchor another sharer — a
+  // couple must be encoded as one ordinary guest (or existing booking) plus
+  // one sharer, never as two sharers. Duplicates would let one person
+  // consume two slots.
+  const sharerIds = new Set<string>();
+  for (const sharer of sharers) {
+    if (sharerIds.has(sharer.memberId)) {
+      return rejected(
+        "The same guest was proposed as a partner-sharer more than once."
+      );
+    }
+    sharerIds.add(sharer.memberId);
+  }
+  for (const sharer of sharers) {
+    if (sharerIds.has(sharer.partnerMemberId)) {
+      return rejected(
+        "Both members of a couple were proposed as partner-sharers. The partner must hold an ordinary place; only the second occupant is a sharer."
+      );
+    }
+  }
+
+  // Every sharer pair must be eligible outright — an ineligible "sharer" must
+  // not silently fall back to an ordinary slot the admin did not intend.
+  for (const sharer of sharers) {
+    const eligible = await mayShareDoubleBed(
+      sharer.memberId,
+      sharer.partnerMemberId,
+      db
+    );
+    if (!eligible) {
+      return rejected(
+        "The guest and their partner do not hold a confirmed partner relationship (or are not both active adults)."
+      );
+    }
+  }
+
+  // Partner night coverage: a shared slot exists only on nights the partner
+  // is themselves staying. Coverage comes from a non-sharing guest in this
+  // same proposal carrying the partner's memberId (the sharer-joins-the-
+  // partner's-own-booking case, where excludeBookingId removes the partner's
+  // existing row from occupancy), or from the partner's other capacity-
+  // holding bookings at this lodge. Never from an unverified caller claim.
+  const coverageBySharer: Array<Set<string>> = [];
+  for (const sharer of sharers) {
+    const covered = new Set<string>();
+    const proposedPartnerRows = ordinaryGuests.filter(
+      (guest) => guest.memberId === sharer.partnerMemberId
+    );
+    for (const night of nights) {
+      if (
+        proposedPartnerRows.length > 0 &&
+        countActiveGuestsForNight(proposedPartnerRows, night, envelope) > 0
+      ) {
+        covered.add(formatDateOnly(night));
+      }
+    }
+
+    // Only hit the database for nights the proposal itself does not cover.
+    const sharerNightsUncovered = nights.some(
+      (night) =>
+        countActiveGuestsForNight([sharer.range], night, envelope) > 0 &&
+        !covered.has(formatDateOnly(night))
+    );
+    if (sharerNightsUncovered) {
+      const partnerGuests = await db.bookingGuest.findMany({
+        where: {
+          memberId: sharer.partnerMemberId,
+          booking: {
+            lodgeId,
+            checkIn: { lt: exclusiveEnd },
+            checkOut: { gt: start },
+            // Nested under AND so the holding filter's top-level OR composes
+            // with the scope fields (same pitfall as the occupancy queries).
+            AND: [capacityHoldingBookingFilter()],
+            ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
+          },
+        },
+        include: {
+          nights: true,
+          booking: { select: { checkIn: true, checkOut: true } },
+        },
+      });
+      const guestEnvelopes = partnerGuests.map((guest) => ({
+        guest,
+        checkInKey: formatDateOnlyForTimeZone(guest.booking.checkIn),
+        checkOutKey: formatDateOnlyForTimeZone(guest.booking.checkOut),
+      }));
+      for (const night of nights) {
+        const nightKey = formatDateOnly(night);
+        if (covered.has(nightKey)) continue;
+        // Gate on the booking envelope exactly like the occupancy index does,
+        // so a stray night row outside its booking window can never grant
+        // coverage occupancy would not count.
+        const present = guestEnvelopes.some(
+          (entry) =>
+            nightKey >= entry.checkInKey &&
+            nightKey < entry.checkOutKey &&
+            countActiveGuestsForNight([entry.guest], night, {
+              checkIn: entry.guest.booking.checkIn,
+              checkOut: entry.guest.booking.checkOut,
+            }) > 0
+        );
+        if (present) covered.add(nightKey);
+      }
+    }
+    coverageBySharer.push(covered);
+  }
+
+  const overlappingBookings = await db.booking.findMany({
+    where: {
+      checkIn: { lt: exclusiveEnd },
+      checkOut: { gt: start },
+      ...capacityHoldingBookingFilter(),
+      lodgeId,
+      ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
+    },
+    include: {
+      guests: { include: { nights: true } },
+    },
+  });
+
+  const occupancyIndex = buildOccupancyIndex(overlappingBookings);
+  let reason: string | null = null;
+  const nightDetails: PartnerSharedNightDetail[] = nights.map((night) => {
+    const nightKey = formatDateOnly(night);
+    const occupied = getOccupiedBedsForNightFromIndex(night, occupancyIndex);
+    const ordinary = countActiveGuestsForNight(ordinaryGuests, night, envelope);
+
+    let sharersPresent = 0;
+    for (const [index, sharer] of sharers.entries()) {
+      if (countActiveGuestsForNight([sharer.range], night, envelope) === 0) {
+        continue;
+      }
+      if (!coverageBySharer[index].has(nightKey)) {
+        // A shared slot exists only on nights the partner also stays.
+        reason ??=
+          "The partner is not staying on every night requested for the shared guest.";
+        continue;
+      }
+      sharersPresent += 1;
+    }
+
+    // Any existing occupancy above the base ceiling counts as consumed shared
+    // slots. Usually that IS prior shared admissions, but a #1668 forced
+    // overbook also lands here — deliberately conservative: forced overage
+    // shrinks what sharers may add (it can only mislabel the reason, never
+    // overbook further).
+    const baseUsed = Math.min(occupied, baseCapacity);
+    const sharedUsed = occupied - baseUsed;
+
+    // Ordinary guests fit under the base ceiling only — the shared slots are
+    // reserved for partner-sharers.
+    const baseFreeAfterOrdinary = baseCapacity - baseUsed - ordinary;
+    if (baseFreeAfterOrdinary < 0) {
+      reason ??= "The lodge is fully booked for part of the requested stay.";
+    }
+
+    // Sharers take a free base slot first (anyone may, below the ceiling);
+    // the remainder need shared slots.
+    const sharedNeeded = Math.max(
+      0,
+      sharersPresent - Math.max(0, baseFreeAfterOrdinary)
+    );
+    if (sharedUsed + sharedNeeded > headroom) {
+      reason ??=
+        headroom === 0
+          ? "This lodge has no shareable double beds (or its capacity setting leaves no partner headroom)."
+          : "All partner-shared double-bed slots are taken for part of the requested stay.";
+    }
+
+    const totalProposed = ordinary + sharersPresent;
+    return {
+      date: night,
+      occupiedBeds: occupied + totalProposed,
+      availableBeds: baseCapacity + headroom - occupied - totalProposed,
+      sharedSlotsUsed: sharedUsed,
+      sharedSlotsNeeded: sharedNeeded,
+    };
+  });
+
+  // A sharer whose range covers a night the partner does not was counted out
+  // of sharersPresent above; surface it as unavailable even if the arithmetic
+  // happened to pass.
+  const available = reason === null;
+  const minAvailable = Math.min(...nightDetails.map((n) => n.availableBeds));
+
+  return {
+    available,
+    reason,
+    minAvailable,
+    partnerSharedHeadroom: headroom,
     nightDetails,
   };
 }

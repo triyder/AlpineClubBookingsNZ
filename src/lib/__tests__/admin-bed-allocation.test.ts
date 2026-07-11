@@ -16,6 +16,15 @@ vi.mock("@/lib/lodge-capacity", () => ({
     activeBedCount: 0,
     fallbackCapacity: 29,
   }),
+  getLodgePartnerSharedCapacityStatus: vi.fn().mockResolvedValue({
+    capacity: 29,
+    source: "club_config",
+    bedAllocationEnabled: false,
+    activeBedCount: 0,
+    fallbackCapacity: 29,
+    activeDoubleBedCount: 0,
+    partnerSharedHeadroom: 0,
+  }),
 }));
 
 import {
@@ -36,7 +45,7 @@ import {
   parseBedAllocationDateRange,
   updateBedAllocationBed,
 } from "@/lib/admin-bed-allocation";
-import { getLodgeCapacityStatus } from "@/lib/lodge-capacity";
+import { getLodgePartnerSharedCapacityStatus } from "@/lib/lodge-capacity";
 import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 
@@ -1595,7 +1604,10 @@ describe("multi-lodge room scoping (phase 7)", () => {
 
     const payload = await getRoomsAndBedsConfiguration(db as never, "lodge-2");
 
-    expect(getLodgeCapacityStatus).toHaveBeenCalledWith("lodge-2", db);
+    expect(getLodgePartnerSharedCapacityStatus).toHaveBeenCalledWith("lodge-2", db);
+    // The card reads the headroom straight off this payload (#1745).
+    expect(payload.capacity.partnerSharedHeadroom).toBe(0);
+    expect(payload.capacity.activeDoubleBedCount).toBe(0);
     // Rooms exist elsewhere in the club, so the empty selected lodge must
     // not offer the config import (it only seeds the first lodge).
     expect(payload.canImportFromConfig).toBe(false);

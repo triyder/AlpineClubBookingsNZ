@@ -191,9 +191,11 @@ enum BedAllocationSource {
   MANUAL
 }
 
-// Descriptive/visual bed type (#1675). v1 is display-only: capacity stays 1
-// person per bed per night regardless of type (double-bed shared occupancy is
-// out of scope). BUNK_TOP / BUNK_BOTTOM pair up via LodgeBed.bunkGroup.
+// Bed type (#1675). A DOUBLE may hold a declared-partner second occupant
+// (#1701) and contributes one partner-shared admission slot above the base
+// capacity (#1745, docs/CAPACITY_MODEL.md); every other type stays exactly
+// one occupant per night. BUNK_TOP / BUNK_BOTTOM pair up via
+// LodgeBed.bunkGroup.
 enum BedType {
   SINGLE
   BUNK_TOP
@@ -1557,7 +1559,8 @@ model LodgeBed {
   name      String   @db.VarChar(100)
   sortOrder Int      @default(0)
   active    Boolean  @default(true)
-  // Descriptive bed type (#1675); does not affect capacity (still 1/bed/night).
+  // Bed type (#1675). Base capacity stays 1/bed/night; an active DOUBLE also
+  // adds one partner-shared admission slot above the base figure (#1745).
   bedType   BedType  @default(SINGLE)
   // Optional pairing label within a room: at most two beds share a bunkGroup,
   // one BUNK_TOP and one BUNK_BOTTOM. Enforced in admin-bed-allocation.ts, not

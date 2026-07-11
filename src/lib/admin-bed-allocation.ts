@@ -14,7 +14,10 @@ import {
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
-import { getLodgeCapacityStatus, type LodgeCapacityStatus } from "@/lib/lodge-capacity";
+import {
+  getLodgePartnerSharedCapacityStatus,
+  type LodgePartnerSharedCapacityStatus,
+} from "@/lib/lodge-capacity";
 import {
   buildFirstFitBedAllocationPlan,
   type BedAllocationAgeTier,
@@ -181,7 +184,9 @@ export interface BedAllocationDashboardPayload {
 
 export interface RoomsAndBedsConfigurationPayload {
   rooms: DashboardRoom[];
-  capacity: LodgeCapacityStatus;
+  // Includes the partner-shared headroom (#1745) so the admin Capacity card
+  // can break the figure out ("10 beds + up to 1 partner spot").
+  capacity: LodgePartnerSharedCapacityStatus;
   canImportFromConfig: boolean;
   configBeds: Array<{
     id: string;
@@ -345,7 +350,7 @@ export async function getRoomsAndBedsConfiguration(
 ): Promise<RoomsAndBedsConfigurationPayload> {
   const lodgeId = requestedLodgeId ?? (await getDefaultLodgeId(db));
   const rooms = await listBedAllocationRooms(db, lodgeId);
-  const capacity = await getLodgeCapacityStatus(lodgeId, db);
+  const capacity = await getLodgePartnerSharedCapacityStatus(lodgeId, db);
   // Import seeds the club's first lodge only, so the offer keys off the
   // whole tables being empty, not just the selected lodge's slice.
   const [totalRoomCount, totalBedCount] = await Promise.all([

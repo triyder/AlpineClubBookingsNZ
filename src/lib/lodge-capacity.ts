@@ -38,7 +38,7 @@ interface LodgeCapacityDb {
   };
   lodgeBed: {
     count: (args: {
-      where: { active: boolean; room?: { lodgeId: string } };
+      where: { active: boolean; room?: { lodgeId: string }; bedType?: "DOUBLE" };
     }) => Promise<number>;
   };
   // Optional so existing structural mocks keep working: when absent, the
@@ -207,6 +207,67 @@ export async function getLodgeCapacity(
 ): Promise<number> {
   const status = await getLodgeCapacityStatus(lodgeId, db);
   return status.capacity;
+}
+
+export interface LodgePartnerSharedCapacityStatus extends LodgeCapacityStatus {
+  activeDoubleBedCount: number;
+  partnerSharedHeadroom: number;
+}
+
+/**
+ * Capacity status plus the partner-shared headroom (#1745): how many guests
+ * beyond the base `capacity` may be admitted as second occupants of shared
+ * DOUBLE beds. Kept out of getLodgeCapacityStatus so ordinary availability
+ * checks — which must never see the extra slots — pay no extra query.
+ *
+ * Headroom is one slot per active DOUBLE bed, bounded by an explicit admin
+ * capacity value when one is set: that value is a maximum *sleeping* capacity
+ * (fire/consent/licence, #1653), and a partner-sharer sleeps in the lodge like
+ * anyone else. So a `capped_beds` lodge gets no headroom at all, and a lodge
+ * whose capacity sits between `beds` and `beds + doubles` gets only the gap.
+ * The headroom never raises the base figure the public booking paths read —
+ * it is consumed only by the admin-initiated partner-shared admission check
+ * (`checkCapacityForPartnerSharedAdmission`, see docs/CAPACITY_MODEL.md).
+ */
+export async function getLodgePartnerSharedCapacityStatus(
+  lodgeId: string,
+  db?: LodgeCapacityDb,
+): Promise<LodgePartnerSharedCapacityStatus> {
+  const client = db ?? (await resolveLodgeCapacityDb());
+  const base = await getLodgeCapacityStatus(lodgeId, client);
+
+  // Shared slots exist only where beds are the bookable inventory: with the
+  // module off (or no active beds) there are no DOUBLE rows admitting a second
+  // occupant, and with a capacity below the bed count the explicit people
+  // ceiling already binds.
+  if (
+    !base.bedAllocationEnabled ||
+    base.activeBedCount <= 0 ||
+    base.source !== "configured_beds"
+  ) {
+    return { ...base, activeDoubleBedCount: 0, partnerSharedHeadroom: 0 };
+  }
+
+  const activeDoubleBedCount = await client.lodgeBed.count({
+    where: { active: true, room: { lodgeId }, bedType: "DOUBLE" },
+  });
+
+  const { loadLodgeCapacityOverride } = await import("@/lib/lodge-settings");
+  const override = await loadLodgeCapacityOverride(client, lodgeId);
+  const peopleCeiling =
+    override !== null && override !== undefined
+      ? override
+      : Number.POSITIVE_INFINITY;
+
+  const partnerSharedHeadroom = Math.max(
+    0,
+    Math.min(
+      activeDoubleBedCount,
+      peopleCeiling - base.activeBedCount,
+    ),
+  );
+
+  return { ...base, activeDoubleBedCount, partnerSharedHeadroom };
 }
 
 /**
