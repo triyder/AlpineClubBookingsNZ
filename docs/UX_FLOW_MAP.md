@@ -90,7 +90,16 @@ shadcn neutral (epic #1800). The foundation (#1801) establishes:
   `@theme inline`) are defined for light **and** dark and clear WCAG AA. Use
   `bg-success-muted text-success` / `bg-warning-muted text-warning` (or the
   solid `bg-success text-success-foreground`) instead of hardcoded
-  green/yellow Tailwind classes so badges/chips adapt to dark mode.
+  green/yellow Tailwind classes so badges/chips adapt to dark mode. The trio is
+  completed by `--info` (calm blue) and `--danger` (dark-adaptable red — used
+  instead of the solid `--destructive`, which fails dark-mode AA at 2.63:1).
+- **Status + occupancy primitives (#1804):** render any domain status with
+  `StatusChip` (`src/components/ui/status-chip.tsx`; `kind` =
+  booking|payment|subscription|lifecycle|financeAccess) — it resolves each state
+  to one of five semantic tones (neutral/info/success/warning/danger) as an
+  icon + label, wrapping the shared label maps. Show fullness with
+  `OccupancyMeter` (`filled`/`capacity`; accent bar → safety-orange + a "Full"
+  label when full). Both are presentation-only and dark-mode correct.
 - **Tabular figures:** numeric/data cells inside `.app-theme-scope table` get
   `tabular-nums` automatically; opt any other money/count/date node in with the
   `.tabular-figures` class.

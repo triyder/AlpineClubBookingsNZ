@@ -51,6 +51,9 @@
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
   --color-info-muted: var(--info-muted);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-danger-muted: var(--danger-muted);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -115,12 +118,26 @@
   --warning: #854d0e;
   --warning-foreground: #ffffff;
   --warning-muted: #fef9c3;
-  /* --info completes the status trio (#1802). Light values are the blue-800 /
-     blue-100 pairing (text-on-muted contrast validated >= 4.5:1); the `.dark`
-     block re-tints to the same L ramp as success/warning at a cool blue hue. */
+  /* Semantic status tokens continued (#1804 StatusChip). `--info` is the calm
+     blue used for in-progress / neutral-informational states (waitlisted,
+     processing, review, finance viewer); `--danger` is a dark-adaptable red for
+     terminal-negative states (cancelled, failed, overdue). Both follow the #1801
+     structure (accent text / -foreground on solid / -muted tinted background) so
+     the StatusChip renders one uniform muted-chip family across all five tones.
+     `--danger` is added rather than reusing the solid `--destructive` pair because
+     that pair is only 2.63:1 in dark mode (red-on-red) and would fail WCAG AA in a
+     status chip. Light values equal the previous red/blue badge Tailwind pairings
+     (blue-800/100, red-800/100); the `.dark` block re-tints to the existing
+     colored-callout dark tones (hue 250 / 27). All pairs clear WCAG AA (measured
+     with club-theme-schema.ts contrastRatio: info 7.15/7.37, danger 6.80/7.06,
+     -foreground on solid >= 8.3). NEW, additive tokens — no default palette hex is
+     altered. */
   --info: #1e40af;
   --info-foreground: #ffffff;
   --info-muted: #dbeafe;
+  --danger: #991b1b;
+  --danger-foreground: #ffffff;
+  --danger-muted: #fee2e2;
 }
 
 .dark {
@@ -176,9 +193,20 @@
   --warning: oklch(0.84 0.11 75);
   --warning-foreground: oklch(0.2 0 0);
   --warning-muted: oklch(0.33 0.05 75);
+  /* Semantic status tokens continued (#1804) — dark re-tint follows the
+     colored-callout remap structure (muted bg oklch(0.33 0.05 h), accent/text
+     oklch(0.84 0.11 h), near-black solid foreground), matching the same ratios
+     documented for the family-text remap. `--danger` hue 27 mirrors the existing
+     red callout tone; `--info` hue 250 is NOT an existing callout tone (blue
+     callout is 262) — it is held byte-identical to the sibling Alert lane (#1802)
+     so the two lanes' additive `--info*` blocks de-dupe trivially at merge.
+     info 7.37:1, danger 7.06:1 text-on-muted. */
   --info: oklch(0.84 0.11 250);
   --info-foreground: oklch(0.2 0 0);
   --info-muted: oklch(0.33 0.05 250);
+  --danger: oklch(0.84 0.11 27);
+  --danger-foreground: oklch(0.2 0 0);
+  --danger-muted: oklch(0.33 0.05 27);
 }
 
 .website-theme {
