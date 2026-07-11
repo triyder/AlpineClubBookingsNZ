@@ -4,6 +4,16 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Email message registry completeness pass (#1780 docs child).**
+  `docs/EMAIL_MESSAGE_REGISTRY.md` now documents the 12 live templates it was
+  missing: `two-factor-code`, `booking-review-approved` /
+  `booking-review-rejected`, `induction-sign-off-request`,
+  `school-attendee-confirmation`, `admin-school-manual-invoice`, and the six
+  group-booking settlement/join messages (`group-booking-join-verification`,
+  `group-settlement-receipt`, `group-join-settled`,
+  `group-settlement-expired`, `group-join-released`, `group-join-cancelled`).
+  Docs-only; no behaviour change.
+
 - **A deliberately over-capacity booking is no longer destroyed when payment
   lands (#1771).** Every admin over-capacity admission — on-behalf create
   (#1668/#1695/#1767), date/batch modification (#1668), waitlist force-confirm,

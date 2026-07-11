@@ -268,6 +268,32 @@ Triggers and frequency:
 - Same `POST /api/auth/request-email-change` request as above.
 - Sent to the old email address once per successful request.
 
+### two-factor-code
+
+Subject:
+
+```text
+Your {{CLUB_NAME}} two-factor code
+```
+
+Body:
+
+```text
+Two-factor code
+
+Hi {{firstName}},
+
+Use this code to finish signing in to your {{CLUB_NAME}} booking account:
+
+{{code}}
+
+This code expires on {{expiresAt}}. If you did not try to sign in, change your password and contact the club.
+```
+
+Triggers and frequency:
+
+- `POST /api/auth/2fa/email/send`: when a member with email two-factor enabled requests a sign-in code during login. Per request; codes expire after 10 minutes. Rate limited (shared two-factor limiter).
+
 ### booking-confirmed
 
 Subject:
@@ -542,6 +568,62 @@ Triggers and frequency:
   `notifyMember`); the standalone guest-remove route honours the same flag for
   admins (#1705). "Without emailing" skips this email and records
   `notifyMember: false` in the audit metadata; member self-edits always send.
+
+### booking-review-approved
+
+Subject:
+
+```text
+Your booking has been approved - {{CLUB_LODGE_NAME}}
+```
+
+Body:
+
+```text
+Booking Approved
+
+Hi {{firstName}}, an admin has approved your booking. You can now complete payment to confirm it.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+
+Note from admin: {{adminNotes}} [only when adminNotes is non-empty]
+
+Complete Payment: {{BASE_URL}}/bookings/{{bookingId}}
+```
+
+Triggers and frequency:
+
+- `POST /api/admin/bookings/[id]/review` (approve): when an admin approves a booking held for review (minors flow), releasing it for payment. One email per approval decision, to the booking owner.
+
+### booking-review-rejected
+
+Subject:
+
+```text
+Your booking could not be approved - {{CLUB_LODGE_NAME}}
+```
+
+Body:
+
+```text
+Booking Declined
+
+Hi {{firstName}}, an admin has reviewed your booking and was not able to approve it. The booking has been cancelled — no payment was taken.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+
+Reason from admin: {{adminNotes}} [only when adminNotes is non-empty]
+
+You are welcome to make a new booking that includes an adult guest, or contact the club to discuss.
+
+Make a New Booking: {{BASE_URL}}/book
+```
+
+Triggers and frequency:
+
+- `POST /api/admin/bookings/[id]/review` (reject): when an admin declines a booking held for review (minors flow); the booking is cancelled and no payment is taken. One email per rejection decision, to the booking owner.
 
 ### checkin-reminder
 
@@ -977,6 +1059,35 @@ Triggers and frequency:
 
 - Admin rejects a membership application.
 - One email per rejected application.
+
+### induction-sign-off-request
+
+Subject:
+
+```text
+Lodge induction sign-off for {{inducteeName}} — {{CLUB_NAME}}
+```
+
+Body:
+
+```text
+Lodge Induction Sign-Off Request
+
+Hi {{signerName}},
+
+{{inducteeName}} needs their {{CLUB_NAME}} lodge induction signed off, and you can do this as their {{signerRoleLabel}}.
+
+Once you have taken them through the lodge induction checklist and you are satisfied they are competent, please sign in and confirm the sign-off on your induction page.
+
+You will need to sign in before you can complete the sign-off.
+
+Open My Induction Page: {{inductionUrl}}
+```
+
+Triggers and frequency:
+
+- `POST /api/admin/inductions`: when an admin assigns induction sign-off signers. One email per assigned signer with an email address.
+- Membership application approval (`approveMemberApplication` in `src/lib/nomination.ts`): sign-off requests also go out automatically to the assigned signers when an application is approved.
 
 ### family-group-invitation
 
@@ -2771,3 +2882,237 @@ Review Bookings: {{reviewUrl}}
 Triggers and frequency:
 
 - `POST /api/cron` (confirm-pending job): when a request-origin booking (no saved card) reaches its hold deadline unpaid; the hold is extended and admins are alerted instead of auto-charging. Per hold-expiry check on an unpaid request booking. Sent to admins who opt in to the "Public booking requests" notification.
+
+### school-attendee-confirmation
+
+Subject:
+
+```text
+Confirm your attendee list — {{CLUB_NAME}}
+```
+
+("Reminder: confirm your attendee list — {{CLUB_NAME}}" when a prompt has
+already been sent for this request.)
+
+Body:
+
+```text
+Confirm Your Attendee List [heading becomes "Reminder: Confirm Your Attendee List" on reminders]
+
+Hi {{firstName}}, {{schoolName}}'s stay at {{CLUB_NAME}}'s lodge is coming up, and the booking currently lists placeholder attendee names. Please tell us who is coming so the lodge roster shows real names on arrival. [falls back to "your school group's stay" when no school name is recorded]
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Attendees: {{guestCount}}
+
+Use the secure link below to update the names and confirm the list. You can come back and edit until you confirm; the link stays valid until check-in.
+
+Confirm Attendees: {{BASE_URL}}/school-bookings/confirm/{{token}}
+
+Need to change how many people are coming, or their age groups? Contact the club instead — headcount changes go through a revised quote.
+
+If you have any questions, contact the club at {{SUPPORT_EMAIL}}.
+```
+
+Triggers and frequency:
+
+- `POST /api/cron` (school-attendee-confirmations job): prompts school contacts whose converted booking still lists placeholder attendees ahead of check-in; marked as a reminder after the first send. The tokenized link is rotated on every send.
+- `POST /api/admin/booking-requests/[id]/resend-attendee-confirmation`: explicit admin resend button. One email per send, to the school contact.
+
+### admin-school-manual-invoice
+
+Subject:
+
+```text
+School booking needs a manual invoice: {{schoolName}}
+```
+
+Body:
+
+```text
+School Booking Needs a Manual Invoice
+
+A school group booking has been approved and confirmed. The Xero module is currently off, so no invoice was raised automatically. Please invoice the school manually and record payment through the usual paths.
+
+School: {{schoolName}}
+Contact email: {{contactEmail}}
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Guests: {{guestCount}}
+Amount: {{amount}}
+
+View Booking Requests: {{reviewUrl}}
+```
+
+Triggers and frequency:
+
+- School booking-request conversion (`src/lib/school-booking-request.ts`): when an approved school request converts to a confirmed booking while the Xero module is off, so no invoice was raised automatically. The named school/contact is the party to invoice — the email itself goes to admins. Per conversion. Sent to admins who opt in to the "Public booking requests" notification.
+
+### group-booking-join-verification
+
+Subject:
+
+```text
+Confirm your group booking spot — {{CLUB_NAME}}
+```
+
+Body (reuses the `booking-request-verification` template, pointed at the
+group-join verify page):
+
+```text
+Confirm Your Booking Request
+
+Hi {{firstName}}, thanks for your booking request for {{CLUB_NAME}}'s lodge.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Guests: {{guestCount}}
+
+Please confirm your email address so the club can review your request. Your request will not be reviewed until you confirm.
+
+Confirm My Email: {{BASE_URL}}/join/verify/{{token}}
+
+This link expires on {{expiresAt}}. If you did not make this request, you can safely ignore this email and the request will be deleted.
+```
+
+Triggers and frequency:
+
+- Non-member group join (`src/lib/group-booking.ts`): when a non-member uses a join code to claim a spot on a group booking, they must confirm their email before the join proceeds. Link expires after 48 hours. One email per join attempt.
+
+### group-settlement-receipt
+
+Subject:
+
+```text
+Your group booking is settled — {{CLUB_NAME}}
+```
+
+Body:
+
+```text
+Your Group Booking Is Settled
+
+Hi {{firstName}}, thanks for settling your group's stay at {{CLUB_NAME}}'s lodge. Everyone you are paying for is now confirmed.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Joiners settled: {{joinerCount}}
+Total paid: {{total}}
+
+Each joiner has been emailed to confirm their spot. There is nothing more for them to pay.
+
+If anything looks wrong, contact the club at {{SUPPORT_EMAIL}}.
+```
+
+Triggers and frequency:
+
+- Group settlement success (`src/lib/group-settlement.ts`, Stripe webhook path): after an organiser-pays combined payment settles. One receipt to the organiser per settlement.
+
+### group-join-settled
+
+Subject:
+
+```text
+Your spot is confirmed — {{CLUB_NAME}}
+```
+
+Body:
+
+```text
+Your Spot Is Confirmed
+
+Hi {{firstName}}, {{organiserName}} has settled the cost of your stay at {{CLUB_NAME}}'s lodge as part of their group booking. Your spot is confirmed and there is nothing for you to pay.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Guests: {{guestCount}}
+
+If you have any questions about your stay, contact the club at {{SUPPORT_EMAIL}}.
+```
+
+Triggers and frequency:
+
+- Same group settlement success as `group-settlement-receipt`: one email per joiner booking covered by the organiser's settled payment.
+
+### group-settlement-expired
+
+Subject:
+
+```text
+Your group payment expired — {{CLUB_NAME}}
+```
+
+Body:
+
+```text
+Your Group Settlement Has Expired
+
+Hi {{firstName}}, the combined payment you started for your group's stay at {{CLUB_NAME}}'s lodge was not completed in time, so the beds held for your joiners have been released.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Joiners affected: {{joinerCount}}
+Amount not charged: {{total}}
+
+No money has been taken. If your group still plans to come, restart the payment from your group booking page — the beds are subject to availability.
+
+If anything looks wrong, contact the club at {{SUPPORT_EMAIL}}.
+```
+
+Triggers and frequency:
+
+- `POST /api/cron` (group-settlement-reaper job): when an organiser's started combined payment is not completed in time and the held joiner beds are released. One email to the organiser per expired settlement.
+
+### group-join-released
+
+Subject:
+
+```text
+Your held spot has been released — {{CLUB_NAME}}
+```
+
+Body:
+
+```text
+Your Held Spot Has Been Released
+
+Hi {{firstName}}, {{organiserName}} started a combined payment for your stay at {{CLUB_NAME}}'s lodge but it was not completed in time, so your held bed has been released.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+
+Your booking is back to awaiting payment. If the group still plans to come, the organiser can restart the payment — or check with them about what happens next.
+
+If you have any questions, contact the club at {{SUPPORT_EMAIL}}.
+```
+
+Triggers and frequency:
+
+- Same group-settlement-reaper sweep as `group-settlement-expired`: one email per joiner whose held bed was released; the joiner's booking returns to awaiting payment.
+
+### group-join-cancelled
+
+Subject:
+
+```text
+Your group booking has been cancelled — {{CLUB_NAME}}
+```
+
+Body:
+
+```text
+Your Group Booking Has Been Cancelled
+
+Hi {{firstName}}, the combined group payment {{organiserName}} started for your stay at {{CLUB_NAME}}'s lodge was never completed, so your pending booking has now been cancelled. Nothing has been charged to you.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+
+If you still want to come, you can make your own booking for these dates — or talk to the organiser about starting a fresh group trip.
+
+If you have any questions, contact the club at {{SUPPORT_EMAIL}}.
+```
+
+Triggers and frequency:
+
+- `POST /api/cron` (group-settlement-reaper job, terminal stage, #1094): when a reaped organiser-pays place is never retried and the joiner's pending booking is cancelled. One email per cancelled joiner booking.
