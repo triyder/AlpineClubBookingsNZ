@@ -302,6 +302,10 @@ describe("admin member access-role UI", () => {
       />,
     );
 
+    // Login Access lives under the "More filters" disclosure (#1806); open it
+    // before asserting on its options.
+    fireEvent.click(screen.getByRole("button", { name: /more filters/i }));
+
     expect(screen.getByText("All Login Access")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "No login" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Not invited" })).toBeInTheDocument();
@@ -373,6 +377,10 @@ describe("admin member access-role UI", () => {
         onClearFilters={vi.fn()}
       />,
     );
+
+    // Non-Member Category lives under the "More filters" disclosure (#1806);
+    // open it before asserting on its options.
+    fireEvent.click(screen.getByRole("button", { name: /more filters/i }));
 
     // The old Role-based control is now labelled "Non-Member Category" (#1445);
     // its behaviour and Non-Member/School options are unchanged.
