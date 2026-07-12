@@ -189,7 +189,7 @@ export function KioskWeekView({
           <button
             type="button"
             onClick={onToday}
-            className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-500 active:bg-blue-400"
+            className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-brand-gold px-4 py-2 text-sm font-semibold text-brand-charcoal transition-colors hover:bg-brand-gold/90 active:bg-brand-gold/80"
           >
             <CalendarDays className="h-4 w-4" />
             Today
@@ -225,7 +225,7 @@ export function KioskWeekView({
               <div
                 key={day.date}
                 className={`min-h-[160px] rounded-xl border border-[#334155] bg-[#111827] p-4 text-[#94a3b8] ${
-                  isToday ? "ring-2 ring-blue-500/60" : ""
+                  isToday ? "ring-2 ring-brand-gold/60" : ""
                 }`}
                 aria-label={`${displayDay(day.date)} outside access`}
               >
@@ -246,9 +246,9 @@ export function KioskWeekView({
               onClick={() => onSelectDate(day.date)}
               className={`min-h-[160px] rounded-xl border p-4 text-left text-[#f8fafc] transition-colors hover:bg-[#334155] active:bg-[#475569] ${
                 isSelected
-                  ? "border-blue-400 bg-[#1e293b]"
+                  ? "border-brand-gold bg-[#1e293b]"
                   : "border-[#334155] bg-[#1e293b]"
-              } ${isToday ? "ring-2 ring-blue-400 ring-offset-2 ring-offset-slate-900" : ""}`}
+              } ${isToday ? "ring-2 ring-brand-gold ring-offset-2 ring-offset-slate-900" : ""}`}
               aria-label={`Open ${displayDay(day.date)}`}
             >
               <div className="flex min-h-[48px] items-start justify-between gap-2">
