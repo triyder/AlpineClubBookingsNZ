@@ -75,13 +75,15 @@ opportunistically when a file is already being touched.
 
 ## Design Foundation — Restrained Alpine (#1800)
 
-The authenticated + admin app shells carry the club identity, not just stock
+The public utility (`/login`, `/school-bookings`, `/booking-requests`),
+authenticated, and admin app shells carry the club identity, not just stock
 shadcn neutral (epic #1800). `/admin/site-style` now supplies the same saved
-brand accent, neutral ramp, and font choices to the website and both app shells
-(#1808); the occupancy meter follows that accent. Semantic success, warning,
+brand accent, neutral ramp, and font choices to the website and all three app
+shells (#1808, #1851); the occupancy meter follows that accent. Semantic
+success, warning,
 information, danger/error, and waitlist tones remain curated, contrast-locked
 light/dark pairs rather than editable brand fields; public-site Raw CSS is never
-injected into either app shell. App text-bearing surfaces use directly gated
+injected into these app shells. App text-bearing surfaces use directly gated
 neutral endpoints (deep on snow/mist in light mode; snow on deep/charcoal in
 dark mode), while the editable accent remains visible in solid filled controls
 and decorative borders. Text-bearing app states keep those endpoints opaque;

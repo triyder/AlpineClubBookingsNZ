@@ -19,7 +19,11 @@ function listSourceFiles(path: string): string[] {
 }
 
 describe("database theme app-shell contract", () => {
-  it.each(["src/app/(authenticated)/layout.tsx", "src/app/(admin)/layout.tsx"])(
+  it.each([
+    "src/app/(public)/layout.tsx",
+    "src/app/(authenticated)/layout.tsx",
+    "src/app/(admin)/layout.tsx",
+  ])(
     "injects the sanitized ClubTheme CSS in %s",
     (path) => {
       const layout = readRepoFile(path);
@@ -31,6 +35,24 @@ describe("database theme app-shell contract", () => {
       );
     },
   );
+
+  it("loads configured font variables in the public utility layout", () => {
+    const layout = readRepoFile("src/app/(public)/layout.tsx");
+
+    expect(layout).toContain("clubThemeFontVariableClassName");
+    expect(layout).not.toContain('from "next/font/google"');
+  });
+
+  it("passes the configured public logo to public utility shell chrome", () => {
+    const layout = readRepoFile("src/app/(public)/layout.tsx");
+
+    expect(layout).toMatch(
+      /<WebsiteHeader[\s\S]*?logoDataUrl=\{theme\.logoDataUrl\}[\s\S]*?\/>/,
+    );
+    expect(layout).toMatch(
+      /<WebsiteFooter[\s\S]*?logoDataUrl=\{theme\.logoDataUrl\}[\s\S]*?\/>/,
+    );
+  });
 
   it.each(["src/app/(authenticated)/layout.tsx", "src/app/(admin)/layout.tsx"])(
     "moves keyboard focus to the skip-link target in %s",

@@ -440,7 +440,8 @@
 }
 
 .app-theme-scope {
-  /* The authenticated + admin layouts inject the saved ClubTheme stylesheet.
+  /* The public utility, authenticated, and admin layouts inject the saved
+     app-safe ClubTheme stylesheet.
      Existing brand fields deliberately supply both the public website and app:
      gold is the app accent, and deep/ridge/mist/snow form the neutral ramp. The
      semantic success/warning/info/danger tokens remain the curated values declared
