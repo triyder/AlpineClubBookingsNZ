@@ -124,33 +124,45 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
       classes += "border-t-2 border-amber-400 ";
     }
 
+    // Availability heat, token-driven so it dark-adapts (epic #1800). The
+    // per-night free-bed count text below carries the same information, so colour
+    // is never the only signal. The thresholds and branch order are byte-identical
+    // to the previous green/amber/red/grey treatment — only the classes change.
     if (isPast) {
       classes += "text-gray-300 cursor-not-allowed ";
     } else if (isRetroPast) {
       // Muted-but-clickable tint for a past date open to retroactive booking:
-      // distinct from the availability colours and the disabled/full grey.
+      // distinct from the availability heat and the full tint.
       classes += "bg-slate-100 text-slate-500 italic hover:bg-slate-200 cursor-pointer ";
     } else if (available <= 0) {
-      // Full day: hard-disabled for members; muted-but-clickable when the
-      // admin over-capacity flag allows selecting it (#1767).
+      // Full night (0 beds) -> danger token. Hard-disabled for members;
+      // muted-but-clickable when the admin over-capacity flag allows selecting it
+      // (#1767). The "Full" label rendered below states this without colour.
       classes += allowFullDates
-        ? "bg-gray-100 text-gray-500 italic hover:bg-gray-200 cursor-pointer "
-        : "bg-gray-100 text-gray-400 cursor-not-allowed ";
+        ? "bg-danger-muted text-danger italic hover:brightness-95 cursor-pointer "
+        : "bg-danger-muted text-danger cursor-not-allowed ";
     } else if (available <= 5) {
-      classes += "bg-red-100 text-red-700 hover:bg-red-200 cursor-pointer ";
+      // Nearly full (1-5 beds) -> a stronger warning than "filling". No semantic
+      // orange token exists, so this uses the Tailwind orange tier, which
+      // dark-adapts via the .app-theme-scope colored-callout remap (mirrors the
+      // admin occupancy-calendar's orange step).
+      classes += "bg-orange-100 text-orange-800 hover:brightness-95 cursor-pointer ";
     } else if (available <= 15) {
-      classes += "bg-amber-100 text-amber-800 hover:bg-amber-200 cursor-pointer ";
+      // Filling (6-15 beds) -> warning token.
+      classes += "bg-warning-muted text-warning hover:brightness-95 cursor-pointer ";
     } else {
-      classes += "bg-green-100 text-green-800 hover:bg-green-200 cursor-pointer ";
+      // Plenty (>15 beds) -> success token.
+      classes += "bg-success-muted text-success hover:brightness-95 cursor-pointer ";
     }
 
-    // Highlight selected range
+    // Selected range uses the brand-gold accent, deliberately distinct from the
+    // availability heat so the two never read as the same signal.
     if (checkIn && date.getTime() === checkIn.getTime()) {
-      classes += "!bg-blue-600 !text-white !border-blue-600 ";
+      classes += "!bg-brand-gold !text-brand-charcoal !border-brand-gold ";
     } else if (checkOut && date.getTime() === checkOut.getTime()) {
-      classes += "!bg-blue-600 !text-white !border-blue-600 ";
+      classes += "!bg-brand-gold !text-brand-charcoal !border-brand-gold ";
     } else if (checkIn && checkOut && date > checkIn && date < checkOut) {
-      classes += "!bg-blue-100 ";
+      classes += "!bg-brand-gold/20 !text-foreground ";
     }
 
     return classes;
@@ -230,8 +242,9 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
           const inRange = Boolean(
             checkIn && checkOut && date > checkIn && date < checkOut,
           );
-          // Convey the visual blue selection to screen readers, which otherwise
-          // only hear the availability label and can't tell which day is chosen.
+          // Convey the visual selection highlight to screen readers, which
+          // otherwise only hear the availability label and can't tell which day
+          // is chosen.
           const selectionSuffix = isCheckIn
             ? ", selected as check-in"
             : isCheckOut
@@ -264,29 +277,39 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
               aria-pressed={isCheckIn || isCheckOut}
             >
               <span aria-hidden="true" className="leading-none">{day}</span>
-              {!isPast && (
-                <span aria-hidden="true" className="text-xs leading-none mt-0.5">
-                  {available}
-                </span>
-              )}
+              {!isPast &&
+                (available <= 0 ? (
+                  // "Full" states availability without relying on colour; the
+                  // aria-label already announces "full" for screen readers.
+                  <span
+                    aria-hidden="true"
+                    className="mt-0.5 text-[0.625rem] font-semibold uppercase leading-none tracking-wide"
+                  >
+                    Full
+                  </span>
+                ) : (
+                  <span aria-hidden="true" className="text-xs leading-none mt-0.5">
+                    {available}
+                  </span>
+                ))}
             </button>
           );
         })}
       </div>
 
-      {/* Availability legend */}
+      {/* Availability legend — swatches mirror the token-driven heat above */}
       <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
         <span className="flex items-center gap-1">
-          <span className="h-3 w-3 rounded bg-green-100" /> Available (&gt;15 beds)
+          <span className="h-3 w-3 rounded bg-success-muted" /> Available (&gt;15 beds)
         </span>
         <span className="flex items-center gap-1">
-          <span className="h-3 w-3 rounded bg-amber-100" /> Moderate (6-15 beds)
+          <span className="h-3 w-3 rounded bg-warning-muted" /> Filling (6-15 beds)
         </span>
         <span className="flex items-center gap-1">
-          <span className="h-3 w-3 rounded bg-red-100" /> Limited (1-5 beds)
+          <span className="h-3 w-3 rounded bg-orange-100" /> Nearly full (1-5 beds)
         </span>
         <span className="flex items-center gap-1">
-          <span className="h-3 w-3 rounded bg-gray-100" /> Full
+          <span className="h-3 w-3 rounded bg-danger-muted" /> Full
         </span>
       </div>
 

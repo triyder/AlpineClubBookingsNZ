@@ -8,6 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { AdminDataTable } from "@/components/admin/admin-data-table";
+import {
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 
@@ -398,10 +407,10 @@ export default function AdminWaitlistPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold">Waitlist</h1>
-        <Badge variant="secondary">{pagination.total} total</Badge>
-      </div>
+      <AdminPageHeader
+        title="Waitlist"
+        actions={<Badge variant="secondary">{pagination.total} total</Badge>}
+      />
 
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
@@ -604,132 +613,130 @@ export default function AdminWaitlistPage() {
 
       {entries.length === 0 ? (
         <Card>
-          <CardContent className="py-8 text-center text-gray-500">
+          <CardContent className="py-8 text-center text-muted-foreground">
             No waitlisted bookings match the current filters
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-3">
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-muted-foreground">
             Showing {resultStart}-{resultEnd} of {pagination.total}
           </p>
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr className="border-b bg-gray-50 text-left">
-                  <th className="px-3 py-2 font-medium">#</th>
-                  <th className="px-3 py-2 font-medium">Member</th>
-                  <th className="px-3 py-2 font-medium">Stay</th>
-                  <th className="px-3 py-2 font-medium">Guests</th>
-                  <th className="px-3 py-2 font-medium">Price</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2 font-medium">Source</th>
-                  <th className="px-3 py-2 font-medium">Created</th>
-                  <th className="px-3 py-2 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((entry) => (
-                  <tr key={entry.id} className="border-b hover:bg-gray-50">
-                    <td className="px-3 py-2">{entry.waitlistPosition ?? "-"}</td>
-                    <td className="px-3 py-2">
-                      <Link
-                        href={buildHrefWithReturnTo(
-                          `/admin/members/${entry.memberId}`,
-                          currentWaitlistPath
-                        )}
-                        className="hover:underline"
-                      >
-                        <div className="font-medium text-blue-600">{entry.memberName}</div>
-                        <div className="text-xs text-gray-500">{entry.memberEmail}</div>
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2">
-                      <div>{entry.checkIn}</div>
-                      <div className="text-xs text-gray-500">to {entry.checkOut}</div>
-                    </td>
-                    <td className="px-3 py-2">{entry.guestCount}</td>
-                    <td className="px-3 py-2">
-                      ${(entry.finalPriceCents / 100).toFixed(2)}
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="space-y-1">
-                        <Badge variant="secondary" className={bookingStatusClass(entry.status)}>
-                          {bookingStatusLabel(entry.status)}
+          <AdminDataTable>
+            <TableHeader>
+              <TableRow>
+                <TableHead>#</TableHead>
+                <TableHead>Member</TableHead>
+                <TableHead>Stay</TableHead>
+                <TableHead>Guests</TableHead>
+                <TableHead>Price</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {entries.map((entry) => (
+                <TableRow key={entry.id}>
+                  <TableCell>{entry.waitlistPosition ?? "-"}</TableCell>
+                  <TableCell>
+                    <Link
+                      href={buildHrefWithReturnTo(
+                        `/admin/members/${entry.memberId}`,
+                        currentWaitlistPath
+                      )}
+                      className="hover:underline"
+                    >
+                      <div className="font-medium text-blue-600">{entry.memberName}</div>
+                      <div className="text-xs text-muted-foreground">{entry.memberEmail}</div>
+                    </Link>
+                  </TableCell>
+                  <TableCell>
+                    <div>{entry.checkIn}</div>
+                    <div className="text-xs text-muted-foreground">to {entry.checkOut}</div>
+                  </TableCell>
+                  <TableCell>{entry.guestCount}</TableCell>
+                  <TableCell>
+                    ${(entry.finalPriceCents / 100).toFixed(2)}
+                  </TableCell>
+                  <TableCell>
+                    <div className="space-y-1">
+                      <Badge variant="secondary" className={bookingStatusClass(entry.status)}>
+                        {bookingStatusLabel(entry.status)}
+                      </Badge>
+                      {entry.requiresAdminReview && (
+                        <p className="text-xs text-amber-800">
+                          {entry.adminReviewReason || "Admin review required"}
+                        </p>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Link
+                      href={buildHrefWithReturnTo(
+                        `/bookings/${entry.id}`,
+                        currentWaitlistPath
+                      )}
+                      className="text-blue-600 hover:underline"
+                    >
+                      View booking
+                    </Link>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {getWaitlistActionContext(entry)}
+                    </p>
+                    {entry.offerEmailDelivery && (
+                      <div className="mt-2 space-y-1">
+                        <Badge
+                          variant="secondary"
+                          className={getOfferEmailBadgeClass(entry.offerEmailDelivery)}
+                        >
+                          {getOfferEmailSummary(entry.offerEmailDelivery)}
                         </Badge>
-                        {entry.requiresAdminReview && (
-                          <p className="text-xs text-amber-800">
-                            {entry.adminReviewReason || "Admin review required"}
+                        {formatOfferEmailDetail(entry.offerEmailDelivery) && (
+                          <p className="max-w-xs text-xs text-muted-foreground">
+                            {formatOfferEmailDetail(entry.offerEmailDelivery)}
                           </p>
                         )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2">
-                      <Link
-                        href={buildHrefWithReturnTo(
-                          `/bookings/${entry.id}`,
-                          currentWaitlistPath
-                        )}
-                        className="text-blue-600 hover:underline"
-                      >
-                        View booking
-                      </Link>
-                      <p className="mt-1 text-xs text-gray-500">
-                        {getWaitlistActionContext(entry)}
-                      </p>
-                      {entry.offerEmailDelivery && (
-                        <div className="mt-2 space-y-1">
-                          <Badge
-                            variant="secondary"
-                            className={getOfferEmailBadgeClass(entry.offerEmailDelivery)}
+                        {entry.offerEmailDelivery.needsOperatorAction && (
+                          <Link
+                            href="/admin/email-deliverability"
+                            className="block text-xs text-blue-600 hover:underline"
                           >
-                            {getOfferEmailSummary(entry.offerEmailDelivery)}
-                          </Badge>
-                          {formatOfferEmailDetail(entry.offerEmailDelivery) && (
-                            <p className="max-w-xs text-xs text-gray-500">
-                              {formatOfferEmailDetail(entry.offerEmailDelivery)}
-                            </p>
-                          )}
-                          {entry.offerEmailDelivery.needsOperatorAction && (
-                            <Link
-                              href="/admin/email-deliverability"
-                              className="block text-xs text-blue-600 hover:underline"
-                            >
-                              Review email recovery
-                            </Link>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-xs">{formatDateTime(entry.createdAt)}</td>
-                    <td className="px-3 py-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          // #1769b: a force-confirm only emails the member when
-                          // it lands PAID ($0 stay with admin review resolved).
-                          // Offer the email choice only then; otherwise
-                          // force-confirm proceeds directly, exactly as before.
-                          // A no-adult booking that is already APPROVED still
-                          // carries requiresAdminReview but lands PAID, so treat
-                          // APPROVED as resolved (matches the route's gate).
-                          entry.finalPriceCents === 0 &&
-                          (!entry.requiresAdminReview ||
-                            entry.adminReviewStatus === "APPROVED")
-                            ? setNotifyDialog({ bookingId: entry.id })
-                            : handleForceConfirm(entry.id)
-                        }
-                        disabled={forceConfirming === entry.id}
-                      >
-                        {forceConfirming === entry.id ? "..." : "Force Confirm"}
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                            Review email recovery
+                          </Link>
+                        )}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-xs">{formatDateTime(entry.createdAt)}</TableCell>
+                  <TableCell>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        // #1769b: a force-confirm only emails the member when
+                        // it lands PAID ($0 stay with admin review resolved).
+                        // Offer the email choice only then; otherwise
+                        // force-confirm proceeds directly, exactly as before.
+                        // A no-adult booking that is already APPROVED still
+                        // carries requiresAdminReview but lands PAID, so treat
+                        // APPROVED as resolved (matches the route's gate).
+                        entry.finalPriceCents === 0 &&
+                        (!entry.requiresAdminReview ||
+                          entry.adminReviewStatus === "APPROVED")
+                          ? setNotifyDialog({ bookingId: entry.id })
+                          : handleForceConfirm(entry.id)
+                      }
+                      disabled={forceConfirming === entry.id}
+                    >
+                      {forceConfirming === entry.id ? "..." : "Force Confirm"}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </AdminDataTable>
         </div>
       )}
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  CLUB_THEME_COLOUR_FIELDS,
   DEFAULT_CLUB_THEME_VALUES,
+  TOKOROA_CLUB_THEME_VALUES,
   buildClubThemeCss,
   contrastRatio,
   getBlockingContrastWarnings,
@@ -111,6 +113,40 @@ describe("getBlockingContrastWarnings", () => {
         brandCharcoal: "oklch(0.25 0.02 250)",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("generic public default palette (#1807)", () => {
+  // The shipped default must read as generic New Zealand alpine, never as a
+  // specific club. Tokoroa gold is seeded ONLY behind SEED_TOKOROA_THEME_COMPLETE
+  // (TOKOROA_CLUB_THEME_VALUES); it must not leak into the public default.
+  it("does not reuse any Tokoroa brand colour", () => {
+    const tokoroaHexes = new Set(
+      CLUB_THEME_COLOUR_FIELDS.map(
+        (field) => TOKOROA_CLUB_THEME_VALUES[field.key].toLowerCase(),
+      ),
+    );
+    for (const field of CLUB_THEME_COLOUR_FIELDS) {
+      expect(tokoroaHexes.has(DEFAULT_CLUB_THEME_VALUES[field.key].toLowerCase())).toBe(
+        false,
+      );
+    }
+    // Belt-and-suspenders: the signature Tokoroa gold specifically is absent.
+    expect(
+      CLUB_THEME_COLOUR_FIELDS.some(
+        (field) =>
+          DEFAULT_CLUB_THEME_VALUES[field.key].toLowerCase() === "#ffcb05",
+      ),
+    ).toBe(false);
+  });
+
+  it("is a complete, distinct palette from the Tokoroa theme", () => {
+    for (const field of CLUB_THEME_COLOUR_FIELDS) {
+      expect(DEFAULT_CLUB_THEME_VALUES[field.key]).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(DEFAULT_CLUB_THEME_VALUES[field.key]).not.toBe(
+        TOKOROA_CLUB_THEME_VALUES[field.key],
+      );
+    }
   });
 });
 

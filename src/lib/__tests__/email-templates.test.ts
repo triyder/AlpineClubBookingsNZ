@@ -30,8 +30,8 @@ describe("email-templates", () => {
         totalAlerts: 1,
       });
 
-      expect(html).toContain("background-color: #d7dde1; color: #1f2933;");
-      expect(html).not.toContain("background-color: #d7dde1; color: #8fa87c;");
+      expect(html).toContain("background-color: #d4ddd7; color: #17231c;");
+      expect(html).not.toContain("background-color: #d4ddd7; color: #57b3ab;");
     });
   });
 

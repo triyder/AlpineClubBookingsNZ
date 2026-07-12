@@ -6,6 +6,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { useConfirm } from "@/components/confirm-dialog"
+import { AdminPageHeader } from "@/components/admin/admin-page-header"
+import { AdminDataTable } from "@/components/admin/admin-data-table"
+import {
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 
 interface SuggestedMember {
   id: string
@@ -152,26 +161,24 @@ export default function FamilySuggestionsPage() {
   return (
     <div className="space-y-6">
       {confirmDialog}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Family Group Suggestions</h1>
-          <p className="text-muted-foreground mt-1">
-            Review suggested family groups based on shared emails and last names among ungrouped members.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            onClick={handleResetHidden}
-            disabled={loading || resetting || !data?.hiddenCount}
-            variant="outline"
-          >
-            {resetting ? "Resetting..." : `Reset hidden (${data?.hiddenCount ?? 0})`}
-          </Button>
-          <Button onClick={fetchSuggestions} disabled={loading} variant="outline">
-            {loading ? "Loading..." : "Refresh"}
-          </Button>
-        </div>
-      </div>
+      <AdminPageHeader
+        title="Family Group Suggestions"
+        description="Review suggested family groups based on shared emails and last names among ungrouped members."
+        actions={
+          <>
+            <Button
+              onClick={handleResetHidden}
+              disabled={loading || resetting || !data?.hiddenCount}
+              variant="outline"
+            >
+              {resetting ? "Resetting..." : `Reset hidden (${data?.hiddenCount ?? 0})`}
+            </Button>
+            <Button onClick={fetchSuggestions} disabled={loading} variant="outline">
+              {loading ? "Loading..." : "Refresh"}
+            </Button>
+          </>
+        }
+      />
 
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-md p-3 text-red-800 text-sm">
@@ -280,40 +287,38 @@ export default function FamilySuggestionsPage() {
               <CardDescription>{suggestion.reason}</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="border rounded-md">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/50">
-                      <th className="text-left p-2 font-medium">Name</th>
-                      <th className="text-left p-2 font-medium">Email</th>
-                      <th className="text-left p-2 font-medium">Age Tier</th>
-                      <th className="text-left p-2 font-medium">Can Login</th>
-                      <th className="text-left p-2 font-medium">Xero</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {suggestion.members.map((m) => (
-                      <tr key={m.id} className="border-b last:border-0">
-                        <td className="p-2">{m.firstName} {m.lastName}</td>
-                        <td className="p-2 text-muted-foreground">{m.email}</td>
-                        <td className="p-2">
-                          <Badge variant="outline" className="text-xs">{m.ageTier}</Badge>
-                        </td>
-                        <td className="p-2">
-                          {m.canLogin
-                            ? <Badge className="bg-green-100 text-green-800 text-xs">Yes</Badge>
-                            : <Badge variant="secondary" className="text-xs">No</Badge>}
-                        </td>
-                        <td className="p-2">
-                          {m.xeroContactId
-                            ? <Badge className="bg-blue-100 text-blue-800 text-xs">Linked</Badge>
-                            : <span className="text-muted-foreground text-xs">-</span>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <AdminDataTable showDensityToggle={false}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Age Tier</TableHead>
+                    <TableHead>Can Login</TableHead>
+                    <TableHead>Xero</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {suggestion.members.map((m) => (
+                    <TableRow key={m.id}>
+                      <TableCell>{m.firstName} {m.lastName}</TableCell>
+                      <TableCell className="text-muted-foreground">{m.email}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-xs">{m.ageTier}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        {m.canLogin
+                          ? <Badge className="bg-green-100 text-green-800 text-xs">Yes</Badge>
+                          : <Badge variant="secondary" className="text-xs">No</Badge>}
+                      </TableCell>
+                      <TableCell>
+                        {m.xeroContactId
+                          ? <Badge className="bg-blue-100 text-blue-800 text-xs">Linked</Badge>
+                          : <span className="text-muted-foreground text-xs">-</span>}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </AdminDataTable>
             </CardContent>
           </Card>
         )

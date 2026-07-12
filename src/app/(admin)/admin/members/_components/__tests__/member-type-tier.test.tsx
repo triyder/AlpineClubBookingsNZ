@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Member } from "../../_types";
@@ -168,6 +168,10 @@ describe("members list: Membership Type filter + Non-Member Category rename (#14
 
   it("renames the Role-based control to Non-Member Category, keeping its options", () => {
     renderToolbar();
+
+    // Non-Member Category lives under the "More filters" disclosure (#1806);
+    // open it before asserting on the renamed control.
+    fireEvent.click(screen.getByRole("button", { name: /more filters/i }));
 
     // The renamed control's placeholder + neutral option use the new wording.
     expect(screen.getByText("Non-Member Category")).toBeInTheDocument();

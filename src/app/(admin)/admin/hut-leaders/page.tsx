@@ -4,6 +4,15 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { AdminDataTable } from "@/components/admin/admin-data-table";
+import {
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Trash2, UserCheck, CalendarDays, KeyRound } from "lucide-react";
 import {
   addDaysDateOnly,
@@ -422,13 +431,10 @@ export default function HutLeadersPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">{hutLeaderLabel} Assignments</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Paint the calendar: assign a member as {hutLeaderLabel.toLowerCase()} for
-          the nights that need cover.
-        </p>
-      </div>
+      <AdminPageHeader
+        title={`${hutLeaderLabel} Assignments`}
+        description={`Paint the calendar: assign a member as ${hutLeaderLabel.toLowerCase()} for the nights that need cover.`}
+      />
 
       {/*
         Page-level (more prominent than a form-scoped banner): reset-PIN errors
@@ -535,92 +541,84 @@ export default function HutLeadersPage() {
         </Card>
       )}
 
-      <Card>
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="p-6 text-center text-slate-500">Loading...</div>
-          ) : assignments.length === 0 ? (
-            <div className="p-6 text-center text-slate-500">
-              No {hutLeaderLabel.toLowerCase()} assignments yet.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-slate-50">
-                    <th className="px-4 py-3 text-left font-medium text-slate-600">Member</th>
-                    {showLodgeColumn && (
-                      <th className="px-4 py-3 text-left font-medium text-slate-600">Lodge</th>
+      {loading ? (
+        <div className="rounded-lg border border-border bg-card p-6 text-center text-muted-foreground">
+          Loading...
+        </div>
+      ) : assignments.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card p-6 text-center text-muted-foreground">
+          No {hutLeaderLabel.toLowerCase()} assignments yet.
+        </div>
+      ) : (
+        <AdminDataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Member</TableHead>
+              {showLodgeColumn && <TableHead>Lodge</TableHead>}
+              <TableHead>Start</TableHead>
+              <TableHead>End</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {assignments.map((a) => {
+              const isActive = a.startDate <= today && a.endDate >= today;
+              const isPast = a.endDate < today;
+              return (
+                <TableRow key={a.id}>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <UserCheck className="h-4 w-4 text-muted-foreground" />
+                      <div>
+                        <div className="font-medium">{a.memberName}</div>
+                        <div className="text-xs text-muted-foreground">{a.memberEmail}</div>
+                      </div>
+                    </div>
+                  </TableCell>
+                  {showLodgeColumn && <TableCell>{a.lodgeName ?? "—"}</TableCell>}
+                  <TableCell>{a.startDate}</TableCell>
+                  <TableCell>{a.endDate}</TableCell>
+                  <TableCell>
+                    {isActive ? (
+                      <Badge className="border-green-200 bg-green-100 text-green-800">Active</Badge>
+                    ) : isPast ? (
+                      <Badge variant="secondary">Past</Badge>
+                    ) : (
+                      <Badge className="border-blue-200 bg-blue-100 text-blue-800">Upcoming</Badge>
                     )}
-                    <th className="px-4 py-3 text-left font-medium text-slate-600">Start</th>
-                    <th className="px-4 py-3 text-left font-medium text-slate-600">End</th>
-                    <th className="px-4 py-3 text-left font-medium text-slate-600">Status</th>
-                    <th className="px-4 py-3 text-right font-medium text-slate-600">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {assignments.map((a) => {
-                    const isActive = a.startDate <= today && a.endDate >= today;
-                    const isPast = a.endDate < today;
-                    return (
-                      <tr key={a.id} className="border-b hover:bg-slate-50">
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <UserCheck className="h-4 w-4 text-slate-400" />
-                            <div>
-                              <div className="font-medium">{a.memberName}</div>
-                              <div className="text-xs text-slate-500">{a.memberEmail}</div>
-                            </div>
-                          </div>
-                        </td>
-                        {showLodgeColumn && (
-                          <td className="px-4 py-3">{a.lodgeName ?? "—"}</td>
-                        )}
-                        <td className="px-4 py-3">{a.startDate}</td>
-                        <td className="px-4 py-3">{a.endDate}</td>
-                        <td className="px-4 py-3">
-                          {isActive ? (
-                            <Badge className="border-green-200 bg-green-100 text-green-800">Active</Badge>
-                          ) : isPast ? (
-                            <Badge variant="secondary">Past</Badge>
-                          ) : (
-                            <Badge className="border-blue-200 bg-blue-100 text-blue-800">Upcoming</Badge>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleResetPin(a)}
-                              disabled={resettingPinId === a.id}
-                              className="text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                              title="Reset kiosk PIN"
-                            >
-                              <KeyRound className="h-4 w-4" />
-                              <span className="sr-only">Reset kiosk PIN</span>
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDelete(a.id)}
-                              className="text-red-600 hover:bg-red-50 hover:text-red-700"
-                              title="Delete assignment"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                              <span className="sr-only">Delete assignment</span>
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleResetPin(a)}
+                        disabled={resettingPinId === a.id}
+                        className="text-muted-foreground hover:bg-muted hover:text-foreground"
+                        title="Reset kiosk PIN"
+                      >
+                        <KeyRound className="h-4 w-4" />
+                        <span className="sr-only">Reset kiosk PIN</span>
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDelete(a.id)}
+                        className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                        title="Delete assignment"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        <span className="sr-only">Delete assignment</span>
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </AdminDataTable>
+      )}
     </div>
   );
 }

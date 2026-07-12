@@ -90,14 +90,14 @@ describe("email-theme palette cache", () => {
     const palette = emailPalette();
     // oklch roles -> site-default hex
     expect(palette.gold).toBe(DEFAULT_CLUB_THEME_VALUES.brandGold);
-    expect(palette.gold).toBe("#8fa87c");
+    expect(palette.gold).toBe("#57b3ab");
     expect(palette.deep).toBe(DEFAULT_CLUB_THEME_VALUES.brandDeep);
     // hex roles -> kept as-is
     expect(palette.charcoal).toBe("#654321");
     expect(palette.mist).toBe("#abcdef");
 
     const html = passwordResetTemplate("Jo");
-    expect(html).toContain("#8fa87c"); // default gold substituted into the email
+    expect(html).toContain("#57b3ab"); // default gold substituted into the email
     expect(html).toContain("#654321"); // custom hex charcoal preserved
     expect(html).not.toContain("oklch");
   });
@@ -115,12 +115,12 @@ describe("email-theme palette cache", () => {
       snow: DEFAULT_CLUB_THEME_VALUES.brandSnow,
       ridge: DEFAULT_CLUB_THEME_VALUES.brandRidge,
     });
-    // The site default gold is #8fa87c, not the legacy email gold #ffcb05.
-    expect(palette.gold).toBe("#8fa87c");
+    // The site default gold is #57b3ab, not the legacy email gold #ffcb05.
+    expect(palette.gold).toBe("#57b3ab");
     expect(palette.gold).not.toBe(LEGACY_EMAIL_GOLD);
 
     const html = passwordResetTemplate("Jo");
-    expect(html).toContain("#8fa87c");
+    expect(html).toContain("#57b3ab");
     expect(html).not.toContain(LEGACY_EMAIL_GOLD);
   });
 
