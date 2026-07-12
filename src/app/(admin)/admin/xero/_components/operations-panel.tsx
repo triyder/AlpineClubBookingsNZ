@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { CheckCircle2 } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -11,13 +11,13 @@ import { redactSensitiveText } from "@/lib/redact-sensitive-json"
 import { summarizeXeroOperation } from "@/lib/xero-operation-summaries"
 import { fetchJson, postJson } from "./api"
 import {
-  failureStateBadgeClass,
-  failureStateLabel,
+  FailureStateChip,
   FilterSelect,
   formatJson,
-  operationStatusClass,
+  OperationStatusChip,
   SectionCard,
   shortId,
+  ToneChip,
   type ToggleSection,
 } from "./shared"
 import type { XeroOperation } from "./types"
@@ -317,9 +317,9 @@ export function OperationsPanel({
     >
       <div className="space-y-4">
         {confirmDialog}
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
-        <details className="rounded-md border bg-slate-50 p-3 text-xs text-slate-600">
-          <summary className="cursor-pointer font-medium text-slate-700">What do these statuses mean?</summary>
+        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        <details className="rounded-md border bg-muted p-3 text-xs text-muted-foreground">
+          <summary className="cursor-pointer font-medium text-foreground">What do these statuses mean?</summary>
           <ul className="mt-2 space-y-1">
             <li><span className="font-medium">PENDING</span> — queued, waiting for the next sync run. No action needed.</li>
             <li><span className="font-medium">RUNNING</span> — being sent to Xero now. If it stays running for a long time it is stale — use &ldquo;Reset stale running&rdquo; above.</li>
@@ -422,11 +422,11 @@ export function OperationItem({
   return (
     <div className="space-y-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="default" className={operationStatusClass(operation.status)}>{operation.status}</Badge>
+        <OperationStatusChip status={operation.status} />
         {resolved ? (
-          <Badge variant="default" className="bg-green-100 text-green-800">Resolved in Xero</Badge>
+          <ToneChip tone="success" icon={CheckCircle2}>Resolved in Xero</ToneChip>
         ) : operation.failureState ? (
-          <Badge variant="default" className={failureStateBadgeClass(operation.failureState)}>{failureStateLabel(operation.failureState)}</Badge>
+          <FailureStateChip state={operation.failureState} />
         ) : null}
         <span className="text-sm font-medium">{operation.entityType} {operation.operationType}</span>
         <span className="text-xs text-muted-foreground">{new Date(operation.createdAt).toLocaleString("en-NZ")}</span>
@@ -438,7 +438,7 @@ export function OperationItem({
           <span>
             Local:{" "}
             {operation.localUrl ? (
-              <a href={operation.localUrl} className="text-blue-600 hover:underline">{operation.localModel} {shortId(operation.localId)}</a>
+              <a href={operation.localUrl} className="text-primary hover:underline">{operation.localModel} {shortId(operation.localId)}</a>
             ) : (
               `${operation.localModel} ${shortId(operation.localId)}`
             )}
@@ -448,7 +448,7 @@ export function OperationItem({
           <span>
             Xero:{" "}
             {operation.xeroObjectUrl ? (
-              <a href={operation.xeroObjectUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+              <a href={operation.xeroObjectUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
                 {operation.xeroObjectNumber || shortId(operation.xeroObjectId)}
               </a>
             ) : (
@@ -458,14 +458,14 @@ export function OperationItem({
         ) : null}
       </div>
       {operation.lastErrorMessage ? (
-        <p className="text-sm text-red-700">
+        <p className="text-sm text-danger">
           {operation.lastErrorCode ? `${operation.lastErrorCode}: ` : ""}
           {redactSensitiveText(operation.lastErrorMessage)}
         </p>
       ) : null}
       {operation.failureStateReason && operation.status === "FAILED" && !resolved ? <p className="text-xs text-muted-foreground">{operation.failureStateReason}</p> : null}
       {resolved ? (
-        <p className="text-xs text-green-700">
+        <p className="text-xs text-success">
           Resolved in Xero{operation.manuallyResolvedReason ? `: ${operation.manuallyResolvedReason}` : ""}
         </p>
       ) : (
@@ -490,13 +490,13 @@ export function OperationItem({
         </div>
       )}
       {summary ? (
-        <div className="rounded-md bg-slate-50 p-2">
+        <div className="rounded-md bg-muted p-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-medium text-slate-700">{summary.title}</p>
+            <p className="text-xs font-medium text-foreground">{summary.title}</p>
             <button
               type="button"
               onClick={() => setShowRaw((value) => !value)}
-              className="text-xs font-medium text-blue-600 hover:underline"
+              className="rounded-sm text-xs font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-expanded={showRaw}
             >
               {showRaw ? "Hide raw JSON" : "Show raw JSON"}
@@ -506,8 +506,8 @@ export function OperationItem({
             <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
               {summary.facts.map((fact, index) => (
                 <div key={`${fact.label}-${index}`} className="flex gap-1">
-                  <dt className="shrink-0 text-slate-500">{fact.label}:</dt>
-                  <dd className="min-w-0 break-words font-medium text-slate-800">{fact.value}</dd>
+                  <dt className="shrink-0 text-muted-foreground">{fact.label}:</dt>
+                  <dd className="min-w-0 break-words font-medium text-foreground">{fact.value}</dd>
                 </div>
               ))}
             </dl>
@@ -515,8 +515,8 @@ export function OperationItem({
           {showRaw ? <RawPayloads operation={operation} className="mt-3" /> : null}
         </div>
       ) : (
-        <details className="rounded-md bg-slate-50 p-2">
-          <summary className="cursor-pointer text-xs font-medium text-slate-700">View request / response payloads</summary>
+        <details className="rounded-md bg-muted p-2">
+          <summary className="cursor-pointer text-xs font-medium text-foreground">View request / response payloads</summary>
           <RawPayloads operation={operation} className="mt-2" />
         </details>
       )}
@@ -528,12 +528,12 @@ function RawPayloads({ operation, className }: { operation: XeroOperation; class
   return (
     <div className={`grid gap-3 lg:grid-cols-2${className ? ` ${className}` : ""}`}>
       <div>
-        <p className="mb-1 text-xs font-medium text-slate-700">Request</p>
-        <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">{formatJson(operation.requestPayload)}</pre>
+        <p className="mb-1 text-xs font-medium text-foreground">Request</p>
+        <pre className="max-h-64 overflow-auto rounded border bg-background p-2 text-[11px]">{formatJson(operation.requestPayload)}</pre>
       </div>
       <div>
-        <p className="mb-1 text-xs font-medium text-slate-700">Response</p>
-        <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">{formatJson(operation.responsePayload)}</pre>
+        <p className="mb-1 text-xs font-medium text-foreground">Response</p>
+        <pre className="max-h-64 overflow-auto rounded border bg-background p-2 text-[11px]">{formatJson(operation.responsePayload)}</pre>
       </div>
     </div>
   )

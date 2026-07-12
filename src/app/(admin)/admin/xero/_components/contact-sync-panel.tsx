@@ -259,7 +259,7 @@ export function ContactSyncPanel({
       actions={<Button onClick={() => void syncContacts()} disabled={syncing !== null || !connected}>{syncing === "contacts" ? "Syncing..." : "Sync Contacts from Xero"}</Button>}
     >
       <div className="space-y-4">
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {error ? <p className="text-sm text-danger">{error}</p> : null}
         <p className="text-sm text-muted-foreground">
           Link existing {clubName} members to their Xero contacts by email address, or push a single member or booking without running a full sweep.
         </p>
@@ -367,14 +367,14 @@ function BookingPicker({
     <div className="space-y-1">
       <Label>Booking</Label>
       {selectedBooking ? (
-        <div className="rounded-md border bg-slate-50 px-3 py-2">
+        <div className="rounded-md border bg-muted px-3 py-2">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-900">{selectedBooking.memberName}</p>
-              <p className="truncate text-xs text-slate-500">{selectedBooking.memberEmail}</p>
-              <p className="text-xs text-slate-500">Booking ID: {selectedBooking.id} - {selectedBooking.checkIn} to {selectedBooking.checkOut} - {selectedBooking.guestCount} guest{selectedBooking.guestCount === 1 ? "" : "s"} - {selectedBooking.status}</p>
-              <p className={selectedBooking.canForceSyncInvoice ? "text-xs text-emerald-700" : "text-xs text-amber-700"}>{selectedBooking.canForceSyncInvoice ? "Ready to queue invoice sync." : selectedBooking.forceSyncInvoiceReason}</p>
-              {selectedBooking.xeroInvoiceId ? <p className="text-xs text-slate-500">Xero invoice: {selectedBooking.xeroInvoiceId}</p> : null}
+              <p className="text-sm font-medium text-foreground">{selectedBooking.memberName}</p>
+              <p className="truncate text-xs text-muted-foreground">{selectedBooking.memberEmail}</p>
+              <p className="text-xs text-muted-foreground">Booking ID: {selectedBooking.id} - {selectedBooking.checkIn} to {selectedBooking.checkOut} - {selectedBooking.guestCount} guest{selectedBooking.guestCount === 1 ? "" : "s"} - {selectedBooking.status}</p>
+              <p className={selectedBooking.canForceSyncInvoice ? "text-xs text-success" : "text-xs text-warning"}>{selectedBooking.canForceSyncInvoice ? "Ready to queue invoice sync." : selectedBooking.forceSyncInvoiceReason}</p>
+              {selectedBooking.xeroInvoiceId ? <p className="text-xs text-muted-foreground">Xero invoice: {selectedBooking.xeroInvoiceId}</p> : null}
             </div>
             <Button type="button" variant="outline" size="sm" onClick={() => { clearError(); setSelectedBooking(null); setBookingSearch(""); setBookingResults([]) }}>Change</Button>
           </div>
@@ -382,20 +382,20 @@ function BookingPicker({
       ) : (
         <div className="relative">
           <Input value={bookingSearch} onChange={(event) => { clearError(); setBookingSearch(event.target.value) }} placeholder="Search by booking reference, ID, member name, or email" />
-          {bookingSearching ? <div className="absolute right-3 top-2.5 text-xs text-slate-400">Searching...</div> : null}
+          {bookingSearching ? <div className="absolute right-3 top-2.5 text-xs text-muted-foreground">Searching...</div> : null}
           {bookingResults.length > 0 ? (
-            <div className="absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-md border bg-white shadow-lg">
+            <div className="absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-md border bg-popover text-popover-foreground shadow-lg">
               {bookingResults.map((booking) => (
-                <button key={booking.id} type="button" onClick={() => { clearError(); setSelectedBooking(booking); setBookingSearch(""); setBookingResults([]) }} className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50">
-                  <div className="font-medium text-slate-900">{booking.memberName}</div>
-                  <div className="truncate text-xs text-slate-500">{booking.memberEmail}</div>
-                  <div className="text-xs text-slate-500">{booking.id} - {booking.checkIn} to {booking.checkOut} - {booking.status}</div>
-                  <div className={booking.forceSyncInvoiceReason ? "text-xs text-amber-700" : "text-xs text-emerald-700"}>{booking.forceSyncInvoiceReason || "Ready to queue invoice sync."}</div>
+                <button key={booking.id} type="button" onClick={() => { clearError(); setSelectedBooking(booking); setBookingSearch(""); setBookingResults([]) }} className="w-full px-3 py-2 text-left text-sm hover:bg-muted">
+                  <div className="font-medium text-foreground">{booking.memberName}</div>
+                  <div className="truncate text-xs text-muted-foreground">{booking.memberEmail}</div>
+                  <div className="text-xs text-muted-foreground">{booking.id} - {booking.checkIn} to {booking.checkOut} - {booking.status}</div>
+                  <div className={booking.forceSyncInvoiceReason ? "text-xs text-warning" : "text-xs text-success"}>{booking.forceSyncInvoiceReason || "Ready to queue invoice sync."}</div>
                 </button>
               ))}
             </div>
           ) : null}
-          {bookingSearch.trim().length >= 2 && !bookingSearching && bookingResults.length === 0 ? <p className="mt-1 text-xs text-slate-500">No matching bookings found yet.</p> : null}
+          {bookingSearch.trim().length >= 2 && !bookingSearching && bookingResults.length === 0 ? <p className="mt-1 text-xs text-muted-foreground">No matching bookings found yet.</p> : null}
         </div>
       )}
     </div>
@@ -414,12 +414,12 @@ function MemberPicker(props: Parameters<typeof ForceSyncPicker>[0]) {
     <div className="space-y-1">
       <Label>Member</Label>
       {props.selectedMember ? (
-        <div className="rounded-md border bg-slate-50 px-3 py-2">
+        <div className="rounded-md border bg-muted px-3 py-2">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-900">{props.selectedMember.firstName} {props.selectedMember.lastName}</p>
-              <p className="truncate text-xs text-slate-500">{props.selectedMember.email}</p>
-              <p className="text-xs text-slate-500">Member ID: {props.selectedMember.id}{props.selectedMember.xeroContactId ? " - already linked to Xero" : " - not yet linked to Xero"}{!props.selectedMember.active ? " - inactive" : ""}</p>
+              <p className="text-sm font-medium text-foreground">{props.selectedMember.firstName} {props.selectedMember.lastName}</p>
+              <p className="truncate text-xs text-muted-foreground">{props.selectedMember.email}</p>
+              <p className="text-xs text-muted-foreground">Member ID: {props.selectedMember.id}{props.selectedMember.xeroContactId ? " - already linked to Xero" : " - not yet linked to Xero"}{!props.selectedMember.active ? " - inactive" : ""}</p>
             </div>
             <Button type="button" variant="outline" size="sm" onClick={() => { props.clearError(); props.setSelectedMember(null); props.setMemberSearch(""); props.setMemberResults([]); props.setXeroContactResults([]) }}>Change</Button>
           </div>
@@ -427,30 +427,30 @@ function MemberPicker(props: Parameters<typeof ForceSyncPicker>[0]) {
       ) : (
         <div className="relative">
           <Input value={props.memberSearch} onChange={(event) => { props.clearError(); props.setMemberSearch(event.target.value) }} placeholder={props.type === "CONTACT" ? "Search local members and Xero contacts by name or email" : "Search by member name, email, or member ID"} />
-          {searching ? <div className="absolute right-3 top-2.5 text-xs text-slate-400">Searching...</div> : null}
+          {searching ? <div className="absolute right-3 top-2.5 text-xs text-muted-foreground">Searching...</div> : null}
           {props.memberResults.length > 0 || props.xeroContactResults.length > 0 ? (
-            <div className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-md border bg-white shadow-lg">
+            <div className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-md border bg-popover text-popover-foreground shadow-lg">
               {props.memberResults.length > 0 ? (
                 <div className={props.xeroContactResults.length > 0 ? "border-b" : ""}>
-                  {props.type === "CONTACT" && props.xeroContactResults.length > 0 ? <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Local members</div> : null}
+                  {props.type === "CONTACT" && props.xeroContactResults.length > 0 ? <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Local members</div> : null}
                   {props.memberResults.map((member) => (
-                    <button key={member.id} type="button" onClick={() => { props.clearError(); props.setSelectedMember(member); props.setMemberSearch(""); props.setMemberResults([]); props.setXeroContactResults([]) }} className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50">
-                      <div className="font-medium text-slate-900">{member.firstName} {member.lastName}</div>
-                      <div className="truncate text-xs text-slate-500">{member.email}</div>
-                      <div className="text-xs text-slate-500">ID {member.id}{member.xeroContactId ? " - linked" : " - unlinked"}{!member.active ? " - inactive" : ""}</div>
+                    <button key={member.id} type="button" onClick={() => { props.clearError(); props.setSelectedMember(member); props.setMemberSearch(""); props.setMemberResults([]); props.setXeroContactResults([]) }} className="w-full px-3 py-2 text-left text-sm hover:bg-muted">
+                      <div className="font-medium text-foreground">{member.firstName} {member.lastName}</div>
+                      <div className="truncate text-xs text-muted-foreground">{member.email}</div>
+                      <div className="text-xs text-muted-foreground">ID {member.id}{member.xeroContactId ? " - linked" : " - unlinked"}{!member.active ? " - inactive" : ""}</div>
                     </button>
                   ))}
                 </div>
               ) : null}
               {props.type === "CONTACT" && props.xeroContactResults.length > 0 ? (
                 <div>
-                  <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">Xero contacts</div>
+                  <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Xero contacts</div>
                   {props.xeroContactResults.map((contact) => (
-                    <div key={contact.contactId} className="flex items-start justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-50">
+                    <div key={contact.contactId} className="flex items-start justify-between gap-3 px-3 py-2 text-sm hover:bg-muted">
                       <div className="min-w-0">
-                        <div className="font-medium text-slate-900">{contact.name}</div>
-                        <div className="truncate text-xs text-slate-500">{contact.email || "No email address"}</div>
-                        <div className={contact.canImportAsMember ? "text-xs text-emerald-700" : "text-xs text-amber-700"}>{contact.canImportAsMember ? "Can be imported as a linked local member." : contact.importBlockReason || "Cannot be imported from here."}</div>
+                        <div className="font-medium text-foreground">{contact.name}</div>
+                        <div className="truncate text-xs text-muted-foreground">{contact.email || "No email address"}</div>
+                        <div className={contact.canImportAsMember ? "text-xs text-success" : "text-xs text-warning"}>{contact.canImportAsMember ? "Can be imported as a linked local member." : contact.importBlockReason || "Cannot be imported from here."}</div>
                       </div>
                       <Button type="button" size="sm" variant={contact.canImportAsMember ? "default" : "outline"} onClick={() => void props.onImportContact(contact)} disabled={!contact.canImportAsMember || props.importingXeroContactId === contact.contactId}>
                         {props.importingXeroContactId === contact.contactId ? "Importing..." : "Import"}
@@ -461,7 +461,7 @@ function MemberPicker(props: Parameters<typeof ForceSyncPicker>[0]) {
               ) : null}
             </div>
           ) : null}
-          {noResults ? <p className="mt-1 text-xs text-slate-500">{props.type === "CONTACT" ? "No matching local members or Xero contacts found yet." : "No matching member records found yet."}</p> : null}
+          {noResults ? <p className="mt-1 text-xs text-muted-foreground">{props.type === "CONTACT" ? "No matching local members or Xero contacts found yet." : "No matching member records found yet."}</p> : null}
         </div>
       )}
     </div>

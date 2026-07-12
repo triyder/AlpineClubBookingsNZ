@@ -169,13 +169,13 @@ export function MappingsPanel({
               ref={errorRef}
               role="alert"
               tabIndex={-1}
-              className="scroll-mt-20 text-sm text-red-600 focus:outline-none"
+              className="scroll-mt-20 text-sm text-danger focus:outline-none"
             >
               {error}
             </p>
           ) : null}
-          {saved ? <p className="text-sm text-green-700">Account mappings saved.</p> : null}
-          <div className="flex flex-col gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 md:flex-row md:items-center md:justify-between">
+          {saved ? <p className="text-sm text-success">Account mappings saved.</p> : null}
+          <div className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3 text-xs text-muted-foreground md:flex-row md:items-center md:justify-between">
             <div className="space-y-1">
               <p>{formatReferenceCacheLabel("Accounts", accountCacheMeta)}</p>
               <p>{formatReferenceCacheLabel("Items", itemCacheMeta)}</p>
@@ -184,7 +184,7 @@ export function MappingsPanel({
               {refreshingReferenceData ? "Refreshing..." : "Refresh Xero reference data"}
             </Button>
           </div>
-          <h4 className="text-sm font-semibold text-slate-700">Account Code Mappings</h4>
+          <h4 className="text-sm font-semibold text-foreground">Account Code Mappings</h4>
           {accountMappings ? ACCOUNT_MAPPING_KEYS.map((key) => (
             <AccountMappingRow
               key={key}
@@ -196,7 +196,7 @@ export function MappingsPanel({
             />
           )) : null}
           <Separator />
-          <h4 className="text-sm font-semibold text-slate-700">Credit Note Item Codes</h4>
+          <h4 className="text-sm font-semibold text-foreground">Credit Note Item Codes</h4>
           <p className="text-xs text-muted-foreground">Xero Items for credit note line items. When set, Xero can apply the item configuration while the mapped account remains available for reporting.</p>
           {accountMappings ? CREDIT_ITEM_MAPPING_KEYS.map((key) => (
             <CreditItemRow key={key} mappingKey={key} mappings={accountMappings} setMappings={setAccountMappings} items={xeroItems} isEditingMappings={isEditingMappings} />
@@ -255,7 +255,7 @@ function AccountMappingRow({
             </SelectContent>
           </Select>
         ) : (
-          <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">{matchedAccount ? `${matchedAccount.code} - ${matchedAccount.name}` : currentCode || <span className="text-muted-foreground">Not configured (using default)</span>}</p>
+          <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm">{matchedAccount ? `${matchedAccount.code} - ${matchedAccount.name}` : currentCode || <span className="text-muted-foreground">Not configured (using default)</span>}</p>
         )}
       </div>
     </div>
@@ -293,7 +293,7 @@ function CreditItemRow({
             </SelectContent>
           </Select>
         ) : (
-          <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">{matchedItem ? `${matchedItem.code} - ${matchedItem.name}` : currentItemCode || <span className="text-muted-foreground">Not configured</span>}</p>
+          <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm">{matchedItem ? `${matchedItem.code} - ${matchedItem.name}` : currentItemCode || <span className="text-muted-foreground">Not configured</span>}</p>
         )}
       </div>
     </div>
@@ -303,7 +303,7 @@ function CreditItemRow({
 function HutFeeTable({ isEditingMappings, items, codes, setCodes }: { isEditingMappings: boolean; items: XeroItem[]; codes: HutFeeMap; setCodes: (value: HutFeeMap | ((prev: HutFeeMap) => HutFeeMap)) => void }) {
   return (
     <>
-      <h4 className="text-sm font-semibold text-slate-700">Hut Fee Item Codes</h4>
+      <h4 className="text-sm font-semibold text-foreground">Hut Fee Item Codes</h4>
       <p className="text-xs text-muted-foreground">Map each combination of age tier, season, and membership status to a Xero Item.</p>
       {isEditingMappings ? (
         <div className="flex gap-2">
@@ -318,18 +318,18 @@ function HutFeeTable({ isEditingMappings, items, codes, setCodes }: { isEditingM
       ) : null}
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">
-          <thead><tr>{["Age Tier", "Winter / Member", "Winter / Non-Member", "Summer / Member", "Summer / Non-Member"].map((heading) => <th key={heading} className="border-b p-2 text-left font-medium text-slate-600">{heading}</th>)}</tr></thead>
+          <thead><tr>{["Age Tier", "Winter / Member", "Winter / Non-Member", "Summer / Member", "Summer / Non-Member"].map((heading) => <th key={heading} className="border-b p-2 text-left font-medium text-muted-foreground">{heading}</th>)}</tr></thead>
           <tbody>
             {(["ADULT", "YOUTH", "CHILD", "INFANT"] as const).map((tier) => (
               <tr key={tier} className="border-b last:border-0">
-                <td className="p-2 font-medium text-slate-700">{tier}</td>
+                <td className="p-2 font-medium text-foreground">{tier}</td>
                 {(["WINTER_true", "WINTER_false", "SUMMER_true", "SUMMER_false"] as const).map((combo) => {
                   const mapKey = `${tier}_${combo}`
                   const currentCode = codes[mapKey]?.itemCode ?? null
                   const matchedItem = items.find((item) => item.code === currentCode)
                   return (
                     <td key={combo} className="p-2">
-                      {isEditingMappings ? <ItemSelect currentCode={currentCode} items={items} onChange={(value) => setCodes((prev) => updateHutFeeMap(prev, mapKey, value))} /> : <span className={currentCode ? "text-slate-700" : "text-muted-foreground"}>{matchedItem?.code ?? currentCode ?? "Not set"}</span>}
+                      {isEditingMappings ? <ItemSelect currentCode={currentCode} items={items} onChange={(value) => setCodes((prev) => updateHutFeeMap(prev, mapKey, value))} /> : <span className={currentCode ? "text-foreground" : "text-muted-foreground"}>{matchedItem?.code ?? currentCode ?? "Not set"}</span>}
                     </td>
                   )
                 })}
@@ -345,11 +345,11 @@ function HutFeeTable({ isEditingMappings, items, codes, setCodes }: { isEditingM
 function EntranceFeeTable({ isEditingMappings, items, codes, setCodes }: { isEditingMappings: boolean; items: XeroItem[]; codes: EntranceFeeMap; setCodes: (value: EntranceFeeMap | ((prev: EntranceFeeMap) => EntranceFeeMap)) => void }) {
   return (
     <>
-      <h4 className="text-sm font-semibold text-slate-700">Entrance Fee Categories</h4>
+      <h4 className="text-sm font-semibold text-foreground">Entrance Fee Categories</h4>
       <p className="text-xs text-muted-foreground">Configure entrance fee amounts and Xero Item codes per membership category.</p>
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">
-          <thead><tr>{["Category", "Xero Item", "Amount (incl. GST)"].map((heading) => <th key={heading} className="border-b p-2 text-left font-medium text-slate-600">{heading}</th>)}</tr></thead>
+          <thead><tr>{["Category", "Xero Item", "Amount (incl. GST)"].map((heading) => <th key={heading} className="border-b p-2 text-left font-medium text-muted-foreground">{heading}</th>)}</tr></thead>
           <tbody>
             {([{ key: "ADULT", label: "Adult" }, { key: "YOUTH", label: "Youth" }, { key: "CHILD", label: "Child" }, { key: "FAMILY", label: "Family" }] as const).map(({ key, label }) => {
               const entry = codes[key]
@@ -358,8 +358,8 @@ function EntranceFeeTable({ isEditingMappings, items, codes, setCodes }: { isEdi
               const matchedItem = items.find((item) => item.code === currentCode)
               return (
                 <tr key={key} className="border-b last:border-0">
-                  <td className="p-2 font-medium text-slate-700">{label}</td>
-                  <td className="p-2">{isEditingMappings ? <ItemSelect currentCode={currentCode} items={items} onChange={(value) => setCodes((prev) => updateEntranceItem(prev, key, value))} /> : <span className={currentCode ? "text-slate-700" : "text-muted-foreground"}>{matchedItem ? matchedItem.code : currentCode || "Not set"}</span>}</td>
+                  <td className="p-2 font-medium text-foreground">{label}</td>
+                  <td className="p-2">{isEditingMappings ? <ItemSelect currentCode={currentCode} items={items} onChange={(value) => setCodes((prev) => updateEntranceItem(prev, key, value))} /> : <span className={currentCode ? "text-foreground" : "text-muted-foreground"}>{matchedItem ? matchedItem.code : currentCode || "Not set"}</span>}</td>
                   <td className="p-2">
                     {isEditingMappings ? (
                       <div className="flex items-center gap-1">
@@ -375,7 +375,7 @@ function EntranceFeeTable({ isEditingMappings, items, codes, setCodes }: { isEdi
                         />
                       </div>
                     ) : (
-                      <span className={currentAmountCents ? "text-slate-700" : "text-muted-foreground"}>{currentAmountCents ? `$${(currentAmountCents / 100).toFixed(2)}` : "Not set"}</span>
+                      <span className={currentAmountCents ? "text-foreground" : "text-muted-foreground"}>{currentAmountCents ? `$${(currentAmountCents / 100).toFixed(2)}` : "Not set"}</span>
                     )}
                   </td>
                 </tr>

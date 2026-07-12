@@ -227,8 +227,9 @@ describe("#27: Xero Account Mappings lock/edit mode", () => {
     expect(content).toContain("Cancel");
     // Should have savedMappings for revert
     expect(content).toContain("savedMappings");
-    // Locked state should show read-only values
-    expect(content).toContain("bg-slate-50");
+    // Locked state should show read-only values on the semantic muted surface
+    // so it remains legible in both light and dark themes.
+    expect(content).toContain("bg-muted");
   });
 });
 
