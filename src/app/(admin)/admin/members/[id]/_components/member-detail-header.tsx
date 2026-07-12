@@ -65,12 +65,12 @@ export function MemberDetailHeader({
       >
         <ArrowLeft className="h-4 w-4 mr-1" /> {backLabel}
       </Button>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="break-words text-2xl font-bold text-foreground">
             {member.firstName} {member.lastName}
           </h1>
-          <p className="mt-1 text-sm text-slate-500">{member.email}</p>
+          <p className="mt-1 break-all text-sm text-muted-foreground">{member.email}</p>
           <div className="flex flex-wrap gap-2 mt-2">
             {accessRoles.length > 0 ? (
               accessRoles.map((role) => (
@@ -79,7 +79,7 @@ export function MemberDetailHeader({
                   variant={role.startsWith("ADMIN") ? "default" : "secondary"}
                   className={
                     role.startsWith("ADMIN")
-                      ? "bg-blue-600 text-white hover:bg-blue-700"
+                      ? "bg-primary text-primary-foreground hover:shadow-md"
                       : ""
                   }
                 >
@@ -93,7 +93,7 @@ export function MemberDetailHeader({
               variant={member.active ? "default" : "destructive"}
               className={
                 member.active
-                  ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200"
+                  ? "border-success/20 bg-success-muted text-success hover:shadow-md"
                   : ""
               }
             >
@@ -102,7 +102,7 @@ export function MemberDetailHeader({
             {member.cancelledAt && (
               <Badge
                 variant="secondary"
-                className="bg-amber-100 text-amber-800 border-amber-200"
+                className="border-warning/20 bg-warning-muted text-warning"
               >
                 Cancelled
               </Badge>
@@ -110,7 +110,7 @@ export function MemberDetailHeader({
             {member.archivedAt && (
               <Badge
                 variant="secondary"
-                className="bg-slate-200 text-slate-800 border-slate-300"
+                className="border-border bg-muted text-foreground"
               >
                 Archived
               </Badge>
@@ -127,7 +127,7 @@ export function MemberDetailHeader({
             )}
           </div>
         </div>
-        <div className="flex gap-2 shrink-0 flex-wrap">
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
           {isAdultMember && !memberIsArchived && (
             <Button variant="outline" size="sm" onClick={onOpenDependentDialog}>
               <Plus className="h-4 w-4 mr-1" />

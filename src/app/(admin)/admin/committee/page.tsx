@@ -127,7 +127,7 @@ function assignmentEffectiveEmail(assignment: CommitteeAssignment) {
 
 function VisibilityBadge({ visible }: { visible: boolean }) {
   return visible ? (
-    <Badge className="border-green-200 bg-green-100 text-green-800">
+    <Badge className="border-success/20 bg-success-muted text-success">
       <Eye className="mr-1 h-3 w-3" />
       Published
     </Badge>
@@ -524,7 +524,7 @@ export default function CommitteePage() {
           ref={errorRef}
           role="alert"
           tabIndex={-1}
-          className="scroll-mt-20 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 focus:outline-none"
+          className="scroll-mt-20 rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger focus:outline-none"
         >
           {error}
         </div>
@@ -534,7 +534,7 @@ export default function CommitteePage() {
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle className="text-lg">Committee Settings</CardTitle>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-1 text-sm text-muted-foreground">
               Master roles are reusable positions for member-linked committee
               assignments. Role email aliases route contact-form messages;
               linked member emails are used only when a role email is blank.
@@ -549,10 +549,10 @@ export default function CommitteePage() {
           {showRoleForm ? (
             <form
               onSubmit={handleRoleSubmit}
-              className="rounded-md border border-slate-200 p-4"
+              className="rounded-md border border-border bg-card p-4 text-card-foreground"
             >
               <div className="mb-4 flex items-center justify-between">
-                <h2 className="font-medium text-slate-900">
+                <h2 className="font-medium text-foreground">
                   {editingRoleId ? "Edit Role" : "Add Role"}
                 </h2>
                 <Button
@@ -632,7 +632,7 @@ export default function CommitteePage() {
                       isActive: event.target.checked,
                     })
                   }
-                  className="h-4 w-4 rounded border-slate-300"
+                  className="h-4 w-4 rounded border-border"
                 />
                 Active
               </label>
@@ -682,7 +682,7 @@ export default function CommitteePage() {
                   </TableCell>
                   <TableCell>
                     {role.isActive ? (
-                      <Badge className="border-green-200 bg-green-100 text-green-800">
+                      <Badge className="border-success/20 bg-success-muted text-success">
                         Active
                       </Badge>
                     ) : (
@@ -713,7 +713,7 @@ export default function CommitteePage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Member-Linked Assignments</CardTitle>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-muted-foreground">
             Assign members from their member detail page. Published assignments
             now power the public committee and contact-form recipient lists;
             contact-form messages use the role email alias or the linked
@@ -754,7 +754,7 @@ export default function CommitteePage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="font-medium text-blue-600">
+                      <div className="font-medium text-primary">
                         {assignment.committeeRole.name}
                       </div>
                       {assignment.blurb ? (
@@ -776,7 +776,7 @@ export default function CommitteePage() {
                     </TableCell>
                     <TableCell>
                       {assignment.isActive ? (
-                        <Badge className="border-green-200 bg-green-100 text-green-800">
+                        <Badge className="border-success/20 bg-success-muted text-success">
                           Active
                         </Badge>
                       ) : (
@@ -795,7 +795,7 @@ export default function CommitteePage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                          className="text-danger hover:bg-danger-muted hover:text-danger"
                           onClick={() => handleDeactivateAssignment(assignment)}
                         >
                           <Trash2 className="h-4 w-4" />
@@ -816,10 +816,10 @@ export default function CommitteePage() {
           {editingAssignmentId ? (
             <form
               onSubmit={handleAssignmentSubmit}
-              className="rounded-md border border-slate-200 p-4"
+              className="rounded-md border border-border bg-card p-4 text-card-foreground"
             >
               <div className="mb-4 flex items-center justify-between">
-                <h2 className="font-medium text-slate-900">
+                <h2 className="font-medium text-foreground">
                   Edit Assignment
                 </h2>
                 <Button
@@ -882,7 +882,7 @@ export default function CommitteePage() {
                           [key]: event.target.checked,
                         })
                       }
-                      className="h-4 w-4 rounded border-slate-300"
+                      className="h-4 w-4 rounded border-border"
                     />
                     {label}
                   </label>
@@ -910,7 +910,7 @@ export default function CommitteePage() {
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle className="text-lg">Legacy Public Committee</CardTitle>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-1 text-sm text-muted-foreground">
               These historical records are retained for migration reference.
               Public committee cards and contact recipients now come from
               member-linked assignments.
@@ -925,10 +925,10 @@ export default function CommitteePage() {
           {showLegacyForm ? (
             <form
               onSubmit={handleLegacySubmit}
-              className="rounded-md border border-slate-200 p-4"
+              className="rounded-md border border-border bg-card p-4 text-card-foreground"
             >
               <div className="mb-4 flex items-center justify-between">
-                <h2 className="font-medium text-slate-900">
+                <h2 className="font-medium text-foreground">
                   {editingLegacyId
                     ? "Edit Public Committee Entry"
                     : "Add Public Committee Entry"}
@@ -1048,7 +1048,7 @@ export default function CommitteePage() {
                       active: event.target.checked,
                     })
                   }
-                  className="h-4 w-4 rounded border-slate-300"
+                  className="h-4 w-4 rounded border-border"
                 />
                 Active on public committee page
               </label>
@@ -1069,12 +1069,12 @@ export default function CommitteePage() {
           ) : null}
 
           {loading ? (
-            <div className="p-6 text-center text-sm text-slate-500">
+            <div className="p-6 text-center text-sm text-muted-foreground">
               Loading...
             </div>
           ) : legacyMembers.length === 0 ? (
-            <div className="p-6 text-center text-slate-500">
-              <Users className="mx-auto mb-2 h-8 w-8 text-slate-300" />
+            <div className="p-6 text-center text-muted-foreground">
+              <Users className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
               <p>No public committee entries yet.</p>
             </div>
           ) : (
@@ -1121,7 +1121,7 @@ export default function CommitteePage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <span className="font-medium text-blue-600">
+                      <span className="font-medium text-primary">
                         {member.role}
                       </span>
                       {member.contactKey ? (
@@ -1144,7 +1144,7 @@ export default function CommitteePage() {
                     <TableCell>
                       <button onClick={() => handleToggleLegacyActive(member)}>
                         {member.active ? (
-                          <Badge className="cursor-pointer border-green-200 bg-green-100 text-green-800">
+                          <Badge className="cursor-pointer border-success/20 bg-success-muted text-success">
                             Active
                           </Badge>
                         ) : (
@@ -1170,7 +1170,7 @@ export default function CommitteePage() {
                           onClick={() =>
                             handleDeleteLegacy(member.id, member.name)
                           }
-                          className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                          className="text-danger hover:bg-danger-muted hover:text-danger"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

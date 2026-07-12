@@ -90,6 +90,18 @@ Add `-v` to the final command only when you intentionally want to delete the sta
 Run checks against the staging origin, not production. The minimum
 release-review sweep is:
 
+The repository wrapper requires an explicit non-production target and refuses
+to run when it is absent, so an agent must record the check as not run instead
+of guessing a host or starting a shared/live server:
+
+```bash
+STAGING_APP_URL=http://localhost:3001 npm run review:staging:a11y
+```
+
+Use that command only after the staging health checks above pass. Without a
+configured staging target, rely on the local static/component accessibility
+contracts and leave the browser/Lighthouse pass as a named manual follow-up.
+
 ```bash
 STAGING_BASE_URL=http://localhost:3001
 

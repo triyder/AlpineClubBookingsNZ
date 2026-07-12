@@ -1,6 +1,7 @@
 "use client";
 
 import { useDroppable } from "@dnd-kit/core";
+import { Focus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AllocationChip } from "./allocation-chip";
 import {
@@ -63,10 +64,18 @@ export function BoardCell({
         BED_ALLOCATION_COLUMN_WIDTH_CLASS,
         "overflow-hidden border p-1 align-top",
         activeDragLane && "bg-accent",
-        highlighted && !isOver && "bg-warning-muted",
+        highlighted &&
+          !isOver &&
+          "border-2 border-dashed border-warning bg-warning-muted",
         isOver && "bg-info-muted ring-2 ring-info",
       )}
     >
+      {highlighted ? (
+        <span className="mb-1 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-warning">
+          <Focus aria-hidden className="h-3 w-3" />
+          Focused
+        </span>
+      ) : null}
       {allocations.length > 0 ? (
         <div className="flex flex-col gap-1">
           {allocations.map((allocation) => (

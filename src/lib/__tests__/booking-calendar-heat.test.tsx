@@ -28,14 +28,17 @@ function targetLabelPrefix() {
   });
 }
 
-function stubAvailability(occupiedOnTarget: number) {
+function stubAvailability(
+  occupiedOnTarget: number,
+  season?: { name: string; type: string },
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => ({
       ok: true,
       json: async () => ({
         availability: { [targetIso]: occupiedOnTarget },
-        seasons: {},
+        seasons: season ? { [targetIso]: season } : {},
       }),
     })),
   );
@@ -76,13 +79,13 @@ describe("BookingCalendar token-driven availability heat (#1814)", () => {
     expect(button.textContent).toContain("12");
   });
 
-  it("paints a nearly-full night (1-5 free) with the orange step", async () => {
+  it("paints a nearly-full night (1-5 free) with the info step", async () => {
     stubAvailability(17); // 3 of 20 free
     render(<BookingCalendar onDateSelect={() => {}} />);
 
     const button = await targetButton();
-    expect(button.className).toContain("bg-orange-100");
-    expect(button.className).toContain("text-orange-800");
+    expect(button.className).toContain("bg-info-muted");
+    expect(button.className).toContain("text-info");
     expect(button.textContent).toContain("3");
   });
 
@@ -105,5 +108,14 @@ describe("BookingCalendar token-driven availability heat (#1814)", () => {
     const button = await targetButton();
     expect(button.className).toContain("!bg-brand-gold");
     expect(button.className).toContain("!text-brand-charcoal");
+  });
+
+  it("states a season with text as well as a coloured top border", async () => {
+    stubAvailability(2, { name: "Winter 2026", type: "WINTER" });
+    render(<BookingCalendar onDateSelect={() => {}} />);
+
+    const button = await targetButton();
+    expect(button.getAttribute("aria-label")).toContain("Winter 2026 season");
+    expect(button.textContent).toContain("W");
   });
 });

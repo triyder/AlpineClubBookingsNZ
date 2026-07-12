@@ -64,23 +64,23 @@ const CALENDAR_TONE_CLASSES: Record<
   { cell: string; ringCell: string; badge: string }
 > = {
   red: {
-    cell: "border-danger/40 bg-danger-muted text-foreground hover:bg-danger-muted/70",
-    ringCell: "ring-1 ring-inset ring-danger/50 bg-card text-foreground hover:bg-danger-muted/40",
+    cell: "border-danger/40 bg-danger-muted text-foreground hover:shadow-sm",
+    ringCell: "ring-1 ring-inset ring-danger/50 bg-card text-foreground hover:shadow-sm",
     badge: "bg-danger-muted text-danger",
   },
   amber: {
-    cell: "border-warning/40 bg-warning-muted text-foreground hover:bg-warning-muted/70",
-    ringCell: "ring-1 ring-inset ring-warning/50 bg-card text-foreground hover:bg-warning-muted/40",
+    cell: "border-warning/40 bg-warning-muted text-foreground hover:shadow-sm",
+    ringCell: "ring-1 ring-inset ring-warning/50 bg-card text-foreground hover:shadow-sm",
     badge: "bg-warning-muted text-warning",
   },
   orange: {
-    cell: "border-info/40 bg-info-muted text-foreground hover:bg-info-muted/70",
-    ringCell: "ring-1 ring-inset ring-info/50 bg-card text-foreground hover:bg-info-muted/40",
+    cell: "border-info/40 bg-info-muted text-foreground hover:shadow-sm",
+    ringCell: "ring-1 ring-inset ring-info/50 bg-card text-foreground hover:shadow-sm",
     badge: "bg-info-muted text-info",
   },
   green: {
-    cell: "border-success/40 bg-success-muted text-foreground hover:bg-success-muted/70",
-    ringCell: "ring-1 ring-inset ring-success/50 bg-card text-foreground hover:bg-success-muted/40",
+    cell: "border-success/40 bg-success-muted text-foreground hover:shadow-sm",
+    ringCell: "ring-1 ring-inset ring-success/50 bg-card text-foreground hover:shadow-sm",
     badge: "bg-success-muted text-success",
   },
   violet: {

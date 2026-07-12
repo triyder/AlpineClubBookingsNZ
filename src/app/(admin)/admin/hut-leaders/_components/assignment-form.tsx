@@ -124,7 +124,7 @@ export function AssignmentForm({
       <CardContent className="space-y-6">
         {/* Step 1 — pick nights */}
         <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-slate-900">
+          <h3 className="text-sm font-semibold text-foreground">
             1. Pick the nights to cover
           </h3>
           {lodgeSelector ? <div className="max-w-xs">{lodgeSelector}</div> : null}
@@ -165,11 +165,11 @@ export function AssignmentForm({
 
         {/* Step 2 — pick a member */}
         <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-slate-900">
+          <h3 className="text-sm font-semibold text-foreground">
             2. Choose the {label}
           </h3>
           {!datesSelected ? (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-muted-foreground">
               Pick a start and end date first.
             </p>
           ) : (
@@ -197,9 +197,9 @@ export function AssignmentForm({
 
               {memberTab === "staying" ? (
                 loadingMembers ? (
-                  <p className="text-sm text-slate-500">Loading eligible members...</p>
+                  <p className="text-sm text-muted-foreground">Loading eligible members...</p>
                 ) : eligibleMembers.length === 0 ? (
-                  <p className="text-sm text-amber-600">
+                  <p className="text-sm text-warning">
                     No adult members have bookings during this date range. Use the
                     &quot;Any member&quot; tab to assign someone else.
                   </p>
@@ -214,8 +214,8 @@ export function AssignmentForm({
                             m.fullyCovered ? "opacity-60 " : ""
                           }${
                             isSelected
-                              ? "border-blue-300 bg-blue-50"
-                              : "border-slate-200 bg-white"
+                              ? "border-info bg-info-muted"
+                              : "border-border bg-card"
                           }`}
                         >
                           <div className="flex items-start justify-between gap-2">
@@ -223,31 +223,31 @@ export function AssignmentForm({
                               <p className="text-sm font-medium">
                                 {m.firstName} {m.lastName}
                               </p>
-                              <p className="text-xs text-slate-500">{m.email}</p>
+                              <p className="text-xs text-muted-foreground">{m.email}</p>
                               <div className="mt-1.5">
                                 {m.hutLeaderEligible ? (
-                                  <Badge className="border-green-200 bg-green-100 text-green-800">
+                                  <Badge className="border-success/20 bg-success-muted text-success">
                                     {hutLeaderLabel} qualified
                                   </Badge>
                                 ) : (
-                                  <span className="text-xs text-slate-500">
+                                  <span className="text-xs text-muted-foreground">
                                     Not yet inducted
                                   </span>
                                 )}
                               </div>
-                              <div className="mt-1.5 flex items-center gap-1 text-xs text-slate-600">
+                              <div className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
                                 <CalendarDays className="h-3.5 w-3.5" />
                                 <span>
                                   Booking: {m.bookingCheckIn} — {m.bookingCheckOut}
                                 </span>
                               </div>
-                              <p className="mt-0.5 text-xs text-slate-500">
+                              <p className="mt-0.5 text-xs text-muted-foreground">
                                 Suggested: {m.suggestedStartDate} — {m.suggestedEndDate}{" "}
                                 (covers {m.uncoveredNightCount} uncovered night
                                 {m.uncoveredNightCount !== 1 ? "s" : ""})
                               </p>
                               {m.fullyCovered && (
-                                <p className="mt-1 text-xs text-amber-600">
+                                <p className="mt-1 text-xs text-warning">
                                   These dates already have a {label}.
                                 </p>
                               )}
@@ -265,7 +265,7 @@ export function AssignmentForm({
                             </Button>
                           </div>
                           {error?.memberId === m.id && (
-                            <p className="mt-2 text-sm text-red-600">{error.message}</p>
+                            <p className="mt-2 text-sm text-danger">{error.message}</p>
                           )}
                         </div>
                       );
@@ -294,9 +294,9 @@ export function AssignmentForm({
 
         {/* Step 3 — visual confirm (sticky above the submit button) */}
         {summary && (
-          <div className="sticky bottom-0 z-10 -mx-6 -mb-6 space-y-2 border-t border-slate-200 bg-white px-6 py-4">
-            <h3 className="text-sm font-semibold text-slate-900">3. Confirm</h3>
-            <p className="text-sm text-slate-700">
+          <div className="sticky bottom-0 z-10 -mx-6 -mb-6 space-y-2 border-t border-border bg-card px-6 py-4 text-card-foreground">
+            <h3 className="text-sm font-semibold text-foreground">3. Confirm</h3>
+            <p className="text-sm text-foreground">
               <span className="font-medium">Assign {summary.name}:</span>{" "}
               {summary.startDate} → {summary.endDate} · {summary.nights} night
               {summary.nights !== 1 ? "s" : ""} · fills {summary.fills} uncovered
@@ -312,7 +312,7 @@ export function AssignmentForm({
               )}
             </p>
             {hasConflict && (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              <div className="rounded-md border border-danger/20 bg-danger-muted px-3 py-2 text-sm text-danger">
                 {summary.conflicts.map((c) => (
                   <p key={`${c.name}-${c.startDate}`}>
                     Overlaps {c.name}&apos;s assignment ({c.startDate} to {c.endDate})
@@ -323,7 +323,7 @@ export function AssignmentForm({
               </div>
             )}
             {error && !hasConflict && (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              <div className="rounded-md border border-danger/20 bg-danger-muted px-3 py-2 text-sm text-danger">
                 {error.message}
               </div>
             )}

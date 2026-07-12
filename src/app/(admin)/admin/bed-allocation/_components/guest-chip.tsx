@@ -2,7 +2,7 @@
 
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical } from "lucide-react";
+import { Focus, GripVertical } from "lucide-react";
 import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -88,7 +88,8 @@ export function GuestChip({
         "relative flex flex-col gap-2 overflow-hidden rounded-md border bg-card p-2 pl-3 text-card-foreground shadow-sm ring-1 ring-inset sm:flex-row sm:items-center sm:justify-between",
         accent.ringClassName,
         isDragging && "opacity-50",
-        highlighted && "border-warning bg-warning-muted dark:bg-warning-muted",
+        highlighted &&
+          "border-2 border-dashed border-warning bg-warning-muted dark:bg-warning-muted",
       )}
     >
       <span
@@ -109,6 +110,12 @@ export function GuestChip({
         </button>
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-1 text-sm font-medium">
+            {highlighted ? (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-warning-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
+                <Focus aria-hidden className="h-3 w-3" />
+                Focused
+              </span>
+            ) : null}
             <span className="min-w-0 truncate" title={group.guestName}>
               {group.guestName}
             </span>

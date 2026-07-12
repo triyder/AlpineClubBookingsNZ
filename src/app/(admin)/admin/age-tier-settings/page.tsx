@@ -319,28 +319,28 @@ export default function AgeTierSettingsPage() {
         </CardHeader>
         <CardContent className="space-y-6">
           {loading ? (
-            <p className="text-sm text-slate-500">Loading settings...</p>
+            <p className="text-sm text-muted-foreground">Loading settings...</p>
           ) : null}
 
-          <div className="flex flex-col gap-3 rounded-md border bg-slate-50/70 p-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-3 rounded-md border bg-muted p-4 md:flex-row md:items-center md:justify-between">
             <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-900">Xero Contact Groups</p>
-              <p className="text-sm text-slate-600">
+              <p className="text-sm font-medium text-foreground">Xero Contact Groups</p>
+              <p className="text-sm text-muted-foreground">
                 Choose one primary group per age tier for outbound sync, then optionally
                 add extra accepted groups that should also count as valid for mismatch
                 checks.
               </p>
               {loadingXeroGroups ? (
-                <p className="text-xs text-slate-500">Loading cached Xero contact groups...</p>
+                <p className="text-xs text-muted-foreground">Loading cached Xero contact groups...</p>
               ) : (
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   {xeroGroups.length > 0
                     ? `${xeroGroups.length} cached Xero group${xeroGroups.length === 1 ? "" : "s"} available.`
                     : "No cached Xero contact groups available yet."}
                 </p>
               )}
               {xeroGroupsError ? (
-                <p className="text-xs text-red-700">{xeroGroupsError}</p>
+                <p className="text-xs text-danger">{xeroGroupsError}</p>
               ) : null}
             </div>
             <Button
@@ -382,12 +382,12 @@ export default function AgeTierSettingsPage() {
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       {setting.tier}
                     </p>
-                    <p className="text-sm text-slate-600">{setting.label}</p>
+                    <p className="text-sm text-muted-foreground">{setting.label}</p>
                   </div>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     Ages {setting.minAge}
                     {isLastTier ? "+" : `-${maxAgeDisplay}`}
                   </p>
@@ -403,7 +403,7 @@ export default function AgeTierSettingsPage() {
                         updateRow(setting.tier, "label", event.target.value)
                       }
                       disabled={!editing}
-                      className={!editing ? "bg-slate-50 text-slate-700" : ""}
+                      className={!editing ? "bg-muted text-foreground" : ""}
                     />
                   </div>
                   <div className="space-y-1">
@@ -421,7 +421,7 @@ export default function AgeTierSettingsPage() {
                         )
                       }
                       disabled={!editing}
-                      className={!editing ? "bg-slate-50 text-slate-700" : ""}
+                      className={!editing ? "bg-muted text-foreground" : ""}
                     />
                   </div>
                   <div className="space-y-1">
@@ -431,10 +431,10 @@ export default function AgeTierSettingsPage() {
                       type="text"
                       disabled
                       value={maxAgeDisplay}
-                      className="bg-slate-50 text-slate-500"
+                      className="bg-muted text-muted-foreground"
                     />
                     {!isLastTier ? (
-                      <p className="text-xs text-slate-400">From next min age</p>
+                      <p className="text-xs text-muted-foreground">From next min age</p>
                     ) : null}
                   </div>
                   <div className="space-y-1">
@@ -448,7 +448,7 @@ export default function AgeTierSettingsPage() {
                     >
                       <SelectTrigger
                         id={primaryGroupInputId}
-                        className={!editing ? "bg-slate-50 text-slate-700" : ""}
+                        className={!editing ? "bg-muted text-foreground" : ""}
                       >
                         <SelectValue placeholder="Not mapped" />
                       </SelectTrigger>
@@ -469,7 +469,7 @@ export default function AgeTierSettingsPage() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-muted-foreground">
                       Linked members without any accepted tier group will be added to this
                       group by default.
                     </p>
@@ -477,7 +477,7 @@ export default function AgeTierSettingsPage() {
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(16rem,20rem)_minmax(16rem,22rem)_1fr]">
-                  <div className="flex items-start gap-3 rounded-md border bg-slate-50/70 p-3">
+                  <div className="flex items-start gap-3 rounded-md border bg-muted p-3">
                     <Checkbox
                       id={subscriptionInputId}
                       checked={setting.subscriptionRequiredForBooking}
@@ -494,14 +494,14 @@ export default function AgeTierSettingsPage() {
                       <Label htmlFor={subscriptionInputId}>
                         Subscription Required for Booking
                       </Label>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-muted-foreground">
                         Requires a paid subscription before members in this tier can be
                         booked as owners or member guests.
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-start gap-3 rounded-md border bg-slate-50/70 p-3">
+                  <div className="flex items-start gap-3 rounded-md border bg-muted p-3">
                     <Checkbox
                       id={familyRequestCreateInputId}
                       checked={setting.familyGroupRequestCreateMemberAllowed}
@@ -518,27 +518,27 @@ export default function AgeTierSettingsPage() {
                       <Label htmlFor={familyRequestCreateInputId}>
                         Allow admin-created members from family group requests
                       </Label>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-muted-foreground">
                         Lets admins approve a pending family request by creating a
                         non-login dependant when the request DOB maps to this tier.
                       </p>
                     </div>
                   </div>
 
-                  <div className="rounded-md border bg-slate-50/70 p-3">
+                  <div className="rounded-md border bg-muted p-3">
                     <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                       <div className="space-y-1">
                         <Label>Additional Accepted Xero Groups</Label>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-muted-foreground">
                           Special-purpose groups that still count as valid for this tier.
                         </p>
                       </div>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-muted-foreground">
                         {setting.xeroAcceptedContactGroups.length} accepted
                       </p>
                     </div>
                     {availableAcceptedGroups.length === 0 ? (
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-muted-foreground">
                         No other eligible Xero contact groups available.
                       </p>
                     ) : (
@@ -554,7 +554,7 @@ export default function AgeTierSettingsPage() {
                               <label
                                 key={group.id}
                                 htmlFor={acceptedGroupInputId}
-                                className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-md border bg-white px-2.5 py-1.5 text-sm"
+                                className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-md border bg-card px-2.5 py-1.5 text-sm text-card-foreground"
                               >
                                 <Checkbox
                                   id={acceptedGroupInputId}
@@ -568,7 +568,7 @@ export default function AgeTierSettingsPage() {
                                   }
                                   disabled={!editing || loadingXeroGroups || refreshingXeroGroups}
                                 />
-                                <span className="min-w-0 truncate text-slate-700">
+                                <span className="min-w-0 truncate text-foreground">
                                   {group.name}
                                   {group.contactCount > 0
                                     ? ` (${group.contactCount})`
@@ -587,12 +587,12 @@ export default function AgeTierSettingsPage() {
           })}
 
           {error ? (
-            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">
               {error}
             </div>
           ) : null}
           {success ? (
-            <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+            <div className="rounded-md border border-success/20 bg-success-muted p-3 text-sm text-success">
               Age tier settings saved successfully.
             </div>
           ) : null}

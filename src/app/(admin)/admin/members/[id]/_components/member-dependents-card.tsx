@@ -39,7 +39,7 @@ export function MemberDependentsCard({
 
   return (
     <Card className={className}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+      <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle className="text-base font-medium">Dependents</CardTitle>
         {isAdultMember && !memberIsArchived && (
           <Button variant="outline" size="sm" onClick={onOpenDependentDialog}>
@@ -50,7 +50,7 @@ export function MemberDependentsCard({
       </CardHeader>
       <CardContent>
         {member.dependents.length === 0 ? (
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-muted-foreground">
             {isAdultMember
               ? "No dependents linked to this member yet."
               : "Only adult members can manage dependents."}
@@ -84,7 +84,7 @@ export function MemberDependentsCard({
                     <Badge
                       variant={dependent.active ? "default" : "destructive"}
                       className={
-                        dependent.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""
+                        dependent.active ? "border-success/20 bg-success-muted text-success hover:shadow-md" : ""
                       }
                     >
                       {dependent.active ? "Active" : "Inactive"}
@@ -93,17 +93,17 @@ export function MemberDependentsCard({
                   <TableCell>{dependent.dateOfBirth ? formatMemberDateNz(dependent.dateOfBirth) : "-"}</TableCell>
                   <TableCell>
                     {dependent.canLogin ? (
-                      <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">
+                      <Badge variant="secondary" className="border-border bg-muted text-foreground">
                         Can Login
                       </Badge>
                     ) : (
-                      <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">
+                      <Badge variant="secondary" className="border-info/20 bg-info-muted text-info">
                         Non-Login
                       </Badge>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                       <Button
                         variant="outline"
                         size="sm"

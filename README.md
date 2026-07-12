@@ -236,6 +236,13 @@ npm run build
 Browser E2E tests for the Critical journeys run separately against the staging
 compose stack: `npm run test:e2e` (see `docs/E2E_PLAYWRIGHT.md`).
 
+The member and admin shells use the Restrained Alpine accessibility baseline:
+semantic light/dark status tokens, icon-or-text redundancy for colour-coded
+states, responsive overflow for data tables, focusable skip-link targets, a
+visible keyboard outline, and a global reduced-motion guard. Run
+`npm run review:staging:a11y` only with an explicit non-production
+`STAGING_APP_URL`; the command refuses to guess a target.
+
 `npm test` includes property-based tests (fast-check) for the pure money math —
 pricing, promo discounts, refund tiers, change fees, member credit, and the
 Xero booking-edit settlement classifier — in

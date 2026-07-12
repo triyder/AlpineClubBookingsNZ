@@ -158,14 +158,14 @@ function getOfferEmailSummary(delivery: OfferEmailDelivery) {
 
 function getOfferEmailBadgeClass(delivery: OfferEmailDelivery) {
   if (delivery.needsOperatorAction) {
-    return "bg-red-100 text-red-800";
+    return "bg-danger-muted text-danger";
   }
 
   if (delivery.retryState === "retrying" || delivery.retryState === "queued") {
-    return "bg-amber-100 text-amber-800";
+    return "bg-warning-muted text-warning";
   }
 
-  return "bg-emerald-100 text-emerald-800";
+  return "bg-success-muted text-success";
 }
 
 function formatOfferEmailDetail(delivery: OfferEmailDelivery) {
@@ -413,18 +413,18 @@ export default function AdminWaitlistPage() {
       />
 
       {error && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+        <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">{error}</div>
       )}
 
       {/* #1723 path 1 (owner decision B): allowed, but the admin is told at
           creation that this booking is already an unpaid finished stay. */}
       {forceConfirmReport?.unpaidFinishedStay && (
-        <Card className="border-amber-200 bg-amber-50">
+        <Card className="border-warning/20 bg-warning-muted">
           <CardContent className="pt-6 space-y-2">
-            <p className="font-medium text-amber-900">
+            <p className="font-medium text-warning">
               Unpaid finished stay created
             </p>
-            <p className="text-sm text-amber-800">
+            <p className="text-sm text-warning">
               This booking&apos;s check-out date has already passed, so
               force-confirming it created a payment-pending stay that is
               already finished. It now appears on the{" "}
@@ -439,12 +439,12 @@ export default function AdminWaitlistPage() {
           confirmation email. The booking still landed PAID; only the member
           email was skipped, and the choice is in the audit log. */}
       {forceConfirmReport?.notifiedMember === false && (
-        <Card className="border-emerald-200 bg-emerald-50">
+        <Card className="border-success/20 bg-success-muted">
           <CardContent className="pt-6 space-y-1">
-            <p className="font-medium text-emerald-900">
+            <p className="font-medium text-success">
               Booking force-confirmed
             </p>
-            <p className="text-sm text-emerald-800">
+            <p className="text-sm text-success">
               The member was not emailed — your choice is recorded in the audit
               log.
             </p>
@@ -453,20 +453,20 @@ export default function AdminWaitlistPage() {
       )}
 
       {forceConfirmReport?.overbooked && (
-        <Card className="border-red-200 bg-red-50">
+        <Card className="border-danger/20 bg-danger-muted">
           <CardContent className="pt-6 space-y-3">
             <div>
-              <p className="font-medium text-red-900">
+              <p className="font-medium text-danger">
                 Force-confirmed overbooked booking
               </p>
               {forceConfirmReport.status && (
-                <p className="text-sm text-red-800">
+                <p className="text-sm text-danger">
                   New status: {bookingStatusLabel(forceConfirmReport.status)}
                 </p>
               )}
             </div>
             {forceConfirmReport.overbookDates.length > 0 && (
-              <ul className="list-disc list-inside text-sm text-red-800">
+              <ul className="list-inside list-disc text-sm text-danger">
                 {forceConfirmReport.overbookDates.map((date) => (
                   <li key={date}>{date}</li>
                 ))}
@@ -474,7 +474,7 @@ export default function AdminWaitlistPage() {
             )}
             <Link
               href={buildForceConfirmAuditPath(forceConfirmReport)}
-              className="text-sm text-blue-700 hover:underline"
+              className="text-sm text-primary hover:underline"
             >
               View critical audit record
             </Link>
@@ -532,12 +532,12 @@ export default function AdminWaitlistPage() {
       </Card>
 
       {overbookDialog && (
-        <Card className="border-amber-200 bg-amber-50">
+        <Card className="border-warning/20 bg-warning-muted">
           <CardContent className="pt-6 space-y-3">
-            <p className="font-medium text-amber-900">
+            <p className="font-medium text-warning">
               This will overbook the lodge on the following dates:
             </p>
-            <ul className="list-disc list-inside text-sm text-amber-800">
+            <ul className="list-inside list-disc text-sm text-warning">
               {overbookDialog.dates.map((d) => (
                 <li key={d}>{d}</li>
               ))}
@@ -575,12 +575,12 @@ export default function AdminWaitlistPage() {
           booking identically and the choice is recorded in the audit log.
           Shown only when an email would actually be sent. */}
       {notifyDialog && (
-        <Card className="border-amber-200 bg-amber-50">
+        <Card className="border-warning/20 bg-warning-muted">
           <CardContent className="pt-6 space-y-3">
-            <p className="font-medium text-amber-900">
+            <p className="font-medium text-warning">
               Email the member about this confirmation?
             </p>
-            <p className="text-sm text-amber-800">
+            <p className="text-sm text-warning">
               Force-confirming this booking confirms it as paid. Choose whether
               the member receives the standard booking confirmation email — your
               choice is recorded in the audit log.
@@ -648,7 +648,7 @@ export default function AdminWaitlistPage() {
                       )}
                       className="hover:underline"
                     >
-                      <div className="font-medium text-blue-600">{entry.memberName}</div>
+                      <div className="font-medium text-primary">{entry.memberName}</div>
                       <div className="text-xs text-muted-foreground">{entry.memberEmail}</div>
                     </Link>
                   </TableCell>
@@ -666,7 +666,7 @@ export default function AdminWaitlistPage() {
                         {bookingStatusLabel(entry.status)}
                       </Badge>
                       {entry.requiresAdminReview && (
-                        <p className="text-xs text-amber-800">
+                        <p className="text-xs text-warning">
                           {entry.adminReviewReason || "Admin review required"}
                         </p>
                       )}
@@ -678,7 +678,7 @@ export default function AdminWaitlistPage() {
                         `/bookings/${entry.id}`,
                         currentWaitlistPath
                       )}
-                      className="text-blue-600 hover:underline"
+                      className="text-primary hover:underline"
                     >
                       View booking
                     </Link>
@@ -701,7 +701,7 @@ export default function AdminWaitlistPage() {
                         {entry.offerEmailDelivery.needsOperatorAction && (
                           <Link
                             href="/admin/email-deliverability"
-                            className="block text-xs text-blue-600 hover:underline"
+                            className="block text-xs text-primary hover:underline"
                           >
                             Review email recovery
                           </Link>
@@ -742,7 +742,7 @@ export default function AdminWaitlistPage() {
 
       {pagination.total > 0 && (
         <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-muted-foreground">
             Page {pagination.page} of {totalPages}
           </p>
           <div className="flex gap-2">

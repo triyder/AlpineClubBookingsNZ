@@ -267,7 +267,7 @@ export default function AdminWorkPartiesPage() {
       />
 
       {error && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+        <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">{error}</div>
       )}
 
       {showForm && (

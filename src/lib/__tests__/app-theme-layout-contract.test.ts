@@ -32,6 +32,25 @@ describe("database theme app-shell contract", () => {
     },
   );
 
+  it.each(["src/app/(authenticated)/layout.tsx", "src/app/(admin)/layout.tsx"])(
+    "moves keyboard focus to the skip-link target in %s",
+    (path) => {
+      const layout = readRepoFile(path);
+
+      expect(layout).toContain('href="#main-content"');
+      expect(layout).toMatch(/<main\s+[\s\S]*?id="main-content"[\s\S]*?tabIndex=\{-1\}/);
+    },
+  );
+
+  it("keeps the shared error Alert on the AA danger pair", () => {
+    const alert = readRepoFile("src/components/ui/alert.tsx");
+
+    expect(alert).toContain(
+      'error: "border-danger/20 bg-danger-muted text-danger"',
+    );
+    expect(alert).not.toMatch(/error:.*destructive/);
+  });
+
   it("maps app presentation tokens to brand variables without remapping semantic status", () => {
     const globals = readRepoFile("src/app/globals.css");
     const start = globals.indexOf(".app-theme-scope {");

@@ -119,7 +119,15 @@ establishes:
   `.tabular-figures` class.
 - **A11y baseline:** a global `prefers-reduced-motion: reduce` guard collapses
   animation/transition duration + delay, and both app shells have a
-  skip-to-content link targeting `#main-content`.
+  skip-to-content link targeting a programmatically focusable `#main-content`.
+- **Final sweep (#1819):** colour-coded calendar seasons, payment choices, and
+  focused bed-allocation cards/cells pair their colour with visible text/icons
+  or a distinct border style. The shared error `Alert` uses the AA `--danger`
+  pair rather than `--destructive`. The bookings table keeps a horizontally
+  scrollable minimum width, while booking review, family-group, and member
+  detail controls stack at phone width. The eight #1809 admin-list surfaces now
+  use semantic surrounding form/config/pagination chrome as well as semantic
+  table chrome.
 - **List loading/empty primitives (#1803):** use the shared `Spinner`
   (`src/components/ui/spinner.tsx`; `role="status"` with an sr-only label, and
   it degrades to a static indicator under reduced motion) and `EmptyState`

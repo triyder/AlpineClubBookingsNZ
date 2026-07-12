@@ -248,7 +248,7 @@ export function MemberPartnerLinkCard({
 
   return (
     <Card className={className}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+      <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle className="text-base font-medium">Partner</CardTitle>
         {memberIsArchived ? (
           <Badge variant="secondary" className="bg-slate-200 text-slate-800 border-slate-300">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useDroppable } from "@dnd-kit/core";
-import { CircleDashed, Inbox, Lock } from "lucide-react";
+import { CircleDashed, Focus, Inbox, Lock } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 import { getBookingAccent } from "./booking-accent";
@@ -87,6 +87,7 @@ export function BucketBoard({
           const holdsCapacity = booking.holdsCapacity;
           const accent = getBookingAccent(booking.id);
           const bookingTitle = `Booking ${booking.id}`;
+          const highlighted = booking.id === highlightedBookingId;
           return (
             <div
               key={booking.id}
@@ -94,8 +95,8 @@ export function BucketBoard({
               className={cn(
                 "relative overflow-hidden rounded-md border bg-card p-2 pl-3 text-card-foreground ring-1 ring-inset",
                 accent.ringClassName,
-                booking.id === highlightedBookingId &&
-                  "border-warning bg-warning-muted dark:bg-warning-muted",
+                highlighted &&
+                  "border-2 border-dashed border-warning bg-warning-muted dark:bg-warning-muted",
               )}
             >
               <span
@@ -103,6 +104,12 @@ export function BucketBoard({
                 className={cn("absolute inset-y-0 left-0 w-1", accent.stripClassName)}
               />
               <div className="mb-2 flex flex-wrap items-baseline gap-2 px-1">
+                {highlighted ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-warning-muted px-2 py-0.5 text-xs font-semibold text-warning">
+                    <Focus aria-hidden className="h-3 w-3" />
+                    Focused
+                  </span>
+                ) : null}
                 <span className="text-sm font-semibold">{booking.memberName}</span>
                 <span className="font-mono text-xs text-muted-foreground">
                   {booking.id}
@@ -161,7 +168,7 @@ export function BucketBoard({
                     onSelectBed={(bedId) => onSelectBed(group.bookingGuestId, bedId)}
                     onAllocate={() => onAllocate(group)}
                     pending={pendingGuestIds.has(group.bookingGuestId)}
-                    highlighted={booking.id === highlightedBookingId}
+                    highlighted={highlighted}
                     canEdit={canEdit}
                   />
                 ))}
