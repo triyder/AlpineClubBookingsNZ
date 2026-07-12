@@ -67,13 +67,18 @@
 
 :root {
   --radius: 0.625rem;
-  --brand-gold: #ffcb05;
-  --brand-charcoal: #4d4d46;
-  --brand-deep: #2f2f2b;
-  --brand-ridge: #6a6a63;
-  --brand-mist: #d9d5c2;
-  --brand-snow: #f7f5ed;
-  --brand-safety: #ff7c12;
+  /* Generic "Aotearoa" default brand palette (#1807): glacial-teal primary,
+     deep bush-green cool-stone neutrals, terracotta safety. These must stay in
+     lockstep with DEFAULT_CLUB_THEME_VALUES in src/lib/club-theme-schema.ts so
+     the static app chrome and the DB default agree for a fresh fork. Tokoroa
+     gold lives only in TOKOROA_CLUB_THEME_VALUES + the seed flag path. */
+  --brand-gold: #57b3ab;
+  --brand-charcoal: #21362b;
+  --brand-deep: #17231c;
+  --brand-ridge: #5c6f66;
+  --brand-mist: #d4ddd7;
+  --brand-snow: #f5f8f6;
+  --brand-safety: #b04d28;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -1009,7 +1014,10 @@ html:not(.dark)
 }
 
 .pswp__thumbnail-carousel-item.is-active {
-  border-color: #ffcb05;
+  /* Track the brand accent instead of a hardcoded Tokoroa gold (#1807). The
+     PhotoSwipe lightbox portals to <body>, so this inherits :root's
+     --brand-gold (the generic default teal), not the .website-theme override. */
+  border-color: var(--brand-gold);
   opacity: 1;
 }
 
