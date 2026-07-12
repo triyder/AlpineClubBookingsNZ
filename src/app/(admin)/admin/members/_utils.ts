@@ -109,39 +109,6 @@ export const filterValueLabels: Partial<
   },
 };
 
-export const subscriptionStatusConfig: Record<
-  string,
-  { className: string; label: string }
-> = {
-  PAID: {
-    className:
-      "bg-green-100 text-green-800 border-green-200 hover:bg-green-200",
-    label: "Paid",
-  },
-  UNPAID: {
-    className:
-      "bg-yellow-100 text-yellow-800 border-yellow-200 hover:bg-yellow-200",
-    label: "Unpaid",
-  },
-  OVERDUE: {
-    className: "bg-red-100 text-red-800 border-red-200 hover:bg-red-200",
-    label: "Overdue",
-  },
-  NOT_INVOICED: {
-    className:
-      "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200",
-    label: "Not Invoiced",
-  },
-  NONE: {
-    className: "bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100",
-    label: "No Record",
-  },
-  NOT_REQUIRED: {
-    className: "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100",
-    label: "Not Required",
-  },
-};
-
 /**
  * Format an AgeTier for display (e.g. "ADULT" → "Adult").
  *

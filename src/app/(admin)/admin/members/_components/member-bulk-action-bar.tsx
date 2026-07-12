@@ -24,8 +24,8 @@ export function MemberBulkActionBar({
   if (selectedCount === 0) return null
 
   return (
-    <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-md">
-      <span className="text-sm font-medium text-blue-700">{selectedCount} selected</span>
+    <div className="flex flex-wrap items-center gap-3 rounded-md border border-info/30 bg-info-muted p-3 text-info">
+      <span className="text-sm font-medium">{selectedCount} selected</span>
       <Button size="sm" variant="outline" onClick={() => onOpenBulkDialog("deactivate")}>
         Deactivate
       </Button>
