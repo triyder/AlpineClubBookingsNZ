@@ -109,7 +109,6 @@ export function MemberFilterToolbar({
           value={search}
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder="Search by name or email..."
-          className="bg-white"
         />
       }
       primary={

@@ -7,7 +7,7 @@ import { isFullAdmin } from "@/lib/access-roles"
 import { Download, RefreshCw, Upload } from "lucide-react"
 import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import {
   AdminViewOnlyNotice,
   ViewOnlyActionButton,
@@ -246,57 +246,56 @@ export default function MembersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Members</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            {total} member{total !== 1 ? "s" : ""}
-            {debouncedSearch ? ` matching "${debouncedSearch}"` : " total"}
-          </p>
-        </div>
-        <div className="flex flex-col items-start gap-1.5">
-          <div className="flex gap-2">
-            {xeroConnected && (
+      <AdminPageHeader
+        title="Members"
+        description={`${total} member${total !== 1 ? "s" : ""}${
+          debouncedSearch ? ` matching "${debouncedSearch}"` : " total"
+        }`}
+        actions={
+          <div className="flex flex-col items-start gap-1.5 sm:items-end">
+            <div className="flex flex-wrap gap-2">
+              {xeroConnected && (
+                <ViewOnlyActionButton
+                  canEdit={canEditMembership}
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRefreshXeroGroups}
+                  disabled={refreshingXeroGroups}
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 mr-1 ${refreshingXeroGroups ? "animate-spin" : ""}`}
+                  />
+                  {refreshingXeroGroups ? "Refreshing Xero Groups..." : "Refresh Xero Groups"}
+                </ViewOnlyActionButton>
+              )}
+              <a href={exportUrl}>
+                <Button variant="outline" size="sm">
+                  <Download className="h-4 w-4 mr-1" />
+                  Export CSV
+                </Button>
+              </a>
               <ViewOnlyActionButton
                 canEdit={canEditMembership}
                 variant="outline"
                 size="sm"
-                onClick={handleRefreshXeroGroups}
-                disabled={refreshingXeroGroups}
+                onClick={() => setImportDialogOpen(true)}
               >
-                <RefreshCw
-                  className={`h-4 w-4 mr-1 ${refreshingXeroGroups ? "animate-spin" : ""}`}
-                />
-                {refreshingXeroGroups ? "Refreshing Xero Groups..." : "Refresh Xero Groups"}
+                <Upload className="h-4 w-4 mr-1" />
+                Import CSV
               </ViewOnlyActionButton>
+              <ViewOnlyActionButton
+                canEdit={canEditMembership}
+                onClick={() => setCreateDialogOpen(true)}
+              >
+                Add Member
+              </ViewOnlyActionButton>
+            </div>
+            {xeroConnected && (
+              <XeroGroupsRefreshHint lastRefreshedAt={xeroGroupsLastRefreshedAt} />
             )}
-            <a href={exportUrl}>
-              <Button variant="outline" size="sm">
-                <Download className="h-4 w-4 mr-1" />
-                Export CSV
-              </Button>
-            </a>
-            <ViewOnlyActionButton
-              canEdit={canEditMembership}
-              variant="outline"
-              size="sm"
-              onClick={() => setImportDialogOpen(true)}
-            >
-              <Upload className="h-4 w-4 mr-1" />
-              Import CSV
-            </ViewOnlyActionButton>
-            <ViewOnlyActionButton
-              canEdit={canEditMembership}
-              onClick={() => setCreateDialogOpen(true)}
-            >
-              Add Member
-            </ViewOnlyActionButton>
           </div>
-          {xeroConnected && (
-            <XeroGroupsRefreshHint lastRefreshedAt={xeroGroupsLastRefreshedAt} />
-          )}
-        </div>
-      </div>
+        }
+      />
 
       {!canEditMembership && (
         <AdminViewOnlyNotice>
@@ -346,33 +345,28 @@ export default function MembersPage() {
         />
       )}
 
-      <Card>
-        <CardHeader className="pb-0">
-          <CardTitle className="text-base font-medium">Member List</CardTitle>
-        </CardHeader>
-        <CardContent className="pt-4">
-          <MemberTable
-            members={members}
-            loading={loading}
-            debouncedSearch={debouncedSearch}
-            selectedIds={selectedIds}
-            canEdit={canEditMembership}
-            sortBy={sortBy}
-            sortDir={sortDir}
-            membersListPath={membersListPath}
-            onToggleSelect={toggleSelect}
-            onToggleSelectAll={toggleSelectAll}
-            onToggleSort={toggleSort}
-            onOpenPasswordActionDialog={openPasswordActionDialog}
-            onEditMember={handleEditMember}
-          />
-          <MemberPagination
-            page={page}
-            totalPages={totalPages}
-            onPageChange={setPage}
-          />
-        </CardContent>
-      </Card>
+      <div className="space-y-4">
+        <MemberTable
+          members={members}
+          loading={loading}
+          debouncedSearch={debouncedSearch}
+          selectedIds={selectedIds}
+          canEdit={canEditMembership}
+          sortBy={sortBy}
+          sortDir={sortDir}
+          membersListPath={membersListPath}
+          onToggleSelect={toggleSelect}
+          onToggleSelectAll={toggleSelectAll}
+          onToggleSort={toggleSort}
+          onOpenPasswordActionDialog={openPasswordActionDialog}
+          onEditMember={handleEditMember}
+        />
+        <MemberPagination
+          page={page}
+          totalPages={totalPages}
+          onPageChange={setPage}
+        />
+      </div>
 
       <MemberEditorDialog
         open={createDialogOpen}
