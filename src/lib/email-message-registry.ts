@@ -51,10 +51,17 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "website-contact",
   "admin-booking-request-pending",
   "admin-booking-request-hold-expired",
+  "admin-school-manual-invoice",
 ]);
 
+// Admin/system templates whose delivery mode admins must NOT be able to change.
+// admin-school-manual-invoice (#1797) is admin-facing so it classifies as an
+// admin alert, but disabling it would let an approved school booking go
+// un-invoiced — a money risk — so it is locked to always-send like
+// admin-email-failure, matching the pre-#1797 hardcoded behaviour.
 const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-email-failure",
+  "admin-school-manual-invoice",
 ]);
 
 const CONTENT_ONLY_DEFAULT_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
@@ -206,6 +213,10 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "admin-booking-request-pending": ["requesterName", "reviewUrl"],
   "admin-booking-request-hold-expired": ["requesterName", "reviewUrl"],
   "admin-partner-share-swept": ["memberName", "partnerName", "reason"],
+  "booking-review-approved": ["bookingId"],
+  "induction-sign-off-request": ["inductionUrl"],
+  "school-attendee-confirmation": ["token"],
+  "group-booking-join-verification": ["token"],
 };
 
 const TEMPLATE_TRIGGER_METADATA: Partial<
@@ -346,6 +357,64 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "admin-booking-request-hold-expired": {
     triggerSummary: "Request-origin booking unpaid at hold expiry",
     frequency: "Per hold-expiry check on an unpaid request booking",
+  },
+  "booking-review-approved": {
+    triggerSummary:
+      "Admin approved a booking held for minors review, releasing it for payment",
+    frequency:
+      "Once per approval decision, to the owner, unless the admin opts out of notifying (#1790)",
+  },
+  "booking-review-rejected": {
+    triggerSummary:
+      "Admin declined a booking held for minors review; the booking is cancelled",
+    frequency:
+      "Once per rejection decision, to the owner (suppressible #1790; the always-notify cancellation email still sends)",
+  },
+  "induction-sign-off-request": {
+    triggerSummary:
+      "Induction sign-off signer assigned (admin assignment or membership-application approval)",
+    frequency: "One email per assigned signer who has an email address",
+  },
+  "school-attendee-confirmation": {
+    triggerSummary:
+      "School contact prompted to confirm placeholder attendees (cron sweep or admin resend)",
+    frequency:
+      "Per send to the school contact; flagged a reminder after the first, token rotated each send",
+  },
+  "admin-school-manual-invoice": {
+    triggerSummary:
+      "Approved school booking-request converted while the Xero module is off, so no invoice was raised",
+    frequency:
+      "Once per conversion, to admins opted into public booking-request alerts",
+  },
+  "group-booking-join-verification": {
+    triggerSummary:
+      "Non-member used a join code to claim a group-booking spot and must confirm their email",
+    frequency: "One email per join attempt; link expires after 48 hours",
+  },
+  "group-settlement-receipt": {
+    triggerSummary: "Organiser-pays combined group payment settled successfully",
+    frequency: "One receipt to the organiser per settlement",
+  },
+  "group-join-settled": {
+    triggerSummary:
+      "Organiser settled a joiner's spot as part of a combined group payment",
+    frequency: "One email per joiner booking covered by the settled payment",
+  },
+  "group-settlement-expired": {
+    triggerSummary:
+      "Organiser's started combined group payment expired before completion; held beds released",
+    frequency: "One email to the organiser per expired settlement",
+  },
+  "group-join-released": {
+    triggerSummary:
+      "A joiner's held bed was released when the organiser's combined payment expired",
+    frequency: "One email per joiner whose held bed was released",
+  },
+  "group-join-cancelled": {
+    triggerSummary:
+      "Reaped organiser-pays place was never retried, so the joiner's pending booking was cancelled (#1094)",
+    frequency: "One email per cancelled joiner booking",
   },
 };
 
@@ -490,6 +559,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "choreDescription",
   "choreLink",
   "choreName",
+  "contactEmail",
   "correlationKey",
   "count",
   "creditRestored",
@@ -521,6 +591,8 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "guestName",
   "holdUntil",
   "hoursRemaining",
+  "inducteeName",
+  "inductionUrl",
   "intendedMemberId",
   "intendedMemberName",
   "inviteeName",
@@ -528,6 +600,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "issueCategoryCount",
   "issueReportUrl",
   "issueTotalCount",
+  "joinerCount",
   "latestErrorMessage",
   "localId",
   "localModel",
@@ -550,6 +623,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "oldTotal",
   "operation",
   "operationType",
+  "organiserName",
   "originalRecipient",
   "originalTemplateName",
   "pageTitle",
@@ -590,7 +664,10 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "reviewUrl",
   "localUrl",
   "s",
+  "schoolName",
   "severityLabel",
+  "signerName",
+  "signerRoleLabel",
   "stalePendingMinutes",
   "startDate",
   "status",

@@ -4,6 +4,19 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **11 previously-hardcoded emails are now admin-editable in
+  `/admin/notifications` (#1797).** Booking review approved/rejected, induction
+  sign-off request, school attendee confirmation, the school manual-invoice
+  admin alert, and the six group-booking settlement/join notices gained
+  `EMAIL_TEMPLATE_DEFINITIONS` entries, so admins can reword them like the rest
+  of the registry. Delivery stays **locked to always-send** for all 11 (they are
+  member- or admin-facing and several carry action links or are operationally
+  required, so they can never be content-only'd or disabled), and absent an override the shipped wording is
+  unchanged. The school-attendee confirmation's `{{token}}` is now threaded into
+  its template data so an override renders the confirm link. `two-factor-code`
+  stays hardcoded by design (auth-critical). No money, booking capacity, or
+  delivery-timing behaviour changes.
+
 - **Admin email-notify choice extended across the remaining admin-initiated
   member emails (#1780 / #1769b, completing the sweep).** The canonical
   `notifyMember` two-button pattern (#1705/#1769a) now covers: membership

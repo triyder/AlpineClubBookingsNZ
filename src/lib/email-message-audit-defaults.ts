@@ -329,6 +329,50 @@ export const EMAIL_AUDIT_DEFAULTS = {
   "admin-booking-request-hold-expired": {
     "defaultSubject": "Request booking unpaid at hold expiry: {{requesterName}}",
     "defaultBody": "Request Booking Unpaid at Hold Expiry\n\n{{requesterName}}'s request-origin booking has reached its hold deadline without payment.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal due: {{total}}\nHold until: {{holdUntil}}\n\nReview Bookings: {{reviewUrl}}"
+  },
+  "booking-review-approved": {
+    "defaultSubject": "Your booking has been approved - {{CLUB_LODGE_NAME}}",
+    "defaultBody": "Booking Approved\n\nHi {{firstName}}, an admin has approved your booking. You can now complete payment to confirm it.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nNote from admin: {{adminNotes}} [only when adminNotes is non-empty]\n\nComplete Payment: {{BASE_URL}}/bookings/{{bookingId}}"
+  },
+  "booking-review-rejected": {
+    "defaultSubject": "Your booking could not be approved - {{CLUB_LODGE_NAME}}",
+    "defaultBody": "Booking Declined\n\nHi {{firstName}}, an admin has reviewed your booking and was not able to approve it. The booking has been cancelled — no payment was taken.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nReason from admin: {{adminNotes}} [only when adminNotes is non-empty]\n\nYou are welcome to make a new booking that includes an adult guest, or contact the club to discuss.\n\nMake a New Booking: {{BASE_URL}}/book"
+  },
+  "induction-sign-off-request": {
+    "defaultSubject": "Lodge induction sign-off for {{inducteeName}} — {{CLUB_NAME}}",
+    "defaultBody": "Lodge Induction Sign-Off Request\n\nHi {{signerName}},\n\n{{inducteeName}} needs their {{CLUB_NAME}} lodge induction signed off, and you can do this as their {{signerRoleLabel}}.\n\nOnce you have taken them through the lodge induction checklist and you are satisfied they are competent, please sign in and confirm the sign-off on your induction page.\n\nYou will need to sign in before you can complete the sign-off.\n\nOpen My Induction Page: {{inductionUrl}}"
+  },
+  "school-attendee-confirmation": {
+    "defaultSubject": "Confirm your attendee list — {{CLUB_NAME}}",
+    "defaultBody": "Confirm Your Attendee List [heading becomes \"Reminder: Confirm Your Attendee List\" on reminders]\n\nHi {{firstName}}, {{schoolName}}'s stay at {{CLUB_NAME}}'s lodge is coming up, and the booking currently lists placeholder attendee names. Please tell us who is coming so the lodge roster shows real names on arrival. [falls back to \"your school group's stay\" when no school name is recorded]\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAttendees: {{guestCount}}\n\nUse the secure link below to update the names and confirm the list. You can come back and edit until you confirm; the link stays valid until check-in.\n\nConfirm Attendees: {{BASE_URL}}/school-bookings/confirm/{{token}}\n\nNeed to change how many people are coming, or their age groups? Contact the club instead — headcount changes go through a revised quote.\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}."
+  },
+  "admin-school-manual-invoice": {
+    "defaultSubject": "School booking needs a manual invoice: {{schoolName}}",
+    "defaultBody": "School Booking Needs a Manual Invoice\n\nA school group booking has been approved and confirmed. The Xero module is currently off, so no invoice was raised automatically. Please invoice the school manually and record payment through the usual paths.\n\nSchool: {{schoolName}}\nContact email: {{contactEmail}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nAmount: {{amount}}\n\nView Booking Requests: {{reviewUrl}}"
+  },
+  "group-booking-join-verification": {
+    "defaultSubject": "Confirm your group booking spot — {{CLUB_NAME}}",
+    "defaultBody": "Confirm Your Booking Request\n\nHi {{firstName}}, thanks for your booking request for {{CLUB_NAME}}'s lodge.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nPlease confirm your email address so the club can review your request. Your request will not be reviewed until you confirm.\n\nConfirm My Email: {{BASE_URL}}/join/verify/{{token}}\n\nThis link expires on {{expiresAt}}. If you did not make this request, you can safely ignore this email and the request will be deleted."
+  },
+  "group-settlement-receipt": {
+    "defaultSubject": "Your group booking is settled — {{CLUB_NAME}}",
+    "defaultBody": "Your Group Booking Is Settled\n\nHi {{firstName}}, thanks for settling your group's stay at {{CLUB_NAME}}'s lodge. Everyone you are paying for is now confirmed.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nJoiners settled: {{joinerCount}}\nTotal paid: {{total}}\n\nEach joiner has been emailed to confirm their spot. There is nothing more for them to pay.\n\nIf anything looks wrong, contact the club at {{SUPPORT_EMAIL}}."
+  },
+  "group-join-settled": {
+    "defaultSubject": "Your spot is confirmed — {{CLUB_NAME}}",
+    "defaultBody": "Your Spot Is Confirmed\n\nHi {{firstName}}, {{organiserName}} has settled the cost of your stay at {{CLUB_NAME}}'s lodge as part of their group booking. Your spot is confirmed and there is nothing for you to pay.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nIf you have any questions about your stay, contact the club at {{SUPPORT_EMAIL}}."
+  },
+  "group-settlement-expired": {
+    "defaultSubject": "Your group payment expired — {{CLUB_NAME}}",
+    "defaultBody": "Your Group Settlement Has Expired\n\nHi {{firstName}}, the combined payment you started for your group's stay at {{CLUB_NAME}}'s lodge was not completed in time, so the beds held for your joiners have been released.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nJoiners affected: {{joinerCount}}\nAmount not charged: {{total}}\n\nNo money has been taken. If your group still plans to come, restart the payment from your group booking page — the beds are subject to availability.\n\nIf anything looks wrong, contact the club at {{SUPPORT_EMAIL}}."
+  },
+  "group-join-released": {
+    "defaultSubject": "Your held spot has been released — {{CLUB_NAME}}",
+    "defaultBody": "Your Held Spot Has Been Released\n\nHi {{firstName}}, {{organiserName}} started a combined payment for your stay at {{CLUB_NAME}}'s lodge but it was not completed in time, so your held bed has been released.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nYour booking is back to awaiting payment. If the group still plans to come, the organiser can restart the payment — or check with them about what happens next.\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}."
+  },
+  "group-join-cancelled": {
+    "defaultSubject": "Your group booking has been cancelled — {{CLUB_NAME}}",
+    "defaultBody": "Your Group Booking Has Been Cancelled\n\nHi {{firstName}}, the combined group payment {{organiserName}} started for your stay at {{CLUB_NAME}}'s lodge was never completed, so your pending booking has now been cancelled. Nothing has been charged to you.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nIf you still want to come, you can make your own booking for these dates — or talk to the organiser about starting a fresh group trip.\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}."
   }
 } as const;
 

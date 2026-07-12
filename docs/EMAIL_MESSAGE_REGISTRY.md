@@ -2824,46 +2824,7 @@ Triggers and frequency:
 
 - `POST /api/cron` (confirm-pending job): when a request-origin booking (no saved card) reaches its hold deadline unpaid; the hold is extended and admins are alerted instead of auto-charging. Per hold-expiry check on an unpaid request booking. Sent to admins who opt in to the "Public booking requests" notification.
 
-## Hardcoded Messages (Not In The Admin-Editable Registry)
-
-The following messages are live senders whose subject and body wording are
-fixed in code (`src/lib/email/*.ts` plus `src/lib/email-templates.ts`). They
-have no `EMAIL_TEMPLATE_DEFINITIONS` entry in
-`src/lib/email-message-registry.ts`, so `/admin/notifications` cannot edit
-their wording. The sync contract test
-(`src/lib/__tests__/email-message-registry.test.ts`) keeps the `###` sections
-above in exact lockstep with the editable registry — these entries use `####`
-headings so they stay out of that contract. Do not promote one to `###`
-without also registering it for admin editing (that is feature work, not a
-docs change).
-
-#### two-factor-code
-
-Subject:
-
-```text
-Your {{CLUB_NAME}} two-factor code
-```
-
-Body:
-
-```text
-Two-factor code
-
-Hi {{firstName}},
-
-Use this code to finish signing in to your {{CLUB_NAME}} booking account:
-
-{{code}}
-
-This code expires on {{expiresAt}}. If you did not try to sign in, change your password and contact the club.
-```
-
-Triggers and frequency:
-
-- `POST /api/auth/2fa/email/send`: when a member with email two-factor enabled requests a sign-in code during login. Per request; codes expire after 10 minutes. Rate limited (shared two-factor limiter).
-
-#### booking-review-approved
+### booking-review-approved
 
 Subject:
 
@@ -2890,7 +2851,7 @@ Triggers and frequency:
 
 - `POST /api/admin/bookings/[id]/review` (approve): when an admin approves a booking held for review (minors flow), releasing it for payment — unless the admin chose not to notify (suppression audited `notifyMember: false`, #1790). One email per approval decision, to the booking owner.
 
-#### booking-review-rejected
+### booking-review-rejected
 
 Subject:
 
@@ -2919,7 +2880,7 @@ Triggers and frequency:
 
 - `POST /api/admin/bookings/[id]/review` (reject): when an admin declines a booking held for review (minors flow); the booking is cancelled and no payment is taken. The admin may choose not to notify (suppression audited `notifyMember: false`, #1790), which withholds only this review-declined notice — the separate cancellation email from the shared cancel flow is deliberately always-notify (#1730), so a suppressed reject still emails the member the cancellation. One email per rejection decision, to the booking owner.
 
-#### induction-sign-off-request
+### induction-sign-off-request
 
 Subject:
 
@@ -2948,7 +2909,7 @@ Triggers and frequency:
 - `POST /api/admin/inductions`: when an admin assigns induction sign-off signers. One email per assigned signer with an email address.
 - Membership application approval (`approveMemberApplication` in `src/lib/nomination.ts`): sign-off requests also go out automatically to the assigned signers when an application is approved.
 
-#### school-attendee-confirmation
+### school-attendee-confirmation
 
 Subject:
 
@@ -2984,7 +2945,7 @@ Triggers and frequency:
 - `POST /api/cron` (school-attendee-confirmations job): prompts school contacts whose converted booking still lists placeholder attendees ahead of check-in; marked as a reminder after the first send. The tokenized link is rotated on every send.
 - `POST /api/admin/booking-requests/[id]/resend-attendee-confirmation`: explicit admin resend button. One email per send, to the school contact.
 
-#### admin-school-manual-invoice
+### admin-school-manual-invoice
 
 Subject:
 
@@ -3013,7 +2974,7 @@ Triggers and frequency:
 
 - School booking-request conversion (`src/lib/school-booking-request.ts`): when an approved school request converts to a confirmed booking while the Xero module is off, so no invoice was raised automatically. The named school/contact is the party to invoice — the email itself goes to admins. Per conversion. Sent to admins who opt in to the "Public booking requests" notification.
 
-#### group-booking-join-verification
+### group-booking-join-verification
 
 Subject:
 
@@ -3044,7 +3005,7 @@ Triggers and frequency:
 
 - Non-member group join (`src/lib/group-booking.ts`): when a non-member uses a join code to claim a spot on a group booking, they must confirm their email before the join proceeds. Link expires after 48 hours. One email per join attempt.
 
-#### group-settlement-receipt
+### group-settlement-receipt
 
 Subject:
 
@@ -3073,7 +3034,7 @@ Triggers and frequency:
 
 - Group settlement success (`src/lib/group-settlement.ts`, Stripe webhook path): after an organiser-pays combined payment settles. One receipt to the organiser per settlement.
 
-#### group-join-settled
+### group-join-settled
 
 Subject:
 
@@ -3099,7 +3060,7 @@ Triggers and frequency:
 
 - Same group settlement success as `group-settlement-receipt`: one email per joiner booking covered by the organiser's settled payment.
 
-#### group-settlement-expired
+### group-settlement-expired
 
 Subject:
 
@@ -3128,7 +3089,7 @@ Triggers and frequency:
 
 - `POST /api/cron` (group-settlement-reaper job): when an organiser's started combined payment is not completed in time and the held joiner beds are released. One email to the organiser per expired settlement.
 
-#### group-join-released
+### group-join-released
 
 Subject:
 
@@ -3155,7 +3116,7 @@ Triggers and frequency:
 
 - Same group-settlement-reaper sweep as `group-settlement-expired`: one email per joiner whose held bed was released; the joiner's booking returns to awaiting payment.
 
-#### group-join-cancelled
+### group-join-cancelled
 
 Subject:
 
@@ -3181,3 +3142,42 @@ If you have any questions, contact the club at {{SUPPORT_EMAIL}}.
 Triggers and frequency:
 
 - `POST /api/cron` (group-settlement-reaper job, terminal stage, #1094): when a reaped organiser-pays place is never retried and the joiner's pending booking is cancelled. One email per cancelled joiner booking.
+
+## Hardcoded Messages (Not In The Admin-Editable Registry)
+
+Only one live sender keeps its subject and body wording fixed in code
+(`src/lib/email/*.ts` plus `src/lib/email-templates.ts`). It has no
+`EMAIL_TEMPLATE_DEFINITIONS` entry in `src/lib/email-message-registry.ts`, so
+`/admin/notifications` cannot edit its wording — two-factor codes are
+security-sensitive and stay out of the admin-editable registry by design. The
+sync contract test (`src/lib/__tests__/email-message-registry.test.ts`) keeps
+the `###` sections above in exact lockstep with the editable registry — this
+entry uses a `####` heading so it stays out of that contract. Do not promote it
+to `###` without also registering it for admin editing (that is feature work,
+not a docs change).
+
+#### two-factor-code
+
+Subject:
+
+```text
+Your {{CLUB_NAME}} two-factor code
+```
+
+Body:
+
+```text
+Two-factor code
+
+Hi {{firstName}},
+
+Use this code to finish signing in to your {{CLUB_NAME}} booking account:
+
+{{code}}
+
+This code expires on {{expiresAt}}. If you did not try to sign in, change your password and contact the club.
+```
+
+Triggers and frequency:
+
+- `POST /api/auth/2fa/email/send`: when a member with email two-factor enabled requests a sign-in code during login. Per request; codes expire after 10 minutes. Rate limited (shared two-factor limiter).

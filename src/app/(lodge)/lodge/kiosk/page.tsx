@@ -622,7 +622,7 @@ export default function KioskPage() {
             {authRequired && (
               <a
                 href={`/login?callbackUrl=${encodeURIComponent("/lodge/kiosk")}`}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-500 active:bg-blue-400"
+                className="inline-flex min-h-[44px] items-center justify-center rounded-xl bg-brand-gold px-4 py-2 text-sm font-semibold text-brand-charcoal transition-colors hover:bg-brand-gold/90 active:bg-brand-gold/80"
               >
                 Sign in
               </a>
@@ -649,7 +649,7 @@ export default function KioskPage() {
                   setShowPinForm(true);
                   setPinError(null);
                 }}
-                className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-500 active:bg-blue-400"
+                className="inline-flex items-center justify-center rounded-xl bg-brand-gold px-4 py-3 text-sm font-semibold text-brand-charcoal transition-colors hover:bg-brand-gold/90 active:bg-brand-gold/80"
               >
                 Enter PIN
               </button>
@@ -678,7 +678,7 @@ export default function KioskPage() {
                   onChange={(event) =>
                     setPin(event.target.value.replace(/\D/g, "").slice(0, 6))
                   }
-                  className="w-full rounded-xl border border-slate-600 bg-slate-900 px-4 py-3 text-lg tracking-[0.35em] text-white outline-none transition-colors focus:border-blue-400"
+                  className="w-full rounded-xl border border-slate-600 bg-slate-900 px-4 py-3 text-lg tracking-[0.35em] text-white outline-none transition-colors focus:border-brand-gold"
                   placeholder="123456"
                   autoComplete="one-time-code"
                   required
@@ -691,7 +691,7 @@ export default function KioskPage() {
                 <button
                   type="submit"
                   disabled={pinLoading || pin.length !== 6}
-                  className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-500 active:bg-blue-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+                  className="rounded-xl bg-brand-gold px-4 py-3 text-sm font-semibold text-brand-charcoal transition-colors hover:bg-brand-gold/90 active:bg-brand-gold/80 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
                 >
                   {pinLoading ? "Checking..." : "Unlock"}
                 </button>
@@ -837,7 +837,7 @@ export default function KioskPage() {
                                       className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
                                         guest.arrivedAt
                                           ? "bg-green-600 text-white"
-                                          : "bg-slate-600 hover:bg-slate-500 active:bg-slate-400 text-slate-200"
+                                          : "bg-brand-gold text-brand-charcoal hover:bg-brand-gold/90 active:bg-brand-gold/80"
                                       }`}
                                     >
                                       {guest.arrivedAt ? "Arrived" : "Mark Arrived"}
@@ -849,7 +849,7 @@ export default function KioskPage() {
                                       className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
                                         guest.departedAt
                                           ? "bg-amber-600 text-white"
-                                          : "bg-slate-600 hover:bg-slate-500 active:bg-slate-400 text-slate-200"
+                                          : "bg-brand-gold text-brand-charcoal hover:bg-brand-gold/90 active:bg-brand-gold/80"
                                       }`}
                                     >
                                       {guest.departedAt ? "Departed" : "Mark Departed"}
@@ -878,7 +878,7 @@ export default function KioskPage() {
             {canManageRoster && (
               <a
                 href={`/lodge/roster/${date}/setup`}
-                className="inline-block bg-blue-600 hover:bg-blue-500 active:bg-blue-400 text-white text-sm font-semibold px-4 py-2 rounded-xl min-h-[44px] transition-colors whitespace-nowrap"
+                className="inline-block bg-brand-gold hover:bg-brand-gold/90 active:bg-brand-gold/80 text-brand-charcoal text-sm font-semibold px-4 py-2 rounded-xl min-h-[44px] transition-colors whitespace-nowrap"
               >
                 {hasAssignments ? "Manage Today's Roster" : "Set Up Today's Roster"}
               </a>
