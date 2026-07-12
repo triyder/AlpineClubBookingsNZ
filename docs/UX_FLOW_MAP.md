@@ -120,6 +120,14 @@ shadcn neutral (epic #1800). The foundation (#1801) establishes:
   modes) — instead of re-implementing the table shell / sort / pagination per
   page. `bookings-pagination.tsx` / `member-pagination.tsx` are thin wrappers
   over the shared `Pagination`.
+- **Long-page section nav (#1818):** wrap the long single-column member pages
+  (`/profile`, `/bookings/[id]`) with `SectionNav` (`src/components/section-nav.tsx`;
+  a sticky desktop anchor rail + a mobile `<details>` disclosure of in-page
+  `#anchor` links). It is presentation-only and additive: give the page's cards
+  stable `id=`s (with `scroll-mt-20`), pass the full candidate list, and it prunes
+  to the sections actually present in the DOM and hides itself below two entries.
+  Member booking cards show "how full for your dates" with `OccupancyMeter` fed by
+  a read-only `checkCapacity` call (never a new capacity computation).
 
 Later epic issues build on these primitives; do not re-introduce hardcoded
 status hex, `bg-white`, or `text-slate-*` on app surfaces.

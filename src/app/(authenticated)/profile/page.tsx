@@ -240,8 +240,8 @@ export default async function ProfilePage({
         <div className="min-w-0 max-w-2xl flex-1 space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Profile</h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <h1 className="text-2xl font-bold text-foreground">Profile</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
               Manage your account details
             </p>
           </div>
@@ -575,7 +575,7 @@ export default async function ProfilePage({
               </p>
               {!isAdmin && <DeleteAccountButton />}
               {isAdmin && (
-                <p className="text-sm text-slate-500 italic">
+                <p className="text-sm text-muted-foreground italic">
                   Admin accounts cannot be self-deleted. Contact another admin.
                 </p>
               )}
