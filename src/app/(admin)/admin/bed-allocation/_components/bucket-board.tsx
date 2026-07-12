@@ -94,7 +94,6 @@ export function BucketBoard({
               className={cn(
                 "relative overflow-hidden rounded-md border bg-card p-2 pl-3 text-card-foreground ring-1 ring-inset",
                 accent.ringClassName,
-                accent.tintClassName,
                 booking.id === highlightedBookingId &&
                   "border-warning bg-warning-muted dark:bg-warning-muted",
               )}
@@ -115,7 +114,7 @@ export function BucketBoard({
                   className={cn(
                     "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
                     holdsCapacity
-                      ? "bg-foreground/10 text-foreground"
+                      ? "bg-secondary text-secondary-foreground"
                       : "border border-dashed border-muted-foreground/60 text-muted-foreground",
                   )}
                   title={

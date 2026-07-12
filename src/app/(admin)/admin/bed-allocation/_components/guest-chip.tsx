@@ -87,7 +87,6 @@ export function GuestChip({
       className={cn(
         "relative flex flex-col gap-2 overflow-hidden rounded-md border bg-card p-2 pl-3 text-card-foreground shadow-sm ring-1 ring-inset sm:flex-row sm:items-center sm:justify-between",
         accent.ringClassName,
-        accent.tintClassName,
         isDragging && "opacity-50",
         highlighted && "border-warning bg-warning-muted dark:bg-warning-muted",
       )}

@@ -139,9 +139,8 @@ describe("GuestChip bed select", () => {
     expect(card.className).toContain(
       getBookingAccent("booking-colour-1").ringClassName,
     );
-    expect(card.className).toContain(
-      getBookingAccent("booking-colour-1").tintClassName,
-    );
+    expect(card.className).toContain("bg-card");
+    expect(card.className).toContain("text-card-foreground");
     expect(accentStrip.className).toContain(
       getBookingAccent("booking-colour-1").stripClassName,
     );

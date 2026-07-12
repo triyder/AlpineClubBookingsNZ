@@ -199,6 +199,8 @@ describe("database theme app-shell contract", () => {
     // composites cross back toward the foreground and fail AA.
     expect(contrastRatio("#757575", "#1a1a1a") ?? 21).toBeLessThan(4.5);
     expect(contrastRatio("#767676", "#737373") ?? 21).toBeLessThan(4.5);
+    expect(contrastRatio("#767676", "#0c0c0c") ?? 21).toBeLessThan(4.5);
+    expect(contrastRatio("#767676", "#726d6d") ?? 21).toBeLessThan(4.5);
 
     const appSources = [
       ...listSourceFiles("src/app/(admin)"),
@@ -211,7 +213,7 @@ describe("database theme app-shell contract", () => {
         path !== "src/components/ui/skeleton.tsx",
     );
     const transparentAppBackground =
-      /(?:^|[\s"'`])(?:hover:|active:|focus:|dark:|data-\[[^\]]+\]:)*bg-(?:background|card|popover|primary|secondary|muted|accent|brand-(?:gold|charcoal|deep|mist|snow))\/\d+/m;
+      /(?:^|[\s"'`])(?:hover:|active:|focus:|dark:|data-\[[^\]]+\]:)*bg-(?:background|foreground|card|popover|primary|secondary|muted|accent|brand-(?:gold|charcoal|deep|mist|snow))\/\d+/m;
 
     for (const path of appSources) {
       const source = readRepoFile(path);
@@ -228,6 +230,14 @@ describe("database theme app-shell contract", () => {
     expect(globals).not.toContain("hover:bg-brand-gold/90");
     expect(wizard).not.toContain("bg-muted/45");
     expect(themeSwitcher).not.toContain("text-foreground/75");
+
+    const bedAllocationSources = listSourceFiles(
+      "src/app/(admin)/admin/bed-allocation/_components",
+    ).map(readRepoFile);
+    expect(bedAllocationSources.join("\n")).not.toContain("tintClassName");
+    expect(bedAllocationSources.join("\n")).not.toMatch(
+      /bg-[a-z]+-50\/45|dark:bg-[a-z]+-950\/20/,
+    );
   });
 
   it("keeps Site Style app chrome semantic while fixed code previews stay isolated", () => {

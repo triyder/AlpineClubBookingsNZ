@@ -90,6 +90,9 @@ and the occupancy meter; it is not used directly for app text or focus rings.
 App controls keep those text/background endpoints opaque on hover and selected
 states; shadows or direct semantic endpoints provide interaction feedback rather
 than `/NN` transparency utilities that could cross between accepted endpoints.
+Bed-allocation booking colours are likewise confined to decorative strips and
+rings; their text-bearing cards and Held badges use the gated card/secondary
+pairs.
 App keyboard focus uses deep on light surfaces and snow in dark mode, with a
 two-pixel offset outline that remains visible on opacity-reduced controls. The wizard
 disables its Save/Finish buttons and the `/admin/site-style` API rejects the

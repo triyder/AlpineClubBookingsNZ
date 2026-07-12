@@ -113,7 +113,8 @@ describe("BucketBoard requested-room badge (#706)", () => {
     );
 
     expect(titledCards[0].className).toContain(accent.ringClassName);
-    expect(titledCards[0].className).toContain(accent.tintClassName);
+    expect(titledCards[0].className).toContain("bg-card");
+    expect(titledCards[0].className).toContain("text-card-foreground");
     expect(titledCards[1].className).toContain(accent.ringClassName);
     expect(accentStrips).toHaveLength(2);
     expect(

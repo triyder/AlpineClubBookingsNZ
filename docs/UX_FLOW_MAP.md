@@ -86,7 +86,9 @@ neutral endpoints (deep on snow/mist in light mode; snow on deep/charcoal in
 dark mode), while the editable accent remains visible in solid filled controls
 and decorative borders. Text-bearing app states keep those endpoints opaque;
 hover feedback uses shadows or another directly gated semantic endpoint rather
-than transparent token variants. Keyboard focus uses a two-pixel offset deep/snow outline
+than transparent token variants. Bed-allocation booking identity stays on
+decorative strips/rings while its text cards use direct card/secondary pairs.
+Keyboard focus uses a two-pixel offset deep/snow outline
 that remains visible when a control is opacity-reduced. The foundation (#1801)
 establishes:
 
