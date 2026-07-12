@@ -447,9 +447,9 @@
      on :root/.dark above and are intentionally not overridden here (#1808). */
   --background: var(--brand-snow);
   --foreground: var(--brand-deep);
-  --card: color-mix(in srgb, white 78%, var(--brand-snow));
+  --card: color-mix(in srgb, var(--brand-mist) 22%, var(--brand-snow));
   --card-foreground: var(--brand-deep);
-  --popover: color-mix(in srgb, white 78%, var(--brand-snow));
+  --popover: color-mix(in srgb, var(--brand-mist) 22%, var(--brand-snow));
   --popover-foreground: var(--brand-deep);
   --primary: var(--brand-gold);
   --primary-foreground: var(--brand-charcoal);
@@ -472,7 +472,11 @@
   --sidebar-foreground: var(--brand-snow);
   --sidebar-primary: var(--brand-gold);
   --sidebar-primary-foreground: var(--brand-charcoal);
-  --sidebar-accent: color-mix(in srgb, var(--brand-snow) 12%, transparent);
+  --sidebar-accent: color-mix(
+    in srgb,
+    var(--brand-charcoal) 80%,
+    var(--brand-deep)
+  );
   --sidebar-accent-foreground: var(--brand-snow);
   --sidebar-border: color-mix(
     in srgb,
@@ -509,11 +513,23 @@
   --popover-foreground: var(--brand-snow);
   --primary: var(--brand-gold);
   --primary-foreground: var(--brand-charcoal);
-  --secondary: color-mix(in srgb, var(--brand-mist) 14%, var(--brand-deep));
+  --secondary: color-mix(
+    in srgb,
+    var(--brand-charcoal) 58%,
+    var(--brand-deep)
+  );
   --secondary-foreground: var(--brand-snow);
-  --muted: color-mix(in srgb, var(--brand-mist) 14%, var(--brand-deep));
+  --muted: color-mix(
+    in srgb,
+    var(--brand-charcoal) 58%,
+    var(--brand-deep)
+  );
   --muted-foreground: var(--brand-snow);
-  --accent: color-mix(in srgb, var(--brand-gold) 18%, var(--brand-deep));
+  --accent: color-mix(
+    in srgb,
+    var(--brand-charcoal) 58%,
+    var(--brand-deep)
+  );
   --accent-foreground: var(--brand-snow);
   --border: color-mix(in srgb, var(--brand-mist) 28%, var(--brand-deep));
   --input: color-mix(in srgb, var(--brand-mist) 28%, var(--brand-deep));
@@ -522,7 +538,11 @@
   --sidebar-foreground: var(--brand-snow);
   --sidebar-primary: var(--brand-gold);
   --sidebar-primary-foreground: var(--brand-charcoal);
-  --sidebar-accent: color-mix(in srgb, var(--brand-gold) 14%, var(--brand-deep));
+  --sidebar-accent: color-mix(
+    in srgb,
+    var(--brand-charcoal) 44%,
+    var(--brand-deep)
+  );
   --sidebar-accent-foreground: var(--brand-snow);
   --sidebar-border: color-mix(in srgb, var(--brand-mist) 25%, var(--brand-deep));
   --sidebar-ring: var(--brand-gold);

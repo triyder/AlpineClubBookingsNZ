@@ -100,6 +100,24 @@ describe("site style admin API", () => {
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
+  it("rejects unreadable text on the light app secondary surface", async () => {
+    const response = await PUT(
+      request({
+        ...DEFAULT_CLUB_THEME_VALUES,
+        brandMist: DEFAULT_CLUB_THEME_VALUES.brandDeep,
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.contrastWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "app-secondary-on-mist" }),
+      ]),
+    );
+    expect(mocks.clubThemeUpsert).not.toHaveBeenCalled();
+  });
+
   it("saves completion and revalidates every themed layout", async () => {
     const response = await PUT(
       request({

@@ -79,8 +79,9 @@ wizard. The logo is public-site only and is stored in the database as a validate
 image data URL; there is no runtime upload directory to preserve.
 
 Saved palettes must meet the **WCAG AA 4.5:1** minimum text-contrast ratio on
-the key public/app pairs — body and muted text on the page background, header
-text on the navigation bar, button text on the primary-action colour, the app
+the key public/app pairs — body and muted text on the page background, app text
+on the secondary/mist surface, header text on the navigation bar, button text on
+the primary-action colour, the app
 accent on dark app chrome, and the contrast-safe dark accent-text/focus role on
 the light app background. The editable primary accent remains visible as filled
 controls, tints, and the occupancy meter; it is not used directly for light-mode

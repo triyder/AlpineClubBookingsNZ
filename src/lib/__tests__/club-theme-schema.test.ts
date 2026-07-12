@@ -98,6 +98,7 @@ describe("getBlockingContrastWarnings", () => {
       brandGold: "#333333",
       brandCharcoal: "#303030",
       brandDeep: "#343434",
+      brandMist: "#353535",
       brandSnow: "#353535",
     };
 
@@ -108,6 +109,7 @@ describe("getBlockingContrastWarnings", () => {
       "app-accent-on-deep",
       "app-accent-on-snow",
       "app-muted-on-snow",
+      "app-secondary-on-mist",
     ]);
   });
 
@@ -139,6 +141,24 @@ describe("getBlockingContrastWarnings", () => {
         expect.objectContaining({ id: "app-muted-on-snow" }),
       ]),
     );
+  });
+
+  it("blocks secondary app text when brand mist collapses onto brand deep", () => {
+    const blocking = getBlockingContrastWarnings({
+      ...DEFAULT_CLUB_THEME_VALUES,
+      brandMist: DEFAULT_CLUB_THEME_VALUES.brandDeep,
+    });
+
+    expect(blocking).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "app-secondary-on-mist" }),
+      ]),
+    );
+  });
+
+  it("keeps both shipped render palettes inside every contrast gate", () => {
+    expect(getBlockingContrastWarnings(DEFAULT_CLUB_THEME_VALUES)).toEqual([]);
+    expect(getBlockingContrastWarnings(TOKOROA_CLUB_THEME_VALUES)).toEqual([]);
   });
 
   it("builds app brand CSS without raw or semantic overrides", () => {

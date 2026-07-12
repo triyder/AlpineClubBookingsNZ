@@ -116,4 +116,26 @@ describe("site style wizard", () => {
       "Occupancy: 18 of 30 bunks filled",
     );
   });
+
+  it("blocks saving when secondary app text would disappear into brand mist", async () => {
+    render(
+      <SiteStyleWizard
+        initialTheme={{
+          ...DEFAULT_CLUB_THEME_VALUES,
+          completedAt: null,
+          contrastWarnings: [],
+        }}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Mist value"), {
+      target: { value: DEFAULT_CLUB_THEME_VALUES.brandDeep },
+    });
+
+    await screen.findByText(/App text on secondary surface:/);
+    expect(
+      (screen.getByRole("button", { name: "Save and next" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
 });

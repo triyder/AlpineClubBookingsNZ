@@ -384,6 +384,12 @@ export function getContrastWarnings(
       foreground: theme.brandDeep,
       background: theme.brandSnow,
     },
+    {
+      id: "app-secondary-on-mist",
+      label: "App text on secondary surface",
+      foreground: theme.brandDeep,
+      background: theme.brandMist,
+    },
   ];
 
   const warnings: ContrastWarning[] = [];
