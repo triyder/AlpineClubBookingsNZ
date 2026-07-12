@@ -86,7 +86,7 @@ as a red flag and check the release notes before deploying.
 
 ## v0.10.1 → v0.11.0
 
-`v0.11.0` is a large minor release with 29 migrations and first-class
+`v0.11.0` is a large minor release with 30 migrations and first-class
 multi-lodge operation. It also adds configuration transfer, declared-partner
 and shared-double workflows, admin booking recovery/override controls, and an
 application-wide design/accessibility refresh. Read the full release inventory

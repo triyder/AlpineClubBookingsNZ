@@ -8,7 +8,7 @@ All notable public reference-release changes should be recorded here.
 
 - Release classification: minor public reference release. This is a large
   feature, operator-UX, accessibility, and multi-lodge release over `0.10.1`,
-  with 29 migrations. It adds first-class multi-lodge operation, configuration
+  with 30 migrations. It adds first-class multi-lodge operation, configuration
   transfer, declared partner/double-bed sharing, safer admin booking overrides,
   expanded admin email controls, and the Restrained Alpine application design
   system. Read `docs/releases/v0.11.0.md` and the `v0.10.1 -> v0.11.0` section
