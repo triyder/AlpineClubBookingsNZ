@@ -180,7 +180,12 @@ test("(d) a cross-lodge waitlist offer confirms into a fresh lodge B booking", a
     { timeout: 30_000 },
   );
   await expect(page.getByText("A Spot Has Opened Up!")).toHaveCount(0);
-  await expect(page.getByText(/payment/i).first()).toBeVisible();
+  // Target the payment ACTION card title, not a loose /payment/i match: the
+  // #1818 SectionNav rail renders a "Payment" anchor ahead of the content, so
+  // `.first()` would resolve to a hidden nav link.
+  await expect(
+    page.getByText(/complete payment|internet banking payment/i).first(),
+  ).toBeVisible();
   await page.close();
 });
 
