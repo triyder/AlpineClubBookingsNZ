@@ -162,7 +162,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     } else if (checkOut && date.getTime() === checkOut.getTime()) {
       classes += "!bg-brand-gold !text-brand-charcoal !border-brand-gold ";
     } else if (checkIn && checkOut && date > checkIn && date < checkOut) {
-      classes += "!bg-brand-gold/20 !text-foreground ";
+      classes += "!border-brand-gold !bg-muted !text-foreground ";
     }
 
     return classes;

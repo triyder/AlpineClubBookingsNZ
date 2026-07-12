@@ -161,6 +161,23 @@ describe("getBlockingContrastWarnings", () => {
     expect(getBlockingContrastWarnings(TOKOROA_CLUB_THEME_VALUES)).toEqual([]);
   });
 
+  it("shows why independently safe endpoints must not be interpolated for app text surfaces", () => {
+    // Deep sits between black snow and white mist. Both configured endpoint
+    // pairs clear AA, while their sRGB midpoint collapses almost onto deep.
+    // Direct token endpoints are therefore part of the rendering contract.
+    const endpointCrossingPalette = {
+      ...DEFAULT_CLUB_THEME_VALUES,
+      brandDeep: "#767676",
+      brandSnow: "#000000",
+      brandMist: "#ffffff",
+      brandCharcoal: "#ffffff",
+      brandGold: "#000000",
+    };
+
+    expect(getBlockingContrastWarnings(endpointCrossingPalette)).toEqual([]);
+    expect(contrastRatio("#767676", "#808080") ?? 21).toBeLessThan(4.5);
+  });
+
   it("builds app brand CSS without raw or semantic overrides", () => {
     const appCss = buildClubThemeAppCss({
       ...DEFAULT_CLUB_THEME_VALUES,

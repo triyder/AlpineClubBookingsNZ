@@ -322,7 +322,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                 onClick={() => setStep(item.id)}
                 className={`flex min-h-11 items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
                   active
-                    ? "border-brand-gold bg-brand-gold/20 text-brand-charcoal"
+                    ? "border-brand-gold bg-brand-gold text-brand-charcoal"
                     : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 }`}
               >
@@ -336,7 +336,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
           <section className="space-y-5">
             <div className="flex items-center gap-2">
-              <ActiveStepIcon className="h-5 w-5 text-brand-charcoal" />
+              <ActiveStepIcon className="h-5 w-5 text-foreground" />
               <h2 className="text-lg font-semibold text-slate-900">
                 {activeStep.label}
               </h2>

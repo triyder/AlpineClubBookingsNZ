@@ -80,7 +80,7 @@ export function OccupancyMeter({
           className={cn(
             "tabular-figures shrink-0 font-medium whitespace-nowrap",
             sizes.text,
-            isFull ? "text-brand-safety" : "text-foreground",
+            isFull ? "text-danger" : "text-foreground",
           )}
         >
           {countText}

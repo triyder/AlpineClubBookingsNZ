@@ -82,10 +82,13 @@ Saved palettes must meet the **WCAG AA 4.5:1** minimum text-contrast ratio on
 the key public/app pairs — body and muted text on the page background, app text
 on the secondary/mist surface, header text on the navigation bar, button text on
 the primary-action colour, the app
-accent on dark app chrome, and the contrast-safe dark accent-text/focus role on
-the light app background. The editable primary accent remains visible as filled
-controls, tints, and the occupancy meter; it is not used directly for light-mode
-text or focus rings. The wizard
+accent on dark app chrome, and the contrast-safe dark accent-text role on the
+light app background. App text-bearing surfaces use only the directly gated
+snow/mist/deep/charcoal endpoints rather than interpolated colour mixes. The
+editable primary accent remains visible as filled controls, decorative borders,
+and the occupancy meter; it is not used directly for app text or focus rings.
+App keyboard focus uses deep on light surfaces and snow in dark mode, with a
+two-pixel offset outline that remains visible on opacity-reduced controls. The wizard
 disables its Save/Finish buttons and the `/admin/site-style` API rejects the
 request (`400`) while any pair falls short, so an admin cannot ship an unreadable
 theme. Both accepted colour formats are measured — hex directly, and `oklch()`

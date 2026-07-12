@@ -222,7 +222,7 @@ export function PublicBookingRequestsSection() {
             type="button"
             onClick={handleSaveQuoteTiming}
             disabled={saving || !timingDirty}
-            className="rounded bg-brand-charcoal px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded bg-brand-charcoal px-3 py-1.5 text-sm font-medium text-brand-snow disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save quote timing"}
           </button>
@@ -279,7 +279,7 @@ export function PublicBookingRequestsSection() {
             type="button"
             onClick={handleSaveAttendeeTiming}
             disabled={saving || !attendeeTimingDirty}
-            className="rounded bg-brand-charcoal px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded bg-brand-charcoal px-3 py-1.5 text-sm font-medium text-brand-snow disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save attendee prompts"}
           </button>

@@ -339,15 +339,15 @@
 
 @layer components {
   .app-brand-mark {
-    @apply inline-flex items-center justify-center rounded-full bg-brand-gold/20 text-brand-charcoal dark:bg-brand-gold/15 dark:text-brand-gold;
+    @apply inline-flex items-center justify-center rounded-full bg-brand-gold text-brand-charcoal;
   }
 
   .app-nav-link-active {
-    @apply bg-brand-gold/20 text-brand-charcoal dark:bg-brand-gold/15 dark:text-brand-gold;
+    @apply bg-brand-gold text-brand-charcoal;
   }
 
   .app-step-active {
-    @apply rounded-full bg-brand-gold/20 px-2 py-0.5 font-semibold text-brand-charcoal dark:bg-brand-gold/15 dark:text-brand-gold;
+    @apply rounded-full bg-brand-gold px-2 py-0.5 font-semibold text-brand-charcoal;
   }
 
   .app-button-brand {
@@ -355,11 +355,11 @@
   }
 
   .app-callout-brand {
-    @apply rounded-md border border-brand-gold/35 bg-brand-gold/10;
+    @apply rounded-md border border-brand-gold bg-card text-card-foreground;
   }
 
   .app-chip-brand {
-    @apply inline-flex items-center gap-1.5 rounded-md bg-brand-gold/15 px-3 py-1.5 text-sm font-medium text-brand-charcoal transition-colors hover:bg-brand-gold/25 dark:text-brand-gold;
+    @apply inline-flex items-center gap-1.5 rounded-md bg-brand-gold px-3 py-1.5 text-sm font-medium text-brand-charcoal transition-opacity hover:opacity-90;
   }
 
   /* Charcoal-on-snow keeps AA contrast under both shipped theme presets;
@@ -447,22 +447,24 @@
      on :root/.dark above and are intentionally not overridden here (#1808). */
   --background: var(--brand-snow);
   --foreground: var(--brand-deep);
-  --card: color-mix(in srgb, var(--brand-mist) 22%, var(--brand-snow));
+  --card: var(--brand-snow);
   --card-foreground: var(--brand-deep);
-  --popover: color-mix(in srgb, var(--brand-mist) 22%, var(--brand-snow));
+  --popover: var(--brand-snow);
   --popover-foreground: var(--brand-deep);
   --primary: var(--brand-gold);
   --primary-foreground: var(--brand-charcoal);
   --secondary: var(--brand-mist);
   --secondary-foreground: var(--brand-deep);
-  --muted: color-mix(in srgb, var(--brand-mist) 72%, var(--brand-snow));
+  --muted: var(--brand-mist);
   --muted-foreground: var(--brand-deep);
-  --accent: color-mix(in srgb, var(--brand-gold) 16%, var(--brand-snow));
+  --accent: var(--brand-mist);
   --accent-foreground: var(--brand-deep);
-  --app-accent-text: var(--brand-charcoal);
+  --app-accent-text: var(--brand-deep);
+  /* These remaining mixes are non-text structural boundaries only; no text
+     foreground is paired with a mixed endpoint. */
   --border: color-mix(in srgb, var(--brand-ridge) 30%, var(--brand-snow));
   --input: color-mix(in srgb, var(--brand-ridge) 30%, var(--brand-snow));
-  --ring: var(--brand-charcoal);
+  --ring: var(--brand-deep);
   --chart-1: var(--brand-gold);
   --chart-2: var(--brand-safety);
   --chart-3: var(--brand-ridge);
@@ -472,18 +474,14 @@
   --sidebar-foreground: var(--brand-snow);
   --sidebar-primary: var(--brand-gold);
   --sidebar-primary-foreground: var(--brand-charcoal);
-  --sidebar-accent: color-mix(
-    in srgb,
-    var(--brand-charcoal) 80%,
-    var(--brand-deep)
-  );
+  --sidebar-accent: var(--brand-deep);
   --sidebar-accent-foreground: var(--brand-snow);
   --sidebar-border: color-mix(
     in srgb,
     var(--brand-ridge) 35%,
     var(--brand-charcoal)
   );
-  --sidebar-ring: var(--brand-gold);
+  --sidebar-ring: var(--brand-snow);
   --font-sans: var(
     --font-website-body,
     var(
@@ -507,45 +505,30 @@
 .dark .app-theme-scope {
   --background: var(--brand-deep);
   --foreground: var(--brand-snow);
-  --card: color-mix(in srgb, var(--brand-charcoal) 58%, var(--brand-deep));
+  --card: var(--brand-charcoal);
   --card-foreground: var(--brand-snow);
-  --popover: color-mix(in srgb, var(--brand-charcoal) 58%, var(--brand-deep));
+  --popover: var(--brand-charcoal);
   --popover-foreground: var(--brand-snow);
   --primary: var(--brand-gold);
   --primary-foreground: var(--brand-charcoal);
-  --secondary: color-mix(
-    in srgb,
-    var(--brand-charcoal) 58%,
-    var(--brand-deep)
-  );
+  --secondary: var(--brand-charcoal);
   --secondary-foreground: var(--brand-snow);
-  --muted: color-mix(
-    in srgb,
-    var(--brand-charcoal) 58%,
-    var(--brand-deep)
-  );
+  --muted: var(--brand-charcoal);
   --muted-foreground: var(--brand-snow);
-  --accent: color-mix(
-    in srgb,
-    var(--brand-charcoal) 58%,
-    var(--brand-deep)
-  );
+  --accent: var(--brand-charcoal);
   --accent-foreground: var(--brand-snow);
+  --app-accent-text: var(--brand-snow);
   --border: color-mix(in srgb, var(--brand-mist) 28%, var(--brand-deep));
   --input: color-mix(in srgb, var(--brand-mist) 28%, var(--brand-deep));
-  --ring: var(--brand-gold);
-  --sidebar: color-mix(in srgb, var(--brand-charcoal) 44%, var(--brand-deep));
+  --ring: var(--brand-snow);
+  --sidebar: var(--brand-charcoal);
   --sidebar-foreground: var(--brand-snow);
   --sidebar-primary: var(--brand-gold);
   --sidebar-primary-foreground: var(--brand-charcoal);
-  --sidebar-accent: color-mix(
-    in srgb,
-    var(--brand-charcoal) 44%,
-    var(--brand-deep)
-  );
+  --sidebar-accent: var(--brand-deep);
   --sidebar-accent-foreground: var(--brand-snow);
   --sidebar-border: color-mix(in srgb, var(--brand-mist) 25%, var(--brand-deep));
-  --sidebar-ring: var(--brand-gold);
+  --sidebar-ring: var(--brand-snow);
 }
 
 /* Filled brand controls keep the editable accent with its gated charcoal
@@ -570,19 +553,27 @@
 
 .dark
   .app-theme-scope
-  :is(
-    .text-primary,
-    .text-brand-gold,
-    [class~="hover:text-primary"]:hover,
-    .group:hover [class~="group-hover:text-primary"]
-  ):not(.website-theme *) {
-  color: var(--brand-gold);
-}
-
-.dark
-  .app-theme-scope
   :is(.bg-primary, .bg-brand-gold):not(.website-theme *) {
   outline: none;
+}
+
+/* A native outline is independent of Tailwind's ring opacity and component
+   opacity, so filled Button/Checkbox variants retain a visible keyboard focus
+   boundary. The ring token is a gated page-foreground endpoint in each mode. */
+.app-theme-scope
+  :where(
+    a,
+    button,
+    input,
+    select,
+    textarea,
+    [role="button"],
+    [role="checkbox"],
+    [role="link"],
+    [tabindex]
+  ):focus-visible:not(.website-theme *) {
+  outline: 2px solid var(--ring) !important;
+  outline-offset: 2px !important;
 }
 
 /* App headings pick up --font-heading (League Spartan when loaded). Specificity is

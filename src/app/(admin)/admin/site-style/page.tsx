@@ -35,13 +35,13 @@ export default async function SiteStylePage() {
         <CardContent className="flex flex-wrap gap-3 text-sm">
           <Link
             href="/admin/setup"
-            className="font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
+            className="font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
           >
             Setup
           </Link>
           <Link
             href="/admin/email-messages"
-            className="font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
+            className="font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
           >
             Email messages
           </Link>

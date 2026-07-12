@@ -26,44 +26,159 @@ describe("database theme app-shell contract", () => {
     const end = globals.indexOf("/* App headings pick up", start);
     const appThemeRules = globals.slice(start, end);
     const darkStart = appThemeRules.indexOf(".dark .app-theme-scope {");
+    const lightRules = appThemeRules.slice(0, darkStart);
     const darkRules = appThemeRules.slice(darkStart);
 
     expect(appThemeRules).toContain("--primary: var(--brand-gold)");
-    expect(appThemeRules).toContain("--background: var(--brand-snow)");
-    expect(appThemeRules).toContain("--background: var(--brand-deep)");
-    expect(appThemeRules).toContain("--muted-foreground: var(--brand-deep)");
-    expect(appThemeRules).toContain("--muted-foreground: var(--brand-snow)");
-    expect(appThemeRules).toContain("var(--brand-charcoal) 58%");
-    expect(appThemeRules).toContain("--app-accent-text: var(--brand-charcoal)");
-    expect(appThemeRules).toContain("--ring: var(--brand-charcoal)");
-    expect(appThemeRules).not.toContain("color-mix(in srgb, white");
-    expect(appThemeRules).toMatch(
-      /--card:\s*color-mix\(\s*in srgb,\s*var\(--brand-mist\) 22%,\s*var\(--brand-snow\)/,
-    );
-    expect(appThemeRules).toMatch(
-      /--popover:\s*color-mix\(\s*in srgb,\s*var\(--brand-mist\) 22%,\s*var\(--brand-snow\)/,
-    );
-    expect(appThemeRules).toMatch(
-      /--sidebar-accent:\s*color-mix\(\s*in srgb,\s*var\(--brand-charcoal\) 80%,\s*var\(--brand-deep\)/,
+    for (const token of ["background", "card", "popover"]) {
+      expect(lightRules).toContain(`--${token}: var(--brand-snow)`);
+    }
+    for (const token of ["secondary", "muted", "accent"]) {
+      expect(lightRules).toContain(`--${token}: var(--brand-mist)`);
+    }
+    for (const token of [
+      "foreground",
+      "card-foreground",
+      "popover-foreground",
+      "secondary-foreground",
+      "muted-foreground",
+      "accent-foreground",
+    ]) {
+      expect(lightRules).toContain(`--${token}: var(--brand-deep)`);
+    }
+    expect(lightRules).toContain("--sidebar: var(--brand-charcoal)");
+    expect(lightRules).toContain("--sidebar-accent: var(--brand-deep)");
+    expect(lightRules).toContain("--sidebar-foreground: var(--brand-snow)");
+    expect(lightRules).toContain("--sidebar-accent-foreground: var(--brand-snow)");
+    expect(lightRules).toContain("--ring: var(--brand-deep)");
+    expect(lightRules).toContain("--sidebar-ring: var(--brand-snow)");
+    expect(darkRules).toContain("--background: var(--brand-deep)");
+    for (const token of [
+      "card",
+      "popover",
+      "secondary",
+      "muted",
+      "accent",
+      "sidebar",
+    ]) {
+      expect(darkRules).toContain(`--${token}: var(--brand-charcoal)`);
+    }
+    for (const token of [
+      "foreground",
+      "card-foreground",
+      "popover-foreground",
+      "secondary-foreground",
+      "muted-foreground",
+      "accent-foreground",
+      "sidebar-foreground",
+      "sidebar-accent-foreground",
+    ]) {
+      expect(darkRules).toContain(`--${token}: var(--brand-snow)`);
+    }
+    expect(darkRules).toContain("--sidebar-accent: var(--brand-deep)");
+    expect(darkRules).toContain("--ring: var(--brand-snow)");
+    expect(darkRules).toContain("--sidebar-ring: var(--brand-snow)");
+    expect(lightRules).toContain("--app-accent-text: var(--brand-deep)");
+    expect(darkRules).toContain("--app-accent-text: var(--brand-snow)");
+    expect(appThemeRules).not.toMatch(
+      /--(?:background|foreground|card|card-foreground|popover|popover-foreground|secondary|secondary-foreground|muted|muted-foreground|accent|accent-foreground|sidebar|sidebar-foreground|sidebar-accent|sidebar-accent-foreground):\s*color-mix/,
     );
     expect(appThemeRules).toContain('[class~="hover:text-primary"]:hover');
     expect(appThemeRules).toContain(
       '.group:hover [class~="group-hover:text-primary"]',
     );
     expect(appThemeRules.match(/:not\(\.website-theme \*\)/g)).toHaveLength(4);
-    expect(darkRules).toMatch(
-      /--accent:\s*color-mix\(\s*in srgb,\s*var\(--brand-charcoal\) 58%,\s*var\(--brand-deep\)/,
-    );
-    expect(darkRules).toMatch(
-      /--sidebar-accent:\s*color-mix\(\s*in srgb,\s*var\(--brand-charcoal\) 44%,\s*var\(--brand-deep\)/,
-    );
-    expect(darkRules).not.toMatch(
-      /--(?:sidebar-)?accent:\s*color-mix\([^;]*var\(--brand-gold\)/,
-    );
+    expect(appThemeRules).toContain(":focus-visible:not(.website-theme *)");
+    expect(appThemeRules).toContain("outline: 2px solid var(--ring) !important");
+    expect(appThemeRules).toContain("outline-offset: 2px !important");
     expect(appThemeRules).toContain("--font-website-body");
     expect(appThemeRules).toContain("--font-website-heading");
     expect(appThemeRules).not.toMatch(
       /--(?:success|warning|info|danger)(?:-|:)/,
     );
+  });
+
+  it("keeps app brand utilities on solid gated text/background pairs", () => {
+    const globals = readRepoFile("src/app/globals.css");
+    const componentRules = globals.slice(
+      globals.indexOf("@layer components"),
+      globals.indexOf(".app-theme-scope {"),
+    );
+
+    for (const utility of [
+      "app-brand-mark",
+      "app-nav-link-active",
+      "app-step-active",
+      "app-chip-brand",
+    ]) {
+      const start = componentRules.indexOf(`.${utility} {`);
+      const end = componentRules.indexOf("}", start);
+      const rule = componentRules.slice(start, end);
+      expect(rule).toContain("bg-brand-gold");
+      expect(rule).toContain("text-brand-charcoal");
+      expect(rule).not.toMatch(/bg-brand-gold\//);
+      expect(rule).not.toContain("dark:text-brand-gold");
+    }
+
+    const calloutStart = componentRules.indexOf(".app-callout-brand {");
+    const calloutEnd = componentRules.indexOf("}", calloutStart);
+    const calloutRule = componentRules.slice(calloutStart, calloutEnd);
+    expect(calloutRule).toContain("bg-card");
+    expect(calloutRule).toContain("text-card-foreground");
+    expect(calloutRule).not.toMatch(/bg-brand-gold\//);
+  });
+
+  it("uses semantic app text roles across admin navigation and setup surfaces", () => {
+    const semanticTextFiles = [
+      "src/app/(admin)/admin/booking-policies/page.tsx",
+      "src/app/(admin)/admin/notifications/page.tsx",
+      "src/app/(admin)/admin/roster/[date]/print/page.tsx",
+      "src/app/(admin)/admin/setup/finance/page.tsx",
+      "src/app/(admin)/admin/setup/setup-page-client.tsx",
+      "src/app/(admin)/admin/site-style/page.tsx",
+      "src/app/(admin)/admin/xero/page.tsx",
+      "src/app/(admin)/admin/xero/setup/page.tsx",
+      "src/components/admin-hub-page.tsx",
+      "src/components/admin/back-link.tsx",
+    ];
+
+    for (const path of semanticTextFiles) {
+      const source = readRepoFile(path);
+      expect(source, path).toContain("text-foreground");
+      expect(source, path).not.toContain("text-brand-charcoal");
+      expect(source, path).not.toContain("dark:text-brand-gold");
+    }
+
+    const wizard = readRepoFile(
+      "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+    );
+    expect(wizard).toContain(
+      '"border-brand-gold bg-brand-gold text-brand-charcoal"',
+    );
+    expect(wizard).toContain(
+      '<ActiveStepIcon className="h-5 w-5 text-foreground" />',
+    );
+    expect(wizard).not.toContain("bg-brand-gold/20 text-brand-charcoal");
+
+    const publicRequests = readRepoFile(
+      "src/components/admin/booking-policies/public-booking-requests-section.tsx",
+    );
+    expect(publicRequests.match(/bg-brand-charcoal[^"\n]*text-brand-snow/g)).toHaveLength(
+      2,
+    );
+    expect(publicRequests).not.toMatch(/bg-brand-charcoal[^"\n]*text-white/);
+  });
+
+  it("keeps text-bearing calendar states off interpolated brand fills", () => {
+    for (const path of [
+      "src/components/admin/occupancy-calendar.tsx",
+      "src/components/booking-calendar.tsx",
+    ]) {
+      const source = readRepoFile(path);
+      expect(source, path).not.toMatch(
+        /bg-brand-gold\/(?:10|15|20|25)[^"\n]*(?:text-|font-)/,
+      );
+      expect(source, path).not.toContain("dark:text-brand-gold");
+    }
   });
 });

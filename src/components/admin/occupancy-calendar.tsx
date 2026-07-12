@@ -446,13 +446,13 @@ export function OccupancyCalendar({
             isSelectedStart || isSelectedEnd
               ? "border-brand-gold bg-brand-gold text-brand-charcoal"
               : isInRange
-                ? "border-brand-gold/40 bg-brand-gold/25 text-foreground"
+                ? "border-brand-gold bg-muted text-foreground"
                 : overlay
                   ? overlay.emphasis === "ring"
                     ? CALENDAR_TONE_CLASSES[overlay.tone].ringCell
                     : CALENDAR_TONE_CLASSES[overlay.tone].cell
                   : hasGuests
-                    ? "border-brand-gold/25 bg-brand-gold/10 text-foreground hover:bg-brand-gold/20"
+                    ? "border-brand-gold/40 bg-card text-card-foreground hover:bg-muted"
                     : "border-border bg-card text-foreground hover:bg-muted";
           const guestLabel = night?.guestCount
             ? `${night.guestCount} guest${night.guestCount === 1 ? "" : "s"}`
@@ -477,8 +477,8 @@ export function OccupancyCalendar({
               {hasGuests && (
                 <span className={`mt-2 inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${
                   isSelectedStart || isSelectedEnd
-                    ? "bg-brand-charcoal/15 text-brand-charcoal"
-                    : "bg-brand-gold/20 text-brand-charcoal dark:bg-brand-gold/15 dark:text-brand-gold"
+                    ? "bg-brand-charcoal text-brand-snow"
+                    : "border border-brand-gold bg-card text-card-foreground"
                 }`}>
                   <Users className="mr-1 h-3 w-3" />
                   {night?.guestCount}
