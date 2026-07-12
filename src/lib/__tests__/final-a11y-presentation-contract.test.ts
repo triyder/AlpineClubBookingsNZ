@@ -30,6 +30,7 @@ describe("#1819 final accessibility presentation contract", () => {
   );
 
   it("keeps the four named wide surfaces usable at mobile width", () => {
+    const adminLayout = source("src/app/(admin)/layout.tsx");
     const bookings = source("src/app/(admin)/admin/bookings/page.tsx");
     const table = source("src/components/admin/admin-data-table.tsx");
     const review = source(
@@ -45,6 +46,12 @@ describe("#1819 final accessibility presentation contract", () => {
       "src/app/(admin)/admin/members/[id]/_components/member-contact-group.tsx",
     );
 
+    expect(adminLayout).toContain(
+      'className="flex flex-1 flex-col md:flex-row"',
+    );
+    expect(adminLayout).toContain(
+      'className="flex min-w-0 flex-1 flex-col md:overflow-hidden"',
+    );
     expect(bookings).toContain('className="min-w-[56rem]"');
     expect(table).toContain('"relative w-full overflow-auto"');
     expect(review).toContain(
