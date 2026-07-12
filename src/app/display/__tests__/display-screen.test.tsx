@@ -257,8 +257,9 @@ describe("DisplayScreen lifecycle", () => {
       expect(container.querySelector('input[type="date"]')).not.toBeNull();
       // Accessible-only hint, but no visible layout-shifting marker element.
       expect(screen.getByText(/Simulating/)).toBeDefined();
-      // LTV-036: the preview makes its lodge explicit near the clock.
-      expect(screen.getByText(/Previewing against Silverpeak Lodge/)).toBeDefined();
+      // #109 follow-up: the lodge is identified on the admin preview host page
+      // around the frame, so there is no in-frame "previewing against" line.
+      expect(screen.queryByText(/Previewing against/)).toBeNull();
     } finally {
       window.history.pushState({}, "", "/display");
     }
