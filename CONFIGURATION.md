@@ -87,6 +87,9 @@ light app background. App text-bearing surfaces use only the directly gated
 snow/mist/deep/charcoal endpoints rather than interpolated colour mixes. The
 editable primary accent remains visible as filled controls, decorative borders,
 and the occupancy meter; it is not used directly for app text or focus rings.
+App controls keep those text/background endpoints opaque on hover and selected
+states; shadows or direct semantic endpoints provide interaction feedback rather
+than `/NN` transparency utilities that could cross between accepted endpoints.
 App keyboard focus uses deep on light surfaces and snow in dark mode, with a
 two-pixel offset outline that remains visible on opacity-reduced controls. The wizard
 disables its Save/Finish buttons and the `/admin/site-style` API rejects the

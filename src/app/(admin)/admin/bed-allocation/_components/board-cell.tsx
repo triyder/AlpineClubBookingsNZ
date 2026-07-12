@@ -62,7 +62,7 @@ export function BoardCell({
       className={cn(
         BED_ALLOCATION_COLUMN_WIDTH_CLASS,
         "overflow-hidden border p-1 align-top",
-        activeDragLane && "bg-accent/40",
+        activeDragLane && "bg-accent",
         highlighted && !isOver && "bg-warning-muted",
         isOver && "bg-info-muted ring-2 ring-info",
       )}
@@ -91,7 +91,7 @@ export function BoardCell({
       ) : (
         <div
           className={cn(
-            "flex h-12 items-center justify-center rounded-md border border-dashed border-transparent text-[10px] text-muted-foreground/50",
+            "flex h-12 items-center justify-center rounded-md border border-dashed border-transparent text-[10px] text-muted-foreground",
             isOver && "border-info/60 text-info",
           )}
         >

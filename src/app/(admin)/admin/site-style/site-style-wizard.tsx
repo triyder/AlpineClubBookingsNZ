@@ -337,14 +337,14 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
           <section className="space-y-5">
             <div className="flex items-center gap-2">
               <ActiveStepIcon className="h-5 w-5 text-foreground" />
-              <h2 className="text-lg font-semibold text-slate-900">
+              <h2 className="text-lg font-semibold text-foreground">
                 {activeStep.label}
               </h2>
             </div>
 
             {step === "colours" && (
               <div className="space-y-5">
-                <div className="rounded-md border bg-muted/45 p-4 text-sm text-muted-foreground">
+                <div className="rounded-md border bg-muted p-4 text-sm text-muted-foreground">
                   <p className="font-medium text-foreground">Editable brand layer</p>
                   <p className="mt-1">
                     These colours set the identity, neutral warmth, primary actions,
@@ -446,7 +446,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
 
             {step === "raw-css" && (
               <div className="space-y-3">
-                <p className="text-sm text-slate-600">
+                <p className="text-sm text-muted-foreground">
                   Add custom CSS rules that will be appended to the generated
                   theme stylesheet on the public website only. Member and admin
                   areas receive the validated brand variables above, never raw
@@ -523,17 +523,17 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
               <div className="space-y-4">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="rounded-md border p-4">
-                    <p className="text-sm font-medium text-slate-900">Fonts</p>
-                    <p className="mt-2 text-sm text-slate-600">
+                    <p className="text-sm font-medium text-foreground">Fonts</p>
+                    <p className="mt-2 text-sm text-muted-foreground">
                       Heading: {fontLabel(values.headingFontKey)}
                     </p>
-                    <p className="text-sm text-slate-600">
+                    <p className="text-sm text-muted-foreground">
                       Body: {fontLabel(values.bodyFontKey)}
                     </p>
                   </div>
                   <div className="rounded-md border p-4">
-                    <p className="text-sm font-medium text-slate-900">Logo</p>
-                    <p className="mt-2 text-sm text-slate-600">
+                    <p className="text-sm font-medium text-foreground">Logo</p>
+                    <p className="mt-2 text-sm text-muted-foreground">
                       {values.logoDataUrl
                         ? "Custom logo stored"
                         : "Club name fallback"}
@@ -541,7 +541,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs font-medium text-slate-700">
+                  <p className="text-xs font-medium text-foreground">
                     Generated CSS
                   </p>
                   <pre className="max-h-40 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">
@@ -550,7 +550,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                 </div>
                 {values.rawCss && (
                   <div className="space-y-1">
-                    <p className="text-xs font-medium text-slate-700">
+                    <p className="text-xs font-medium text-foreground">
                       Raw CSS
                     </p>
                     <pre className="max-h-40 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">

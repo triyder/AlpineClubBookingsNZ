@@ -12,8 +12,8 @@ export default async function SiteStylePage() {
     <div className={`space-y-8 ${clubThemeFontVariableClassName}`}>
       <div>
         <BackLink href="/admin/appearance" label="Site Appearance & Content" />
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">Site Style</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="mt-2 text-2xl font-bold text-foreground">Site Style</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Set the brand colours and fonts used by the public website, member area,
           and admin area, plus the public logo.
         </p>

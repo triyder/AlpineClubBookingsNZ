@@ -84,8 +84,8 @@ const CALENDAR_TONE_CLASSES: Record<
     badge: "bg-success-muted text-success",
   },
   violet: {
-    cell: "border-border bg-muted text-foreground hover:bg-muted/70",
-    ringCell: "ring-1 ring-inset ring-border bg-card text-foreground hover:bg-muted/60",
+    cell: "border-border bg-muted text-foreground hover:shadow-sm",
+    ringCell: "ring-1 ring-inset ring-border bg-card text-foreground hover:bg-muted",
     badge: "bg-muted text-foreground",
   },
 };
@@ -499,7 +499,7 @@ export function OccupancyCalendar({
       <div className="space-y-3 px-3 py-3">
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded bg-brand-gold/25 ring-1 ring-brand-gold/40" />
+            <span className="h-3 w-3 rounded bg-card ring-1 ring-brand-gold" />
             Guests staying
           </span>
           <span className="inline-flex items-center gap-1">

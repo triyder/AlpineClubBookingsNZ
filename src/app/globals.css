@@ -351,7 +351,7 @@
   }
 
   .app-button-brand {
-    @apply inline-flex items-center justify-center rounded-md bg-brand-gold px-4 py-2 text-sm font-medium text-brand-charcoal shadow-sm transition-colors hover:bg-brand-gold/90;
+    @apply inline-flex items-center justify-center rounded-md bg-brand-gold px-4 py-2 text-sm font-medium text-brand-charcoal shadow-sm transition-shadow hover:shadow-md;
   }
 
   .app-callout-brand {
@@ -359,7 +359,7 @@
   }
 
   .app-chip-brand {
-    @apply inline-flex items-center gap-1.5 rounded-md bg-brand-gold px-3 py-1.5 text-sm font-medium text-brand-charcoal transition-opacity hover:opacity-90;
+    @apply inline-flex items-center gap-1.5 rounded-md bg-brand-gold px-3 py-1.5 text-sm font-medium text-brand-charcoal transition-shadow hover:shadow-md;
   }
 
   /* Charcoal-on-snow keeps AA contrast under both shipped theme presets;

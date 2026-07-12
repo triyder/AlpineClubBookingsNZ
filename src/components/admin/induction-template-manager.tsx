@@ -416,7 +416,7 @@ export function InductionTemplateManager() {
             <button
               type="button"
               onClick={() => setShowActiveTemplate((v) => !v)}
-              className="flex w-full items-center justify-between p-3 text-left text-sm font-medium hover:bg-muted/30"
+              className="flex w-full items-center justify-between p-3 text-left text-sm font-medium hover:bg-muted"
             >
               <span>
                 View active checklist —{" "}
@@ -467,7 +467,7 @@ export function InductionTemplateManager() {
           </div>
         )}
 
-        <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+        <div className="space-y-2 rounded-md border bg-muted p-3">
           <p className="text-sm font-medium">Create a new version</p>
           <div className="flex flex-wrap items-end gap-2">
             <div className="space-y-1">

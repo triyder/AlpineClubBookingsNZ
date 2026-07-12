@@ -1,9 +1,21 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { contrastRatio } from "@/lib/club-theme-schema";
 
 function readRepoFile(path: string) {
   return readFileSync(join(process.cwd(), path), "utf8");
+}
+
+function listSourceFiles(path: string): string[] {
+  return readdirSync(join(process.cwd(), path)).flatMap((entry) => {
+    const child = join(path, entry);
+    return statSync(join(process.cwd(), child)).isDirectory()
+      ? listSourceFiles(child)
+      : /\.(?:css|tsx?)$/.test(entry)
+        ? [child]
+        : [];
+  });
 }
 
 describe("database theme app-shell contract", () => {
@@ -180,5 +192,59 @@ describe("database theme app-shell contract", () => {
       );
       expect(source, path).not.toContain("dark:text-brand-gold");
     }
+  });
+
+  it("rejects endpoint-crossing opacity variants on app text surfaces", () => {
+    // Both endpoint palettes pass the save gate, but Tailwind's transparent
+    // composites cross back toward the foreground and fail AA.
+    expect(contrastRatio("#757575", "#1a1a1a") ?? 21).toBeLessThan(4.5);
+    expect(contrastRatio("#767676", "#737373") ?? 21).toBeLessThan(4.5);
+
+    const appSources = [
+      ...listSourceFiles("src/app/(admin)"),
+      ...listSourceFiles("src/app/(authenticated)"),
+      ...listSourceFiles("src/components"),
+    ].filter(
+      (path) =>
+        !path.includes("/__tests__/") &&
+        !path.includes("/website") &&
+        path !== "src/components/ui/skeleton.tsx",
+    );
+    const transparentAppBackground =
+      /(?:^|[\s"'`])(?:hover:|active:|focus:|dark:|data-\[[^\]]+\]:)*bg-(?:background|card|popover|primary|secondary|muted|accent|brand-(?:gold|charcoal|deep|mist|snow))\/\d+/m;
+
+    for (const path of appSources) {
+      const source = readRepoFile(path);
+      expect(source, path).not.toMatch(transparentAppBackground);
+    }
+
+    const button = readRepoFile("src/components/ui/button.tsx");
+    const globals = readRepoFile("src/app/globals.css");
+    const wizard = readRepoFile(
+      "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+    );
+    const themeSwitcher = readRepoFile("src/components/theme-switcher.tsx");
+    expect(button).not.toContain("hover:bg-primary/90");
+    expect(globals).not.toContain("hover:bg-brand-gold/90");
+    expect(wizard).not.toContain("bg-muted/45");
+    expect(themeSwitcher).not.toContain("text-foreground/75");
+  });
+
+  it("keeps Site Style app chrome semantic while fixed code previews stay isolated", () => {
+    const page = readRepoFile("src/app/(admin)/admin/site-style/page.tsx");
+    const wizard = readRepoFile(
+      "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+    );
+
+    expect(page).not.toMatch(/text-slate-(?:500|900)/);
+    expect(wizard).not.toContain('className="text-lg font-semibold text-slate-900"');
+    expect(wizard).not.toMatch(/text-sm (?:font-medium )?text-slate-(?:600|900)/);
+    expect(wizard).not.toContain("text-xs font-medium text-slate-700");
+    expect(wizard).toContain(
+      "bg-slate-950 p-3 text-xs text-slate-100",
+    );
+    expect(wizard).toContain(
+      "border border-slate-300 bg-white p-3 font-mono text-xs text-slate-900",
+    );
   });
 });

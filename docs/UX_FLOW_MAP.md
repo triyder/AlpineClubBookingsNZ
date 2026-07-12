@@ -84,7 +84,9 @@ light/dark pairs rather than editable brand fields; public-site Raw CSS is never
 injected into either app shell. App text-bearing surfaces use directly gated
 neutral endpoints (deep on snow/mist in light mode; snow on deep/charcoal in
 dark mode), while the editable accent remains visible in solid filled controls
-and decorative borders. Keyboard focus uses a two-pixel offset deep/snow outline
+and decorative borders. Text-bearing app states keep those endpoints opaque;
+hover feedback uses shadows or another directly gated semantic endpoint rather
+than transparent token variants. Keyboard focus uses a two-pixel offset deep/snow outline
 that remains visible when a control is opacity-reduced. The foundation (#1801)
 establishes:
 

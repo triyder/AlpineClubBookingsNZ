@@ -163,7 +163,7 @@ export default async function AdminLayout({
                     </p>
                     <Link
                       href="/admin/site-style"
-                      className="rounded-md bg-brand-gold px-3 py-2 text-sm font-semibold text-brand-charcoal shadow-sm transition-colors hover:bg-brand-gold/90"
+                      className="rounded-md bg-brand-gold px-3 py-2 text-sm font-semibold text-brand-charcoal shadow-sm transition-shadow hover:shadow-md"
                     >
                       Open Site Style
                     </Link>

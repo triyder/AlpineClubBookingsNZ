@@ -1149,7 +1149,7 @@ export function RoomsBedsManager({
                         ) : null}
 
                         {room.beds.length === 0 ? (
-                          <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
+                          <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
                             No beds in this room.
                           </div>
                         ) : (

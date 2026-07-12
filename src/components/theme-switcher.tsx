@@ -52,7 +52,7 @@ export function ThemeSwitcher({
             <button
               aria-checked={active}
               className={cn(
-                "flex min-h-10 flex-col items-center justify-center gap-1 rounded px-2 py-1.5 text-center text-[11px] font-medium leading-tight text-foreground/75 transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "flex min-h-10 flex-col items-center justify-center gap-1 rounded px-2 py-1.5 text-center text-[11px] font-medium leading-tight text-foreground transition-colors hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 active && "bg-background text-foreground shadow-sm"
               )}
               key={value}

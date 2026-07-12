@@ -98,7 +98,7 @@ export function AllocationChip({
         accent.ringClassName,
         holdsCapacity
           ? "border-border bg-card text-card-foreground"
-          : "border-dashed border-muted-foreground/50 bg-muted/40 text-foreground",
+          : "border-dashed border-muted-foreground/50 bg-muted text-foreground",
         isDragging && "opacity-50",
         pending && "opacity-60",
       )}

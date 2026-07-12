@@ -91,7 +91,7 @@ describe("RoomTable active drag lane rendering", () => {
 
     expect(inactiveCell).not.toHaveAttribute("data-active-drag-lane");
     expect(activeCell).toHaveAttribute("data-active-drag-lane", "true");
-    expect(activeCell).toHaveClass("bg-accent/40");
+    expect(activeCell).toHaveClass("bg-accent");
     expect(activeCell).toHaveClass(...columnWidthClasses);
 
     const fixedCells = Array.from(container.querySelectorAll("th, td")).filter(

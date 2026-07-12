@@ -544,7 +544,7 @@ export function InductionRegisterTable() {
                     {reassignRowId === row.id && (
                       <TableRow>
                         <TableCell colSpan={7}>
-                          <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+                          <div className="space-y-3 rounded-md border bg-muted p-3">
                             <p className="text-sm font-medium">
                               Assigned signers for {row.member.firstName}{" "}
                               {row.member.lastName}
