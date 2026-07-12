@@ -53,6 +53,10 @@ describe("#1819 final accessibility presentation contract", () => {
     expect(review).toContain(
       'className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between"',
     );
+    expect(review).toContain(
+      'className="flex flex-col gap-3 sm:flex-row"',
+    );
+    expect(review.match(/className="w-full sm:w-auto"/g)).toHaveLength(2);
     expect(family).not.toMatch(/className="grid grid-cols-2 gap-3"/);
     expect(family).toContain("sm:grid-cols-2");
     expect(memberHeader).toContain(

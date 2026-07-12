@@ -604,15 +604,21 @@ export function ReviewStep({
         <Button variant="outline" onClick={() => setStep("guests")}>
           Back
         </Button>
-        <div className="flex gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row">
           <Button
             variant="outline"
             onClick={handleSaveAsDraft}
             disabled={savingDraft || submitting}
+            className="w-full sm:w-auto"
           >
             {savingDraft ? "Saving draft..." : "Save as Draft"}
           </Button>
-          <Button onClick={handleSubmit} disabled={submitting || savingDraft} size="lg">
+          <Button
+            onClick={handleSubmit}
+            disabled={submitting || savingDraft}
+            size="lg"
+            className="w-full sm:w-auto"
+          >
             {submitting
               ? "Creating booking..."
               : requiresAdminReviewLocal
