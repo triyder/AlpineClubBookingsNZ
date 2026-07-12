@@ -25,13 +25,18 @@ can edit shared email variables and template wording without changing
 TypeScript files. Admin/system notification delivery policies are managed from
 `/admin/notifications`.
 
-Sensitive tokens (`{{doorCode}}`, `{{token}}`, `{{pin}}`, `{{resetUrl}}`,
-`{{verifyUrl}}`, `{{confirmationUrl}}`) are body-only: subjects are persisted
-in `EmailLog` for every template and travel in clear mail headers, so template
-override subjects containing these tokens are rejected at save time, and the
-renderer never substitutes their values into a subject line. Required tokens
-must appear in the template body; a token in the subject does not satisfy the
-requirement.
+Sensitive credential tokens and bearer-link aliases are body-only. The shared
+subject denylist covers `{{doorCode}}`, `{{pin}}`, `{{token}}`,
+`{{choreLink}}`, `{{claimUrl}}`, `{{confirmUrl}}`, `{{confirmationUrl}}`,
+`{{payUrl}}`, `{{resetUrl}}`, `{{respondUrl}}`, and `{{verifyUrl}}`.
+`{{reviewUrl}}` is additionally sensitive for `nomination-request`, where it
+contains the public nomination bearer token; authenticated/admin review URLs
+for other templates remain subject-eligible. Subjects are persisted in
+`EmailLog` and travel in clear mail headers, so editable overrides containing
+an allowed sensitive token are rejected at save time (unapproved aliases are
+already invalid), while the renderer also strips placeholders and literal live
+values from legacy stored overrides. Required tokens must appear in the body; a
+token in the subject does not satisfy the requirement.
 
 ## Runtime Placeholders
 

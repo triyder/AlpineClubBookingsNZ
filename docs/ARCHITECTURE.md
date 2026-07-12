@@ -715,6 +715,16 @@ and complaint suppression. Email templates should avoid embedding secrets and
 should use effective recipient logic for dependents where required. Editable
 templates and admin/system delivery policies are registered in the email
 message registry and surfaced in Admin Setup and Admin Notifications.
+Rendered HTML is not retained in `EmailLog` (or emitted to development HTML
+logs) for bearer-token, one-time-code, lodge-access, and other sensitive
+templates. This includes every registry template whose required data contains a
+`token`, plus the optional tokenized `chore-roster` link; SMTP still receives
+the complete rendered message. Keep `SENSITIVE_EMAIL_LOG_TEMPLATES` aligned
+whenever a template starts carrying a credential or action token.
+Editable subjects reject secret-bearing tokens (including nomination, quote
+response, and optional chore links), and the render path strips bearer-link
+aliases from legacy stored overrides before SMTP, `EmailLog`, or application
+logging receives the subject.
 If an admin/system alert cannot be delivered to any opted-in admin recipient
 because every send is suppressed or fails, the app records a critical
 communication audit event and surfaces it in Admin Email Deliverability.

@@ -185,6 +185,47 @@ describe("admin email message APIs", () => {
     expect(mocks.emailTemplateOverrideUpsert).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      templateName: "chore-roster",
+      subject: "Complete your chores: {{choreLink}}",
+      bodyText:
+        "Hi {{guestName}}, mark {{choreName}} complete: {{choreLink}}",
+      sensitiveToken: "choreLink",
+    },
+    {
+      templateName: "booking-request-quote",
+      subject: "Respond to your quote: {{respondUrl}}",
+      bodyText:
+        "Respond here: {{BASE_URL}}/booking-requests/respond/{{token}}",
+      sensitiveToken: "respondUrl",
+    },
+    {
+      templateName: "nomination-request",
+      subject: "Review this nomination: {{reviewUrl}}",
+      bodyText:
+        "Review {{applicantName}} here: {{BASE_URL}}/nominations/{{token}}",
+      sensitiveToken: "reviewUrl",
+    },
+  ])(
+    "rejects $templateName subjects containing $sensitiveToken",
+    async ({ templateName, subject, bodyText, sensitiveToken }) => {
+      const response = await putEmailTemplate(
+        request("/api/admin/email-templates", {
+          templateName,
+          subject,
+          bodyText,
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe("Invalid email template");
+      expect(body.sensitiveSubjectTokens).toContain(sensitiveToken);
+      expect(mocks.emailTemplateOverrideUpsert).not.toHaveBeenCalled();
+    },
+  );
+
   it("saves booking-confirmed overrides with the door code only in the body", async () => {
     const response = await putEmailTemplate(
       request("/api/admin/email-templates", {

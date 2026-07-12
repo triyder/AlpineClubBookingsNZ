@@ -3,6 +3,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   EMAIL_TEMPLATE_DEFINITIONS,
+  SENSITIVE_EMAIL_SUBJECT_TOKEN_SET,
+  getSensitiveEmailSubjectTokens,
   getDefaultDeliveryMode,
   getEmailTemplateDefinition,
 } from "@/lib/email-message-registry";
@@ -174,6 +176,29 @@ describe("email message registry", () => {
 
     expect(validation.valid).toBe(false);
     expect(validation.sensitiveSubjectTokens).toEqual(["token"]);
+  });
+
+  it("classifies every bearer-link data alias as subject-sensitive", () => {
+    expect(
+      [
+        "choreLink",
+        "claimUrl",
+        "confirmUrl",
+        "confirmationUrl",
+        "payUrl",
+        "resetUrl",
+        "respondUrl",
+        "verifyUrl",
+      ].filter((token) => !SENSITIVE_EMAIL_SUBJECT_TOKEN_SET.has(token)),
+    ).toEqual([]);
+    expect(
+      getSensitiveEmailSubjectTokens("nomination-request").has("reviewUrl"),
+    ).toBe(true);
+    expect(
+      getSensitiveEmailSubjectTokens("admin-booking-request-pending").has(
+        "reviewUrl",
+      ),
+    ).toBe(false);
   });
 
   it("strips sensitive placeholders and live values from rendered subjects", () => {
