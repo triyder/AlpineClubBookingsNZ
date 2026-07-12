@@ -222,6 +222,9 @@ export async function sendSchoolAttendeeConfirmationEmail(params: {
     templateName: "school-attendee-confirmation",
     templateData: {
       firstName: params.firstName,
+      // Registered defaultBody references {{token}} for the confirm link, so an
+      // admin override can render it (the hardcoded sender builds the link in HTML).
+      token: params.token,
       schoolName: params.schoolName ?? "",
       checkIn: formatNZDate(params.checkIn),
       checkOut: formatNZDate(params.checkOut),

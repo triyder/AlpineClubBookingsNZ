@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   EMAIL_TEMPLATE_DEFINITIONS,
   getDefaultDeliveryMode,
+  getEmailTemplateDefinition,
 } from "@/lib/email-message-registry";
 import {
   neutraliseSensitiveSubjectContent,
@@ -209,4 +210,104 @@ describe("email message registry", () => {
       }),
     ).toBe("Hi Ada ");
   });
+});
+
+// #1797: the 11 previously-hardcoded senders are now wording-editable via
+// EMAIL_AUDIT_DEFAULTS, but their delivery must stay locked (always send).
+// two-factor-code is deliberately excluded and stays hardcoded.
+const NEWLY_REGISTERED_HARDCODED_KEYS = [
+  "booking-review-approved",
+  "booking-review-rejected",
+  "induction-sign-off-request",
+  "school-attendee-confirmation",
+  "admin-school-manual-invoice",
+  "group-booking-join-verification",
+  "group-settlement-receipt",
+  "group-join-settled",
+  "group-settlement-expired",
+  "group-join-released",
+  "group-join-cancelled",
+] as const;
+
+// The subset that carries an essential action link (required body token).
+const ACTION_LINK_KEYS = [
+  "booking-review-approved",
+  "induction-sign-off-request",
+  "school-attendee-confirmation",
+  "group-booking-join-verification",
+] as const;
+
+describe("newly-registered hardcoded email templates (#1797)", () => {
+  it.each(NEWLY_REGISTERED_HARDCODED_KEYS)(
+    "registers %s as wording-editable but delivery-locked (always send)",
+    (key) => {
+      const definition = getEmailTemplateDefinition(key);
+      if (!definition) throw new Error(`missing definition for ${key}`);
+
+      // Hard safety invariant: these are member-facing (some carry action
+      // links), so wording is editable but delivery must never become
+      // admin-disable-able — deliveryEditable stays false and the default
+      // delivery mode stays "always", matching today's unconditional send.
+      expect(definition.deliveryEditable).toBe(false);
+      expect(getDefaultDeliveryMode(key)).toBe("always");
+    },
+  );
+
+  it.each(NEWLY_REGISTERED_HARDCODED_KEYS)(
+    "keeps every required token of %s present in its default body",
+    (key) => {
+      const definition = getEmailTemplateDefinition(key);
+      if (!definition) throw new Error(`missing definition for ${key}`);
+
+      for (const token of definition.requiredTokens) {
+        expect(definition.defaultBody).toContain(`{{${token}}}`);
+      }
+    },
+  );
+
+  it("does not confuse two-factor-code as editable (stays hardcoded)", () => {
+    expect(getEmailTemplateDefinition("two-factor-code")).toBeUndefined();
+  });
+
+  it("classifies admin-school-manual-invoice as an admin alert but keeps it delivery-locked", () => {
+    // It ships via sendToAdmins, so it must classify as an admin alert like its
+    // siblings (audience "admin") rather than "member". It stays in
+    // LOCKED_DELIVERY_TEMPLATE_NAMES so admins still cannot disable it —
+    // disabling would let an approved school booking go un-invoiced (#1797).
+    const definition = getEmailTemplateDefinition("admin-school-manual-invoice");
+    if (!definition) throw new Error("missing admin-school-manual-invoice");
+    expect(definition.audience).toBe("admin");
+    expect(definition.deliveryEditable).toBe(false);
+    expect(getDefaultDeliveryMode("admin-school-manual-invoice")).toBe("always");
+  });
+});
+
+describe("render path for newly-registered action-link templates (#1797)", () => {
+  it.each(ACTION_LINK_KEYS)(
+    "renders %s default body from sample data with no unresolved placeholders",
+    (key) => {
+      const definition = getEmailTemplateDefinition(key);
+      if (!definition) throw new Error(`missing definition for ${key}`);
+
+      // This is the override render path an admin edit takes:
+      // prepareEmailMessage feeds a stored bodyText through renderTemplateString
+      // with the send's templateData. Proving the default body renders cleanly
+      // from sampleData proves the required action token substitutes correctly.
+      const rendered = renderTemplateString(
+        definition.defaultBody,
+        definition.sampleData,
+      );
+
+      for (const token of definition.requiredTokens) {
+        const sample = definition.sampleData[token];
+        expect(sample).toBeTruthy();
+        expect(rendered).toContain(String(sample));
+        expect(rendered).not.toContain(`{{${token}}}`);
+      }
+
+      // Every token in the default body has a sample value, so nothing is left
+      // as an unrendered {{placeholder}} (bracket annotations are plain text).
+      expect(rendered).not.toMatch(/\{\{[^{}]+\}\}/);
+    },
+  );
 });
