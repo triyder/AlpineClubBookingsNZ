@@ -1,0 +1,95 @@
+<meta charset="utf-8">
+<title>Silverpeak lobby — booking × room grid</title>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="peak" viewBox="0 0 100 100"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"><path d="M8 78 L38 30 L54 55 L66 38 L92 78 Z"/><path d="M31 41 L38 48 L45 41"/></g></symbol>
+</svg>
+<style>
+  :root { --bg:#e8eef1; --panel:#fff; --ink:#10242a; --muted:#4f6670; --line:#d2dde1; --accent:#0e6e78; --accent-ink:#0a545c; --radius:14px; --maxw:1120px; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#081a1f; --panel:#0f242b; --ink:#e8f4f6; --muted:#8fb0b8; --line:#20343b; --accent:#3fb9cb; --accent-ink:#6fd2e0; } }
+  :root[data-theme="light"]{ --bg:#e8eef1; --panel:#fff; --ink:#10242a; --muted:#4f6670; --line:#d2dde1; --accent:#0e6e78; --accent-ink:#0a545c; }
+  :root[data-theme="dark"]{ --bg:#081a1f; --panel:#0f242b; --ink:#e8f4f6; --muted:#8fb0b8; --line:#20343b; --accent:#3fb9cb; --accent-ink:#6fd2e0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:var(--maxw); margin:0 auto; padding: clamp(20px,4vw,52px) clamp(16px,4vw,40px) 70px; }
+  .eyebrow { font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent-ink); font-weight:700; margin:0 0 10px; display:flex; align-items:center; gap:9px; } .eyebrow .badge { width:20px; height:20px; color:var(--accent); }
+  h1 { font-size:clamp(26px,5vw,42px); line-height:1.05; margin:0 0 14px; letter-spacing:-.02em; font-weight:800; }
+  .lede { font-size:clamp(15px,2.2vw,18px); color:var(--muted); max-width:70ch; margin:0 0 8px; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px 20px; margin:16px 0 0; font-size:14px; color:var(--muted); } .legend .k { display:inline-flex; align-items:center; gap:7px; } .legend .sw { width:12px; height:12px; border-radius:4px; }
+
+  .tv { border-radius:var(--radius); padding: clamp(5px,.8vw,9px); background:linear-gradient(180deg,#04070c,#0a1016); box-shadow:0 22px 55px -30px rgba(0,0,0,.7); margin-top:22px; }
+  .screen { position:relative; aspect-ratio:16/9; width:100%; container-type:size; border-radius:7px; overflow:hidden; font-size:2.5cqh; color:#eef8fa;
+    background: radial-gradient(120% 90% at 88% -10%, rgba(63,185,203,.13), transparent 55%), radial-gradient(90% 80% at -5% 115%, rgba(75,196,141,.06), transparent 50%), linear-gradient(160deg,#08171d 0%,#0a1c23 55%,#07141a 100%);
+    --p:rgba(255,255,255,.05); --ln:rgba(255,255,255,.12); --mu:#8fb2ba; --ac:#43c2d4; --arr:#4bc48d; --dep:#e6a84f; --grp:#b79bff; --inkc:#eef8fa; }
+  .scr { position:absolute; inset:0; display:flex; flex-direction:column; padding:3.6cqh 3.4cqw; }
+  .head { display:flex; justify-content:space-between; align-items:flex-start; gap:2cqw; }
+  .brand { display:flex; align-items:center; gap:1.5cqw; } .brand .lg { width:6.8cqh; height:6.8cqh; color:var(--ac); } .brand .nm { font-weight:800; font-size:3.6cqh; line-height:1; } .brand .sb { color:var(--mu); font-size:2cqh; margin-top:.7cqh; }
+  .upd { text-align:right; color:var(--mu); font-size:2cqh; } .upd .big { font-size:3.6cqh; font-weight:800; color:var(--inkc); letter-spacing:-.01em; } .upd b { font-weight:700; }
+
+  .board { position:relative; display:grid; grid-template-columns:21% 14% repeat(3,1fr); grid-template-rows:auto repeat(7, minmax(8.5cqh, auto)); align-content:start; flex:1; min-height:0; margin-top:2.6cqh; }
+  .nhead { grid-row:1; font-size:2cqh; color:var(--mu); font-weight:700; display:flex; align-items:flex-end; padding:0 0 1cqh 1cqw; border-bottom:1.5px solid var(--ln); } .nhead.today { color:var(--ac); }
+  .bklab { grid-column:1; display:flex; flex-direction:column; justify-content:center; font-size:2.1cqh; font-weight:750; color:var(--inkc); border-bottom:1px solid var(--ln); padding-right:1.2cqw; line-height:1.15; }
+  .bklab .sz { color:var(--mu); font-weight:600; font-size:1.65cqh; margin-top:.3cqh; }
+  .rmlab { grid-column:2; display:flex; align-items:center; font-size:1.95cqh; font-weight:650; color:var(--mu); border-bottom:1px solid var(--ln); border-left:1px solid var(--ln); padding:0 1cqw; }
+  .cbg { border-bottom:1px solid var(--ln); border-left:1px solid var(--ln); }
+  .bar { z-index:2; margin:.7cqh .5cqw; border-radius:1.3cqh; display:flex; flex-direction:column; justify-content:center; gap:.15cqh; padding:0 1.4cqw; overflow:hidden; background:var(--p); }
+  .bar .cnt { font-weight:750; font-size:1.85cqh; color:var(--inkc); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .bar .bmeta { font-size:1.45cqh; color:var(--mu); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .bar.arr { background: color-mix(in srgb, var(--arr) 24%, var(--p)); box-shadow: inset .55cqw 0 0 var(--arr); }
+  .bar.dep { background: color-mix(in srgb, var(--dep) 24%, var(--p)); box-shadow: inset -.55cqw 0 0 var(--dep); }
+  .bar.grp { background: color-mix(in srgb, var(--grp) 26%, var(--p)); box-shadow: inset .55cqw 0 0 var(--grp); }
+
+  .foot { display:flex; align-items:center; gap:2.2cqw; margin-top:2cqh; padding-top:1.8cqh; border-top:1px solid var(--ln); font-size:2cqh; }
+  .foot .item { display:flex; align-items:center; gap:1cqw; color:var(--mu); } .foot .item .i { color:var(--ac); } .foot .item b { color:var(--inkc); font-weight:650; } .foot .camera { margin-left:auto; color:var(--ac); font-weight:700; }
+  .note { display:flex; gap:12px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-top:16px; font-size:14.5px; color:var(--muted); } .note b { color:var(--ink); font-weight:650; }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow"><svg class="badge"><use href="#peak"/></svg> Silverpeak lobby display · booking × room</p>
+  <h1>Booking &amp; room — grouped, not per-person</h1>
+  <p class="lede">Your refinement of the name-row grid: one row per <b>room</b>, but labelled by the <b>booking</b> (not every individual). A booking that holds several rooms splits into a row each, sharing its name — so Alpine Skills sits once across its two rooms. The cell shows how many are in that room and the stay dates.</p>
+  <div class="legend">
+    <span class="k"><span class="sw" style="background:#4bc48d"></span> Arriving</span>
+    <span class="k"><span class="sw" style="background:#8fb0b8"></span> Staying</span>
+    <span class="k"><span class="sw" style="background:#e6a84f"></span> Leaving</span>
+    <span class="k"><span class="sw" style="background:#b79bff"></span> Group</span>
+  </div>
+  <div class="tv"><div class="screen"><div class="scr">
+    <div class="head"><div class="brand"><svg class="lg"><use href="#peak"/></svg><div><div class="nm">Silverpeak Lodge</div><div class="sb">Alpine Sports Club</div></div></div><div class="upd"><div class="big">4:32 PM</div>Fri 3 Jul · <b>updated 4:30</b></div></div>
+    <div class="board">
+      <div class="nhead" style="grid-column:1">Booking</div><div class="nhead" style="grid-column:2">Room</div><div class="nhead today">Tonight · Fri 3</div><div class="nhead">Sat 4</div><div class="nhead">Sun 5</div>
+      <!-- gridlines for the 3 night columns, rows 2-8 -->
+      <div class="cbg" style="grid-column:3;grid-row:2"></div><div class="cbg" style="grid-column:4;grid-row:2"></div><div class="cbg" style="grid-column:5;grid-row:2"></div>
+      <div class="cbg" style="grid-column:3;grid-row:3"></div><div class="cbg" style="grid-column:4;grid-row:3"></div><div class="cbg" style="grid-column:5;grid-row:3"></div>
+      <div class="cbg" style="grid-column:3;grid-row:4"></div><div class="cbg" style="grid-column:4;grid-row:4"></div><div class="cbg" style="grid-column:5;grid-row:4"></div>
+      <div class="cbg" style="grid-column:3;grid-row:5"></div><div class="cbg" style="grid-column:4;grid-row:5"></div><div class="cbg" style="grid-column:5;grid-row:5"></div>
+      <div class="cbg" style="grid-column:3;grid-row:6"></div><div class="cbg" style="grid-column:4;grid-row:6"></div><div class="cbg" style="grid-column:5;grid-row:6"></div>
+      <div class="cbg" style="grid-column:3;grid-row:7"></div><div class="cbg" style="grid-column:4;grid-row:7"></div><div class="cbg" style="grid-column:5;grid-row:7"></div>
+      <div class="cbg" style="grid-column:3;grid-row:8"></div><div class="cbg" style="grid-column:4;grid-row:8"></div><div class="cbg" style="grid-column:5;grid-row:8"></div>
+      <!-- booking labels (col 1) — Alpine spans two room rows -->
+      <div class="bklab" style="grid-row:2">Dave N <span class="sz">+5</span></div>
+      <div class="bklab" style="grid-row:3">Alex B <span class="sz">+5</span></div>
+      <div class="bklab" style="grid-row:4 / span 2">Alpine Skills course <span class="sz">×14 · 2 rooms</span></div>
+      <div class="bklab" style="grid-row:6">Elinor R <span class="sz">+2 · family</span></div>
+      <div class="bklab" style="grid-row:7">Tama W <span class="sz">+1</span></div>
+      <div class="bklab" style="grid-row:8">Ana W <span class="sz">+1</span></div>
+      <!-- room labels (col 2) -->
+      <div class="rmlab" style="grid-row:2">Kea</div>
+      <div class="rmlab" style="grid-row:3">Tui</div>
+      <div class="rmlab" style="grid-row:4">Ruru</div>
+      <div class="rmlab" style="grid-row:5">Kereru</div>
+      <div class="rmlab" style="grid-row:6">Weka</div>
+      <div class="rmlab" style="grid-row:7">Kaka</div>
+      <div class="rmlab" style="grid-row:8">Pukeko</div>
+      <!-- occupancy bars -->
+      <div class="bar arr" style="grid-column:3/4;grid-row:2"><span class="cnt">6 in room</span><span class="bmeta">out Sat 4</span></div>
+      <div class="bar arr" style="grid-column:3/6;grid-row:3"><span class="cnt">6 in room</span><span class="bmeta">out Mon 6 →</span></div>
+      <div class="bar grp" style="grid-column:3/6;grid-row:4"><span class="cnt">8 in room</span><span class="bmeta">out Mon 6 →</span></div>
+      <div class="bar grp" style="grid-column:3/6;grid-row:5"><span class="cnt">6 in room</span><span class="bmeta">out Mon 6 →</span></div>
+      <div class="bar arr" style="grid-column:3/5;grid-row:6"><span class="cnt">3 in room</span><span class="bmeta">out Sun 5</span></div>
+      <div class="bar arr" style="grid-column:4/6;grid-row:7"><span class="cnt">2 in room</span><span class="bmeta">in Sat · out Mon 6 →</span></div>
+      <div class="bar dep" style="grid-column:3/4;grid-row:8"><span class="cnt">2 in room</span><span class="bmeta">since Wed · out Sat 4</span></div>
+    </div>
+    <div class="foot"><span class="item"><span class="i">📶</span>Wi-Fi <b>LodgeGuest</b> · <b>alpine1234</b></span><span class="item"><span class="i">✉</span><b>bookings@example.org</b></span><span class="camera">😊 Smile — you're on camera</span></div>
+  </div></div></div>
+  <div class="note"><span>💡</span><span>Reads as "who has what": bookings grouped, rooms itemised, headcount per room. A group across rooms shows once (Alpine Skills · 2 rooms) rather than 14 lines — but empty rooms still don't appear, so it's a guest/occupancy view rather than the free-rooms board.</span></div>
+</div>

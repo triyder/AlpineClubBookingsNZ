@@ -1,0 +1,73 @@
+<meta charset="utf-8">
+<title>Silverpeak lobby — everyday cards</title>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="peak" viewBox="0 0 100 100"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"><path d="M8 78 L38 30 L54 55 L66 38 L92 78 Z"/><path d="M31 41 L38 48 L45 41"/></g></symbol>
+</svg>
+<style>
+  :root { --bg:#e8eef1; --panel:#fff; --ink:#10242a; --muted:#4f6670; --line:#d2dde1; --accent:#0e6e78; --accent-ink:#0a545c; --radius:14px; --maxw:1120px; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#081a1f; --panel:#0f242b; --ink:#e8f4f6; --muted:#8fb0b8; --line:#20343b; --accent:#3fb9cb; --accent-ink:#6fd2e0; } }
+  :root[data-theme="light"]{ --bg:#e8eef1; --panel:#fff; --ink:#10242a; --muted:#4f6670; --line:#d2dde1; --accent:#0e6e78; --accent-ink:#0a545c; }
+  :root[data-theme="dark"]{ --bg:#081a1f; --panel:#0f242b; --ink:#e8f4f6; --muted:#8fb0b8; --line:#20343b; --accent:#3fb9cb; --accent-ink:#6fd2e0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:var(--maxw); margin:0 auto; padding: clamp(20px,4vw,52px) clamp(16px,4vw,40px) 70px; }
+  .eyebrow { font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent-ink); font-weight:700; margin:0 0 10px; display:flex; align-items:center; gap:9px; } .eyebrow .badge { width:20px; height:20px; color:var(--accent); }
+  h1 { font-size:clamp(26px,5vw,42px); line-height:1.05; margin:0 0 14px; letter-spacing:-.02em; font-weight:800; }
+  .lede { font-size:clamp(15px,2.2vw,18px); color:var(--muted); max-width:66ch; margin:0 0 22px; }
+
+  .tv { border-radius:var(--radius); padding: clamp(5px,.8vw,9px); background:linear-gradient(180deg,#04070c,#0a1016); box-shadow:0 22px 55px -30px rgba(0,0,0,.7); }
+  .screen { position:relative; aspect-ratio:16/9; width:100%; container-type:size; border-radius:7px; overflow:hidden; font-size:2.5cqh; color:#eef8fa;
+    background: radial-gradient(120% 90% at 88% -10%, rgba(63,185,203,.13), transparent 55%), radial-gradient(90% 80% at -5% 115%, rgba(75,196,141,.06), transparent 50%), linear-gradient(160deg,#08171d 0%,#0a1c23 55%,#07141a 100%);
+    --p:rgba(255,255,255,.05); --ln:rgba(255,255,255,.12); --mu:#8fb2ba; --ac:#43c2d4; --arr:#4bc48d; --dep:#e6a84f; --grp:#b79bff; --inkc:#eef8fa; }
+  .scr { position:absolute; inset:0; display:flex; flex-direction:column; padding:3.6cqh 3.4cqw; }
+  .head { display:flex; justify-content:space-between; align-items:flex-start; gap:2cqw; }
+  .brand { display:flex; align-items:center; gap:1.5cqw; } .brand .lg { width:6.8cqh; height:6.8cqh; color:var(--ac); } .brand .nm { font-weight:800; font-size:3.6cqh; line-height:1; } .brand .sb { color:var(--mu); font-size:2cqh; margin-top:.7cqh; }
+  .upd { text-align:right; color:var(--mu); font-size:2cqh; } .upd .big { font-size:3.8cqh; font-weight:800; color:var(--inkc); font-variant-numeric:tabular-nums; }
+  .body { display:flex; gap:2.4cqw; flex:1; min-height:0; margin-top:2.6cqh; } .maincol { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; }
+  .cardgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:1.5cqh 1.7cqw; flex:1; min-height:0; align-content:start; }
+  .rcard { background:var(--p); border:1px solid var(--ln); border-radius:1.5cqh; padding:1.5cqh 1.6cqw; display:flex; flex-direction:column; gap:.6cqh; }
+  .rcard.free { border-style:dashed; opacity:.5; align-items:center; justify-content:center; }
+  .rcard .rh { display:flex; align-items:baseline; gap:1cqw; }
+  .rcard .rn { font-size:2.1cqh; font-weight:750; color:var(--inkc); } .rcard .rn .rk { color:var(--mu); font-size:1.6cqh; margin-right:.5cqw; }
+  .rcard .st { margin-left:auto; font-size:1.5cqh; font-weight:800; text-transform:uppercase; letter-spacing:.04em; padding:.3cqh 1cqw; border-radius:.8cqh; }
+  .rcard .st.arr { color:#04241a; background:var(--arr); } .rcard .st.dep { color:#241804; background:var(--dep); } .rcard .st.grp { color:#160a2e; background:var(--grp); }
+  .rcard .nmz { font-size:2cqh; line-height:1.32; color:var(--inkc); font-weight:600; } .rcard .nmz .more { color:var(--mu); }
+  .rcard .dt { font-size:1.7cqh; color:var(--mu); font-variant-numeric:tabular-nums; margin-top:auto; } .rcard .dt .edge { color:var(--ac); font-weight:700; }
+  .rail { width:29%; flex:none; display:flex; flex-direction:column; gap:1.8cqh; }
+  .card2 { background:var(--p); border:1px solid var(--ln); border-radius:1.4cqh; padding:1.7cqh; }
+  .card2 h4 { margin:0 0 1.1cqh; font-size:2.3cqh; display:flex; align-items:center; gap:1cqw; } .card2 h4 .i { color:var(--ac); }
+  .card2 ul { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:1cqh; }
+  .card2 li { font-size:2cqh; color:var(--mu); display:flex; gap:1cqw; } .card2 li::before { content:"›"; color:var(--ac); font-weight:800; } .card2 li b { color:var(--inkc); font-weight:600; }
+  .foot { display:flex; align-items:center; gap:2.2cqw; margin-top:2cqh; padding-top:1.8cqh; border-top:1px solid var(--ln); font-size:2cqh; }
+  .foot .item { display:flex; align-items:center; gap:1cqw; color:var(--mu); } .foot .item .i { color:var(--ac); } .foot .item b { color:var(--inkc); font-weight:650; } .foot .camera { margin-left:auto; color:var(--ac); font-weight:700; }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow"><svg class="badge"><use href="#peak"/></svg> Silverpeak lobby display · version</p>
+  <h1>Everyday board — room cards</h1>
+  <p class="lede">The same day as room cards instead of bars — roomier for real names, so a <b>big family lists its members</b> (Weka shows five, then "+1"). Each card carries the check-in → check-out, with "since"/"until" for stays crossing the window.</p>
+  <div class="tv"><div class="screen"><div class="scr">
+    <div class="head">
+      <div class="brand"><svg class="lg"><use href="#peak"/></svg><div><div class="nm">Silverpeak Lodge</div><div class="sb">Tonight · Friday 3 July</div></div></div>
+      <div class="upd"><div class="big">26</div>guests in tonight</div>
+    </div>
+    <div class="body">
+      <div class="maincol">
+        <div class="cardgrid">
+          <div class="rcard"><div class="rh"><span class="rn"><span class="rk">A</span>Kea</span><span class="st arr">Arriving</span></div><div class="nmz">Dave N, Priya S, Wiremu T, Hana C</div><div class="dt">In tonight → out Sun 5</div></div>
+          <div class="rcard"><div class="rh"><span class="rn"><span class="rk">B</span>Tui</span><span class="st arr">Arriving</span></div><div class="nmz">Alex B, Jarrod K</div><div class="dt">In tonight → <span class="edge">out Mon 6</span></div></div>
+          <div class="rcard"><div class="rh"><span class="rn"><span class="rk">C</span>Ruru</span><span class="st grp">Group</span></div><div class="nmz">Alpine Skills course — 14 <span class="more">(Jo K)</span></div><div class="dt">In tonight → <span class="edge">out Mon 6</span> · also in Kereru</div></div>
+          <div class="rcard"><div class="rh"><span class="rn"><span class="rk">D</span>Weka</span><span class="st arr">Arriving</span></div><div class="nmz">Elinor R, Sam R, Toby R, Mia R, Jack R <span class="more">+1</span></div><div class="dt">In tonight → out Sun 5</div></div>
+          <div class="rcard"><div class="rh"><span class="rn"><span class="rk">F</span>Kaka</span><span class="st arr">Arriving</span></div><div class="nmz">Tui M +2</div><div class="dt">In Sat 4 → <span class="edge">out Mon 6</span></div></div>
+          <div class="rcard"><div class="rh"><span class="rn"><span class="rk">H</span>Pukeko</span><span class="st dep">Leaving</span></div><div class="nmz">Ana W, Rob E</div><div class="dt"><span class="edge">Here since Wed 1</span> → out Sat 4</div></div>
+          <div class="rcard free">Takahe — free tonight</div>
+        </div>
+      </div>
+      <div class="rail">
+        <div class="card2"><h4><span class="i">✔</span>Housekeeping</h4><ul><li><b>Sign in</b> on arrival</li><li>Complete <b>Daily Compliance</b></li></ul></div>
+        <div class="card2"><h4><span class="i">⎋</span>On checkout</h4><ul><li>Clean up your room</li><li>Check <b>gas bottles</b></li></ul></div>
+      </div>
+    </div>
+    <div class="foot"><span class="item"><span class="i">📶</span>Wi-Fi <b>LodgeGuest</b> · <b>alpine1234</b></span><span class="item"><span class="i">✉</span><b>bookings@example.org</b></span><span class="camera">😊 Smile — you're on camera</span></div>
+  </div></div></div>
+</div>

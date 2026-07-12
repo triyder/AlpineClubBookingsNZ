@@ -1,0 +1,162 @@
+<meta charset="utf-8">
+<title>Silverpeak lobby — part-week whole-lodge variants</title>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="peak" viewBox="0 0 100 100"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"><path d="M8 78 L38 30 L54 55 L66 38 L92 78 Z"/><path d="M31 41 L38 48 L45 41"/></g></symbol>
+</svg>
+<style>
+  :root { --bg:#e8eef1; --panel:#fff; --ink:#10242a; --muted:#4f6670; --line:#d2dde1; --accent:#0e6e78; --accent-ink:#0a545c; --radius:14px; --maxw:1120px; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#081a1f; --panel:#0f242b; --ink:#e8f4f6; --muted:#8fb0b8; --line:#20343b; --accent:#3fb9cb; --accent-ink:#6fd2e0; } }
+  :root[data-theme="light"]{ --bg:#e8eef1; --panel:#fff; --ink:#10242a; --muted:#4f6670; --line:#d2dde1; --accent:#0e6e78; --accent-ink:#0a545c; }
+  :root[data-theme="dark"]{ --bg:#081a1f; --panel:#0f242b; --ink:#e8f4f6; --muted:#8fb0b8; --line:#20343b; --accent:#3fb9cb; --accent-ink:#6fd2e0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:var(--maxw); margin:0 auto; padding: clamp(20px,4vw,52px) clamp(16px,4vw,40px) 70px; }
+  .eyebrow { font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent-ink); font-weight:700; margin:0 0 10px; display:flex; align-items:center; gap:9px; } .eyebrow .badge { width:20px; height:20px; color:var(--accent); }
+  h1 { font-size:clamp(26px,5vw,42px); line-height:1.05; margin:0 0 14px; letter-spacing:-.02em; font-weight:800; }
+  .lede { font-size:clamp(15px,2.2vw,18px); color:var(--muted); max-width:68ch; margin:0 0 8px; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px 20px; margin:16px 0 0; font-size:14px; color:var(--muted); } .legend .k { display:inline-flex; align-items:center; gap:7px; } .legend .sw { width:12px; height:12px; border-radius:4px; }
+  .example { margin-top: clamp(30px,5vw,50px); }
+  .cap { display:flex; gap:14px; align-items:baseline; margin-bottom:14px; }
+  .cap .n { flex:none; width:30px; height:30px; border-radius:8px; display:grid; place-items:center; font-weight:700; font-size:14px; background:var(--accent); color:#fff; }
+  .cap h2 { font-size:clamp(18px,2.6vw,23px); margin:0 0 3px; } .cap p { margin:0; color:var(--muted); font-size:15px; max-width:78ch; }
+
+  .tv { border-radius:var(--radius); padding: clamp(5px,.8vw,9px); background:linear-gradient(180deg,#04070c,#0a1016); box-shadow:0 22px 55px -30px rgba(0,0,0,.7); }
+  .screen { position:relative; aspect-ratio:16/9; width:100%; container-type:size; border-radius:7px; overflow:hidden; font-size:2.5cqh; color:#eef8fa;
+    background: radial-gradient(120% 90% at 88% -10%, rgba(63,185,203,.13), transparent 55%), radial-gradient(90% 80% at -5% 115%, rgba(75,196,141,.06), transparent 50%), linear-gradient(160deg,#08171d 0%,#0a1c23 55%,#07141a 100%);
+    --p:rgba(255,255,255,.05); --ln:rgba(255,255,255,.12); --mu:#8fb2ba; --ac:#43c2d4; --arr:#4bc48d; --dep:#e6a84f; --grp:#b79bff; --inkc:#eef8fa; }
+  .scr { position:absolute; inset:0; display:flex; flex-direction:column; padding:3.6cqh 3.4cqw; }
+  .head { display:flex; justify-content:space-between; align-items:flex-start; gap:2cqw; }
+  .brand { display:flex; align-items:center; gap:1.5cqw; } .brand .lg { width:6.8cqh; height:6.8cqh; color:var(--ac); } .brand .nm { font-weight:800; font-size:3.6cqh; line-height:1; } .brand .sb { color:var(--mu); font-size:2cqh; margin-top:.7cqh; }
+  .upd { text-align:right; color:var(--mu); font-size:2cqh; } .upd .big { font-size:3.8cqh; font-weight:800; color:var(--inkc); font-variant-numeric:tabular-nums; } .upd b { font-weight:700; }
+  .body { display:flex; gap:2.4cqw; flex:1; min-height:0; margin-top:2.6cqh; } .maincol { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; }
+  .board { position:relative; display:grid; grid-template-columns:23% repeat(3,1fr); grid-template-rows:auto repeat(8, minmax(0,1fr)); flex:1; min-height:0; }
+  .nhead { grid-row:1; font-size:2cqh; color:var(--mu); font-weight:700; display:flex; align-items:flex-end; padding:0 0 1cqh 1cqw; border-bottom:1.5px solid var(--ln); } .nhead.today { color:var(--ac); }
+  .rlab { grid-column:1; display:flex; align-items:center; gap:.6cqw; font-size:2.2cqh; font-weight:750; color:var(--inkc); border-bottom:1px solid var(--ln); padding-right:1cqw; } .rlab .rk { color:var(--mu); font-weight:600; font-size:1.7cqh; }
+  .cbg { border-bottom:1px solid var(--ln); border-left:1px solid var(--ln); }
+  .bar { z-index:2; margin:.7cqh .5cqw; border-radius:1.3cqh; display:flex; flex-direction:column; justify-content:center; gap:.2cqh; padding:0 1.7cqw; overflow:hidden; background:var(--p); }
+  .bar .bnm { font-weight:700; font-size:1.85cqh; color:var(--inkc); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+  .bar .bmeta { font-size:1.45cqh; color:var(--mu); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+  .bar.arr { background: color-mix(in srgb, var(--arr) 24%, var(--p)); box-shadow: inset .55cqw 0 0 var(--arr); }
+  .bar.dep { background: color-mix(in srgb, var(--dep) 24%, var(--p)); box-shadow: inset -.55cqw 0 0 var(--dep); }
+  .bar.grp { background: color-mix(in srgb, var(--grp) 26%, var(--p)); box-shadow: inset .55cqw 0 0 var(--grp); }
+  .colblock { z-index:3; margin:.7cqh .5cqw; border-radius:1.6cqh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:2cqh 1cqw;
+    background: linear-gradient(160deg, color-mix(in srgb,var(--grp) 30%, var(--p)), color-mix(in srgb,var(--grp) 15%, var(--p))); box-shadow: inset 0 0 0 1.5px color-mix(in srgb,var(--grp) 55%, transparent); }
+  .colblock .ey { color:var(--grp); font-size:1.7cqh; letter-spacing:.13em; text-transform:uppercase; font-weight:800; }
+  .colblock .bg2 { font-size:3.8cqh; font-weight:850; color:var(--inkc); letter-spacing:-.02em; margin:.8cqh 0 .4cqh; line-height:1.04; }
+  .colblock .sub { font-size:1.9cqh; color:var(--inkc); font-weight:600; } .colblock .dts { font-size:1.7cqh; color:var(--mu); margin-top:.6cqh; font-variant-numeric:tabular-nums; }
+  .colblock .note { margin-top:1.2cqh; font-size:1.55cqh; color:var(--mu); background:var(--p); border:1px solid var(--ln); border-radius:1cqh; padding:.7cqh 1.2cqw; }
+  .rail { width:29%; flex:none; display:flex; flex-direction:column; gap:1.8cqh; }
+  .card2 { background:var(--p); border:1px solid var(--ln); border-radius:1.4cqh; padding:1.7cqh; }
+  .card2 h4 { margin:0 0 1.1cqh; font-size:2.3cqh; display:flex; align-items:center; gap:1cqw; } .card2 h4 .i { color:var(--ac); }
+  .card2 ul { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:1cqh; }
+  .card2 li { font-size:2cqh; color:var(--mu); display:flex; gap:1cqw; } .card2 li::before { content:"›"; color:var(--ac); font-weight:800; } .card2 li b { color:var(--inkc); font-weight:600; }
+  .foot { display:flex; align-items:center; gap:2.2cqw; margin-top:2cqh; padding-top:1.8cqh; border-top:1px solid var(--ln); font-size:2cqh; }
+  .foot .item { display:flex; align-items:center; gap:1cqw; color:var(--mu); } .foot .item .i { color:var(--ac); } .foot .item b { color:var(--inkc); font-weight:650; } .foot .camera { margin-left:auto; color:var(--ac); font-weight:700; }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow"><svg class="badge"><use href="#peak"/></svg> Silverpeak lobby display · part-week whole-lodge</p>
+  <h1>Part-week block — the free days, busy</h1>
+  <p class="lede">When a group has the lodge for only part of the window, the other days fill with ordinary bookings. Three variants show that free day carrying real names, check-in/out and the mix — arrivals, departures, families and a room-spanning group.</p>
+  <div class="legend">
+    <span class="k"><span class="sw" style="background:#4bc48d"></span> Arriving</span>
+    <span class="k"><span class="sw" style="background:#e6a84f"></span> Checking out</span>
+    <span class="k"><span class="sw" style="background:#b79bff"></span> Group</span>
+    <span class="k">‹ started earlier · → runs past Sun</span>
+  </div>
+
+  <!-- V1: group Fri+Sat, Sunday arrivals -->
+  <section class="example">
+    <div class="cap"><div class="n">1</div><div><h2>Group Fri–Sat · Sunday fills with arrivals</h2><p>The school leaves Sunday morning and the lodge refills — a big family, a course across two non-adjacent rooms (Takahe + Kereru), and a range of check-outs including two running past the window.</p></div></div>
+    <div class="tv"><div class="screen"><div class="scr">
+      <div class="head"><div class="brand"><svg class="lg"><use href="#peak"/></svg><div><div class="nm">Silverpeak Lodge</div><div class="sb">Alpine Sports Club</div></div></div><div class="upd"><div class="big">4:32 PM</div>Fri 3 Jul · <b>updated 4:30</b></div></div>
+      <div class="body">
+        <div class="maincol"><div class="board">
+          <div class="nhead" style="grid-column:1">Room</div><div class="nhead today">Tonight · Fri 3</div><div class="nhead">Sat 4</div><div class="nhead">Sun 5</div>
+          <div class="cbg" style="grid-column:2;grid-row:2"></div><div class="cbg" style="grid-column:3;grid-row:2"></div><div class="cbg" style="grid-column:4;grid-row:2"></div>
+          <div class="cbg" style="grid-column:2;grid-row:3"></div><div class="cbg" style="grid-column:3;grid-row:3"></div><div class="cbg" style="grid-column:4;grid-row:3"></div>
+          <div class="cbg" style="grid-column:2;grid-row:4"></div><div class="cbg" style="grid-column:3;grid-row:4"></div><div class="cbg" style="grid-column:4;grid-row:4"></div>
+          <div class="cbg" style="grid-column:2;grid-row:5"></div><div class="cbg" style="grid-column:3;grid-row:5"></div><div class="cbg" style="grid-column:4;grid-row:5"></div>
+          <div class="cbg" style="grid-column:2;grid-row:6"></div><div class="cbg" style="grid-column:3;grid-row:6"></div><div class="cbg" style="grid-column:4;grid-row:6"></div>
+          <div class="cbg" style="grid-column:2;grid-row:7"></div><div class="cbg" style="grid-column:3;grid-row:7"></div><div class="cbg" style="grid-column:4;grid-row:7"></div>
+          <div class="cbg" style="grid-column:2;grid-row:8"></div><div class="cbg" style="grid-column:3;grid-row:8"></div><div class="cbg" style="grid-column:4;grid-row:8"></div>
+          <div class="cbg" style="grid-column:2;grid-row:9"></div><div class="cbg" style="grid-column:3;grid-row:9"></div><div class="cbg" style="grid-column:4;grid-row:9"></div>
+          <div class="rlab" style="grid-row:2"><span class="rk">A</span>Kea</div><div class="rlab" style="grid-row:3"><span class="rk">B</span>Tui</div><div class="rlab" style="grid-row:4"><span class="rk">C</span>Ruru</div><div class="rlab" style="grid-row:5"><span class="rk">D</span>Weka</div><div class="rlab" style="grid-row:6"><span class="rk">E</span>Takahe</div><div class="rlab" style="grid-row:7"><span class="rk">F</span>Kaka</div><div class="rlab" style="grid-row:8"><span class="rk">G</span>Kereru</div><div class="rlab" style="grid-row:9"><span class="rk">H</span>Pukeko</div>
+          <div class="colblock" style="grid-column:2/4;grid-row:2/-1"><div class="ey">Whole lodge · Fri–Sat</div><div class="bg2">Harakeke College</div><div class="sub">42 guests · Mr Whittaker</div><div class="dts">Fri 3 → Sun 5 (out Sun)</div><div class="note">Bunks by group leader</div></div>
+          <div class="bar arr" style="grid-column:4/5;grid-row:2"><span class="bnm">Dave N +3</span><span class="bmeta">in Sun · out Tue 7 →</span></div>
+          <div class="bar arr" style="grid-column:4/5;grid-row:3"><span class="bnm">Alex B +1</span><span class="bmeta">in Sun · out Mon 6</span></div>
+          <div class="bar arr" style="grid-column:4/5;grid-row:4"><span class="bnm">Reid family · Elinor R +5</span><span class="bmeta">in Sun · out Wed 8 →</span></div>
+          <div class="bar arr" style="grid-column:4/5;grid-row:5"><span class="bnm">Priya S +2</span><span class="bmeta">in Sun · out Mon 6</span></div>
+          <div class="bar grp" style="grid-column:4/5;grid-row:6"><span class="bnm">Tramping club · Jo K +7</span><span class="bmeta">in Sun · out Tue 7 →</span></div>
+          <div class="bar arr" style="grid-column:4/5;grid-row:7"><span class="bnm">Tui M</span><span class="bmeta">in Sun · out Mon 6</span></div>
+          <div class="bar grp" style="grid-column:4/5;grid-row:8"><span class="bnm">Tramping club · Jo K +7</span><span class="bmeta">in Sun · out Tue 7 →</span></div>
+        </div></div>
+        <div class="rail"><div class="card2"><h4><span class="i">✔</span>Housekeeping</h4><ul><li><b>Sign in</b> when you arrive</li><li>Complete <b>Daily Compliance</b></li></ul></div><div class="card2"><h4><span class="i">⎋</span>On checkout</h4><ul><li>Clean up your room</li><li>Check <b>gas bottles</b></li></ul></div></div>
+      </div>
+      <div class="foot"><span class="item"><span class="i">📶</span>Wi-Fi <b>LodgeGuest</b> · <b>alpine1234</b></span><span class="item"><span class="i">✉</span><b>bookings@example.org</b></span><span class="camera">😊 Smile — you're on camera</span></div>
+    </div></div></div>
+  </section>
+
+  <!-- V2: group Sat+Sun, Friday departures -->
+  <section class="example">
+    <div class="cap"><div class="n">2</div><div><h2>Group Sat–Sun · Friday clears out first</h2><p>The other way round: tonight's guests all check out Saturday to make room, so Friday is a departures day — with "since" dates showing who arrived earlier, a big family, and a weekend group leaving together.</p></div></div>
+    <div class="tv"><div class="screen"><div class="scr">
+      <div class="head"><div class="brand"><svg class="lg"><use href="#peak"/></svg><div><div class="nm">Silverpeak Lodge</div><div class="sb">Alpine Sports Club</div></div></div><div class="upd"><div class="big">4:32 PM</div>Fri 3 Jul · <b>updated 4:30</b></div></div>
+      <div class="body">
+        <div class="maincol"><div class="board">
+          <div class="nhead" style="grid-column:1">Room</div><div class="nhead today">Tonight · Fri 3</div><div class="nhead">Sat 4</div><div class="nhead">Sun 5</div>
+          <div class="cbg" style="grid-column:2;grid-row:2"></div><div class="cbg" style="grid-column:3;grid-row:2"></div><div class="cbg" style="grid-column:4;grid-row:2"></div>
+          <div class="cbg" style="grid-column:2;grid-row:3"></div><div class="cbg" style="grid-column:3;grid-row:3"></div><div class="cbg" style="grid-column:4;grid-row:3"></div>
+          <div class="cbg" style="grid-column:2;grid-row:4"></div><div class="cbg" style="grid-column:3;grid-row:4"></div><div class="cbg" style="grid-column:4;grid-row:4"></div>
+          <div class="cbg" style="grid-column:2;grid-row:5"></div><div class="cbg" style="grid-column:3;grid-row:5"></div><div class="cbg" style="grid-column:4;grid-row:5"></div>
+          <div class="cbg" style="grid-column:2;grid-row:6"></div><div class="cbg" style="grid-column:3;grid-row:6"></div><div class="cbg" style="grid-column:4;grid-row:6"></div>
+          <div class="cbg" style="grid-column:2;grid-row:7"></div><div class="cbg" style="grid-column:3;grid-row:7"></div><div class="cbg" style="grid-column:4;grid-row:7"></div>
+          <div class="cbg" style="grid-column:2;grid-row:8"></div><div class="cbg" style="grid-column:3;grid-row:8"></div><div class="cbg" style="grid-column:4;grid-row:8"></div>
+          <div class="cbg" style="grid-column:2;grid-row:9"></div><div class="cbg" style="grid-column:3;grid-row:9"></div><div class="cbg" style="grid-column:4;grid-row:9"></div>
+          <div class="rlab" style="grid-row:2"><span class="rk">A</span>Kea</div><div class="rlab" style="grid-row:3"><span class="rk">B</span>Tui</div><div class="rlab" style="grid-row:4"><span class="rk">C</span>Ruru</div><div class="rlab" style="grid-row:5"><span class="rk">D</span>Weka</div><div class="rlab" style="grid-row:6"><span class="rk">E</span>Takahe</div><div class="rlab" style="grid-row:7"><span class="rk">F</span>Kaka</div><div class="rlab" style="grid-row:8"><span class="rk">G</span>Kereru</div><div class="rlab" style="grid-row:9"><span class="rk">H</span>Pukeko</div>
+          <div class="colblock" style="grid-column:3/-1;grid-row:2/-1"><div class="ey">Whole lodge · Sat–Sun</div><div class="bg2">Harakeke College</div><div class="sub">42 guests · Mr Whittaker</div><div class="dts">In Sat 4 → out Mon 6</div><div class="note">Bunks by group leader</div></div>
+          <div class="bar dep" style="grid-column:2/3;grid-row:2"><span class="bnm">Dave N +3</span><span class="bmeta">since Wed → out Sat 4</span></div>
+          <div class="bar dep" style="grid-column:2/3;grid-row:3"><span class="bnm">Alex B +1</span><span class="bmeta">out Sat 4</span></div>
+          <div class="bar dep" style="grid-column:2/3;grid-row:4"><span class="bnm">Reid family · Elinor R +5</span><span class="bmeta">since Thu → out Sat 4</span></div>
+          <div class="bar dep" style="grid-column:2/3;grid-row:5"><span class="bnm">Priya S +2</span><span class="bmeta">out Sat 4</span></div>
+          <div class="bar grp" style="grid-column:2/3;grid-row:6"><span class="bnm">Weekend club · Sam K +5</span><span class="bmeta">out Sat 4</span></div>
+          <div class="bar dep" style="grid-column:2/3;grid-row:8"><span class="bnm">Tui M</span><span class="bmeta">since Tue → out Sat 4</span></div>
+        </div></div>
+        <div class="rail"><div class="card2"><h4><span class="i">✔</span>Housekeeping</h4><ul><li><b>Sign in</b> when you arrive</li><li>Complete <b>Daily Compliance</b></li></ul></div><div class="card2"><h4><span class="i">⎋</span>On checkout</h4><ul><li>Clean up your room</li><li>Check <b>gas bottles</b></li></ul></div></div>
+      </div>
+      <div class="foot"><span class="item"><span class="i">📶</span>Wi-Fi <b>LodgeGuest</b> · <b>alpine1234</b></span><span class="item"><span class="i">✉</span><b>bookings@example.org</b></span><span class="camera">😊 Smile — you're on camera</span></div>
+    </div></div></div>
+  </section>
+
+  <!-- V3: group Fri only, Sat+Sun mixed spans -->
+  <section class="example">
+    <div class="cap"><div class="n">3</div><div><h2>Group Friday only · a busy weekend after</h2><p>One night blocked, then a full weekend: bookings that span both free nights, some arriving Saturday and some Sunday, a big family and a ski-school group across two rooms — the widest mix of spans.</p></div></div>
+    <div class="tv"><div class="screen"><div class="scr">
+      <div class="head"><div class="brand"><svg class="lg"><use href="#peak"/></svg><div><div class="nm">Silverpeak Lodge</div><div class="sb">Alpine Sports Club</div></div></div><div class="upd"><div class="big">4:32 PM</div>Fri 3 Jul · <b>updated 4:30</b></div></div>
+      <div class="body">
+        <div class="maincol"><div class="board">
+          <div class="nhead" style="grid-column:1">Room</div><div class="nhead today">Tonight · Fri 3</div><div class="nhead">Sat 4</div><div class="nhead">Sun 5</div>
+          <div class="cbg" style="grid-column:2;grid-row:2"></div><div class="cbg" style="grid-column:3;grid-row:2"></div><div class="cbg" style="grid-column:4;grid-row:2"></div>
+          <div class="cbg" style="grid-column:2;grid-row:3"></div><div class="cbg" style="grid-column:3;grid-row:3"></div><div class="cbg" style="grid-column:4;grid-row:3"></div>
+          <div class="cbg" style="grid-column:2;grid-row:4"></div><div class="cbg" style="grid-column:3;grid-row:4"></div><div class="cbg" style="grid-column:4;grid-row:4"></div>
+          <div class="cbg" style="grid-column:2;grid-row:5"></div><div class="cbg" style="grid-column:3;grid-row:5"></div><div class="cbg" style="grid-column:4;grid-row:5"></div>
+          <div class="cbg" style="grid-column:2;grid-row:6"></div><div class="cbg" style="grid-column:3;grid-row:6"></div><div class="cbg" style="grid-column:4;grid-row:6"></div>
+          <div class="cbg" style="grid-column:2;grid-row:7"></div><div class="cbg" style="grid-column:3;grid-row:7"></div><div class="cbg" style="grid-column:4;grid-row:7"></div>
+          <div class="cbg" style="grid-column:2;grid-row:8"></div><div class="cbg" style="grid-column:3;grid-row:8"></div><div class="cbg" style="grid-column:4;grid-row:8"></div>
+          <div class="cbg" style="grid-column:2;grid-row:9"></div><div class="cbg" style="grid-column:3;grid-row:9"></div><div class="cbg" style="grid-column:4;grid-row:9"></div>
+          <div class="rlab" style="grid-row:2"><span class="rk">A</span>Kea</div><div class="rlab" style="grid-row:3"><span class="rk">B</span>Tui</div><div class="rlab" style="grid-row:4"><span class="rk">C</span>Ruru</div><div class="rlab" style="grid-row:5"><span class="rk">D</span>Weka</div><div class="rlab" style="grid-row:6"><span class="rk">E</span>Takahe</div><div class="rlab" style="grid-row:7"><span class="rk">F</span>Kaka</div><div class="rlab" style="grid-row:8"><span class="rk">G</span>Kereru</div><div class="rlab" style="grid-row:9"><span class="rk">H</span>Pukeko</div>
+          <div class="colblock" style="grid-column:2/3;grid-row:2/-1"><div class="ey">Whole lodge · tonight</div><div class="bg2">Harakeke College</div><div class="sub">42 · Mr Whittaker</div><div class="dts">Fri 3 only (out Sat)</div></div>
+          <div class="bar arr" style="grid-column:3/5;grid-row:2"><span class="bnm">Dave N +3</span><span class="bmeta">in Sat · out Mon 6 →</span></div>
+          <div class="bar arr" style="grid-column:3/4;grid-row:3"><span class="bnm">Alex B +1</span><span class="bmeta">in Sat · out Sun 5</span></div>
+          <div class="bar arr" style="grid-column:4/5;grid-row:4"><span class="bnm">Reid family · Elinor R +5</span><span class="bmeta">in Sun · out Wed 8 →</span></div>
+          <div class="bar arr" style="grid-column:3/5;grid-row:5"><span class="bnm">Priya S +2</span><span class="bmeta">in Sat · out Mon 6 →</span></div>
+          <div class="bar grp" style="grid-column:3/5;grid-row:6"><span class="bnm">Ski school · Jo K +9</span><span class="bmeta">in Sat · out Mon 6 →</span></div>
+          <div class="bar arr" style="grid-column:4/5;grid-row:7"><span class="bnm">Tui M</span><span class="bmeta">in Sun · out Mon 6</span></div>
+          <div class="bar grp" style="grid-column:3/5;grid-row:8"><span class="bnm">Ski school · Jo K +9</span><span class="bmeta">in Sat · out Mon 6 →</span></div>
+        </div></div>
+        <div class="rail"><div class="card2"><h4><span class="i">✔</span>Housekeeping</h4><ul><li><b>Sign in</b> when you arrive</li><li>Complete <b>Daily Compliance</b></li></ul></div><div class="card2"><h4><span class="i">⎋</span>On checkout</h4><ul><li>Clean up your room</li><li>Check <b>gas bottles</b></li></ul></div></div>
+      </div>
+      <div class="foot"><span class="item"><span class="i">📶</span>Wi-Fi <b>LodgeGuest</b> · <b>alpine1234</b></span><span class="item"><span class="i">✉</span><b>bookings@example.org</b></span><span class="camera">😊 Smile — you're on camera</span></div>
+    </div></div></div>
+  </section>
+</div>

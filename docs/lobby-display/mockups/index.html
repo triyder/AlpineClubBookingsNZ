@@ -1,0 +1,195 @@
+<meta charset="utf-8">
+<title>Lobby display — design index (by concept)</title>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="peak" viewBox="0 0 100 100"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"><path d="M8 78 L38 30 L54 55 L66 38 L92 78 Z"/><path d="M31 41 L38 48 L45 41"/></g></symbol>
+</svg>
+<style>
+  :root { --bg:#eef2f4; --panel:#fff; --panel2:#f6f9fa; --ink:#102329; --muted:#516670; --line:#dce5e9; --accent:#0e6e78; --accent-ink:#0a545c; --grp:#6f52c8; --radius:16px; --maxw:1040px; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#08171c; --panel:#0f242b; --panel2:#0c1e24; --ink:#e8f4f6; --muted:#8fb0b8; --line:#213840; --accent:#3fb9cb; --accent-ink:#6fd2e0; --grp:#b79bff; } }
+  :root[data-theme="light"]{ --bg:#eef2f4; --panel:#fff; --panel2:#f6f9fa; --ink:#102329; --muted:#516670; --line:#dce5e9; --accent:#0e6e78; --accent-ink:#0a545c; --grp:#6f52c8; }
+  :root[data-theme="dark"]{ --bg:#08171c; --panel:#0f242b; --panel2:#0c1e24; --ink:#e8f4f6; --muted:#8fb0b8; --line:#213840; --accent:#3fb9cb; --accent-ink:#6fd2e0; --grp:#b79bff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; line-height:1.55; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:var(--maxw); margin:0 auto; padding: clamp(24px,5vw,60px) clamp(18px,4vw,40px) 90px; }
+  .eyebrow { font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent-ink); font-weight:700; margin:0 0 12px; display:flex; align-items:center; gap:10px; } .eyebrow .badge { width:22px; height:22px; color:var(--accent); }
+  h1 { font-size:clamp(30px,5.5vw,48px); line-height:1.03; margin:0 0 14px; letter-spacing:-.025em; font-weight:800; text-wrap:balance; }
+  .lede { font-size:clamp(16px,2.3vw,20px); color:var(--muted); max-width:66ch; margin:0; }
+
+  .concept { margin: clamp(34px,6vw,54px) 0 0; }
+  .concept > h2 { font-size:clamp(19px,2.6vw,24px); margin:0 0 3px; letter-spacing:-.01em; }
+  .concept > .sub { margin:0 0 16px; color:var(--muted); font-size:15px; }
+  .concept .rule { height:2px; background:linear-gradient(to right, var(--accent), transparent 65%); border-radius:2px; margin:0 0 18px; opacity:.5; }
+
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:20px 22px; display:flex; flex-direction:column; gap:9px; }
+  .card.pick { border-color:color-mix(in srgb,var(--accent) 45%, var(--line)); box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 30%, transparent); }
+  .card .tags { display:flex; flex-wrap:wrap; gap:6px; }
+  .tag { font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; padding:3px 9px; border-radius:999px; background:var(--panel2); color:var(--muted); border:1px solid var(--line); }
+  .tag.rec { background:color-mix(in srgb,var(--accent) 16%, transparent); color:var(--accent-ink); border-color:color-mix(in srgb,var(--accent) 35%, transparent); }
+  .tag.grp { background:color-mix(in srgb,var(--grp) 16%, transparent); color:var(--grp); border-color:color-mix(in srgb,var(--grp) 40%, transparent); }
+  .tag.mut { opacity:.75; }
+  .card h3 { margin:2px 0 0; font-size:19px; letter-spacing:-.01em; }
+  .card p { margin:0; color:var(--muted); font-size:14px; }
+  .card .demo { color:var(--ink); font-size:13.5px; }
+  .links { margin-top:auto; padding-top:6px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  a.view { display:inline-flex; align-items:center; gap:7px; font-weight:700; font-size:14px; color:#fff; background:var(--accent); text-decoration:none; padding:8px 15px; border-radius:10px; }
+  a.view:hover { filter:brightness(1.06); } a.view:focus-visible { outline:2px solid var(--accent-ink); outline-offset:2px; }
+  a.share { font-size:13px; color:var(--muted); text-decoration:underline; text-underline-offset:2px; } a.share:hover { color:var(--accent-ink); }
+
+  .split { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top: clamp(34px,6vw,52px); } @media (max-width:720px){ .split { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:22px 24px; }
+  .panel h4 { margin:0 0 12px; font-size:16px; }
+  ul.tick, ul.q { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:9px; }
+  ul.tick li, ul.q li { font-size:14.5px; color:var(--muted); display:flex; gap:9px; } ul.tick li b, ul.q li b { color:var(--ink); font-weight:650; }
+  ul.tick li::before { content:"✓"; color:var(--accent); font-weight:800; } ul.q li::before { content:"?"; color:var(--grp); font-weight:800; }
+  .foot { margin-top:40px; padding-top:18px; border-top:1px solid var(--line); font-size:13px; color:var(--muted); }
+  code { background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:1px 6px; font-size:12.5px; }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow"><svg class="badge"><use href="#peak"/></svg> Alpine Sports Club</p>
+  <h1>Lobby display — design index, by concept</h1>
+  <p class="lede">The Silverpeak lobby-TV mockups, grouped by the idea they explore (not the order they were made). Each card opens a self-contained page; some pages hold several variants to scroll through. One screen per lodge; mock data throughout.</p>
+
+  <!-- CONCEPT 1 -->
+  <section class="concept">
+    <h2>1 · Everyday board — the normal mixed-booking day</h2>
+    <p class="sub">Rooms down the side, the next three nights across. The core view.</p>
+    <div class="rule"></div>
+    <div class="cards">
+      <div class="card pick">
+        <div class="tags"><span class="tag rec">✓ Chosen base</span><span class="tag">bars · names ≤5</span></div>
+        <h3>Bar board</h3>
+        <p>Each booking a continuous bar with its check-out; bars wrap to show up to 5 names then "+N"; groups keep a name + headcount and repeat per room.</p>
+        <div class="links"><a class="view" href="everyday-bar-board.html">Open ↗</a></div>
+      </div>
+      <div class="card">
+        <div class="tags"><span class="tag mut">prior version</span><span class="tag">lead + count</span></div>
+        <h3>Bar board — lead + count</h3>
+        <p>Earlier take: each booking as just the lead member + "+N" ("Dave N +3"). Kept for comparison; superseded by the names version.</p>
+        <div class="links"><a class="view" href="everyday-bar-board-leadname.html">Open ↗</a></div>
+      </div>
+      <div class="card">
+        <div class="tags"><span class="tag mut">parked</span><span class="tag">room cards</span></div>
+        <h3>Room cards</h3>
+        <p>One card per room, names listed. Parked — not being progressed; kept for reference.</p>
+        <div class="links"><a class="view" href="everyday-cards.html">Open ↗</a></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONCEPT 2 -->
+  <section class="concept">
+    <h2>2 · Whole-lodge — one group takes the lodge</h2>
+    <p class="sub">A single group books out the lodge with no room assignment. Blockout is the approved direction.</p>
+    <div class="rule"></div>
+    <div class="cards">
+      <div class="card pick">
+        <div class="tags"><span class="tag rec">✓ Approved: blockout</span><span class="tag grp">3 treatments</span></div>
+        <h3>Blockout / summary / part-week</h3>
+        <p>A keep the grid &amp; block it out · B clean statement + week strip · C part-week (block only the full days). Blockout (A/C) won the vote.</p>
+        <div class="links"><a class="view" href="whole-lodge.html">Open ↗</a></div>
+      </div>
+      <div class="card pick">
+        <div class="tags"><span class="tag rec">✓ Full marks</span><span class="tag grp">rotating</span></div>
+        <h3>Blockout ⇄ welcome</h3>
+        <p>When fully out to a group, the blockout board cross-fades with a warm welcome panel carrying the group's details. Live animation.</p>
+        <div class="links"><a class="view" href="whole-lodge-rotating.html">Open ↗</a></div>
+      </div>
+      <div class="card">
+        <div class="tags"><span class="tag grp">part-week</span><span class="tag">3 variants</span></div>
+        <h3>Part-week — the free day, busy</h3>
+        <p>Group has the lodge only some nights; the free days fill with real bookings — arrivals / departures / mixed spans.</p>
+        <div class="links"><a class="view" href="whole-lodge-part-week.html">Open ↗</a></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONCEPT 3 -->
+  <section class="concept">
+    <h2>3 · Guest / booking-centric — people down the side</h2>
+    <p class="sub">Find your name, see your room. Explorations of the transpose.</p>
+    <div class="rule"></div>
+    <div class="cards">
+      <div class="card">
+        <div class="tags"><span class="tag grp">2 takes</span></div>
+        <h3>List + guest grid</h3>
+        <p>A the "coming up" list with each person's room; B the transposed grid — names down the side, room in the cell.</p>
+        <div class="links"><a class="view" href="guest-rows.html">Open ↗</a></div>
+      </div>
+      <div class="card">
+        <div class="tags"><span class="tag">booking × room</span><span class="tag mut">Room column</span></div>
+        <h3>Booking × room — Room column</h3>
+        <p>One row per (booking × room), room in its own column; groups span their rooms once. Headcount per room in the cell.</p>
+        <div class="links"><a class="view" href="booking-room-grid.html">Open ↗</a></div>
+      </div>
+      <div class="card">
+        <div class="tags"><span class="tag">booking × room</span><span class="tag">room in timeline</span></div>
+        <h3>Booking × room — room in the bar</h3>
+        <p>Same, but the room sits in the timeline bar (no Room column). Shown at quiet / standard / busy occupancy.</p>
+        <div class="links"><a class="view" href="booking-room-timeline.html">Open ↗</a></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONCEPT 4 -->
+  <section class="concept">
+    <h2>4 · Full house &amp; occupancy range — density and all-singles</h2>
+    <p class="sub">How the boards cope from a quiet night to 32 in, including a full house of individuals.</p>
+    <div class="rule"></div>
+    <div class="cards">
+      <div class="card">
+        <div class="tags"><span class="tag grp">4 frames</span><span class="tag">small → full</span></div>
+        <h3>Occupancy range</h3>
+        <p>Two small nights, a full lodge of 32 as families/groups, and 32 individuals room-grouped with names. Shows when each projection works.</p>
+        <div class="links"><a class="view" href="full-lodge-occupancy.html">Open ↗</a></div>
+      </div>
+      <div class="card pick">
+        <div class="tags"><span class="tag rec">✓ Preferred (all-singles)</span><span class="tag">Room | Guest</span></div>
+        <h3>32 individuals — by booking</h3>
+        <p>One row per person, grouped by room in its own lane, each with their own check-out. Chosen over the two variants below.</p>
+        <div class="links"><a class="view" href="singles-by-booking.html">Open ↗</a></div>
+      </div>
+      <div class="card">
+        <div class="tags"><span class="tag mut">compared</span><span class="tag">room in the line</span></div>
+        <h3>32 individuals — room in the line</h3>
+        <p>Room folded onto each group's first guest instead of a column.</p>
+        <div class="links"><a class="view" href="singles-by-booking-inline-room.html">Open ↗</a></div>
+      </div>
+      <div class="card">
+        <div class="tags"><span class="tag mut">compared</span><span class="tag">room in the bar</span></div>
+        <h3>32 individuals — room in the bar</h3>
+        <p>Room inside each person's coloured bar; guest-only left column.</p>
+        <div class="links"><a class="view" href="singles-room-in-bar.html">Open ↗</a></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LANDED -->
+  <div class="split">
+    <div class="panel">
+      <h4>Where we've landed</h4>
+      <ul class="tick">
+        <li>One screen per lodge; rooms down the side, three nights across.</li>
+        <li>Everyday view: the <b>bar board</b> (names up to 5).</li>
+        <li>Whole-lodge: <b>blockout</b> approved; the <b>rotating welcome</b> for a fully-out group.</li>
+        <li>All-singles full house: <b>by-booking, Room | Guest</b>.</li>
+        <li>Names as first name + surname initial; groups keep name + headcount.</li>
+        <li>Custodian in the footer (only when a lodge has one).</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h4>Still open</h4>
+      <ul class="q">
+        <li>How the display <b>switches</b> between the room-row board and the by-booking board as a night fragments (auto, or fixed).</li>
+        <li><b>Dark, daylight, or auto</b> by time of day.</li>
+        <li>Wiring the <b>static-core / cycling-corner</b> (housekeeping → checkout → notice) into the chosen everyday board.</li>
+        <li>Whether to visually link a group's non-consecutive room bars.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="foot">
+    <b>Versioning:</b> a new iteration is saved as a new file and added here; the previous file is never overwritten. Review-approved whole-lodge designs are frozen in <code>lobby-display/approved/</code>. Files live in <code>Alpine/lobby-display/</code> — open this <code>index.html</code> from that folder and each “Open” link goes to the saved page; the “shareable” link is a hosted copy. Not in the app repo. Mock data throughout — the real display is data-driven from the club site.
+  </div>
+</div>

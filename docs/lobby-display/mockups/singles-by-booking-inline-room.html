@@ -1,0 +1,103 @@
+<meta charset="utf-8">
+<title>Silverpeak lobby — 32 individuals, room in the line</title>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="peak" viewBox="0 0 100 100"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"><path d="M8 78 L38 30 L54 55 L66 38 L92 78 Z"/><path d="M31 41 L38 48 L45 41"/></g></symbol>
+</svg>
+<style>
+  :root { --bg:#e8eef1; --panel:#fff; --ink:#10242a; --muted:#4f6670; --line:#d2dde1; --accent:#0e6e78; --accent-ink:#0a545c; --radius:14px; --maxw:1120px; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#081a1f; --panel:#0f242b; --ink:#e8f4f6; --muted:#8fb0b8; --line:#20343b; --accent:#3fb9cb; --accent-ink:#6fd2e0; } }
+  :root[data-theme="light"]{ --bg:#e8eef1; --panel:#fff; --ink:#10242a; --muted:#4f6670; --line:#d2dde1; --accent:#0e6e78; --accent-ink:#0a545c; }
+  :root[data-theme="dark"]{ --bg:#081a1f; --panel:#0f242b; --ink:#e8f4f6; --muted:#8fb0b8; --line:#20343b; --accent:#3fb9cb; --accent-ink:#6fd2e0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:var(--maxw); margin:0 auto; padding: clamp(20px,4vw,52px) clamp(16px,4vw,40px) 70px; }
+  .eyebrow { font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent-ink); font-weight:700; margin:0 0 10px; display:flex; align-items:center; gap:9px; } .eyebrow .badge { width:20px; height:20px; color:var(--accent); }
+  h1 { font-size:clamp(26px,5vw,42px); line-height:1.05; margin:0 0 14px; letter-spacing:-.02em; font-weight:800; }
+  .lede { font-size:clamp(15px,2.2vw,18px); color:var(--muted); max-width:72ch; margin:0 0 8px; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px 20px; margin:16px 0 0; font-size:14px; color:var(--muted); } .legend .k { display:inline-flex; align-items:center; gap:7px; } .legend .sw { width:12px; height:12px; border-radius:4px; }
+
+  .tv { border-radius:var(--radius); padding: clamp(5px,.8vw,9px); background:linear-gradient(180deg,#04070c,#0a1016); box-shadow:0 22px 55px -30px rgba(0,0,0,.7); margin-top:22px; }
+  .screen { position:relative; aspect-ratio:16/9; width:100%; container-type:size; border-radius:7px; overflow:hidden; font-size:2.5cqh; color:#eef8fa;
+    background: radial-gradient(120% 90% at 88% -10%, rgba(63,185,203,.13), transparent 55%), radial-gradient(90% 80% at -5% 115%, rgba(75,196,141,.06), transparent 50%), linear-gradient(160deg,#08171d 0%,#0a1c23 55%,#07141a 100%);
+    --p:rgba(255,255,255,.05); --ln:rgba(255,255,255,.12); --mu:#8fb2ba; --ac:#43c2d4; --arr:#4bc48d; --dep:#e6a84f; --inkc:#eef8fa; }
+  .scr { position:absolute; inset:0; display:flex; flex-direction:column; padding:3cqh 3.2cqw; }
+  .head { display:flex; justify-content:space-between; align-items:flex-start; gap:2cqw; }
+  .brand { display:flex; align-items:center; gap:1.4cqw; } .brand .lg { width:5.6cqh; height:5.6cqh; color:var(--ac); } .brand .nm { font-weight:800; font-size:3cqh; line-height:1; } .brand .sb { color:var(--mu); font-size:1.7cqh; margin-top:.5cqh; }
+  .upd { text-align:right; color:var(--mu); font-size:1.7cqh; } .upd .big { font-size:3cqh; font-weight:800; color:var(--inkc); letter-spacing:-.01em; }
+
+  .board { position:relative; display:grid; grid-template-columns:33% repeat(3,1fr); grid-template-rows:auto; grid-auto-rows:minmax(2.15cqh, auto); align-content:start; flex:1; min-height:0; margin-top:1.8cqh; }
+  .nhead { grid-row:1; font-size:1.7cqh; color:var(--mu); font-weight:700; display:flex; align-items:flex-end; padding:0 0 .8cqh .8cqw; border-bottom:1.5px solid var(--ln); } .nhead.today { color:var(--ac); }
+  .line { grid-column:1; display:flex; align-items:center; gap:1.2cqw; border-bottom:1px solid var(--ln); padding:0 1cqw; }
+  .line.first { border-top:1.5px solid color-mix(in srgb, var(--mu) 55%, transparent); }
+  .line .rm { font-weight:800; color:var(--ac); font-size:1.55cqh; white-space:nowrap; letter-spacing:.01em; }
+  .line .gn { font-weight:600; color:var(--inkc); font-size:1.7cqh; }
+  .line .gn.ind { padding-left:6.5cqw; }
+  .track { grid-column:2 / -1; border-bottom:1px solid var(--ln); background: repeating-linear-gradient(to right, transparent 0, transparent calc(100%/3 - 0.5px), var(--ln) calc(100%/3 - 0.5px), var(--ln) calc(100%/3)); }
+  .track.first { border-top:1.5px solid color-mix(in srgb, var(--mu) 55%, transparent); }
+  .bar { z-index:2; margin:.3cqh .4cqw; border-radius:.8cqh; display:flex; align-items:center; justify-content:flex-end; padding:0 1cqw; overflow:hidden; font-size:1.35cqh; font-weight:700; color:var(--mu); }
+  .bar.arr { background: color-mix(in srgb, var(--arr) 26%, var(--p)); box-shadow: inset .4cqw 0 0 var(--arr); }
+  .bar.dep { background: color-mix(in srgb, var(--dep) 26%, var(--p)); box-shadow: inset -.4cqw 0 0 var(--dep); }
+
+  .foot { display:flex; align-items:center; gap:2.2cqw; margin-top:1.4cqh; padding-top:1.3cqh; border-top:1px solid var(--ln); font-size:1.7cqh; }
+  .foot .item { display:flex; align-items:center; gap:1cqw; color:var(--mu); } .foot .item .i { color:var(--ac); } .foot .item b { color:var(--inkc); font-weight:650; } .foot .camera { margin-left:auto; color:var(--ac); font-weight:700; }
+  .note { display:flex; gap:12px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-top:16px; font-size:14.5px; color:var(--muted); } .note b { color:var(--ink); font-weight:650; }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow"><svg class="badge"><use href="#peak"/></svg> Silverpeak lobby display · room in the line</p>
+  <h1>32 individuals — room in the line, not a column</h1>
+  <p class="lede">Same by-booking board, but the <b>room is folded into the guest line</b> — shown on the first guest of each group, with a divider between rooms — instead of a separate Room column. Frees width for the timeline; still one row per person with their own check-out.</p>
+  <div class="legend">
+    <span class="k"><span class="sw" style="background:#4bc48d"></span> Arriving / staying</span>
+    <span class="k"><span class="sw" style="background:#e6a84f"></span> Leaving</span>
+    <span class="k">out-date at the right of each bar</span>
+  </div>
+  <div class="tv"><div class="screen"><div class="scr">
+    <div class="head"><div class="brand"><svg class="lg"><use href="#peak"/></svg><div><div class="nm">Silverpeak Lodge</div><div class="sb">Alpine Sports Club</div></div></div><div class="upd"><div class="big">32 in · full house</div>Sat 5 Jul</div></div>
+    <div class="board">
+      <div class="nhead" style="grid-column:1">Room · Guest</div><div class="nhead today">Sat 5</div><div class="nhead">Sun 6</div><div class="nhead">Mon 7</div>
+      <!-- Kea -->
+      <div class="line first" style="grid-row:2"><span class="rm">A · Kea</span><span class="gn">Dave N</span></div><div class="track first" style="grid-row:2"></div><div class="bar arr" style="grid-column:2/5;grid-row:2">out Mon 7 →</div>
+      <div class="line" style="grid-row:3"><span class="gn ind">Priya S</span></div><div class="track" style="grid-row:3"></div><div class="bar arr" style="grid-column:2/4;grid-row:3">out Sun 6</div>
+      <div class="line" style="grid-row:4"><span class="gn ind">Tama W</span></div><div class="track" style="grid-row:4"></div><div class="bar dep" style="grid-column:2/3;grid-row:4">out Sat 5</div>
+      <div class="line" style="grid-row:5"><span class="gn ind">Ana R</span></div><div class="track" style="grid-row:5"></div><div class="bar arr" style="grid-column:2/5;grid-row:5">out Mon 7 →</div>
+      <!-- Tui -->
+      <div class="line first" style="grid-row:6"><span class="rm">B · Tui</span><span class="gn">Alex B</span></div><div class="track first" style="grid-row:6"></div><div class="bar arr" style="grid-column:2/5;grid-row:6">out Mon 7 →</div>
+      <div class="line" style="grid-row:7"><span class="gn ind">Jo K</span></div><div class="track" style="grid-row:7"></div><div class="bar arr" style="grid-column:2/5;grid-row:7">out Mon 7 →</div>
+      <div class="line" style="grid-row:8"><span class="gn ind">Mia T</span></div><div class="track" style="grid-row:8"></div><div class="bar arr" style="grid-column:2/4;grid-row:8">out Sun 6</div>
+      <div class="line" style="grid-row:9"><span class="gn ind">Sam L</span></div><div class="track" style="grid-row:9"></div><div class="bar dep" style="grid-column:2/3;grid-row:9">out Sat 5</div>
+      <!-- Ruru -->
+      <div class="line first" style="grid-row:10"><span class="rm">C · Ruru</span><span class="gn">Rawiri P</span></div><div class="track first" style="grid-row:10"></div><div class="bar arr" style="grid-column:2/5;grid-row:10">out Mon 7 →</div>
+      <div class="line" style="grid-row:11"><span class="gn ind">Hana C</span></div><div class="track" style="grid-row:11"></div><div class="bar arr" style="grid-column:2/5;grid-row:11">out Mon 7 →</div>
+      <div class="line" style="grid-row:12"><span class="gn ind">Wiremu T</span></div><div class="track" style="grid-row:12"></div><div class="bar arr" style="grid-column:2/4;grid-row:12">out Sun 6</div>
+      <div class="line" style="grid-row:13"><span class="gn ind">Nikau M</span></div><div class="track" style="grid-row:13"></div><div class="bar arr" style="grid-column:2/5;grid-row:13">out Mon 7 →</div>
+      <!-- Weka -->
+      <div class="line first" style="grid-row:14"><span class="rm">D · Weka</span><span class="gn">Elinor R</span></div><div class="track first" style="grid-row:14"></div><div class="bar arr" style="grid-column:2/4;grid-row:14">out Sun 6</div>
+      <div class="line" style="grid-row:15"><span class="gn ind">Toby R</span></div><div class="track" style="grid-row:15"></div><div class="bar arr" style="grid-column:2/4;grid-row:15">out Sun 6</div>
+      <div class="line" style="grid-row:16"><span class="gn ind">Kelly F</span></div><div class="track" style="grid-row:16"></div><div class="bar arr" style="grid-column:2/5;grid-row:16">out Mon 7 →</div>
+      <div class="line" style="grid-row:17"><span class="gn ind">Nina F</span></div><div class="track" style="grid-row:17"></div><div class="bar dep" style="grid-column:2/3;grid-row:17">out Sat 5</div>
+      <!-- Takahe -->
+      <div class="line first" style="grid-row:18"><span class="rm">E · Takahe</span><span class="gn">Jess L</span></div><div class="track first" style="grid-row:18"></div><div class="bar arr" style="grid-column:2/5;grid-row:18">out Mon 7 →</div>
+      <div class="line" style="grid-row:19"><span class="gn ind">Rob E</span></div><div class="track" style="grid-row:19"></div><div class="bar arr" style="grid-column:2/5;grid-row:19">out Mon 7 →</div>
+      <div class="line" style="grid-row:20"><span class="gn ind">Sione F</span></div><div class="track" style="grid-row:20"></div><div class="bar arr" style="grid-column:2/5;grid-row:20">out Mon 7 →</div>
+      <div class="line" style="grid-row:21"><span class="gn ind">Lee P</span></div><div class="track" style="grid-row:21"></div><div class="bar arr" style="grid-column:2/4;grid-row:21">out Sun 6</div>
+      <!-- Kaka -->
+      <div class="line first" style="grid-row:22"><span class="rm">F · Kaka</span><span class="gn">Matt H</span></div><div class="track first" style="grid-row:22"></div><div class="bar arr" style="grid-column:2/4;grid-row:22">out Sun 6</div>
+      <div class="line" style="grid-row:23"><span class="gn ind">Tui M</span></div><div class="track" style="grid-row:23"></div><div class="bar dep" style="grid-column:2/3;grid-row:23">out Sat 5</div>
+      <div class="line" style="grid-row:24"><span class="gn ind">Ruia P</span></div><div class="track" style="grid-row:24"></div><div class="bar arr" style="grid-column:2/5;grid-row:24">out Mon 7 →</div>
+      <div class="line" style="grid-row:25"><span class="gn ind">Ken A</span></div><div class="track" style="grid-row:25"></div><div class="bar arr" style="grid-column:2/4;grid-row:25">out Sun 6</div>
+      <!-- Kereru -->
+      <div class="line first" style="grid-row:26"><span class="rm">G · Kereru</span><span class="gn">Ruth K</span></div><div class="track first" style="grid-row:26"></div><div class="bar arr" style="grid-column:2/5;grid-row:26">out Mon 7 →</div>
+      <div class="line" style="grid-row:27"><span class="gn ind">James P</span></div><div class="track" style="grid-row:27"></div><div class="bar arr" style="grid-column:2/5;grid-row:27">out Mon 7 →</div>
+      <div class="line" style="grid-row:28"><span class="gn ind">Cathy M</span></div><div class="track" style="grid-row:28"></div><div class="bar arr" style="grid-column:2/4;grid-row:28">out Sun 6</div>
+      <div class="line" style="grid-row:29"><span class="gn ind">Shawn D</span></div><div class="track" style="grid-row:29"></div><div class="bar dep" style="grid-column:2/3;grid-row:29">out Sat 5</div>
+      <!-- Pukeko -->
+      <div class="line first" style="grid-row:30"><span class="rm">H · Pukeko</span><span class="gn">Sarah M</span></div><div class="track first" style="grid-row:30"></div><div class="bar arr" style="grid-column:2/5;grid-row:30">out Mon 7 →</div>
+      <div class="line" style="grid-row:31"><span class="gn ind">Tom B</span></div><div class="track" style="grid-row:31"></div><div class="bar arr" style="grid-column:2/4;grid-row:31">out Sun 6</div>
+      <div class="line" style="grid-row:32"><span class="gn ind">Anna B</span></div><div class="track" style="grid-row:32"></div><div class="bar arr" style="grid-column:2/4;grid-row:32">out Sun 6</div>
+      <div class="line" style="grid-row:33"><span class="gn ind">Jarrod K</span></div><div class="track" style="grid-row:33"></div><div class="bar dep" style="grid-column:2/3;grid-row:33">out Sat 5</div>
+    </div>
+    <div class="foot"><span class="item"><span class="i">📶</span>Wi-Fi <b>LodgeGuest</b> · <b>alpine1234</b></span><span class="item"><span class="i">✉</span><b>bookings@example.org</b></span><span class="camera">😊 On camera</span></div>
+  </div></div></div>
+  <div class="note"><span>💡</span><span>Room folded into the line (first guest of each group, with a divider) instead of its own column — same information, one less column, wider timeline. Compare with the two-column version if you prefer the room aligned in its own lane.</span></div>
+</div>
