@@ -502,18 +502,19 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > by the save contract regardless of the authoring surface. Noted for the owner to
 > revisit if a reusable rich editor is later extracted.
 >
-> *Default-content materialisation caveat (#111).* Per-area `defaultContent` seeds
+> *Default-content materialisation (#111).* Per-area `defaultContent` seeds
 > a new template **at authoring time** — it is copied into the template's slot
 > content when the author saves, so changing a layout's default **later does not
-> retro-update** templates already authored against it. Two further consequences
-> follow from the create-if-missing seed contract (`ensureBuiltInDisplays` upserts
-> built-ins with an EMPTY update so admin edits are never clobbered): a built-in
-> **layout row already seeded before #111 does not gain the new `defaultContent`**
-> until it is re-seeded or re-imported, and rotator built-ins (whole-lodge /
-> singles-house) still seed **empty child slots** because `DisplayAreaChild` has no
-> `defaultContent` field yet. Both are follow-ups; how (and whether) to
-> retro-materialise defaults onto already-seeded rows is an **open owner
-> decision**, deliberately left unresolved here.
+> retro-update** templates already authored against it (a new template picks up
+> the new default). Built-ins themselves are **code-managed scaffolding** (owner
+> decision A): `ensureBuiltInDisplays` **refreshes** each built-in layout/template
+> from code on every re-seed, so a built-in layout seeded before #111 **gains the
+> new `defaultContent` on the next re-seed** (or via a config-transfer import of
+> the refreshed built-ins). To customise a built-in, an admin **duplicates** it
+> into a new (non-`builtin-`) row and edits that; editing a built-in in place is
+> overwritten on the next re-seed. Rotator built-ins (whole-lodge / singles-house)
+> still seed **empty child slots** because `DisplayAreaChild` has no
+> `defaultContent` field yet — a documented follow-up.
 >
 > *Device binding (the point of a Template).* The **Devices** picker offers the
 > **club default** and every **v2 template** (bound by `templateId`) from

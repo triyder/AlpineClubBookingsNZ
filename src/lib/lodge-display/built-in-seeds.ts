@@ -25,9 +25,12 @@ import {
 // areas inside a rail container div in the layout body (nesting works since
 // LTV-041/#96); whole-lodge and singles keep their rotation as rotator areas.
 //
-// SEED CONTRACT (create-if-missing, admin-safe): `ensureBuiltInDisplays` upserts
-// each Layout/Template by its unique `key` with an EMPTY update, so a re-run
-// never clobbers an admin who customised a built-in — they keep their version.
+// SEED CONTRACT (code-managed scaffolding — owner decision A, issue #111):
+// `ensureBuiltInDisplays` upserts each Layout/Template by its unique `key` and
+// REFRESHES its definition from code on every re-seed, so improvements to the
+// shipped designs reach existing installs. Built-ins are not edited in place —
+// an admin who wants a variant DUPLICATES a built-in into a new (non-`builtin-`)
+// row and customises that. Only the reserved `builtin-*` keys are touched here.
 // Devices bind to these seeded rows by `templateId`; the legacy device
 // `templateKey` column and its one-shot migration were removed in #86 (LTV-040)
 // before the feature shipped. Every step is idempotent: a second run creates
@@ -328,30 +331,35 @@ export interface EnsureBuiltInDisplaysClient {
 }
 
 /**
- * Seed the three built-in Layouts + Templates create-if-missing (LTV-038).
- * Idempotent and admin-safe: Layouts/Templates upsert by `key` with an EMPTY
- * update, so an admin who customised a built-in keeps their version
- * (create-if-missing). Devices bind to these seeded rows by `templateId`; the
- * legacy device `templateKey` column and its one-shot migration were removed in
- * #86 (LTV-040), before the feature shipped.
- *
- * MATERIALISATION CAVEAT (issue #111): the EMPTY-update upsert is deliberate and
- * UNCHANGED here. A consequence is that a built-in layout row ALREADY seeded
- * before #111 will NOT gain the new area `defaultContent` until it is re-seeded
- * or re-imported — only fresh creates carry it. New templates authored against an
- * un-refreshed built-in layout therefore still seed empty slots. Whether (and
- * how) to retro-materialise defaultContent onto already-seeded built-in rows is
- * an OPEN owner decision, intentionally left unresolved: making the update
- * non-empty would risk clobbering admin customisations, which this contract
- * exists to protect.
+ * Seed the built-in Layouts + Templates, refreshing them from code (LTV-038;
+ * refresh policy = owner decision A, issue #111). Idempotent: re-running upserts
+ * each by `key` and rewrites its definition to match code, so a re-seed (or the
+ * prisma seed on deploy) propagates design improvements — e.g. the per-area
+ * `defaultContent` new templates seed from (#111) — to installs that seeded the
+ * built-ins earlier. Built-ins are code-managed scaffolding: to customise, an
+ * admin DUPLICATES a built-in into a new (non-`builtin-`) row and edits that;
+ * editing a built-in in place is overwritten on the next re-seed. Devices bind
+ * to these rows by `templateId`.
  */
 export async function ensureBuiltInDisplays(
   prisma: EnsureBuiltInDisplaysClient
 ): Promise<void> {
+  // Built-ins are code-managed scaffolding (owner decision A, issue #111): each
+  // re-seed REFRESHES the built-in's definition from code so improvements to the
+  // shipped designs (e.g. new per-area defaults) reach existing installs. An
+  // admin who wants a variant DUPLICATES a built-in into a new row rather than
+  // editing it in place. Only the reserved `builtin-*` keys are refreshed here.
+  const layoutIdByKey = new Map<string, string>();
   for (const layout of BUILT_IN_DISPLAY_LAYOUTS) {
-    await prisma.displayLayout.upsert({
+    const row = await prisma.displayLayout.upsert({
       where: { key: layout.key },
-      update: {},
+      update: {
+        name: layout.name,
+        description: layout.description,
+        bodyHtml: layout.bodyHtml,
+        defaultCss: layout.defaultCss,
+        areas: layout.areas as unknown as Prisma.InputJsonValue,
+      },
       create: {
         id: BUILT_IN_LAYOUT_ID(layout.key),
         key: layout.key,
@@ -363,23 +371,30 @@ export async function ensureBuiltInDisplays(
       },
       select: { id: true },
     });
+    layoutIdByKey.set(layout.key, row.id);
   }
 
   for (const template of BUILT_IN_DISPLAY_TEMPLATES) {
-    // The Template binds its Layout by id. The Layout was just upserted; resolve
-    // its id by re-upserting is wasteful, so use the deterministic create id —
-    // which is the id a FRESH seed created, and is stable across re-runs. When an
-    // admin pre-created a layout with this key, its id differs, but a matching
-    // pre-created template would already bind it, and the empty-update upsert
-    // leaves that admin row untouched.
+    // Bind to the Layout's REAL id from the upsert above (robust to an admin who
+    // pre-created a layout with this key under a different id), falling back to
+    // the deterministic id for a fresh seed.
+    const layoutId =
+      layoutIdByKey.get(template.layoutKey) ??
+      BUILT_IN_LAYOUT_ID(template.layoutKey);
     await prisma.displayTemplate.upsert({
       where: { key: template.key },
-      update: {},
+      update: {
+        name: template.name,
+        layoutId,
+        slotContent: template.slotContent as unknown as Prisma.InputJsonValue,
+        cssOverrides: template.cssOverrides,
+        footerHtml: template.footerHtml,
+      },
       create: {
         id: BUILT_IN_TEMPLATE_ID(template.key),
         key: template.key,
         name: template.name,
-        layoutId: BUILT_IN_LAYOUT_ID(template.layoutKey),
+        layoutId,
         slotContent: template.slotContent as unknown as Prisma.InputJsonValue,
         cssOverrides: template.cssOverrides,
         footerHtml: template.footerHtml,

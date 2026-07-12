@@ -17,7 +17,14 @@ import {
 interface UpsertCall {
   where: { key: string };
   update: Record<string, unknown>;
-  create: { id: string; key: string; layoutId?: string };
+  create: {
+    id: string;
+    key: string;
+    layoutId?: string;
+    bodyHtml?: unknown;
+    areas?: unknown;
+    slotContent?: unknown;
+  };
 }
 
 function makeClient() {
@@ -117,28 +124,40 @@ describe("built-in display seeds — definitions", () => {
 describe("ensureBuiltInDisplays — seed contract", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("upserts each layout and template create-if-missing (empty update never clobbers admin edits)", async () => {
+  it("upserts each layout and template refreshing its definition from code (owner decision A, #111)", async () => {
     const { client, layoutUpserts, templateUpserts } = makeClient();
     await ensureBuiltInDisplays(client);
 
     expect(layoutUpserts).toHaveLength(3);
     expect(templateUpserts).toHaveLength(3);
-    // Create-if-missing: EVERY upsert carries an empty update, so a re-run (or an
-    // admin-customised row) is never overwritten.
-    for (const call of [...layoutUpserts, ...templateUpserts]) {
-      expect(call.update).toEqual({});
+    // Code-managed scaffolding: the update REWRITES the definition (not empty),
+    // so a re-seed propagates design improvements to already-seeded rows, and it
+    // matches the create body so an existing row converges on the shipped design.
+    for (const call of layoutUpserts) {
       expect(call.where.key).toBe(call.create.key);
+      expect(call.update).not.toEqual({});
+      expect((call.update as { areas?: unknown }).areas).toEqual(call.create.areas);
+      expect((call.update as { bodyHtml?: unknown }).bodyHtml).toBe(call.create.bodyHtml);
     }
-    // Templates bind their layout by the deterministic built-in layout id.
+    for (const call of templateUpserts) {
+      expect(call.where.key).toBe(call.create.key);
+      expect(call.update).not.toEqual({});
+      expect((call.update as { slotContent?: unknown }).slotContent).toEqual(
+        call.create.slotContent
+      );
+      expect((call.update as { layoutId?: string }).layoutId).toBe(call.create.layoutId);
+    }
+    // Templates bind their layout by the resolved (here deterministic) id.
     const everydayTemplate = templateUpserts.find(
       (c) => c.create.key === "everyday-board"
     )!;
     expect(everydayTemplate.create.layoutId).toBe("builtin-layout-everyday-board");
   });
 
-  it("is idempotent: a second run only re-issues empty-update upserts (no clobber)", async () => {
-    // A populated DB: layouts/templates already exist, so every upsert's empty
-    // update is a no-op and an admin-customised row is never overwritten.
+  it("is idempotent: a second run re-issues the same definition-refresh upserts", async () => {
+    // A populated DB: layouts/templates already exist; each re-seed rewrites them
+    // to match code (converging, not clobbering with drift), so the operation is
+    // safe to repeat on every deploy.
     const { client, layoutUpserts, templateUpserts } = makeClient();
     await ensureBuiltInDisplays(client);
     await ensureBuiltInDisplays(client);
@@ -146,7 +165,7 @@ describe("ensureBuiltInDisplays — seed contract", () => {
     expect(layoutUpserts).toHaveLength(6);
     expect(templateUpserts).toHaveLength(6);
     for (const call of [...layoutUpserts, ...templateUpserts]) {
-      expect(call.update).toEqual({});
+      expect(call.update).not.toEqual({});
     }
   });
 });
