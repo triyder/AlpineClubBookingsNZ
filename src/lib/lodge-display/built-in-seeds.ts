@@ -124,15 +124,38 @@ const EVERYDAY_LAYOUT: BuiltInLayoutSeed = {
     "The daily arrivals board with a stacked side rail (chores, house rules, and a committee notice when one is set).",
   bodyHtml: EVERYDAY_BODY,
   defaultCss: EVERYDAY_CSS,
+  // Each static/conditional area declares the module it is built to show as its
+  // `defaultContent` (issue #111): the Template authoring editor seeds a NEW
+  // template's slots from these, so an author starts from the REAL default rather
+  // than an empty box. These mirror EVERYDAY_TEMPLATE.slotContent exactly.
+  // Rotator-child defaults (whole-lodge / singles-house) are a FOLLOW-UP —
+  // DisplayAreaChild has no defaultContent field yet, so those child slots still
+  // seed empty until the child type gains one.
   areas: [
-    { key: "board", description: "The arrivals / bar board.", kind: "static" },
-    { key: "chores", description: "Today's chores card.", kind: "static" },
-    { key: "rules", description: "House rules card.", kind: "static" },
+    {
+      key: "board",
+      description: "The arrivals / bar board.",
+      kind: "static",
+      defaultContent: { module: "arrivals-board", options: { days: 3 } },
+    },
+    {
+      key: "chores",
+      description: "Today's chores card.",
+      kind: "static",
+      defaultContent: { module: "chores-board" },
+    },
+    {
+      key: "rules",
+      description: "House rules card.",
+      kind: "static",
+      defaultContent: { module: "lodge-rules" },
+    },
     {
       key: "notice",
       description: "Committee notice — shown only when a notice is set.",
       kind: "conditional",
       condition: "content:notice",
+      defaultContent: { module: "notice-board" },
     },
   ],
 };
@@ -311,6 +334,16 @@ export interface EnsureBuiltInDisplaysClient {
  * (create-if-missing). Devices bind to these seeded rows by `templateId`; the
  * legacy device `templateKey` column and its one-shot migration were removed in
  * #86 (LTV-040), before the feature shipped.
+ *
+ * MATERIALISATION CAVEAT (issue #111): the EMPTY-update upsert is deliberate and
+ * UNCHANGED here. A consequence is that a built-in layout row ALREADY seeded
+ * before #111 will NOT gain the new area `defaultContent` until it is re-seeded
+ * or re-imported — only fresh creates carry it. New templates authored against an
+ * un-refreshed built-in layout therefore still seed empty slots. Whether (and
+ * how) to retro-materialise defaultContent onto already-seeded built-in rows is
+ * an OPEN owner decision, intentionally left unresolved: making the update
+ * non-empty would risk clobbering admin customisations, which this contract
+ * exists to protect.
  */
 export async function ensureBuiltInDisplays(
   prisma: EnsureBuiltInDisplaysClient

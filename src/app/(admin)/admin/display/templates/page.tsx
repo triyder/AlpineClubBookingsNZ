@@ -7,6 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { listDisplayCssTokens } from "@/lib/lodge-display/css-tokens";
 import { listDisplayModules } from "@/lib/lodge-display/module-registry";
+import {
+  buildSlots,
+  buildSlotContentPayload,
+  reseedSlotFromDefault,
+  type AreaDefinition,
+  type OptionDraft,
+  type SlotDraft,
+} from "./template-slots";
 
 // Lobby display TEMPLATE authoring (fork issue #79, LTV-033, ADR-003 §1). A
 // Template is built on a Layout: it fills each declared slot with content or an
@@ -39,34 +47,6 @@ interface LayoutOption {
 interface LodgeOption {
   id: string;
   name: string;
-}
-
-interface AreaChild {
-  key: string;
-  description?: string;
-}
-
-interface AreaDefinition {
-  key: string;
-  description?: string;
-  kind: "static" | "conditional" | "rotator";
-  children?: AreaChild[];
-  defaultContent?: { html?: string } | { module?: string; options?: Record<string, unknown> };
-}
-
-interface OptionDraft {
-  key: string;
-  value: string;
-}
-
-interface SlotDraft {
-  slotKey: string;
-  label: string;
-  description: string;
-  mode: "html" | "module";
-  html: string;
-  moduleName: string;
-  options: OptionDraft[];
 }
 
 interface TemplateDraft {
@@ -106,94 +86,6 @@ function emptyDraft(): TemplateDraft {
     cssOverrides: "",
     footerHtml: "",
   };
-}
-
-/** Seed one slot's editor fields from a stored SlotContent (or a layout default). */
-function seedSlot(content: unknown): Pick<SlotDraft, "mode" | "html" | "moduleName" | "options"> {
-  const record = (content ?? {}) as Record<string, unknown>;
-  if (typeof record.module === "string") {
-    const rawOptions =
-      record.options && typeof record.options === "object" && !Array.isArray(record.options)
-        ? (record.options as Record<string, unknown>)
-        : {};
-    return {
-      mode: "module",
-      html: "",
-      moduleName: record.module,
-      options: Object.entries(rawOptions).map(([key, value]) => ({
-        key,
-        value: String(value),
-      })),
-    };
-  }
-  return {
-    mode: "html",
-    html: typeof record.html === "string" ? record.html : "",
-    moduleName: "",
-    options: [],
-  };
-}
-
-/**
- * Generate one slot box per declared slot of the bound layout's areas, seeded
- * from any stored template slotContent, else the layout's defaultContent. A
- * static/conditional area is one slot keyed by the area; a rotator is one slot
- * per child keyed "area/child".
- */
-function buildSlots(
-  areas: AreaDefinition[],
-  slotContent: Record<string, unknown> = {}
-): SlotDraft[] {
-  const slots: SlotDraft[] = [];
-  for (const area of areas) {
-    if (area.kind === "rotator") {
-      for (const child of area.children ?? []) {
-        const slotKey = `${area.key}/${child.key}`;
-        const seed = seedSlot(slotContent[slotKey]);
-        slots.push({
-          slotKey,
-          label: `${area.key} / ${child.key}`,
-          description: child.description ?? "",
-          ...seed,
-        });
-      }
-    } else {
-      const slotKey = area.key;
-      const stored = slotContent[slotKey];
-      const seed = seedSlot(stored !== undefined ? stored : area.defaultContent);
-      slots.push({
-        slotKey,
-        label: area.key,
-        description: area.description ?? "",
-        ...seed,
-      });
-    }
-  }
-  return slots;
-}
-
-/** Assemble the slotContent JSON the save contract validates. Empty slots are
- * omitted so they fall back to the layout default (or render nothing). */
-function buildSlotContentPayload(slots: SlotDraft[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const slot of slots) {
-    if (slot.mode === "module") {
-      if (!slot.moduleName) continue;
-      const options: Record<string, string> = {};
-      for (const option of slot.options) {
-        const key = option.key.trim();
-        if (key !== "") options[key] = option.value;
-      }
-      out[slot.slotKey] =
-        Object.keys(options).length > 0
-          ? { module: slot.moduleName, options }
-          : { module: slot.moduleName };
-    } else {
-      const html = slot.html.trim();
-      if (html !== "") out[slot.slotKey] = { html };
-    }
-  }
-  return out;
 }
 
 export default function AdminDisplayTemplatesPage() {
@@ -434,6 +326,18 @@ export default function AdminDisplayTemplatesPage() {
     }));
   }
 
+  // Re-seed one slot's editor from its layout-provided default (issue #111),
+  // reusing the same seeding path buildSlots uses on create. Only offered for
+  // slots whose area declares a defaultContent (static/conditional built-ins).
+  function resetSlotToDefault(index: number) {
+    setDraft((current) => ({
+      ...current,
+      slots: current.slots.map((slot, i) =>
+        i === index ? reseedSlotFromDefault(slot) : slot
+      ),
+    }));
+  }
+
   function updateOption(slotIndex: number, optionIndex: number, patch: Partial<OptionDraft>) {
     setDraft((current) => ({
       ...current,
@@ -647,6 +551,16 @@ export default function AdminDisplayTemplatesPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-2">
+                      {slot.defaultContent !== undefined && (
+                        <Button
+                          variant="outline"
+                          className="h-9"
+                          title="Re-seed this slot from the layout's default content"
+                          onClick={() => resetSlotToDefault(index)}
+                        >
+                          Reset to default
+                        </Button>
+                      )}
                       <Label className="text-xs" htmlFor={`slot-mode-${index}`}>
                         Mode
                       </Label>
@@ -672,7 +586,7 @@ export default function AdminDisplayTemplatesPage() {
                         id={`slot-html-${index}`}
                         className={`${textareaClass} min-h-24`}
                         spellCheck={false}
-                        placeholder={"<p>Welcome to {{lodge-name}}</p>"}
+                        placeholder={"Empty — HTML goes here, e.g. <p>{{lodge-name}}</p>"}
                         value={slot.html}
                         onChange={(event) =>
                           updateSlot(index, { html: event.target.value })

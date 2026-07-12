@@ -469,8 +469,16 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > original areas, and the key is likewise immutable once devices bind to it. The
 > editor **generates one content box per declared slot** of the bound layout:
 > static/conditional areas key off the area, a rotator gets one box per child
-> (labelled `area / child`), each seeded from the layout's `defaultContent` when
-> present. Each slot box toggles between **HTML** (a monospace `<textarea>`;
+> (labelled `area / child`), each **seeded from the layout's per-area
+> `defaultContent`** when present. Since **#111** the built-in layouts declare
+> that default content on their static/conditional areas (the everyday-board's
+> `board`/`chores`/`rules`/`notice` areas each name the module they are built to
+> show), so a new template opens **pre-populated with the real default —
+> editable from there** — rather than an empty box behind a generic placeholder.
+> A per-slot **"Reset to default"** button (shown only for slots whose area
+> declares a default) re-seeds that one slot from its default through the same
+> seeding path used on create. Each slot box toggles between **HTML** (a monospace
+> `<textarea>`;
 > `{{config:key}}`, `{{lodge-name}}`, `{{display-date}}`, `{{module:name}}` tokens
 > resolve at serve time) and **Module** (a dropdown from `listDisplayModules()`
 > with descriptions, plus a small scalar key/value options editor). A **CSS
@@ -493,6 +501,19 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > unchanged: all authored HTML is sanitised at serve time (LTV-029) and validated
 > by the save contract regardless of the authoring surface. Noted for the owner to
 > revisit if a reusable rich editor is later extracted.
+>
+> *Default-content materialisation caveat (#111).* Per-area `defaultContent` seeds
+> a new template **at authoring time** — it is copied into the template's slot
+> content when the author saves, so changing a layout's default **later does not
+> retro-update** templates already authored against it. Two further consequences
+> follow from the create-if-missing seed contract (`ensureBuiltInDisplays` upserts
+> built-ins with an EMPTY update so admin edits are never clobbered): a built-in
+> **layout row already seeded before #111 does not gain the new `defaultContent`**
+> until it is re-seeded or re-imported, and rotator built-ins (whole-lodge /
+> singles-house) still seed **empty child slots** because `DisplayAreaChild` has no
+> `defaultContent` field yet. Both are follow-ups; how (and whether) to
+> retro-materialise defaults onto already-seeded rows is an **open owner
+> decision**, deliberately left unresolved here.
 >
 > *Device binding (the point of a Template).* The **Devices** picker offers the
 > **club default** and every **v2 template** (bound by `templateId`) from
