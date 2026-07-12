@@ -11,6 +11,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useEffect, useRef, useState } from "react";
+import {
+  AdminFilterBar,
+  type AdminFilterChip,
+} from "@/components/admin/admin-filter-bar";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { bookingFilterDateRangePresets } from "@/lib/date-range-presets";
 import { bookingStatusLabel } from "@/lib/status-colors";
@@ -46,6 +50,44 @@ const KNOWN_BOOKING_FILTER_QUERY_KEYS = [
   "additionalOwed",
   "page",
 ] as const;
+
+// Chip display labels — mirror the SelectItem copy for each filter so an active
+// filter reads the same on its chip as in its control. Presentation only.
+const DELETED_CHIP_LABELS: Record<string, string> = {
+  include: "Include deleted",
+  only: "Deleted only",
+};
+const PAYMENT_SOURCE_CHIP_LABELS: Record<string, string> = {
+  STRIPE: "Stripe",
+  INTERNET_BANKING: "Internet Banking",
+  NONE: "No payment",
+};
+const XERO_STATE_CHIP_LABELS: Record<string, string> = {
+  invoiceLinked: "Invoice linked",
+  invoiceMissing: "Invoice missing",
+  operationFailed: "Failed activity",
+  operationPartial: "Partial activity",
+  operationPending: "Pending activity",
+};
+const BED_STATE_CHIP_LABELS: Record<string, string> = {
+  unallocated: "Unallocated",
+  partial: "Partial",
+  complete: "Complete",
+  warning: "Warning",
+};
+const CHANGE_STATE_CHIP_LABELS: Record<string, string> = {
+  requiresReview: "Requires review",
+  pendingRequest: "Pending request",
+  hasModification: "Has modification",
+  creditGenerated: "Credit generated",
+};
+
+// A date range summarised for a chip: "from → to", or a single open bound.
+function dateRangeChipValue(from: string, to: string): string {
+  if (from && to) return `${from} → ${to}`;
+  if (from) return `From ${from}`;
+  return `Until ${to}`;
+}
 
 export function BookingFilters({
   showBedAllocation = true,
@@ -230,189 +272,329 @@ export function BookingFilters({
     router.push("/admin/bookings");
   }
 
+  // Count of active filters that live under "More filters" (Status, Month,
+  // Payment and Search stay in the always-visible primary row). Drives the
+  // disclosure count badge and the mount-time auto-open. Presentation only —
+  // derived from the same state that already builds the URL.
+  const advancedActiveCount =
+    (updatedFrom || updatedTo ? 1 : 0) +
+    (checkInFrom || checkInTo ? 1 : 0) +
+    (checkOutFrom || checkOutTo ? 1 : 0) +
+    (deleted !== "hide" ? 1 : 0) +
+    (xeroState !== "all" ? 1 : 0) +
+    (showBedAllocation && bedState !== "all" ? 1 : 0) +
+    (changeState !== "all" ? 1 : 0) +
+    (additionalOwed !== "all" ? 1 : 0) +
+    (showLodgeFilter && lodgeId !== "all" ? 1 : 0);
+
+  // Active-filter chips. Each × resets the same state a control would, so the
+  // debounced URL update is identical to clearing that control by hand. Search
+  // is intentionally omitted (it stays in the primary row, showing its value).
+  const chips: AdminFilterChip[] = [];
+  if (status !== "all") {
+    chips.push({
+      key: "status",
+      label: "Status",
+      value: statusFilterLabel(status),
+      onRemove: () => setStatus("all"),
+    });
+  }
+  if (showLodgeFilter && lodgeId !== "all") {
+    chips.push({
+      key: "lodgeId",
+      label: "Lodge",
+      value: lodgeOptions.find((lodge) => lodge.id === lodgeId)?.name ?? lodgeId,
+      onRemove: () => setLodgeId("all"),
+    });
+  }
+  if (month !== "all") {
+    chips.push({
+      key: "month",
+      label: "Month",
+      value: monthOptions.find((opt) => opt.value === month)?.label ?? month,
+      onRemove: () => setMonth("all"),
+    });
+  }
+  if (deleted !== "hide") {
+    chips.push({
+      key: "deleted",
+      label: "Deleted",
+      value: DELETED_CHIP_LABELS[deleted] ?? deleted,
+      onRemove: () => setDeleted("hide"),
+    });
+  }
+  if (paymentSource !== "all") {
+    chips.push({
+      key: "paymentSource",
+      label: "Payment",
+      value: PAYMENT_SOURCE_CHIP_LABELS[paymentSource] ?? paymentSource,
+      onRemove: () => setPaymentSource("all"),
+    });
+  }
+  if (xeroState !== "all") {
+    chips.push({
+      key: "xeroState",
+      label: "Xero",
+      value: XERO_STATE_CHIP_LABELS[xeroState] ?? xeroState,
+      onRemove: () => setXeroState("all"),
+    });
+  }
+  if (showBedAllocation && bedState !== "all") {
+    chips.push({
+      key: "bedState",
+      label: "Beds",
+      value: BED_STATE_CHIP_LABELS[bedState] ?? bedState,
+      onRemove: () => setBedState("all"),
+    });
+  }
+  if (changeState !== "all") {
+    chips.push({
+      key: "changeState",
+      label: "Changes",
+      value: CHANGE_STATE_CHIP_LABELS[changeState] ?? changeState,
+      onRemove: () => setChangeState("all"),
+    });
+  }
+  if (additionalOwed !== "all") {
+    chips.push({
+      key: "additionalOwed",
+      label: "Additional Payment",
+      value: "Still owing",
+      onRemove: () => setAdditionalOwed("all"),
+    });
+  }
+  if (updatedFrom || updatedTo) {
+    chips.push({
+      key: "updated",
+      label: "Updated",
+      value: dateRangeChipValue(updatedFrom, updatedTo),
+      onRemove: () => {
+        setUpdatedFrom("");
+        setUpdatedTo("");
+      },
+    });
+  }
+  if (checkInFrom || checkInTo) {
+    chips.push({
+      key: "checkIn",
+      label: "Check In",
+      value: dateRangeChipValue(checkInFrom, checkInTo),
+      onRemove: () => {
+        setCheckInFrom("");
+        setCheckInTo("");
+      },
+    });
+  }
+  if (checkOutFrom || checkOutTo) {
+    chips.push({
+      key: "checkOut",
+      label: "Check Out",
+      value: dateRangeChipValue(checkOutFrom, checkOutTo),
+      onRemove: () => {
+        setCheckOutFrom("");
+        setCheckOutTo("");
+      },
+    });
+  }
+
   return (
-    <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-white p-4">
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">Status</label>
-        <Select value={status} onValueChange={setStatus}>
-          <SelectTrigger className="w-[170px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            {hasCustomStatusValue ? (
-              <SelectItem value={status}>{statusFilterLabel(status)}</SelectItem>
-            ) : null}
-            {bookingStatuses.map((bookingStatus) => (
-              <SelectItem key={bookingStatus} value={bookingStatus}>
-                {bookingStatusLabel(bookingStatus)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      {showLodgeFilter && (
+    <AdminFilterBar
+      idPrefix="bookings-filters"
+      advancedActiveCount={advancedActiveCount}
+      chips={chips}
+      search={
         <div className="space-y-1">
-          <label className="text-xs font-medium text-gray-500">Lodge</label>
-          <select
-            value={lodgeId}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setLodgeId(e.target.value)}
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
-          >
-            <option value="all">All lodges</option>
-            {lodgeOptions.map((lodge) => (
-              <option key={lodge.id} value={lodge.id}>{lodge.name}</option>
-            ))}
-          </select>
+          <label className="text-xs font-medium text-gray-500">Search member</label>
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Name or email..."
+          />
         </div>
-      )}
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">Month</label>
-        <Select value={month} onValueChange={setMonth}>
-          <SelectTrigger className="w-[140px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All months</SelectItem>
-            {monthOptions.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">Deleted</label>
-        <Select value={deleted} onValueChange={setDeleted}>
-          <SelectTrigger className="w-[150px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="hide">Hide deleted</SelectItem>
-            <SelectItem value="include">Include deleted</SelectItem>
-            <SelectItem value="only">Deleted only</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">Payment</label>
-        <Select value={paymentSource} onValueChange={setPaymentSource}>
-          <SelectTrigger className="w-[160px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All payments</SelectItem>
-            <SelectItem value="STRIPE">Stripe</SelectItem>
-            <SelectItem value="INTERNET_BANKING">Internet Banking</SelectItem>
-            <SelectItem value="NONE">No payment</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">Xero</label>
-        <Select value={xeroState} onValueChange={setXeroState}>
-          <SelectTrigger className="w-[160px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Xero states</SelectItem>
-            <SelectItem value="invoiceLinked">Invoice linked</SelectItem>
-            <SelectItem value="invoiceMissing">Invoice missing</SelectItem>
-            <SelectItem value="operationFailed">Failed activity</SelectItem>
-            <SelectItem value="operationPartial">Partial activity</SelectItem>
-            <SelectItem value="operationPending">Pending activity</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      {showBedAllocation ? (
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-gray-500">Beds</label>
-          <Select value={bedState} onValueChange={setBedState}>
-            <SelectTrigger className="w-[150px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All bed states</SelectItem>
-              <SelectItem value="unallocated">Unallocated</SelectItem>
-              <SelectItem value="partial">Partial</SelectItem>
-              <SelectItem value="complete">Complete</SelectItem>
-              <SelectItem value="warning">Warning</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      ) : null}
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">Changes</label>
-        <Select value={changeState} onValueChange={setChangeState}>
-          <SelectTrigger className="w-[170px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All change states</SelectItem>
-            <SelectItem value="requiresReview">Requires review</SelectItem>
-            <SelectItem value="pendingRequest">Pending request</SelectItem>
-            <SelectItem value="hasModification">Has modification</SelectItem>
-            <SelectItem value="creditGenerated">Credit generated</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">
-          Additional Payment
-        </label>
-        <Select value={additionalOwed} onValueChange={setAdditionalOwed}>
-          <SelectTrigger className="w-[170px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="owed">Still owing</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <DateRangeControls
-        presets={bookingFilterDateRangePresets}
-        from={updatedFrom}
-        to={updatedTo}
-        presetLabel="Updated Range"
-        fromLabel="Updated From"
-        toLabel="Updated To"
-        idPrefix="bookings-updated"
-        onFromChange={setUpdatedFrom}
-        onToChange={setUpdatedTo}
-      />
-      <DateRangeControls
-        presets={bookingFilterDateRangePresets}
-        from={checkInFrom}
-        to={checkInTo}
-        presetLabel="Check In Range"
-        fromLabel="Check In From"
-        toLabel="Check In To"
-        idPrefix="bookings-check-in"
-        onFromChange={setCheckInFrom}
-        onToChange={setCheckInTo}
-      />
-      <DateRangeControls
-        presets={bookingFilterDateRangePresets}
-        from={checkOutFrom}
-        to={checkOutTo}
-        presetLabel="Check Out Range"
-        fromLabel="Check Out From"
-        toLabel="Check Out To"
-        idPrefix="bookings-check-out"
-        onFromChange={setCheckOutFrom}
-        onToChange={setCheckOutTo}
-      />
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">Search member</label>
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Name or email..."
-        />
-      </div>
-      <Button onClick={clearFilters} variant="outline" size="sm">
-        Clear
-      </Button>
-    </div>
+      }
+      primary={
+        <>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">Status</label>
+            <Select value={status} onValueChange={setStatus}>
+              <SelectTrigger className="w-[170px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                {hasCustomStatusValue ? (
+                  <SelectItem value={status}>{statusFilterLabel(status)}</SelectItem>
+                ) : null}
+                {bookingStatuses.map((bookingStatus) => (
+                  <SelectItem key={bookingStatus} value={bookingStatus}>
+                    {bookingStatusLabel(bookingStatus)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">Month</label>
+            <Select value={month} onValueChange={setMonth}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All months</SelectItem>
+                {monthOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">Payment</label>
+            <Select value={paymentSource} onValueChange={setPaymentSource}>
+              <SelectTrigger className="w-[160px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All payments</SelectItem>
+                <SelectItem value="STRIPE">Stripe</SelectItem>
+                <SelectItem value="INTERNET_BANKING">Internet Banking</SelectItem>
+                <SelectItem value="NONE">No payment</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </>
+      }
+      actions={
+        <Button onClick={clearFilters} variant="outline" size="sm">
+          Clear
+        </Button>
+      }
+      advanced={
+        <>
+          {showLodgeFilter && (
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-gray-500">Lodge</label>
+              <select
+                value={lodgeId}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setLodgeId(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+              >
+                <option value="all">All lodges</option>
+                {lodgeOptions.map((lodge) => (
+                  <option key={lodge.id} value={lodge.id}>{lodge.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">Deleted</label>
+            <Select value={deleted} onValueChange={setDeleted}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hide">Hide deleted</SelectItem>
+                <SelectItem value="include">Include deleted</SelectItem>
+                <SelectItem value="only">Deleted only</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">Xero</label>
+            <Select value={xeroState} onValueChange={setXeroState}>
+              <SelectTrigger className="w-[160px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Xero states</SelectItem>
+                <SelectItem value="invoiceLinked">Invoice linked</SelectItem>
+                <SelectItem value="invoiceMissing">Invoice missing</SelectItem>
+                <SelectItem value="operationFailed">Failed activity</SelectItem>
+                <SelectItem value="operationPartial">Partial activity</SelectItem>
+                <SelectItem value="operationPending">Pending activity</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {showBedAllocation ? (
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-gray-500">Beds</label>
+              <Select value={bedState} onValueChange={setBedState}>
+                <SelectTrigger className="w-[150px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All bed states</SelectItem>
+                  <SelectItem value="unallocated">Unallocated</SelectItem>
+                  <SelectItem value="partial">Partial</SelectItem>
+                  <SelectItem value="complete">Complete</SelectItem>
+                  <SelectItem value="warning">Warning</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">Changes</label>
+            <Select value={changeState} onValueChange={setChangeState}>
+              <SelectTrigger className="w-[170px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All change states</SelectItem>
+                <SelectItem value="requiresReview">Requires review</SelectItem>
+                <SelectItem value="pendingRequest">Pending request</SelectItem>
+                <SelectItem value="hasModification">Has modification</SelectItem>
+                <SelectItem value="creditGenerated">Credit generated</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">
+              Additional Payment
+            </label>
+            <Select value={additionalOwed} onValueChange={setAdditionalOwed}>
+              <SelectTrigger className="w-[170px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="owed">Still owing</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <DateRangeControls
+            presets={bookingFilterDateRangePresets}
+            from={updatedFrom}
+            to={updatedTo}
+            presetLabel="Updated Range"
+            fromLabel="Updated From"
+            toLabel="Updated To"
+            idPrefix="bookings-updated"
+            onFromChange={setUpdatedFrom}
+            onToChange={setUpdatedTo}
+          />
+          <DateRangeControls
+            presets={bookingFilterDateRangePresets}
+            from={checkInFrom}
+            to={checkInTo}
+            presetLabel="Check In Range"
+            fromLabel="Check In From"
+            toLabel="Check In To"
+            idPrefix="bookings-check-in"
+            onFromChange={setCheckInFrom}
+            onToChange={setCheckInTo}
+          />
+          <DateRangeControls
+            presets={bookingFilterDateRangePresets}
+            from={checkOutFrom}
+            to={checkOutTo}
+            presetLabel="Check Out Range"
+            fromLabel="Check Out From"
+            toLabel="Check Out To"
+            idPrefix="bookings-check-out"
+            onFromChange={setCheckOutFrom}
+            onToChange={setCheckOutTo}
+          />
+        </>
+      }
+    />
   );
 }
