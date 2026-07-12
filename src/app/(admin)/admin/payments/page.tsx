@@ -701,6 +701,23 @@ export default function PaymentsPage() {
                 </SelectContent>
               </Select>
             </div>
+            <DateRangeControls
+              presets={auditAndPaymentsDateRangePresets}
+              from={lastUpdatedFrom}
+              to={lastUpdatedTo}
+              presetLabel="Updated Range"
+              fromLabel="Updated From"
+              toLabel="Updated To"
+              idPrefix="payments-updated"
+              onFromChange={(value) => {
+                setLastUpdatedFrom(value);
+                resetPage();
+              }}
+              onToChange={(value) => {
+                setLastUpdatedTo(value);
+                resetPage();
+              }}
+            />
           </>
         }
         actions={
@@ -753,23 +770,6 @@ export default function PaymentsPage() {
                 className="w-32"
               />
             </div>
-            <DateRangeControls
-              presets={auditAndPaymentsDateRangePresets}
-              from={lastUpdatedFrom}
-              to={lastUpdatedTo}
-              presetLabel="Updated Range"
-              fromLabel="Updated From"
-              toLabel="Updated To"
-              idPrefix="payments-updated"
-              onFromChange={(value) => {
-                setLastUpdatedFrom(value);
-                resetPage();
-              }}
-              onToChange={(value) => {
-                setLastUpdatedTo(value);
-                resetPage();
-              }}
-            />
             <DateRangeControls
               presets={auditAndPaymentsDateRangePresets}
               from={checkInFrom}

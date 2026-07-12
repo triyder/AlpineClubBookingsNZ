@@ -195,7 +195,7 @@ export function SetupPanels({
     >
       <div className="space-y-6">
         {confirmDialog}
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {error ? <p className="text-sm text-danger">{error}</p> : null}
         <div className="space-y-4">
           <div className="space-y-1">
             <h3 className="text-sm font-semibold">Import Members from Xero</h3>
@@ -238,11 +238,11 @@ export function SetupPanels({
                 })}
               </div>
               <div className="flex items-center gap-2">
-                <input id="sendInvites" type="checkbox" checked={sendInvites} onChange={(event) => setSendInvites(event.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+                <input id="sendInvites" type="checkbox" checked={sendInvites} onChange={(event) => setSendInvites(event.target.checked)} className="h-4 w-4 rounded border-input" />
                 <Label htmlFor="sendInvites" className="text-sm">Send invite emails to new members (password reset link, valid 7 days)</Label>
               </div>
               <div className="flex items-center gap-2">
-                <input id="repairMissingContactCache" type="checkbox" checked={repairMissingContactCache} onChange={(event) => setRepairMissingContactCache(event.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+                <input id="repairMissingContactCache" type="checkbox" checked={repairMissingContactCache} onChange={(event) => setRepairMissingContactCache(event.target.checked)} className="h-4 w-4 rounded border-input" />
                 <Label htmlFor="repairMissingContactCache" className="text-sm">Repair missing contact snapshots during import</Label>
               </div>
               <div className="flex gap-2">
@@ -309,7 +309,7 @@ function DuplicateGroupsPanel({
             {duplicates.filteredByFamilyGroup > 0 ? <span className="text-muted-foreground">Already in family groups (hidden): <span className="font-medium text-foreground">{duplicates.filteredByFamilyGroup}</span></span> : null}
           </div>
           {duplicates.duplicateGroups.length === 0 ? (
-            <p className="text-sm text-green-700">No duplicate contacts found.</p>
+            <p className="text-sm text-success">No duplicate contacts found.</p>
           ) : (
             <div className="space-y-3">
               {duplicates.duplicateGroups.map((group) => (
@@ -318,7 +318,7 @@ function DuplicateGroupsPanel({
                     <p className="text-sm font-medium">
                       {group.email}
                       <span className="ml-2 text-xs font-normal text-muted-foreground">({group.contacts.length} contacts)</span>
-                      {group.suggestedGroupName ? <span className="ml-2 text-xs font-normal text-blue-600">- {group.suggestedGroupName}</span> : null}
+                      {group.suggestedGroupName ? <span className="ml-2 text-xs font-normal text-primary">- {group.suggestedGroupName}</span> : null}
                     </p>
                     {group.canCreateFamilyGroup ? (
                       <Button size="sm" variant="outline" onClick={() => void onCreate(group)} disabled={creatingFamilyGroup === group.email}>
@@ -331,11 +331,11 @@ function DuplicateGroupsPanel({
                       <div key={contact.contactID} className="flex items-center gap-3 border-l-2 border-muted py-1 pl-2 text-sm">
                         <div className="min-w-0 flex-1">
                           <span className="font-medium">{contact.name}</span>
-                          {contact.memberId ? <Badge variant="outline" className="ml-2 border-green-300 text-xs text-green-700">{clubName} member</Badge> : null}
-                          {contact.invoiceCount > 0 ? <Badge variant="default" className="ml-2 bg-blue-600 text-xs">{contact.invoiceCount} invoice{contact.invoiceCount === 1 ? "" : "s"}</Badge> : <Badge variant="secondary" className="ml-2 text-xs">No invoices</Badge>}
+                          {contact.memberId ? <Badge variant="outline" className="ml-2 border-success/30 text-xs text-success">{clubName} member</Badge> : null}
+                          {contact.invoiceCount > 0 ? <Badge variant="default" className="ml-2 bg-info text-info-foreground text-xs">{contact.invoiceCount} invoice{contact.invoiceCount === 1 ? "" : "s"}</Badge> : <Badge variant="secondary" className="ml-2 text-xs">No invoices</Badge>}
                           <span className="ml-2 text-xs text-muted-foreground">{contact.contactStatus}</span>
                         </div>
-                        <a href={contact.xeroLink} target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-xs text-blue-600 hover:underline">Open in Xero</a>
+                        <a href={contact.xeroLink} target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-xs text-primary hover:underline">Open in Xero</a>
                       </div>
                     ))}
                   </div>

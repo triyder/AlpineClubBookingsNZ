@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
+import { AlertTriangle, CheckCircle2, Circle, Clock } from "lucide-react"
 import type { AgeTier } from "@prisma/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,10 +10,11 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import { fetchJson, postJson } from "./api"
 import {
-  healthBudgetToneClass,
+  BudgetStatusChip,
   HealthStatCard,
   SectionCard,
   shortId,
+  ToneChip,
   type ToggleSection,
 } from "./shared"
 import type {
@@ -225,7 +227,7 @@ export function HealthAndDiagnosticsPanels({
           </Button>
         }
       >
-        {healthError ? <p className="mb-3 text-sm text-red-600">{healthError}</p> : null}
+        {healthError ? <p className="mb-3 text-sm text-danger">{healthError}</p> : null}
         {loadingHealth && !health ? (
           <p className="text-sm text-muted-foreground">Loading health snapshot...</p>
         ) : health ? (
@@ -236,14 +238,14 @@ export function HealthAndDiagnosticsPanels({
                 label="Active failed issues"
                 value={health.failedOperations.count}
                 subtitle={health.failedOperations.legacyCount > 0 ? `Replayable failures that still need action. ${health.failedOperations.legacyCount} older failed rows are already repaired or superseded.` : "Replayable failures that still need action."}
-                badge={<Badge className={health.failedOperations.count > 0 ? "bg-red-600" : "bg-green-600"}>{health.failedOperations.count > 0 ? "Needs attention" : "Clear"}</Badge>}
+                badge={health.failedOperations.count > 0 ? <ToneChip tone="danger" icon={AlertTriangle}>Needs attention</ToneChip> : <ToneChip tone="success" icon={CheckCircle2}>Clear</ToneChip>}
                 onClick={() => scrollToSection("operations")}
               />
               <HealthStatCard
                 label="Pending operations"
                 value={health.pendingOperations.count}
                 subtitle="Outbox operations waiting for the next cron pick-up. Nothing is executing yet; running work is tracked separately and flagged only when stale."
-                badge={<Badge className={health.pendingOperations.count > 0 ? "bg-slate-600" : "bg-green-600"}>{health.pendingOperations.count > 0 ? "Waiting" : "Idle"}</Badge>}
+                badge={health.pendingOperations.count > 0 ? <ToneChip tone="neutral" icon={Clock}>Waiting</ToneChip> : <ToneChip tone="success" icon={CheckCircle2}>Idle</ToneChip>}
                 onClick={() => scrollToSection("operations")}
               />
               <HealthStatCard
@@ -256,21 +258,21 @@ export function HealthAndDiagnosticsPanels({
                 label="Group mismatches"
                 value={health.contactGroupMismatches.count}
                 subtitle={health.contactGroupMismatches.cacheReady ? "Linked members whose managed Xero group does not match their current age tier." : "Refresh Xero contact groups before mismatch checks can run."}
-                badge={<Badge className={!health.contactGroupMismatches.cacheReady ? "bg-slate-600" : health.contactGroupMismatches.count > 0 ? "bg-amber-500" : "bg-green-600"}>{!health.contactGroupMismatches.cacheReady ? "Cache needed" : health.contactGroupMismatches.count > 0 ? "Review" : "Clear"}</Badge>}
+                badge={!health.contactGroupMismatches.cacheReady ? <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip> : health.contactGroupMismatches.count > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>Review</ToneChip> : <ToneChip tone="success" icon={CheckCircle2}>Clear</ToneChip>}
                 onClick={() => scrollToSection("contactGroupMismatches")}
               />
               <HealthStatCard
                 label="Link mismatches"
                 value={health.contactLinkMismatches.count}
                 subtitle={health.contactLinkMismatches.cacheReady ? "Linked members whose local name does not match the cached Xero contact name." : "Run contact sync before name mismatch checks can run."}
-                badge={<Badge className={!health.contactLinkMismatches.cacheReady ? "bg-slate-600" : health.contactLinkMismatches.count > 0 ? "bg-amber-500" : "bg-green-600"}>{!health.contactLinkMismatches.cacheReady ? "Cache needed" : health.contactLinkMismatches.count > 0 ? "Review" : "Clear"}</Badge>}
+                badge={!health.contactLinkMismatches.cacheReady ? <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip> : health.contactLinkMismatches.count > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>Review</ToneChip> : <ToneChip tone="success" icon={CheckCircle2}>Clear</ToneChip>}
                 onClick={() => scrollToSection("contactLinkMismatches")}
               />
               <HealthStatCard
                 label="API budget"
                 value={health.apiBudget.usagePercent != null ? `${Math.round(health.apiBudget.usagePercent * 100)}%` : "Unknown"}
                 subtitle={health.apiBudget.totalCalls != null ? `${health.apiBudget.totalCalls} calls today, ${health.apiBudget.failedCalls ?? 0} failed` : "Usage snapshot not available yet."}
-                badge={<Badge className={healthBudgetToneClass(health.apiBudget.status)}>{health.apiBudget.status}</Badge>}
+                badge={<BudgetStatusChip status={health.apiBudget.status} />}
                 onClick={() => scrollToSection("usage")}
               />
             </div>
@@ -280,7 +282,11 @@ export function HealthAndDiagnosticsPanels({
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-semibold">Missing invoice detector</h3>
-                    <Badge className={health.missingInvoices.count > 0 ? "bg-amber-500" : "bg-green-600"}>{health.missingInvoices.count}</Badge>
+                    {health.missingInvoices.count > 0 ? (
+                      <ToneChip tone="warning" icon={AlertTriangle}>{health.missingInvoices.count}</ToneChip>
+                    ) : (
+                      <ToneChip tone="success" icon={CheckCircle2}>{health.missingInvoices.count}</ToneChip>
+                    )}
                   </div>
                   <p className="text-sm text-muted-foreground">Paid bookings with no successful Xero invoice sync on record.</p>
                 </div>
@@ -338,7 +344,7 @@ function MissingInvoicesList({
 }) {
   if (loading && !details) return <p className="mt-4 text-sm text-muted-foreground">Loading missing invoice details...</p>
   if (!details) return <p className="mt-4 text-sm text-muted-foreground">No missing invoice details loaded yet.</p>
-  if (details.count === 0) return <p className="mt-4 text-sm text-green-700">No paid bookings are currently missing a Xero invoice.</p>
+  if (details.count === 0) return <p className="mt-4 text-sm text-success">No paid bookings are currently missing a Xero invoice.</p>
   return (
     <div className="mt-4 space-y-3 border-t pt-4">
       <p className="text-sm text-muted-foreground">
@@ -349,13 +355,13 @@ function MissingInvoicesList({
           <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
-                <a href={buildHrefWithReturnTo(`/bookings/${booking.bookingId}`, currentXeroPath)} className="text-sm font-medium text-blue-600 hover:underline">
+                <a href={buildHrefWithReturnTo(`/bookings/${booking.bookingId}`, currentXeroPath)} className="text-sm font-medium text-primary hover:underline">
                   Booking {shortId(booking.bookingId)}
                 </a>
                 <Badge variant="outline">{booking.status}</Badge>
               </div>
               <p className="text-sm">
-                <a href={buildHrefWithReturnTo(`/admin/members/${booking.memberId}`, currentXeroPath)} className="text-blue-600 hover:underline">
+                <a href={buildHrefWithReturnTo(`/admin/members/${booking.memberId}`, currentXeroPath)} className="text-primary hover:underline">
                   {booking.memberName}
                 </a>
                 <span className="ml-2 text-muted-foreground">{booking.memberEmail}</span>
@@ -400,7 +406,7 @@ function ContactGroupMismatchPanel({
       onToggle={(nextOpen) => onToggle("contactGroupMismatches", nextOpen)}
       actions={<Button variant="outline" size="sm" onClick={() => void onRefresh()} disabled={loading || resyncing} title="Re-fetches the flagged contacts from Xero, then recomputes this audit.">{resyncing ? "Re-syncing from Xero..." : loading ? "Loading..." : "Refresh"}</Button>}
     >
-      {error ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="mb-3 text-sm text-danger">{error}</p> : null}
       {loading && !data ? (
         <p className="text-sm text-muted-foreground">Loading contact group mismatches...</p>
       ) : data ? (
@@ -409,28 +415,32 @@ function ContactGroupMismatchPanel({
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold">Managed mapping status</h3>
-                <Badge className={!data.cacheReady ? "bg-slate-600" : data.count > 0 ? "bg-amber-500" : "bg-green-600"}>
-                  {!data.cacheReady ? "Cache needed" : `${data.count} mismatch${data.count === 1 ? "" : "es"}`}
-                </Badge>
+                {!data.cacheReady ? (
+                  <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip>
+                ) : data.count > 0 ? (
+                  <ToneChip tone="warning" icon={AlertTriangle}>{data.count} mismatch{data.count === 1 ? "" : "es"}</ToneChip>
+                ) : (
+                  <ToneChip tone="success" icon={CheckCircle2}>{data.count} mismatch{data.count === 1 ? "" : "es"}</ToneChip>
+                )}
               </div>
               <p className="text-sm text-muted-foreground">{formatConfiguredMappings(data.configuredMappings)}</p>
               <p className="text-xs text-muted-foreground">
                 {data.cacheReady && data.lastRefreshedAt ? `Cache last refreshed ${new Date(data.lastRefreshedAt).toLocaleString("en-NZ")}.` : "The shared Xero contact-group cache has not been refreshed yet."}
               </p>
               {data.resync ? (
-                <p className="text-xs text-green-700">
+                <p className="text-xs text-success">
                   {data.resync.requestedContacts === 0
                     ? `Nothing was flagged to re-sync; audit recomputed at ${new Date(data.resync.resyncedAt).toLocaleTimeString("en-NZ")}.`
                     : `Re-synced ${data.resync.resyncedContacts} of ${data.resync.requestedContacts} flagged contact${data.resync.requestedContacts === 1 ? "" : "s"} from Xero at ${new Date(data.resync.resyncedAt).toLocaleTimeString("en-NZ")}${data.resync.removedContacts > 0 ? ` (${data.resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)` : ""}.`}
                 </p>
               ) : null}
             </div>
-            <Link href="/admin/age-tier-settings" className="text-sm text-blue-600 hover:underline">Open Age Group Settings</Link>
+            <Link href="/admin/age-tier-settings" className="text-sm text-primary hover:underline">Open Age Group Settings</Link>
           </div>
           {!data.cacheReady ? (
             <p className="text-sm text-muted-foreground">Refresh Xero contact groups before relying on this audit.</p>
           ) : data.mismatches.length === 0 ? (
-            <p className="text-sm text-green-700">No linked members are currently mismatched against the managed age-tier mappings.</p>
+            <p className="text-sm text-success">No linked members are currently mismatched against the managed age-tier mappings.</p>
           ) : (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">Showing {data.mismatches.length} of {data.count} mismatches.</p>
@@ -439,16 +449,16 @@ function ContactGroupMismatchPanel({
                   <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)} className="text-sm font-medium text-blue-600 hover:underline">{mismatch.memberName}</a>
+                        <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)} className="text-sm font-medium text-primary hover:underline">{mismatch.memberName}</a>
                         <Badge variant="outline">{formatAgeTierName(mismatch.ageTier)}</Badge>
-                        {mismatch.missingExpectedGroup ? <Badge className="bg-red-600">Missing accepted group</Badge> : null}
-                        {mismatch.unexpectedManagedGroups.length > 0 ? <Badge className="bg-amber-500">{mismatch.unexpectedManagedGroups.length} extra managed group{mismatch.unexpectedManagedGroups.length === 1 ? "" : "s"}</Badge> : null}
+                        {mismatch.missingExpectedGroup ? <ToneChip tone="danger" icon={AlertTriangle}>Missing accepted group</ToneChip> : null}
+                        {mismatch.unexpectedManagedGroups.length > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>{mismatch.unexpectedManagedGroups.length} extra managed group{mismatch.unexpectedManagedGroups.length === 1 ? "" : "s"}</ToneChip> : null}
                       </div>
                       <p className="text-sm text-muted-foreground">{mismatch.memberEmail}</p>
                       <p className="text-xs text-muted-foreground">Accepted managed groups: {mismatch.acceptedGroups.length > 0 ? mismatch.acceptedGroups.map((group) => `${group.name ?? group.id}${group.isDefault ? " (default)" : ""}`).join(", ") : "None — N/A members don't belong in any managed age group"}</p>
                       <p className="text-xs text-muted-foreground">Actual cached groups: {mismatch.actualGroups.length > 0 ? mismatch.actualGroups.map((group) => group.name).join(", ") : "None"}</p>
                     </div>
-                    <a href={`https://go.xero.com/app/contacts/contact/${mismatch.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">Open in Xero</a>
+                    <a href={`https://go.xero.com/app/contacts/contact/${mismatch.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline">Open in Xero</a>
                   </div>
                 </div>
               ))}
@@ -494,7 +504,7 @@ function ContactLinkMismatchPanel({
       onToggle={(nextOpen) => onToggle("contactLinkMismatches", nextOpen)}
       actions={<Button variant="outline" size="sm" onClick={() => void onRefresh()} disabled={loading || resyncing} title="Re-fetches the flagged contacts from Xero, then recomputes this audit.">{resyncing ? "Re-syncing from Xero..." : loading ? "Loading..." : "Refresh"}</Button>}
     >
-      {error ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="mb-3 text-sm text-danger">{error}</p> : null}
       {loading && !data ? (
         <p className="text-sm text-muted-foreground">Loading contact link mismatches...</p>
       ) : data ? (
@@ -503,16 +513,20 @@ function ContactLinkMismatchPanel({
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold">Member/contact name audit</h3>
-                <Badge className={!data.cacheReady ? "bg-slate-600" : data.count > 0 ? "bg-amber-500" : "bg-green-600"}>
-                  {!data.cacheReady ? "Cache needed" : `${data.count} mismatch${data.count === 1 ? "" : "es"}`}
-                </Badge>
+                {!data.cacheReady ? (
+                  <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip>
+                ) : data.count > 0 ? (
+                  <ToneChip tone="warning" icon={AlertTriangle}>{data.count} mismatch{data.count === 1 ? "" : "es"}</ToneChip>
+                ) : (
+                  <ToneChip tone="success" icon={CheckCircle2}>{data.count} mismatch{data.count === 1 ? "" : "es"}</ToneChip>
+                )}
               </div>
               <p className="text-sm text-muted-foreground">Compares linked members against the cached Xero contact snapshot. Use this to unlink bad email-based matches, then relink the correct contact from the member record.</p>
               <p className="text-xs text-muted-foreground">
                 {data.cacheReady && data.lastRefreshedAt ? `Contact cache last refreshed ${new Date(data.lastRefreshedAt).toLocaleString("en-NZ")}.` : "The shared Xero contact cache has not been refreshed yet."}
               </p>
               {data.resync ? (
-                <p className="text-xs text-green-700">
+                <p className="text-xs text-success">
                   {data.resync.requestedContacts === 0
                     ? `Nothing was flagged to re-sync; audit recomputed at ${new Date(data.resync.resyncedAt).toLocaleTimeString("en-NZ")}.`
                     : `Re-synced ${data.resync.resyncedContacts} of ${data.resync.requestedContacts} flagged contact${data.resync.requestedContacts === 1 ? "" : "s"} from Xero at ${new Date(data.resync.resyncedAt).toLocaleTimeString("en-NZ")}${data.resync.removedContacts > 0 ? ` (${data.resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)` : ""}.`}
@@ -523,7 +537,7 @@ function ContactLinkMismatchPanel({
           {!data.cacheReady ? (
             <p className="text-sm text-muted-foreground">Run contact sync before relying on this audit.</p>
           ) : data.mismatches.length === 0 ? (
-            <p className="text-sm text-green-700">No linked members are currently mismatched against the cached Xero contact names.</p>
+            <p className="text-sm text-success">No linked members are currently mismatched against the cached Xero contact names.</p>
           ) : (
             <div className="space-y-3">
               {data.mismatches.map((mismatch) => (
@@ -531,12 +545,16 @@ function ContactLinkMismatchPanel({
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)} className="text-sm font-medium text-blue-600 hover:underline">{mismatch.memberName}</a>
-                        <Badge variant={mismatch.active ? "default" : "secondary"} className={mismatch.active ? "bg-green-600" : ""}>{mismatch.active ? "Active" : "Inactive"}</Badge>
+                        <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)} className="text-sm font-medium text-primary hover:underline">{mismatch.memberName}</a>
+                        {mismatch.active ? (
+                          <ToneChip tone="success" icon={CheckCircle2}>Active</ToneChip>
+                        ) : (
+                          <ToneChip tone="neutral" icon={Circle}>Inactive</ToneChip>
+                        )}
                       </div>
                       <p className="text-sm text-muted-foreground">{mismatch.memberEmail}</p>
                       <p className="text-xs text-muted-foreground">Cached Xero contact: {mismatch.xeroContactName}{mismatch.xeroContactEmail ? ` (${mismatch.xeroContactEmail})` : ""}</p>
-                      <p className="text-xs text-amber-700">{mismatch.reasons.join(", ")}</p>
+                      <p className="text-xs text-warning">{mismatch.reasons.join(", ")}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)} className="inline-flex"><Button variant="outline" size="sm">Open Member</Button></a>

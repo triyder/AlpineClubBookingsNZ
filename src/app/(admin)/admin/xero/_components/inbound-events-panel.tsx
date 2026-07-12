@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -11,7 +10,7 @@ import {
   FilterSelect,
   formatJson,
   inboundEventActionLabel,
-  operationStatusClass,
+  OperationStatusChip,
   SectionCard,
   shortId,
   type ToggleSection,
@@ -203,9 +202,9 @@ export function InboundEventsPanel({
       actions={<Button variant="outline" size="sm" onClick={() => void fetchEvents()} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</Button>}
     >
       <div className="space-y-4">
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
-        <details className="rounded-md border bg-slate-50 p-3 text-xs text-slate-600">
-          <summary className="cursor-pointer font-medium text-slate-700">What do these statuses mean?</summary>
+        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        <details className="rounded-md border bg-muted p-3 text-xs text-muted-foreground">
+          <summary className="cursor-pointer font-medium text-foreground">What do these statuses mean?</summary>
           <ul className="mt-2 space-y-1">
             <li><span className="font-medium">RECEIVED</span> — webhook stored, waiting to be processed. No action needed.</li>
             <li><span className="font-medium">PROCESSING</span> — being reconciled now. If it stays here for a long time it is stuck; check System Health.</li>
@@ -249,7 +248,7 @@ export function InboundEventsPanel({
             {events.map((event) => (
               <div key={event.id} className="space-y-2 rounded-md border p-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="default" className={operationStatusClass(event.status)}>{event.status}</Badge>
+                  <OperationStatusChip status={event.status} />
                   <span className="text-sm font-medium">{event.eventCategory ?? "UNKNOWN"} {event.eventType}</span>
                   <span className="text-xs text-muted-foreground">{new Date(event.createdAt).toLocaleString("en-NZ")}</span>
                 </div>
@@ -260,22 +259,22 @@ export function InboundEventsPanel({
                     <span>
                       Resource:{" "}
                       {event.xeroObjectUrl ? (
-                        <a href={event.xeroObjectUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{shortId(event.resourceId)}</a>
+                        <a href={event.xeroObjectUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{shortId(event.resourceId)}</a>
                       ) : shortId(event.resourceId)}
                     </span>
                   ) : null}
                   {event.processedAt ? <span>Processed: {new Date(event.processedAt).toLocaleString("en-NZ")}</span> : null}
                 </div>
-                {event.errorMessage ? <p className="text-sm text-red-700">{event.errorMessage}</p> : null}
+                {event.errorMessage ? <p className="text-sm text-danger">{event.errorMessage}</p> : null}
                 <div className="flex flex-wrap items-center gap-2">
                   <Button variant="outline" size="sm" onClick={() => void replay(event.id)} disabled={!event.canReplay || replayingEventId === event.id}>
                     {replayingEventId === event.id ? "Replaying..." : inboundEventActionLabel(event.status)}
                   </Button>
                   {!event.canReplay ? <p className="text-xs text-muted-foreground">This event is currently being processed.</p> : null}
                 </div>
-                <details className="rounded-md bg-slate-50 p-2">
-                  <summary className="cursor-pointer text-xs font-medium text-slate-700">View stored payload</summary>
-                  <pre className="mt-2 max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">{formatJson(event.payload)}</pre>
+                <details className="rounded-md bg-muted p-2">
+                  <summary className="cursor-pointer text-xs font-medium text-foreground">View stored payload</summary>
+                  <pre className="mt-2 max-h-64 overflow-auto rounded border bg-background p-2 text-[11px]">{formatJson(event.payload)}</pre>
                 </details>
               </div>
             ))}

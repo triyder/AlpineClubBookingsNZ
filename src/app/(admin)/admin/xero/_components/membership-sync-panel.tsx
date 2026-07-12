@@ -81,10 +81,10 @@ export function MembershipSyncPanel({
       }
     >
       <div className="space-y-3">
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {error ? <p className="text-sm text-danger">{error}</p> : null}
         <p className="text-sm text-muted-foreground">This runs automatically as a daily cron job. Only members already linked to Xero contacts can be refreshed.</p>
         <p className="text-sm text-muted-foreground">Incremental refresh is the normal low-API-cost path. Repair backfill is manual only and rechecks linked members whose local season status still looks stale.</p>
-        <div className="rounded-md border bg-slate-50 p-3 text-sm">
+        <div className="rounded-md border bg-muted p-3 text-sm">
           <p>
             <span className="text-muted-foreground">Last refresh:</span>{" "}
             {lastRefresh?.at ? new Date(lastRefresh.at).toLocaleString("en-NZ") : "No refresh recorded yet"}

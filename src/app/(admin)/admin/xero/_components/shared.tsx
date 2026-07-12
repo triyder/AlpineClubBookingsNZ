@@ -1,21 +1,33 @@
 "use client"
 
-import { useState, type ReactNode } from "react"
+import { useState, type HTMLAttributes, type ReactNode } from "react"
+import {
+  AlertTriangle,
+  Archive,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  Clock,
+  Loader2,
+  MinusCircle,
+  XCircle,
+  type LucideIcon,
+} from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { formatRedactedJson } from "@/lib/redact-sensitive-json"
+import { cn } from "@/lib/utils"
 import type {
   AccountMappingKey,
   CreditItemMappingKey,
   SectionKey,
   SyncReport,
-  XeroHealthSnapshot,
   XeroOperation,
   XeroReferenceCacheMeta,
-  XeroUsageSummary,
 } from "./types"
 
 export type ToggleSection = (section: SectionKey, nextOpen: boolean) => void
@@ -43,13 +55,18 @@ export function SectionCard({
         <button
           type="button"
           onClick={() => onToggle(!open)}
-          className="flex w-full items-start justify-between gap-3 text-left md:flex-1"
+          aria-expanded={open}
+          className="flex w-full items-start justify-between gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex-1"
         >
           <div className="space-y-1">
             <CardTitle>{title}</CardTitle>
             <CardDescription>{description}</CardDescription>
           </div>
-          <span className="pt-0.5 text-xs text-muted-foreground">{open ? "v" : ">"}</span>
+          {open ? (
+            <ChevronDown aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          )}
         </button>
         {actions ? (
           <div className="flex shrink-0 items-center gap-2" onClick={(event) => event.stopPropagation()}>
@@ -110,7 +127,7 @@ export function HealthStatCard({
   onClick?: () => void
 }) {
   const className =
-    "flex h-full flex-col rounded-xl border bg-white p-4 text-left shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+    "flex h-full flex-col rounded-xl border bg-card p-4 text-left shadow-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   const content = (
     <>
       <div className="flex flex-wrap items-start gap-2">
@@ -128,52 +145,141 @@ export function HealthStatCard({
   return <div className={className}>{content}</div>
 }
 
-export function operationStatusClass(status: string) {
-  switch (status) {
-    case "SUCCEEDED":
-    case "PROCESSED":
-      return "bg-green-600"
-    case "PARTIAL":
-      return "bg-amber-500"
-    case "FAILED":
-      return "bg-red-600"
-    case "RUNNING":
-    case "PROCESSING":
-      return "bg-blue-600"
-    default:
-      return "bg-slate-600"
-  }
+// Restrained Alpine (#1800/#1813): Xero operation & health statuses render as
+// icon + label chips in one of five semantic, dark-adapting tones — never colour
+// alone. StatusChip's typed `kind` API only covers domain enums
+// (booking/payment/…), so per the epic these Xero-specific statuses reuse the
+// SAME tone → token mapping rather than inventing a new StatusChip kind.
+export type XeroTone = "neutral" | "info" | "success" | "warning" | "danger"
+
+const XERO_TONE_CHIP_CLASSES: Record<XeroTone, string> = {
+  neutral: "bg-muted text-foreground",
+  info: "bg-info-muted text-info",
+  success: "bg-success-muted text-success",
+  warning: "bg-warning-muted text-warning",
+  danger: "bg-danger-muted text-danger",
 }
 
-export function usageToneClass(status: XeroUsageSummary["today"]["budgetStatus"] | undefined) {
-  switch (status) {
-    case "warning":
-      return "bg-amber-500"
-    case "critical":
-      return "bg-orange-600"
-    case "exhausted":
-      return "bg-red-600"
-    default:
-      return "bg-green-600"
-  }
+// Solid tone fills for meters / progress-bar fills (no text sits on these).
+const XERO_TONE_SOLID_CLASSES: Record<XeroTone, string> = {
+  neutral: "bg-muted-foreground",
+  info: "bg-info",
+  success: "bg-success",
+  warning: "bg-warning",
+  danger: "bg-danger",
 }
 
-export function healthBudgetToneClass(status: XeroHealthSnapshot["apiBudget"]["status"]) {
-  return status === "unknown" ? "bg-slate-600" : usageToneClass(status)
+export function toneFillClass(tone: XeroTone) {
+  return XERO_TONE_SOLID_CLASSES[tone]
 }
 
-export function failureStateBadgeClass(state: XeroOperation["failureState"]) {
-  if (state === "ACTIVE") return "bg-red-600"
-  if (state === "REPAIRED") return "bg-green-600"
-  if (state === "SUPERSEDED") return "bg-slate-600"
-  return ""
+const TONE_ICON: Record<XeroTone, LucideIcon> = {
+  neutral: MinusCircle,
+  info: Circle,
+  success: CheckCircle2,
+  warning: AlertTriangle,
+  danger: AlertTriangle,
 }
 
-export function failureStateLabel(state: XeroOperation["failureState"]) {
-  if (state === "ACTIVE") return "Active"
-  if (state === "REPAIRED") return "Repaired"
-  if (state === "SUPERSEDED") return "Superseded"
-  return null
+/** Shared icon + label chip for every non-domain Xero status. */
+export function ToneChip({
+  tone,
+  icon: Icon,
+  children,
+  className,
+  ...props
+}: {
+  tone: XeroTone
+  icon: LucideIcon
+  children: ReactNode
+} & HTMLAttributes<HTMLSpanElement>) {
+  return (
+    <span
+      data-slot="xero-status-chip"
+      data-tone={tone}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap",
+        XERO_TONE_CHIP_CLASSES[tone],
+        className,
+      )}
+      {...props}
+    >
+      <Icon aria-hidden="true" className="size-3.5 shrink-0" />
+      <span>{children}</span>
+    </span>
+  )
+}
+
+const OPERATION_STATUS_META: Record<string, { tone: XeroTone; icon: LucideIcon }> = {
+  SUCCEEDED: { tone: "success", icon: CheckCircle2 },
+  PROCESSED: { tone: "success", icon: CheckCircle2 },
+  PARTIAL: { tone: "warning", icon: AlertTriangle },
+  FAILED: { tone: "danger", icon: XCircle },
+  RUNNING: { tone: "info", icon: Loader2 },
+  PROCESSING: { tone: "info", icon: Loader2 },
+  PENDING: { tone: "neutral", icon: Clock },
+  WAITING_PAYMENT: { tone: "neutral", icon: Clock },
+  RECEIVED: { tone: "neutral", icon: Clock },
+}
+
+/** Operation / inbound-event status chip. Keeps the raw status text as the label
+ *  (so filters and the status legend stay in lockstep) and adds tone + icon. */
+export function OperationStatusChip({ status, className }: { status: string; className?: string }) {
+  const meta = OPERATION_STATUS_META[status] ?? { tone: "neutral" as const, icon: Circle }
+  return (
+    <ToneChip tone={meta.tone} icon={meta.icon} className={className}>
+      {status}
+    </ToneChip>
+  )
+}
+
+const FAILURE_STATE_META: Record<
+  NonNullable<XeroOperation["failureState"]>,
+  { tone: XeroTone; icon: LucideIcon; label: string }
+> = {
+  ACTIVE: { tone: "danger", icon: AlertTriangle, label: "Active" },
+  REPAIRED: { tone: "success", icon: CheckCircle2, label: "Repaired" },
+  SUPERSEDED: { tone: "neutral", icon: Archive, label: "Superseded" },
+}
+
+export function FailureStateChip({
+  state,
+  className,
+}: {
+  state: XeroOperation["failureState"]
+  className?: string
+}) {
+  if (!state) return null
+  const meta = FAILURE_STATE_META[state]
+  return (
+    <ToneChip tone={meta.tone} icon={meta.icon} className={className}>
+      {meta.label}
+    </ToneChip>
+  )
+}
+
+export type BudgetStatus = "healthy" | "warning" | "critical" | "exhausted" | "unknown"
+
+const BUDGET_TONE: Record<BudgetStatus, XeroTone> = {
+  healthy: "success",
+  warning: "warning",
+  critical: "danger",
+  exhausted: "danger",
+  unknown: "neutral",
+}
+
+export function budgetTone(status: BudgetStatus | undefined): XeroTone {
+  return status ? BUDGET_TONE[status] : "success"
+}
+
+/** API-budget status chip, shared by the usage panel and the health snapshot. */
+export function BudgetStatusChip({ status, className }: { status: BudgetStatus; className?: string }) {
+  const tone = budgetTone(status)
+  return (
+    <ToneChip tone={tone} icon={TONE_ICON[tone]} className={className}>
+      {status}
+    </ToneChip>
+  )
 }
 
 export function inboundEventActionLabel(status: string) {
@@ -255,12 +361,17 @@ function SyncReportSection({
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium hover:bg-slate-50"
+        aria-expanded={open}
+        className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <span>
           {title} ({count})
         </span>
-        <span className="text-xs text-slate-400">{open ? "v" : ">"}</span>
+        {open ? (
+          <ChevronDown aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        )}
       </button>
       {open ? <div className="space-y-1 border-t px-3 pb-3">{children}</div> : null}
     </div>
@@ -275,37 +386,37 @@ export function SyncReportView({ report, returnTo }: { report: SyncReport; retur
         {report.updated.map((member, index) => (
           <div key={`${member.memberId}-${index}`} className="flex items-start justify-between border-b py-1 text-xs last:border-0">
             <div>
-              <a href={buildHrefWithReturnTo(`/admin/members/${member.memberId}`, returnTo)} className="font-medium text-blue-600 hover:underline">
+              <a href={buildHrefWithReturnTo(`/admin/members/${member.memberId}`, returnTo)} className="font-medium text-primary hover:underline">
                 {member.name}
               </a>
-              <ul className="mt-0.5 list-inside list-disc text-slate-500">
+              <ul className="mt-0.5 list-inside list-disc text-muted-foreground">
                 {member.changes.map((change) => <li key={change}>{change}</li>)}
               </ul>
             </div>
-            <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-blue-600 hover:underline">
+            <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
               Xero
             </a>
           </div>
         ))}
       </SyncReportSection>
       <SyncReportSection title="Already Linked (No Changes)" count={report.skippedNoChanges}>
-        <p className="pt-1 text-xs text-slate-500">{report.skippedNoChanges} contacts were already linked and had no data to update.</p>
+        <p className="pt-1 text-xs text-muted-foreground">{report.skippedNoChanges} contacts were already linked and had no data to update.</p>
       </SyncReportSection>
       <SyncReportSection title="Skipped - Name Mismatch" count={report.skippedNameMismatch.length} defaultOpen>
         {report.skippedNameMismatch.map((mismatch) => (
           <div key={`${mismatch.memberId}-${mismatch.xeroContactId}`} className="flex items-start justify-between gap-3 border-b py-1 text-xs last:border-0">
             <div>
-              <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, returnTo)} className="font-medium text-blue-600 hover:underline">
+              <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, returnTo)} className="font-medium text-primary hover:underline">
                 {mismatch.memberName}
               </a>
-              <p className="text-slate-500">{mismatch.memberEmail}</p>
-              <p className="text-slate-500">
+              <p className="text-muted-foreground">{mismatch.memberEmail}</p>
+              <p className="text-muted-foreground">
                 Xero contact: {mismatch.xeroContactName}
                 {mismatch.xeroContactEmail ? ` (${mismatch.xeroContactEmail})` : ""}
               </p>
-              <p className="text-amber-700">{mismatch.reasons.join(", ")}</p>
+              <p className="text-warning">{mismatch.reasons.join(", ")}</p>
             </div>
-            <a href={`https://go.xero.com/Contacts/View/${mismatch.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="shrink-0 text-blue-600 hover:underline">
+            <a href={`https://go.xero.com/Contacts/View/${mismatch.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="shrink-0 text-primary hover:underline">
               Xero
             </a>
           </div>
@@ -315,7 +426,7 @@ export function SyncReportView({ report, returnTo }: { report: SyncReport; retur
         {report.skippedNoEmail.map((contact) => (
           <div key={contact.xeroContactId} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
             <span>{contact.name}</span>
-            <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-blue-600 hover:underline">
+            <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
               Open in Xero
             </a>
           </div>
@@ -326,10 +437,10 @@ export function SyncReportView({ report, returnTo }: { report: SyncReport; retur
           <div key={`${contact.name}-${index}`} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
             <div>
               <span className="font-medium">{contact.name}</span>
-              <span className="ml-1 text-slate-500">- {contact.reason}</span>
+              <span className="ml-1 text-muted-foreground">- {contact.reason}</span>
             </div>
             {contact.xeroContactId ? (
-              <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-blue-600 hover:underline">
+              <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
                 Xero
               </a>
             ) : null}
@@ -338,13 +449,13 @@ export function SyncReportView({ report, returnTo }: { report: SyncReport; retur
       </SyncReportSection>
       <SyncReportSection title="Errors" count={report.errors.length} defaultOpen>
         {report.errors.map((error, index) => (
-          <div key={`${error.name}-${index}`} className="flex items-center justify-between border-b py-1 text-xs text-red-700 last:border-0">
+          <div key={`${error.name}-${index}`} className="flex items-center justify-between border-b py-1 text-xs text-danger last:border-0">
             <div>
               <span className="font-medium">{error.name}</span>
               <span className="ml-1">- {error.error}</span>
             </div>
             {error.xeroContactId ? (
-              <a href={`https://go.xero.com/Contacts/View/${error.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-blue-600 hover:underline">
+              <a href={`https://go.xero.com/Contacts/View/${error.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
                 Xero
               </a>
             ) : null}
@@ -356,10 +467,10 @@ export function SyncReportView({ report, returnTo }: { report: SyncReport; retur
           <div key={contact.xeroContactId} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
             <div>
               <span className="font-medium">{contact.name}</span>
-              <span className="ml-1 text-slate-500">{contact.email}</span>
+              <span className="ml-1 text-muted-foreground">{contact.email}</span>
               {contact.group ? <Badge variant="secondary" className="ml-1 py-0 text-[10px]">{contact.group}</Badge> : null}
             </div>
-            <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-blue-600 hover:underline">
+            <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
               Xero
             </a>
           </div>
