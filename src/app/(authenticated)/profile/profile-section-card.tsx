@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 interface ProfileSectionCardProps {
   children: ReactNode;
   title: string;
+  className?: string;
   collapsible?: boolean;
   contentClassName?: string;
   defaultOpen?: boolean;
@@ -21,6 +22,7 @@ interface ProfileSectionCardProps {
 
 export function ProfileSectionCard({
   children,
+  className,
   collapsible = false,
   contentClassName,
   defaultOpen = true,
@@ -30,7 +32,7 @@ export function ProfileSectionCard({
 }: ProfileSectionCardProps) {
   if (!collapsible) {
     return (
-      <Card id={id}>
+      <Card id={id} className={className}>
         <CardHeader>
           <CardTitle>{title}</CardTitle>
           {description ? <CardDescription>{description}</CardDescription> : null}
@@ -41,7 +43,7 @@ export function ProfileSectionCard({
   }
 
   return (
-    <Card id={id}>
+    <Card id={id} className={className}>
       <details
         className="group [&_summary::-webkit-details-marker]:hidden"
         open={defaultOpen}

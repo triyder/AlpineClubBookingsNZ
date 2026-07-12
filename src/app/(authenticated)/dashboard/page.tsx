@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { OccupancyMeter } from "@/components/ui/occupancy-meter";
 import {
   CalendarDays,
   BedDouble,
@@ -49,6 +50,7 @@ import {
   ACTIVE_BOOKING_STATUSES,
   PAYMENT_OWED_BOOKING_STATUSES,
 } from "@/lib/booking-status";
+import { checkCapacity } from "@/lib/capacity";
 
 function formatPromoBenefitSummary(promo: AvailablePromoCode) {
   if (promo.type === "PERCENTAGE") {
@@ -95,10 +97,10 @@ function SummaryLinkCard({
       className="group block h-full rounded-xl text-card-foreground no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       href={href}
     >
-      <Card className="h-full transition-colors group-hover:border-slate-400 group-hover:bg-slate-50 group-focus-visible:border-slate-400 group-focus-visible:bg-slate-50">
+      <Card className="h-full transition-colors group-hover:border-ring group-hover:bg-accent group-focus-visible:border-ring group-focus-visible:bg-accent">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">{title}</CardTitle>
-          <span className="flex items-center gap-1 text-muted-foreground transition-colors group-hover:text-slate-900 group-focus-visible:text-slate-900">
+          <span className="flex items-center gap-1 text-muted-foreground transition-colors group-hover:text-foreground group-focus-visible:text-foreground">
             {icon}
             <ChevronRight
               aria-hidden="true"
@@ -165,6 +167,7 @@ export default async function DashboardPage() {
       select: {
         id: true,
         memberId: true,
+        lodgeId: true,
         checkIn: true,
         checkOut: true,
         status: true,
@@ -241,6 +244,36 @@ export default async function DashboardPage() {
   ]);
 
   const nextStay = upcomingBookings[0] ?? null;
+
+  // "How full for your dates" for the next stay — purely additive, read-only
+  // (#1818). Both `filled` and `capacity` are derived from the SAME
+  // checkCapacity call: for every night `occupiedBeds + availableBeds` equals
+  // the lodge capacity, and `capacity - minAvailable` is peak occupancy across
+  // the stay (the member's own party included — correct for "how full for your
+  // dates"). Sharing one capacity notion means the meter can never show a
+  // spurious filled > capacity. Any missing lodge, zero capacity, or helper
+  // failure leaves the card exactly as before (no meter, no crash).
+  let nextStayOccupancy: { filled: number; capacity: number } | null = null;
+  if (nextStay?.lodgeId) {
+    try {
+      const { minAvailable, nightDetails } = await checkCapacity(
+        nextStay.lodgeId,
+        nextStay.checkIn,
+        nextStay.checkOut,
+        1,
+      );
+      const firstNight = nightDetails[0];
+      if (firstNight) {
+        const capacity = firstNight.occupiedBeds + firstNight.availableBeds;
+        if (capacity > 0) {
+          nextStayOccupancy = { filled: capacity - minAvailable, capacity };
+        }
+      }
+    } catch {
+      nextStayOccupancy = null;
+    }
+  }
+
   const paymentOwed = summarizeMemberPaymentOwed(paymentOwedBookings);
   const paymentOwedBookingIds = paymentOwedBookings
     .filter(isDashboardPaymentOwed)
@@ -298,10 +331,10 @@ export default async function DashboardPage() {
       {/* Welcome header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">
+          <h1 className="text-2xl font-bold text-foreground">
             Welcome back, {firstName}
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-muted-foreground">
             {CLUB_NAME} — Member Portal
           </p>
         </div>
@@ -378,10 +411,19 @@ export default async function DashboardPage() {
                 {nextStay._count.guests !== 1 ? "s" : ""} ·{" "}
                 {formatCents(nextStay.finalPriceCents)}
               </p>
+              {nextStayOccupancy ? (
+                <OccupancyMeter
+                  className="mt-3"
+                  size="sm"
+                  label="Lodge occupancy for your dates"
+                  filled={nextStayOccupancy.filled}
+                  capacity={nextStayOccupancy.capacity}
+                />
+              ) : null}
             </>
           ) : (
             <>
-              <div className="text-lg font-semibold text-slate-500">
+              <div className="text-lg font-semibold text-muted-foreground">
                 No upcoming stays
               </div>
               <p className="text-xs text-muted-foreground mt-1">
@@ -436,7 +478,7 @@ export default async function DashboardPage() {
                 : "No assigned promo codes available"}
             </p>
             {firstPromoCode ? (
-              <p className="mt-2 break-words text-xs font-medium text-slate-700">
+              <p className="mt-2 break-words text-xs font-medium text-foreground">
                 {firstPromoCode.code} ·{" "}
                 {formatPromoBenefitSummary(firstPromoCode)}
               </p>
@@ -500,7 +542,7 @@ export default async function DashboardPage() {
               ) : (
                 <ul className="space-y-1">
                   {lockers.map((locker) => (
-                    <li key={locker.id} className="text-sm text-slate-700">
+                    <li key={locker.id} className="text-sm text-foreground">
                       {locker.name}
                     </li>
                   ))}
@@ -515,7 +557,7 @@ export default async function DashboardPage() {
       {draftBookings.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-slate-900">
+            <h2 className="text-lg font-semibold text-foreground">
               Draft Bookings
             </h2>
           </div>
@@ -582,7 +624,7 @@ export default async function DashboardPage() {
       {/* Recent bookings */}
       <div>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-slate-900">
+          <h2 className="text-lg font-semibold text-foreground">
             Recent Bookings
           </h2>
           <Button variant="outline" size="sm" asChild>
@@ -592,8 +634,8 @@ export default async function DashboardPage() {
         <Card>
           {recentBookings.length === 0 ? (
             <CardContent className="py-12 text-center">
-              <BedDouble className="mx-auto h-10 w-10 text-slate-300 mb-3" />
-              <p className="text-sm font-medium text-slate-500">
+              <BedDouble className="mx-auto h-10 w-10 text-muted-foreground/60 mb-3" />
+              <p className="text-sm font-medium text-muted-foreground">
                 No bookings yet
               </p>
               <p className="text-xs text-muted-foreground mt-1">
@@ -613,7 +655,7 @@ export default async function DashboardPage() {
                       `/bookings/${booking.id}`,
                       "/dashboard",
                     )}
-                    className="flex items-center justify-between py-3 hover:bg-slate-50 -mx-2 px-2 rounded"
+                    className="flex items-center justify-between py-3 hover:bg-accent -mx-2 px-2 rounded"
                   >
                     <div className="min-w-0">
                       <p className="font-medium text-sm">

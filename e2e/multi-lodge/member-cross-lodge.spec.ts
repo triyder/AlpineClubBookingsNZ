@@ -180,7 +180,14 @@ test("(d) a cross-lodge waitlist offer confirms into a fresh lodge B booking", a
     { timeout: 30_000 },
   );
   await expect(page.getByText("A Spot Has Opened Up!")).toHaveCount(0);
-  await expect(page.getByText(/payment/i).first()).toBeVisible();
+  // Scope to the content column so the #1818 SectionNav "Payment" anchor (which
+  // precedes the content) can't be matched by this loose payment-owed check.
+  await expect(
+    page
+      .getByTestId("booking-detail-content")
+      .getByText(/payment/i)
+      .first(),
+  ).toBeVisible();
   await page.close();
 });
 

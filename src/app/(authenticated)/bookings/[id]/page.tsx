@@ -15,6 +15,7 @@ import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { AdminBookingToolsCard } from "@/components/admin/admin-booking-tools-card";
 import { ScrollToHash } from "@/components/scroll-to-hash";
+import { SectionNav, type SectionNavItem } from "@/components/section-nav";
 import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 import { RequestedRoomEditor } from "@/components/requested-room-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
@@ -91,6 +92,21 @@ const narrativeBannerClasses: Record<string, string> = {
   cancelled_post_payment: "border-amber-200 bg-amber-50 text-amber-900",
   declined: "border-rose-200 bg-rose-50 text-rose-900",
 };
+
+// Candidate anchors for this long, mostly-conditional page. SectionNav prunes
+// any whose target id is absent from the DOM after mount, so listing the full
+// set here (rather than re-deriving each card's render condition) is safe.
+const BOOKING_SECTIONS: SectionNavItem[] = [
+  { id: "details", label: "Booking Details" },
+  { id: "group", label: "Group Booking" },
+  { id: "arrival", label: "Arrival Time" },
+  { id: "room-request", label: "Room Request" },
+  { id: "directions", label: "Getting There" },
+  { id: "payment", label: "Payment" },
+  { id: "cancellation", label: "Cancellation" },
+  { id: "notes", label: "Notes" },
+  { id: "transaction-history", label: "Transaction History" },
+];
 
 export default async function BookingDetailPage({
   params,
@@ -721,7 +737,15 @@ export default async function BookingDetailPage({
   const cancellationHasNoPayment = showCancellationInfo && !originalPaymentCaptured;
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="lg:flex lg:gap-8">
+      <SectionNav sections={BOOKING_SECTIONS} className="mb-6 lg:mb-0" />
+      {/* data-testid scopes content-only queries away from the SectionNav rail,
+          whose anchor labels (e.g. "Payment") would otherwise be matched by
+          loose getByText(...).first() locators. */}
+      <div
+        data-testid="booking-detail-content"
+        className="min-w-0 max-w-2xl flex-1 space-y-6"
+      >
       <ScrollToHash />
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Booking Details</h1>
@@ -886,18 +910,22 @@ export default async function BookingDetailPage({
         </div>
       ) : null}
 
-      <BookingEditor
-        booking={editorData}
-        canModify={canModify}
-        canAdminOverride={canAdminOverride}
-      />
+      <section id="details" className="scroll-mt-20">
+        <BookingEditor
+          booking={editorData}
+          canModify={canModify}
+          canAdminOverride={canAdminOverride}
+        />
+      </section>
 
       {showGroupSection && (
-        <OrganiserGroupBookingCard
-          bookingId={booking.id}
-          canOpenGroup={canOpenGroup}
-          group={organiserGroupState}
-        />
+        <section id="group" className="scroll-mt-20">
+          <OrganiserGroupBookingCard
+            bookingId={booking.id}
+            canOpenGroup={canOpenGroup}
+            group={organiserGroupState}
+          />
+        </section>
       )}
 
       {booking.createdBy && (
@@ -982,7 +1010,7 @@ export default async function BookingDetailPage({
       )}
 
       {showArrivalTime && (
-        <Card>
+        <Card id="arrival" className="scroll-mt-20">
           <CardHeader>
             <CardTitle>Expected Arrival Time</CardTitle>
           </CardHeader>
@@ -997,7 +1025,7 @@ export default async function BookingDetailPage({
       )}
 
       {showRequestedRoom && (
-        <Card>
+        <Card id="room-request" className="scroll-mt-20">
           <CardHeader>
             <CardTitle>Room Request</CardTitle>
           </CardHeader>
@@ -1029,7 +1057,7 @@ export default async function BookingDetailPage({
       )}
 
       {memberArrivalInstructions ? (
-        <Card>
+        <Card id="directions" className="scroll-mt-20">
           <CardHeader>
             <CardTitle>How to Get to the Lodge</CardTitle>
           </CardHeader>
@@ -1189,7 +1217,7 @@ export default async function BookingDetailPage({
 
       {/* Show payment form if payment hasn't been completed */}
       {showCompletePaymentCard && (
-        <Card id="payment" className="scroll-mt-4">
+        <Card id="payment" className="scroll-mt-20">
           <CardHeader>
             <CardTitle>Complete Payment</CardTitle>
           </CardHeader>
@@ -1315,7 +1343,7 @@ export default async function BookingDetailPage({
         )}
 
       {booking.status === "CANCELLED" && (
-        <Card>
+        <Card id="cancellation" className="scroll-mt-20">
           <CardHeader>
             <CardTitle>Cancellation Outcome</CardTitle>
           </CardHeader>
@@ -1424,7 +1452,7 @@ export default async function BookingDetailPage({
         </Card>
       )}
 
-      <Card>
+      <Card id="notes" className="scroll-mt-20">
         <CardHeader>
           <CardTitle>Notes</CardTitle>
         </CardHeader>
@@ -1437,7 +1465,7 @@ export default async function BookingDetailPage({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="transaction-history" className="scroll-mt-20">
         <CardHeader>
           <CardTitle>Transaction History</CardTitle>
         </CardHeader>
@@ -1500,6 +1528,7 @@ export default async function BookingDetailPage({
         above are up to date even if an email hasn&apos;t arrived. Check your
         spam folder, and contact the club if our emails keep going missing.
       </p>
+      </div>
     </div>
   );
 }

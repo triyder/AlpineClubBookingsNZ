@@ -19,6 +19,7 @@ import { DeleteAccountButton } from "./delete-account-button";
 import { MembershipCancellationPanel } from "./membership-cancellation-panel";
 import { TwoFactorSecurityCard } from "./two-factor-security-card";
 import { AuditTimeline } from "@/components/audit-timeline";
+import { SectionNav, type SectionNavItem } from "@/components/section-nav";
 import {
   Card,
   CardContent,
@@ -89,6 +90,24 @@ function formatPromoBenefit(promo: {
 
   return promo.type.replaceAll("_", " ").toLowerCase();
 }
+
+// Anchor rail for this long (~13 card) page. Every section below is rendered
+// unconditionally, so SectionNav keeps them all; ordering matches the page.
+const PROFILE_SECTIONS: SectionNavItem[] = [
+  { id: "account-information", label: "Account Information" },
+  { id: "security", label: "Security" },
+  { id: "subscription-history", label: "Subscription History" },
+  { id: "account-credit", label: "Account Credit" },
+  { id: "promo-codes", label: "Promo Codes" },
+  { id: "family-group", label: "Family Group" },
+  { id: "partner", label: "Partner" },
+  { id: "membership-cancellation", label: "Membership Cancellation" },
+  { id: "notification-preferences", label: "Notification Preferences" },
+  { id: "change-email", label: "Change Email" },
+  { id: "personal-details", label: "Personal Details" },
+  { id: "account-activity", label: "Account Activity" },
+  { id: "privacy-data", label: "Privacy & Data" },
+];
 
 export default async function ProfilePage({
   searchParams,
@@ -216,11 +235,13 @@ export default async function ProfilePage({
 
   return (
     <ProfileDetailsProvider>
-      <div className="max-w-2xl space-y-6">
+      <div className="lg:flex lg:gap-8">
+        <SectionNav sections={PROFILE_SECTIONS} className="mb-6 lg:mb-0" />
+        <div className="min-w-0 max-w-2xl flex-1 space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Profile</h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <h1 className="text-2xl font-bold text-foreground">Profile</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
               Manage your account details
             </p>
           </div>
@@ -248,7 +269,7 @@ export default async function ProfilePage({
         ) : null}
 
         {/* Account info */}
-        <Card>
+        <Card id="account-information" className="scroll-mt-20">
           <CardHeader>
             <div className="flex items-start justify-between">
               <div>
@@ -305,7 +326,7 @@ export default async function ProfilePage({
         </Card>
 
         {/* Security */}
-        <Card>
+        <Card id="security" className="scroll-mt-20">
           <CardHeader>
             <CardTitle>Security</CardTitle>
             <CardDescription>
@@ -350,9 +371,11 @@ export default async function ProfilePage({
 
         {/* Subscription History */}
         <ProfileSectionCard
+          className="scroll-mt-20"
           collapsible
           defaultOpen={false}
           description="Your membership payment status across seasons"
+          id="subscription-history"
           title="Subscription History"
         >
           {subscriptionHistory.length === 0 ? (
@@ -389,6 +412,7 @@ export default async function ProfilePage({
 
         {/* Account Credit */}
         <ProfileSectionCard
+          className="scroll-mt-20"
           description="Your credit balance and transaction history"
           id="account-credit"
           title="Account Credit"
@@ -398,6 +422,7 @@ export default async function ProfilePage({
 
         {/* Promo Codes */}
         <ProfileSectionCard
+          className="scroll-mt-20"
           description="Promo codes assigned to your member account"
           id="promo-codes"
           title="Promo Codes"
@@ -432,6 +457,7 @@ export default async function ProfilePage({
 
         {/* Family Group */}
         <ProfileSectionCard
+          className="scroll-mt-20"
           collapsible
           defaultOpen
           description="Manage your family group members. Adults can invite other adults, and request to add infants, children, or youth."
@@ -452,6 +478,7 @@ export default async function ProfilePage({
 
         {/* Partner (#1742) */}
         <ProfileSectionCard
+          className="scroll-mt-20"
           collapsible
           defaultOpen
           description="Record your partner (husband, wife, or partner) with the club. Both of you confirm the relationship."
@@ -464,6 +491,7 @@ export default async function ProfilePage({
         </ProfileSectionCard>
 
         <ProfileSectionCard
+          className="scroll-mt-20"
           collapsible
           defaultOpen={false}
           description="Request committee review for membership cancellation."
@@ -475,16 +503,18 @@ export default async function ProfilePage({
 
         {/* Notification Preferences */}
         <ProfileSectionCard
+          className="scroll-mt-20"
           collapsible
           defaultOpen
           description="Choose which email notifications you receive"
+          id="notification-preferences"
           title="Notification Preferences"
         >
           <NotificationPreferences />
         </ProfileSectionCard>
 
         {/* Change Email */}
-        <Card>
+        <Card id="change-email" className="scroll-mt-20">
           <CardHeader>
             <CardTitle>Change Email</CardTitle>
             <CardDescription>
@@ -497,18 +527,22 @@ export default async function ProfilePage({
           </CardContent>
         </Card>
 
-        <ProfileDetailsCard
-          member={profileFormMember}
-          returnTo={returnTo}
-          ageTier={member.ageTier}
-          showOccupation={memberFieldsFlags.showOccupation}
-        />
+        <div id="personal-details" className="scroll-mt-20">
+          <ProfileDetailsCard
+            member={profileFormMember}
+            returnTo={returnTo}
+            ageTier={member.ageTier}
+            showOccupation={memberFieldsFlags.showOccupation}
+          />
+        </div>
 
         {/* Account Activity */}
         <ProfileSectionCard
+          className="scroll-mt-20"
           collapsible
           defaultOpen={false}
           description="Recent account, booking, payment, family, and privacy activity"
+          id="account-activity"
           title="Account Activity"
         >
           <AuditTimeline
@@ -519,7 +553,7 @@ export default async function ProfilePage({
         </ProfileSectionCard>
 
         {/* Privacy & Data */}
-        <Card>
+        <Card id="privacy-data" className="scroll-mt-20">
           <CardHeader>
             <CardTitle>Privacy &amp; Data</CardTitle>
             <CardDescription>
@@ -541,13 +575,14 @@ export default async function ProfilePage({
               </p>
               {!isAdmin && <DeleteAccountButton />}
               {isAdmin && (
-                <p className="text-sm text-slate-500 italic">
+                <p className="text-sm text-muted-foreground italic">
                   Admin accounts cannot be self-deleted. Contact another admin.
                 </p>
               )}
             </div>
           </CardContent>
         </Card>
+        </div>
       </div>
     </ProfileDetailsProvider>
   );
