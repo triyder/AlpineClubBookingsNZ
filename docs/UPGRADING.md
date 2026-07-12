@@ -84,6 +84,75 @@ as a red flag and check the release notes before deploying.
 
 ---
 
+## v0.10.1 → v0.11.0
+
+`v0.11.0` is a large minor release with 30 migrations and first-class
+multi-lodge operation. It also adds configuration transfer, declared-partner
+and shared-double workflows, admin booking recovery/override controls, and an
+application-wide design/accessibility refresh. Read the full release inventory
+in `docs/releases/v0.11.0.md` and the `0.11.0` changelog section before starting.
+
+### Before deployment
+
+1. **Take and restore-test a fresh backup.** Do not use Configuration Export as
+   a database backup; it intentionally excludes members and transactional data.
+2. **Schedule a quiet, low-write window.** The lodge-scoping migrations touch
+   booking and operational tables. The booking capacity-hold and persisted
+   capacity-override migrations each scan `Booking` to build an index, although
+   their new columns are nullable and initially empty.
+3. **Audit the capacity ceiling.** When Bed Allocation is enabled,
+   `LodgeSettings.capacity` now caps the active-bed count. Run the read-only
+   detection query in `docs/CAPACITY_MODEL.md` and confirm every lodge whose
+   configured capacity is below its installed active-bed count.
+4. **Plan the contract-migration window.** Review these ledger rows in
+   `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`:
+   - `20260708220100_drop_member_induction_item_result` is safe only after
+     confirming the retired table contains no data that must be retained.
+   - `20260708220200_drop_member_induction_self_assessment_columns` can make
+     old-colour induction default reads/writes fail until cutover.
+   - `20260708220300_drop_finance_report_mapping_label_columns` can make
+     old-colour finance dashboard/mapping reads fail until cutover.
+   - `20260709130000_drop_email_message_setting_lodge_identity_columns` can
+     make old-colour email-settings and lodge-admin writes fail; member email
+     settings fall back while the old colour drains.
+
+   Idle or drain those affected old-colour paths, cut over promptly, and use
+   `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` only with a non-empty
+   `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` that acknowledges the reviewed
+   windows. Do not use the override to bypass an unreviewed validator failure.
+5. **Confirm default-lodge intent.** The migration sequence converts the
+   existing installation into a lodge record and scopes dependent records to
+   it. Record which lodge should be default before deployment so the result can
+   be checked immediately after cutover.
+
+### Post-upgrade actions
+
+1. Open **Admin > Lodges** and confirm the expected lodge is the default, each
+   active lodge has the intended capacity, rooms/beds, seasons/rates,
+   instructions, and door-code/travel identity, and lodge-scoped records appear
+   under the correct lodge.
+2. Review **Admin > Modules** and lodge/member access. Confirm all capabilities
+   the club uses remain enabled and that kiosk, chores, finance, waitlist, Xero,
+   bed allocation, Internet Banking, and multi-lodge access match policy.
+3. Smoke-check a booking capacity quote, Admin Bookings, bed allocation,
+   waitlist, hut leaders, roster, and kiosk for every active lodge. Do not create
+   live financial transactions merely to test the release.
+4. Open the Finance dashboard and Xero mappings/sync views, then verify an
+   ordinary operational email resolves the correct lodge identity. This checks
+   the contract-migration cutover without contacting live providers
+   unnecessarily.
+5. Review **Admin > Site Style** and the public/login/member/admin shells in
+   light and dark mode. Untouched default themes are reseeded from sage to teal;
+   completed, partially customised, and non-default themes are left unchanged.
+6. Review **Admin > Notifications**. Eleven previously hardcoded operational
+   templates are now editable but remain locked to always-send; `two-factor-code`
+   remains hardcoded because it is authentication-critical.
+
+No one-off data backfill command is required after a successful migration. The
+release's data repairs and lodge scoping are migration-driven and idempotent.
+
+---
+
 ## v0.10.0 → v0.10.1
 
 `v0.10.1` is a patch release: four payment/booking-recovery hardening changes

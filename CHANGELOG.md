@@ -4,6 +4,71 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+## 0.11.0 - 2026-07-13
+
+- Release classification: minor public reference release. This is a large
+  feature, operator-UX, accessibility, and multi-lodge release over `0.10.1`,
+  with 30 migrations. It adds first-class multi-lodge operation, configuration
+  transfer, declared partner/double-bed sharing, safer admin booking overrides,
+  expanded admin email controls, and the Restrained Alpine application design
+  system. Read `docs/releases/v0.11.0.md` and the `v0.10.1 -> v0.11.0` section
+  of `docs/UPGRADING.md` before deployment.
+
+- **Multi-lodge operation is now first-class (#1568).** Lodge-scoped booking,
+  room/bed, season, rate, instruction, waitlist, roster, kiosk, hut-leader,
+  school/group-request, promo, locker, work-party, and member-access flows now
+  resolve an explicit lodge. Admins can choose the default lodge, configure
+  lodge-specific access, and operate calendars and queues without silently
+  crossing lodge boundaries. The migration sequence seeds the existing
+  single-lodge installation as the default, expands/scopes dependent records,
+  and then enforces the required lodge identities.
+
+- **Restrained Alpine design foundation and application-wide UX sweep
+  (#1800).** Authenticated, admin, login, and school/request surfaces now share
+  configurable brand accent/neutral/font tokens, accessible semantic status
+  colours, dark-mode-safe alerts and focus states, reduced-motion handling,
+  skip links, responsive tables, and reusable status, occupancy, empty/loading,
+  filtering, pagination, table, calendar, and section-navigation primitives.
+  Admin lists, bookings, payments, Xero sync, members, bed allocation, lodge
+  kiosk, dashboards, and the public theme were migrated to the shared system.
+
+- **Admin booking operations gained explicit, audited recovery paths.** Full
+  Admins and Booking Officers can create retroactive bookings (within the
+  365-day/Xero-lock-date guard), override locked stay dates by shifting or
+  repricing, explicitly admit over-capacity bookings, place/remove capacity
+  holds, and choose whether applicable admin-initiated actions email members.
+  Finished-stay side doors were closed, linked change requests are fulfilled,
+  and over-capacity intent now survives payment settlement rather than being
+  undone by a later capacity re-check.
+
+- **Bed allocation and shared-double occupancy were expanded.** Admins can
+  manage richer bed types, move whole stays more predictably, preserve draft
+  work, distinguish bookings visually, enforce cross-booking minor/adult
+  separation in automated placement, and place a confirmed partner as the
+  second occupant of a shareable double. A lodge's configured maximum sleeping
+  capacity now remains a hard ceiling even when more beds are installed.
+
+- **Finance, membership, setup, and operational administration were
+  hardened.** Applied-credit allocation and credit-restore deduplication make
+  Internet Banking cancellation/refund recovery deterministic; Xero-lock-date
+  guards cover retroactive repricing; editable access-role definitions,
+  permission-aware setup hubs, committee contact routing, membership-type
+  retirement, lodge-aware hut-leader/roster/kiosk tools, and admin notification
+  controls improve operator visibility and control.
+
+- **Migration/deployment notes:** deploy in a low-traffic window after a tested
+  backup. Four contract migrations require particular care: the induction
+  result table and self-assessment fields, finance-report label fields, and
+  legacy email-setting lodge identity fields are removed. The last three have
+  a brief old-colour incompatibility window described in
+  `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`; drain or idle the affected old-colour
+  traffic, cut over promptly, and supply the documented migration-validator
+  override acknowledgement. Before deployment, audit lodge capacity with the
+  read-only query in `docs/CAPACITY_MODEL.md`. After cutover, verify the default
+  lodge and lodge-scoped configuration, module enablement, email/lodge identity,
+  booking capacity, kiosk/roster, Xero/finance reads, and the new app theme. See
+  `docs/UPGRADING.md` for the complete operator checklist.
+
 - **11 previously-hardcoded emails are now admin-editable in
   `/admin/notifications` (#1797).** Booking review approved/rejected, induction
   sign-off request, school attendee confirmation, the school manual-invoice
