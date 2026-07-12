@@ -528,7 +528,9 @@ describe("AdminBookingsPage", () => {
 
     expect(html).toContain("All Bookings");
     expect(html).toContain("Aroha Ngata");
-    expect(html).toContain("Changes");
+    // The redesigned table (#1810) keeps a Payment column; the operational
+    // Beds/Xero/Changes columns moved to the booking detail view.
+    expect(html).toContain("Payment");
     expect(html).not.toContain("/admin/bed-allocation");
     expect(html).not.toContain("bedState=unallocated");
     expect(html).not.toContain(">Beds<");

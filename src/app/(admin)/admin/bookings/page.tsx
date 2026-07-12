@@ -1,12 +1,21 @@
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
-import { formatCents } from "@/lib/utils";
+import { cn, formatCents } from "@/lib/utils";
 import { BookingFilters } from "@/components/admin/booking-filters";
 import { BookingsPagination } from "@/components/admin/bookings-pagination";
-import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { AdminDataTable } from "@/components/admin/admin-data-table";
+import { SortHeader } from "@/components/admin/sort-header";
+import {
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { StatusChip } from "@/components/ui/status-chip";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   adminBookingsQuerySchema,
   getDefaultAdminBookingSortDir,
@@ -15,8 +24,6 @@ import {
   type BookingSortBy,
   type SortDir,
 } from "@/lib/admin-bookings-service";
-import { formatDateOnly } from "@/lib/date-only";
-import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { lodgeOrderBy } from "@/lib/lodges";
@@ -24,7 +31,15 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { APP_TIME_ZONE } from "@/config/operational";
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import {
+  CalendarX2,
+  CreditCard,
+  Eye,
+  Landmark,
+  MinusCircle,
+  Trash2,
+  type LucideIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 
 function formatDate(value: Date) {
@@ -33,6 +48,68 @@ function formatDate(value: Date) {
 
 export function formatAdminBookingGuestCount(totalGuests: number, nonMemberGuests: number) {
   return `${totalGuests} (${nonMemberGuests} non-member${nonMemberGuests === 1 ? "" : "s"})`;
+}
+
+// Whole lodge nights between two date-only check-in/out values. Both are stored
+// as midnight instants, so the raw millisecond span divides to exact nights —
+// this is a display-only derivation and never touches the query/money math.
+function nightsBetween(checkIn: Date, checkOut: Date) {
+  return Math.max(
+    0,
+    Math.round((checkOut.getTime() - checkIn.getTime()) / 86_400_000),
+  );
+}
+
+// Small semantic chip (icon + text) sharing StatusChip's five-tone visual
+// language for the non-status signals the redesigned table keeps inline
+// (payment source, review, deleted). Meaning is carried by icon + label, never
+// colour alone.
+type ChipTone = "neutral" | "info" | "success" | "warning" | "danger";
+
+const CHIP_TONE_CLASSES: Record<ChipTone, string> = {
+  neutral: "bg-muted text-foreground",
+  info: "bg-info-muted text-info",
+  success: "bg-success-muted text-success",
+  warning: "bg-warning-muted text-warning",
+  danger: "bg-danger-muted text-danger",
+};
+
+function MiniChip({
+  tone,
+  icon: Icon,
+  children,
+}: {
+  tone: ChipTone;
+  icon: LucideIcon;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-transparent px-2 py-0.5 text-xs font-medium",
+        CHIP_TONE_CLASSES[tone],
+      )}
+    >
+      <Icon aria-hidden="true" className="size-3.5 shrink-0" />
+      <span>{children}</span>
+    </span>
+  );
+}
+
+function paymentChip(source: AdminBookingRow["operational"]["paymentSource"]): {
+  tone: ChipTone;
+  icon: LucideIcon;
+  label: string;
+} {
+  switch (source) {
+    case "STRIPE":
+      return { tone: "info", icon: CreditCard, label: "Stripe" };
+    case "INTERNET_BANKING":
+      return { tone: "info", icon: Landmark, label: "Internet Banking" };
+    case "NONE":
+    default:
+      return { tone: "neutral", icon: MinusCircle, label: "No payment" };
+  }
 }
 
 export default async function AdminBookingsPage({
@@ -125,133 +202,43 @@ export default async function AdminBookingsPage({
     return withPage(visibleSearchParams(), targetPage);
   }
 
-  function SortIcon({ column }: { column: BookingSortBy }) {
-    if (sortBy !== column) {
-      return <ArrowUpDown className="ml-1 h-3 w-3 opacity-40" />;
-    }
-
-    return sortDir === "asc" ? (
-      <ArrowUp className="ml-1 h-3 w-3" />
-    ) : (
-      <ArrowDown className="ml-1 h-3 w-3" />
-    );
-  }
-
-  function SortHeader({ column, children }: { column: BookingSortBy; children: ReactNode }) {
+  // One sortable header wired to the URL-driven sort links this page has always
+  // built. `align="right"` keeps the numeric Total header aligned with its cell.
+  function BookingSortHeader({
+    column,
+    children,
+    align,
+  }: {
+    column: BookingSortBy;
+    children: ReactNode;
+    align?: "left" | "right";
+  }) {
     return (
-      <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
-        <Link href={sortHref(column)} className="inline-flex items-center whitespace-nowrap hover:text-gray-900">
-          {children}
-          <SortIcon column={column} />
-        </Link>
-      </th>
+      <SortHeader
+        active={sortBy === column}
+        direction={sortDir}
+        href={sortHref(column)}
+        align={align}
+      >
+        {children}
+      </SortHeader>
     );
-  }
-
-  function paymentSourceLabel(source: AdminBookingRow["operational"]["paymentSource"]) {
-    if (source === "INTERNET_BANKING") return "Internet Banking";
-    if (source === "STRIPE") return "Stripe";
-    return "No payment";
-  }
-
-  function xeroStateLabel(state: AdminBookingRow["operational"]["xeroState"]) {
-    switch (state) {
-      case "invoiceLinked":
-        return "Invoice linked";
-      case "invoiceMissing":
-        return "Invoice missing";
-      case "operationFailed":
-        return "Failed activity";
-      case "operationPartial":
-        return "Partial activity";
-      case "operationPending":
-        return "Pending activity";
-      case "none":
-      default:
-        return "No invoice needed";
-    }
-  }
-
-  function xeroStateClass(state: AdminBookingRow["operational"]["xeroState"]) {
-    switch (state) {
-      case "invoiceLinked":
-        return "bg-green-100 text-green-900";
-      case "invoiceMissing":
-        return "bg-orange-100 text-orange-900";
-      case "operationFailed":
-        return "bg-red-100 text-red-900";
-      case "operationPartial":
-      case "operationPending":
-        return "bg-amber-100 text-amber-900";
-      case "none":
-      default:
-        return "bg-slate-100 text-slate-700";
-    }
-  }
-
-  function bedStateLabel(booking: AdminBookingRow) {
-    const { bedState, allocatedGuestNights, expectedGuestNights } = booking.operational;
-    const countLabel = expectedGuestNights > 0
-      ? ` ${allocatedGuestNights}/${expectedGuestNights}`
-      : "";
-
-    switch (bedState) {
-      case "warning":
-        return `Bed warning${countLabel}`;
-      case "unallocated":
-        return `Unallocated${countLabel}`;
-      case "partial":
-        return `Partial${countLabel}`;
-      case "complete":
-      default:
-        return `Allocated${countLabel}`;
-    }
-  }
-
-  function bedStateClass(state: AdminBookingRow["operational"]["bedState"]) {
-    switch (state) {
-      case "warning":
-        return "bg-amber-100 text-amber-900";
-      case "unallocated":
-        return "bg-red-100 text-red-900";
-      case "partial":
-        return "bg-orange-100 text-orange-900";
-      case "complete":
-      default:
-        return "bg-green-100 text-green-900";
-    }
-  }
-
-  function bedAllocationHref(booking: AdminBookingRow) {
-    const params = new URLSearchParams({
-      from: formatDateOnly(booking.checkIn),
-      to: formatDateOnly(booking.checkOut),
-      bookingId: booking.id,
-    });
-    return buildHrefWithReturnTo(`/admin/bed-allocation?${params.toString()}`, currentBookingsPath);
-  }
-
-  function xeroActivityHref(booking: AdminBookingRow) {
-    return booking.payment
-      ? buildXeroRecordActivityUrl("Payment", booking.payment.id, currentBookingsPath)
-      : buildXeroRecordActivityUrl("Booking", booking.id, currentBookingsPath);
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">All Bookings</h1>
-        {canEditBookings ? (
-          <Link
-            href="/admin/book"
-            className="app-button-brand"
-          >
-            + Create Booking
-          </Link>
-        ) : (
-          <ViewOnlyActionButton canEdit={false}>+ Create Booking</ViewOnlyActionButton>
-        )}
-      </div>
+      <AdminPageHeader
+        title="All Bookings"
+        actions={
+          canEditBookings ? (
+            <Link href="/admin/book" className="app-button-brand">
+              + Create Booking
+            </Link>
+          ) : (
+            <ViewOnlyActionButton canEdit={false}>+ Create Booking</ViewOnlyActionButton>
+          )
+        }
+      />
 
       <BookingFilters
         showBedAllocation={showBedAllocation}
@@ -261,215 +248,109 @@ export default async function AdminBookingsPage({
       <AdminBookingCalendar />
 
       {bookings.length === 0 ? (
-        <Card>
-          <CardContent className="p-6 text-center text-gray-500">
-            No bookings found matching your filters.
-          </CardContent>
-        </Card>
+        <div className="rounded-lg border border-border bg-card">
+          <EmptyState
+            icon={CalendarX2}
+            title="No bookings found"
+            description="No bookings match your current filters. Try clearing or adjusting them."
+          />
+        </div>
       ) : (
         <div className="space-y-2">
-          <p className="text-sm text-gray-500">
-            Showing {bookings.length} of {total} bookings found
-            {totalPages > 1 ? ` (page ${page} of ${totalPages})` : ""}
-          </p>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 bg-white rounded-lg shadow">
-              <thead className="bg-gray-50">
-                <tr>
-                  <SortHeader column="member">Member</SortHeader>
-                  {showLodge ? (
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Lodge</th>
-                  ) : null}
-                  <SortHeader column="lastUpdated">Last Updated</SortHeader>
-                  <SortHeader column="checkIn">Check In</SortHeader>
-                  <SortHeader column="guests">Guests</SortHeader>
-                  <SortHeader column="total">Total</SortHeader>
-                  <SortHeader column="status">Status</SortHeader>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Payment</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Xero</th>
-                  {showBedAllocation ? (
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Beds</th>
-                  ) : null}
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Changes</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {bookings.map((booking) => {
-                  const nonMemberGuestCount = booking.guests.filter((guest) => !guest.isMember).length;
+          <AdminDataTable
+            stickyFirstColumn
+            aria-label="Bookings"
+            toolbar={
+              <p>
+                Showing {bookings.length} of {total} bookings found
+                {totalPages > 1 ? ` (page ${page} of ${totalPages})` : ""}
+              </p>
+            }
+          >
+            <TableHeader>
+              <TableRow>
+                <BookingSortHeader column="member">Member</BookingSortHeader>
+                {showLodge ? <TableHead>Lodge</TableHead> : null}
+                <BookingSortHeader column="lastUpdated">Last Updated</BookingSortHeader>
+                <BookingSortHeader column="checkIn">Stay</BookingSortHeader>
+                <BookingSortHeader column="guests">Guests</BookingSortHeader>
+                <BookingSortHeader column="total" align="right">Total</BookingSortHeader>
+                <BookingSortHeader column="status">Status</BookingSortHeader>
+                <TableHead>Payment</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {bookings.map((booking) => {
+                const nonMemberGuestCount = booking.guests.filter((guest) => !guest.isMember).length;
+                const payment = paymentChip(booking.operational.paymentSource);
+                const nights = nightsBetween(booking.checkIn, booking.checkOut);
 
-                  return (
-                    <tr key={booking.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3">
+                return (
+                  <TableRow key={booking.id}>
+                    <TableCell>
+                      <Link
+                        href={buildHrefWithReturnTo(`/admin/members/${booking.member.id}`, currentBookingsPath)}
+                        className="group inline-block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <span className="block text-sm font-medium text-foreground group-hover:text-primary group-hover:underline">
+                          {booking.member.firstName} {booking.member.lastName}
+                        </span>
+                        <span className="block text-xs text-muted-foreground">{booking.member.email}</span>
+                      </Link>
+                    </TableCell>
+                    {showLodge ? (
+                      <TableCell className="text-sm">
+                        {booking.lodge?.name ?? "—"}
+                      </TableCell>
+                    ) : null}
+                    <TableCell className="text-sm">{formatDate(booking.updatedAt)}</TableCell>
+                    <TableCell className="text-sm">
+                      <span className="block">{formatDate(booking.checkIn)}</span>
+                      <span className="block text-xs text-muted-foreground">to {formatDate(booking.checkOut)}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {nights} night{nights === 1 ? "" : "s"}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {formatAdminBookingGuestCount(booking.guests.length, nonMemberGuestCount)}
+                    </TableCell>
+                    <TableCell className="text-right text-sm font-medium tabular-nums">
+                      {formatCents(booking.finalPriceCents)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <Link
-                          href={buildHrefWithReturnTo(`/admin/members/${booking.member.id}`, currentBookingsPath)}
-                          className="hover:underline"
+                          href={buildHrefWithReturnTo(`/bookings/${booking.id}`, currentBookingsPath)}
+                          className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
-                          <p className="font-medium text-sm text-blue-600">
-                            {booking.member.firstName} {booking.member.lastName}
-                          </p>
-                          <p className="text-xs text-gray-500">{booking.member.email}</p>
+                          <StatusChip kind="booking" value={booking.status} />
                         </Link>
-                      </td>
-                      {showLodge ? (
-                        <td className="px-4 py-3 text-sm">
-                          {booking.lodge?.name ?? "—"}
-                        </td>
-                      ) : null}
-                      <td className="px-4 py-3 text-sm">{formatDate(booking.updatedAt)}</td>
-                      <td className="px-4 py-3 text-sm">
-                        <p>{formatDate(booking.checkIn)}</p>
-                        <p className="text-xs text-gray-500">to {formatDate(booking.checkOut)}</p>
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        {formatAdminBookingGuestCount(booking.guests.length, nonMemberGuestCount)}
-                      </td>
-                      <td className="px-4 py-3 text-sm font-medium">{formatCents(booking.finalPriceCents)}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap items-center gap-2">
+                        {booking.requiresAdminReview ? (
                           <Link
-                            href={buildHrefWithReturnTo(`/bookings/${booking.id}`, currentBookingsPath)}
-                            className="inline-flex"
+                            href={`/admin/booking-requests?tab=approvals&bookingId=${booking.id}&status=ALL`}
+                            className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
-                            <Badge variant="secondary" className={`${bookingStatusClass(booking.status)} cursor-pointer`}>
-                              {bookingStatusLabel(booking.status)}
-                            </Badge>
+                            <MiniChip tone="warning" icon={Eye}>Review</MiniChip>
                           </Link>
-                          {booking.requiresAdminReview ? (
-                            <Link href={`/admin/booking-requests?tab=approvals&bookingId=${booking.id}&status=ALL`}>
-                              <Badge variant="secondary" className="bg-amber-100 text-amber-900 cursor-pointer hover:bg-amber-200">
-                                Review
-                              </Badge>
-                            </Link>
-                          ) : null}
-                          {booking.deletedAt ? (
-                            <Badge variant="secondary" className="bg-red-100 text-red-900">
-                              Deleted
-                            </Badge>
-                          ) : null}
-                        </div>
-                        {booking.requiresAdminReview && booking.adminReviewReason ? (
-                          <p className="mt-1 text-xs text-amber-800">{booking.adminReviewReason}</p>
                         ) : null}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        <div className="flex flex-wrap gap-1">
-                          <Badge
-                            variant="secondary"
-                            className={
-                              booking.operational.paymentSource === "NONE"
-                                ? "bg-slate-100 text-slate-700"
-                                : "bg-blue-100 text-blue-900"
-                            }
-                          >
-                            {paymentSourceLabel(booking.operational.paymentSource)}
-                          </Badge>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        <div className="flex flex-col gap-1">
-                          <Link href={xeroActivityHref(booking)} className="inline-flex">
-                            <Badge
-                              variant="secondary"
-                              className={`${xeroStateClass(booking.operational.xeroState)} cursor-pointer`}
-                            >
-                              {xeroStateLabel(booking.operational.xeroState)}
-                            </Badge>
-                          </Link>
-                          {booking.operational.xeroActivity.failed > 0 ? (
-                            <Link
-                              href={buildXeroRecordActivityUrl("Booking", booking.id, currentBookingsPath)}
-                              className="text-xs text-red-700 hover:underline"
-                            >
-                              {booking.operational.xeroActivity.failed} failed
-                            </Link>
-                          ) : null}
-                          {booking.operational.xeroActivity.partial > 0 ? (
-                            <Link
-                              href={buildXeroRecordActivityUrl("Booking", booking.id, currentBookingsPath)}
-                              className="text-xs text-amber-700 hover:underline"
-                            >
-                              {booking.operational.xeroActivity.partial} partial
-                            </Link>
-                          ) : null}
-                          {booking.operational.xeroActivity.pending > 0 ? (
-                            <Link
-                              href={buildXeroRecordActivityUrl("Booking", booking.id, currentBookingsPath)}
-                              className="text-xs text-slate-700 hover:underline"
-                            >
-                              {booking.operational.xeroActivity.pending} pending
-                            </Link>
-                          ) : null}
-                        </div>
-                      </td>
-                      {showBedAllocation ? (
-                        <td className="px-4 py-3 text-sm">
-                          <div className="space-y-1">
-                            <Link href={bedAllocationHref(booking)} className="inline-flex">
-                              <Badge
-                                variant="secondary"
-                                className={`${bedStateClass(booking.operational.bedState)} cursor-pointer`}
-                              >
-                                {bedStateLabel(booking)}
-                              </Badge>
-                            </Link>
-                            {booking.operational.unapprovedBedAllocations > 0 ? (
-                              <p className="text-xs text-amber-700">
-                                {booking.operational.unapprovedBedAllocations} awaiting approval
-                              </p>
-                            ) : null}
-                            {booking.operational.hasPerGuestDates ? (
-                              <div className="space-y-0.5">
-                                <Badge variant="outline" className="text-xs">
-                                  Per-guest dates
-                                </Badge>
-                                {booking.operational.guestDateRanges.slice(0, 2).map((guestRange) => (
-                                  <p key={guestRange.guestId} className="text-xs text-gray-500">
-                                    {guestRange.guestName}: {guestRange.stayStart} to {guestRange.stayEnd}
-                                  </p>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        </td>
+                        {booking.deletedAt ? (
+                          <MiniChip tone="danger" icon={Trash2}>Deleted</MiniChip>
+                        ) : null}
+                      </div>
+                      {booking.requiresAdminReview && booking.adminReviewReason ? (
+                        <p className="mt-1 text-xs text-warning">{booking.adminReviewReason}</p>
                       ) : null}
-                      <td className="px-4 py-3 text-sm">
-                        <div className="flex flex-wrap gap-1">
-                          {booking.operational.pendingChangeRequest ? (
-                            <Link href={`/admin/booking-change-requests?bookingId=${booking.id}&status=REQUESTED`}>
-                              <Badge variant="secondary" className="bg-amber-100 text-amber-900 cursor-pointer hover:bg-amber-200">
-                                Request
-                              </Badge>
-                            </Link>
-                          ) : null}
-                          {booking.operational.hasModification ? (
-                            <Badge variant="secondary" className="bg-slate-100 text-slate-800">
-                              Modified
-                            </Badge>
-                          ) : null}
-                          {booking.operational.creditGenerated ? (
-                            <Badge variant="secondary" className="bg-green-100 text-green-900">
-                              Credit
-                            </Badge>
-                          ) : null}
-                          {booking.operational.refundGenerated ? (
-                            <Badge variant="secondary" className="bg-blue-100 text-blue-900">
-                              Refund
-                            </Badge>
-                          ) : null}
-                          {!booking.operational.pendingChangeRequest &&
-                          !booking.operational.hasModification &&
-                          !booking.operational.creditGenerated &&
-                          !booking.operational.refundGenerated ? (
-                            <span className="text-xs text-gray-500">-</span>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                    </TableCell>
+                    <TableCell>
+                      <MiniChip tone={payment.tone} icon={payment.icon}>
+                        {payment.label}
+                      </MiniChip>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </AdminDataTable>
           <BookingsPagination
             page={page}
             totalPages={totalPages}

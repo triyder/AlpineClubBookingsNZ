@@ -404,7 +404,7 @@ export function BookingFilters({
       chips={chips}
       search={
         <div className="space-y-1">
-          <label className="text-xs font-medium text-gray-500">Search member</label>
+          <label className="text-xs font-medium text-muted-foreground">Search member</label>
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -415,7 +415,7 @@ export function BookingFilters({
       primary={
         <>
           <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">Status</label>
+            <label className="text-xs font-medium text-muted-foreground">Status</label>
             <Select value={status} onValueChange={setStatus}>
               <SelectTrigger className="w-[170px]">
                 <SelectValue />
@@ -434,7 +434,7 @@ export function BookingFilters({
             </Select>
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">Month</label>
+            <label className="text-xs font-medium text-muted-foreground">Month</label>
             <Select value={month} onValueChange={setMonth}>
               <SelectTrigger className="w-[140px]">
                 <SelectValue />
@@ -448,7 +448,7 @@ export function BookingFilters({
             </Select>
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">Payment</label>
+            <label className="text-xs font-medium text-muted-foreground">Payment</label>
             <Select value={paymentSource} onValueChange={setPaymentSource}>
               <SelectTrigger className="w-[160px]">
                 <SelectValue />
@@ -472,11 +472,11 @@ export function BookingFilters({
         <>
           {showLodgeFilter && (
             <div className="space-y-1">
-              <label className="text-xs font-medium text-gray-500">Lodge</label>
+              <label className="text-xs font-medium text-muted-foreground">Lodge</label>
               <select
                 value={lodgeId}
                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setLodgeId(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="all">All lodges</option>
                 {lodgeOptions.map((lodge) => (
@@ -486,7 +486,7 @@ export function BookingFilters({
             </div>
           )}
           <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">Deleted</label>
+            <label className="text-xs font-medium text-muted-foreground">Deleted</label>
             <Select value={deleted} onValueChange={setDeleted}>
               <SelectTrigger className="w-[150px]">
                 <SelectValue />
@@ -499,7 +499,7 @@ export function BookingFilters({
             </Select>
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">Xero</label>
+            <label className="text-xs font-medium text-muted-foreground">Xero</label>
             <Select value={xeroState} onValueChange={setXeroState}>
               <SelectTrigger className="w-[160px]">
                 <SelectValue />
@@ -516,7 +516,7 @@ export function BookingFilters({
           </div>
           {showBedAllocation ? (
             <div className="space-y-1">
-              <label className="text-xs font-medium text-gray-500">Beds</label>
+              <label className="text-xs font-medium text-muted-foreground">Beds</label>
               <Select value={bedState} onValueChange={setBedState}>
                 <SelectTrigger className="w-[150px]">
                   <SelectValue />
@@ -532,7 +532,7 @@ export function BookingFilters({
             </div>
           ) : null}
           <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">Changes</label>
+            <label className="text-xs font-medium text-muted-foreground">Changes</label>
             <Select value={changeState} onValueChange={setChangeState}>
               <SelectTrigger className="w-[170px]">
                 <SelectValue />
@@ -547,7 +547,7 @@ export function BookingFilters({
             </Select>
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">
+            <label className="text-xs font-medium text-muted-foreground">
               Additional Payment
             </label>
             <Select value={additionalOwed} onValueChange={setAdditionalOwed}>
