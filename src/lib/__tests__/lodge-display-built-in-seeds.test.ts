@@ -60,6 +60,43 @@ describe("built-in display seeds — definitions", () => {
     }
   });
 
+  it("carries per-area defaultContent on the everyday-board static/conditional areas (issue #111)", () => {
+    const everyday = BUILT_IN_DISPLAY_LAYOUTS.find(
+      (l) => l.key === "everyday-board"
+    )!;
+    const byKey = Object.fromEntries(everyday.areas.map((a) => [a.key, a]));
+    // Each static/conditional area declares its default module so the authoring
+    // editor seeds a NEW template's slots from the real default, not an empty box.
+    expect(byKey.board.defaultContent).toEqual({
+      module: "arrivals-board",
+      options: { days: 3 },
+    });
+    expect(byKey.chores.defaultContent).toEqual({ module: "chores-board" });
+    expect(byKey.rules.defaultContent).toEqual({ module: "lodge-rules" });
+    expect(byKey.notice.defaultContent).toEqual({ module: "notice-board" });
+    // The defaults mirror the matching built-in template's slot bindings exactly.
+    const everydayTemplate = BUILT_IN_DISPLAY_TEMPLATES.find(
+      (t) => t.key === "everyday-board"
+    )!;
+    for (const area of everyday.areas) {
+      if (area.kind !== "rotator") {
+        expect(area.defaultContent).toEqual(everydayTemplate.slotContent[area.key]);
+      }
+    }
+  });
+
+  it("leaves rotator built-ins' children without defaultContent (a documented follow-up)", () => {
+    // whole-lodge / singles-house are rotator layouts; the validator rejects
+    // defaultContent on a rotator area, and DisplayAreaChild has no such field
+    // yet, so their child slots still seed empty (issue #111 follow-up).
+    for (const key of ["whole-lodge", "singles-house"]) {
+      const layout = BUILT_IN_DISPLAY_LAYOUTS.find((l) => l.key === key)!;
+      for (const area of layout.areas) {
+        expect(area.defaultContent).toBeUndefined();
+      }
+    }
+  });
+
   it("re-creates the everyday-board board+rail page grid in the layout CSS", () => {
     const everyday = BUILT_IN_DISPLAY_LAYOUTS.find(
       (l) => l.key === "everyday-board"
