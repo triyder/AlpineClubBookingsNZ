@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   bookingFindFirst: vi.fn(),
   bookingFindMany: vi.fn(),
+  checkCapacity: vi.fn(),
   getAvailablePromoCodesForMember: vi.fn(),
   getMemberCreditBalance: vi.fn(),
   hasAccessRole: vi.fn(),
@@ -59,6 +60,10 @@ vi.mock("@/lib/hut-leader", () => ({
   isHutLeader: mocks.isHutLeader,
 }));
 
+vi.mock("@/lib/capacity", () => ({
+  checkCapacity: mocks.checkCapacity,
+}));
+
 import DashboardPage from "../page";
 
 function moduleFlags() {
@@ -103,6 +108,7 @@ describe("DashboardPage summary card drill-downs", () => {
         {
           id: "upcoming-1",
           memberId: "member-1",
+          lodgeId: "lodge-1",
           checkIn: new Date("2026-08-10T00:00:00.000Z"),
           checkOut: new Date("2026-08-12T00:00:00.000Z"),
           status: "CONFIRMED",
@@ -141,6 +147,25 @@ describe("DashboardPage summary card drill-downs", () => {
     });
     mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags());
     mocks.hasAccessRole.mockReturnValue(false);
+    // Peak occupancy 22 across a 30-bed lodge: night one 20/30, night two
+    // 22/30 → minAvailable 8, capacity (occupied + available) 30, filled
+    // (capacity - minAvailable) 22. Both figures come from this one call.
+    mocks.checkCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 8,
+      nightDetails: [
+        {
+          date: new Date("2026-08-10T00:00:00.000Z"),
+          occupiedBeds: 20,
+          availableBeds: 10,
+        },
+        {
+          date: new Date("2026-08-11T00:00:00.000Z"),
+          occupiedBeds: 22,
+          availableBeds: 8,
+        },
+      ],
+    });
   });
 
   it("links summary cards to their drill-down targets", async () => {
@@ -155,5 +180,45 @@ describe("DashboardPage summary card drill-downs", () => {
     expect(html).toContain('href="/profile?returnTo=%2Fdashboard#promo-codes"');
     expect(html).toContain("SAVE10");
     expect(html).toContain("10% off per individual");
+  });
+
+  it("shows a lodge occupancy meter for the next stay's dates", async () => {
+    const html = await renderDashboardPage();
+
+    expect(mocks.checkCapacity).toHaveBeenCalledWith(
+      "lodge-1",
+      new Date("2026-08-10T00:00:00.000Z"),
+      new Date("2026-08-12T00:00:00.000Z"),
+      1,
+    );
+    // filled (peak occupancy) / capacity, both derived from the one call.
+    expect(html).toContain("Lodge occupancy for your dates");
+    expect(html).toContain('role="progressbar"');
+    expect(html).toContain("22 / 30");
+  });
+
+  it("omits the occupancy meter when the next stay has no lodge", async () => {
+    mocks.bookingFindMany.mockReset();
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([
+        {
+          id: "upcoming-1",
+          memberId: "member-1",
+          lodgeId: null,
+          checkIn: new Date("2026-08-10T00:00:00.000Z"),
+          checkOut: new Date("2026-08-12T00:00:00.000Z"),
+          status: "CONFIRMED",
+          finalPriceCents: 18000,
+          _count: { guests: 2 },
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const html = await renderDashboardPage();
+
+    expect(mocks.checkCapacity).not.toHaveBeenCalled();
+    expect(html).not.toContain("Lodge occupancy for your dates");
   });
 });
