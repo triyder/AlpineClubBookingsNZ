@@ -1,17 +1,19 @@
 "use client";
 
-import type { AgeTier } from "@prisma/client";
+import type { AgeTier, SubscriptionStatus } from "@prisma/client";
 import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
-import { subscriptionStatusClass, subscriptionStatusLabel } from "@/lib/status-colors";
+import { subscriptionStatusLabel } from "@/lib/status-colors";
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups";
 import { getAgeTierLabel, useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
+import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -20,25 +22,33 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Alert } from "@/components/ui/alert";
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { AdminDataTable } from "@/components/admin/admin-data-table";
+import {
+  AdminFilterBar,
+  type AdminFilterChip,
+} from "@/components/admin/admin-filter-bar";
+import { SortHeader } from "@/components/admin/sort-header";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { StatusChip } from "@/components/ui/status-chip";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Spinner } from "@/components/ui/spinner";
 import {
   AlertCircle,
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
-  CheckCircle,
+  CheckCircle2,
   ExternalLink,
   RefreshCw,
   ShieldCheck,
   Users,
   Clock,
+  type LucideIcon,
 } from "lucide-react";
 
 function getSeasonYear(date: Date): number {
@@ -115,6 +125,44 @@ function getSortDir(value: string | null): SortDir {
 
 function getDefaultSortDir(sortBy: SubscriptionSortBy): SortDir {
   return sortBy === "paidAt" ? "desc" : "asc";
+}
+
+function SummaryCard({
+  title,
+  icon: Icon,
+  value,
+  valueClassName,
+  iconClassName,
+}: {
+  title: string;
+  icon: LucideIcon;
+  value: ReactNode;
+  valueClassName?: string;
+  iconClassName?: string;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">
+          {title}
+        </CardTitle>
+        <Icon
+          className={cn("h-4 w-4", iconClassName ?? "text-muted-foreground")}
+          aria-hidden="true"
+        />
+      </CardHeader>
+      <CardContent>
+        <div
+          className={cn(
+            "text-2xl font-bold tabular-nums text-foreground",
+            valueClassName,
+          )}
+        >
+          {value}
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function SubscriptionsPage() {
@@ -236,19 +284,9 @@ export default function SubscriptionsPage() {
     setSortDir(getDefaultSortDir(column));
   }
 
-  function SortIcon({ column }: { column: SubscriptionSortBy }) {
-    if (sortBy !== column) {
-      return <ArrowUpDown className="ml-1 h-3 w-3 opacity-40" />;
-    }
-
-    return sortDir === "asc" ? (
-      <ArrowUp className="ml-1 h-3 w-3" />
-    ) : (
-      <ArrowDown className="ml-1 h-3 w-3" />
-    );
-  }
-
-  function SortHeader({
+  // Thin wrapper over the shared admin SortHeader (#1805): callback mode with the
+  // page's existing toggleSort behaviour.
+  function SubscriptionSortHeader({
     column,
     children,
   }: {
@@ -256,206 +294,290 @@ export default function SubscriptionsPage() {
     children: ReactNode;
   }) {
     return (
-      <TableHead>
-        <button
-          type="button"
-          onClick={() => toggleSort(column)}
-          className="inline-flex items-center whitespace-nowrap text-left"
-        >
-          {children}
-          <SortIcon column={column} />
-        </button>
-      </TableHead>
+      <SortHeader
+        active={sortBy === column}
+        direction={sortDir}
+        onSort={() => toggleSort(column)}
+      >
+        {children}
+      </SortHeader>
     );
+  }
+
+  // Active-filter chips. Removing a chip resets just that filter to "all" (the
+  // same effect as selecting the "All" option), so query semantics are unchanged.
+  const filterChips: AdminFilterChip[] = [];
+  if (status !== "all") {
+    filterChips.push({
+      key: "status",
+      label: "Status",
+      value: subscriptionStatusLabel(status),
+      onRemove: () => { setStatus("all"); setPage(1); },
+    });
+  }
+  if (ageTier !== "all") {
+    filterChips.push({
+      key: "ageTier",
+      label: "Age group",
+      value: getAgeTierLabel(ageTierOptions, ageTier),
+      onRemove: () => { setAgeTier("all"); setPage(1); },
+    });
+  }
+  if (xeroContactGroup !== "all") {
+    filterChips.push({
+      key: "xeroContactGroup",
+      label: "Xero group",
+      value:
+        xeroContactGroupsList.find((group) => group.id === xeroContactGroup)?.name ??
+        xeroContactGroup,
+      onRemove: () => { setXeroContactGroup("all"); setPage(1); },
+    });
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Subscriptions</h1>
-        <p className="text-sm text-slate-500 mt-1">Track member subscription status by season</p>
-      </div>
+      <AdminPageHeader
+        title="Subscriptions"
+        description="Track member subscription status by season"
+        actions={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => handleSync("incremental")}
+              disabled={syncing !== null}
+            >
+              <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
+              {syncing === "incremental" ? "Syncing..." : "Incremental Sync"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => handleSync("backfill")}
+              disabled={syncing !== null}
+            >
+              <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
+              {syncing === "backfill" ? "Repairing..." : "Repair Stale Linked Members"}
+            </Button>
+          </>
+        }
+      />
 
-      <div className="flex flex-wrap gap-3 items-end">
-        <div>
-          <label className="text-xs font-medium text-slate-500">Season Year</label>
-          <Select value={String(seasonYear)} onValueChange={(v) => { setSeasonYear(Number(v)); setPage(1); setSyncMessage(null); }}>
-            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {yearOptions.map((y) => (
-                <SelectItem key={y} value={String(y)}>{y} - {y + 1} (Apr-Mar)</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <label className="text-xs font-medium text-slate-500">Status</label>
-          <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
-            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="PAID">Paid</SelectItem>
-              <SelectItem value="UNPAID">Unpaid</SelectItem>
-              <SelectItem value="OVERDUE">Overdue</SelectItem>
-              <SelectItem value="NOT_INVOICED">Not Invoiced</SelectItem>
-              <SelectItem value="NOT_REQUIRED">Not Required</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <label className="text-xs font-medium text-slate-500">Age Group</label>
-          <Select value={ageTier} onValueChange={(v) => { setAgeTier(v as AgeTier | "all"); setPage(1); }}>
-            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Age Groups</SelectItem>
-              {ageTierOptions.map((option) => (
-                <SelectItem key={option.tier} value={option.tier}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        {xeroContactGroupsList.length > 0 && (
-          <div>
-            <label className="text-xs font-medium text-slate-500">Xero Contact Group</label>
-            <Select value={xeroContactGroup} onValueChange={(v) => { setXeroContactGroup(v); setPage(1); }}>
-              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Xero Contact Groups</SelectItem>
-                {xeroContactGroupsList.map((group) => (
-                  <SelectItem key={group.id} value={group.id}>
-                    {group.name} ({group.contactCount})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-        <Button
-          variant="outline"
-          onClick={() => handleSync("incremental")}
-          disabled={syncing !== null}
-        >
-          <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
-          {syncing === "incremental" ? "Syncing..." : "Incremental Sync"}
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => handleSync("backfill")}
-          disabled={syncing !== null}
-        >
-          <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
-          {syncing === "backfill" ? "Repairing..." : "Repair Stale Linked Members"}
-        </Button>
-      </div>
-      <p className="text-xs text-amber-700">
-        Only linked members are checked in Xero. Unlinked members stay Not
-        Invoiced until a Xero contact is linked or created.
-      </p>
-      <p className="text-xs text-slate-500">
-        Incremental sync is the normal low-cost refresh. The repair action is a
-        manual backfill for linked members who may be stuck after historical
-        Xero invoices were created before the link existed.
-      </p>
-      {!xeroContactGroupsLoaded && (
-        <p className="text-xs text-slate-500">
-          Cached Xero contact groups have not been refreshed yet, so linked
-          members may appear without group badges.
+      <AdminFilterBar
+        idPrefix="subscriptions-filters"
+        chips={filterChips}
+        primary={
+          <>
+            <div>
+              <Label className="text-xs">Season Year</Label>
+              <Select value={String(seasonYear)} onValueChange={(v) => { setSeasonYear(Number(v)); setPage(1); setSyncMessage(null); }}>
+                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {yearOptions.map((y) => (
+                    <SelectItem key={y} value={String(y)}>{y} - {y + 1} (Apr-Mar)</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Status</Label>
+              <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
+                <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="PAID">Paid</SelectItem>
+                  <SelectItem value="UNPAID">Unpaid</SelectItem>
+                  <SelectItem value="OVERDUE">Overdue</SelectItem>
+                  <SelectItem value="NOT_INVOICED">Not Invoiced</SelectItem>
+                  <SelectItem value="NOT_REQUIRED">Not Required</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Age Group</Label>
+              <Select value={ageTier} onValueChange={(v) => { setAgeTier(v as AgeTier | "all"); setPage(1); }}>
+                <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Age Groups</SelectItem>
+                  {ageTierOptions.map((option) => (
+                    <SelectItem key={option.tier} value={option.tier}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {xeroContactGroupsList.length > 0 && (
+              <div>
+                <Label className="text-xs">Xero Contact Group</Label>
+                <Select value={xeroContactGroup} onValueChange={(v) => { setXeroContactGroup(v); setPage(1); }}>
+                  <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Xero Contact Groups</SelectItem>
+                    {xeroContactGroupsList.map((group) => (
+                      <SelectItem key={group.id} value={group.id}>
+                        {group.name} ({group.contactCount})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </>
+        }
+      />
+
+      <div className="space-y-2">
+        <p className="text-xs text-warning">
+          Only linked members are checked in Xero. Unlinked members stay Not
+          Invoiced until a Xero contact is linked or created.
         </p>
-      )}
+        <p className="text-xs text-muted-foreground">
+          Incremental sync is the normal low-cost refresh. The repair action is a
+          manual backfill for linked members who may be stuck after historical
+          Xero invoices were created before the link existed.
+        </p>
+        {!xeroContactGroupsLoaded && (
+          <p className="text-xs text-muted-foreground">
+            Cached Xero contact groups have not been refreshed yet, so linked
+            members may appear without group badges.
+          </p>
+        )}
+      </div>
 
       {syncMessage && (
-        <div className={`rounded-md p-3 text-sm ${syncMessage.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
+        <Alert variant={syncMessage.type === "success" ? "success" : "error"}>
           {syncMessage.text}
-        </div>
+        </Alert>
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-        <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Total</CardTitle><Users className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold">{summary.total}</div></CardContent></Card>
-        <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Paid</CardTitle><CheckCircle className="h-4 w-4 text-green-500" /></CardHeader><CardContent><div className="text-2xl font-bold text-green-700">{summary.paid}</div></CardContent></Card>
-        <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Unpaid</CardTitle><Clock className="h-4 w-4 text-yellow-500" /></CardHeader><CardContent><div className="text-2xl font-bold text-yellow-700">{summary.unpaid}</div></CardContent></Card>
-        <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Overdue</CardTitle><AlertCircle className="h-4 w-4 text-red-500" /></CardHeader><CardContent><div className="text-2xl font-bold text-red-700">{summary.overdue}</div></CardContent></Card>
-        <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Not Required</CardTitle><ShieldCheck className="h-4 w-4 text-blue-500" /></CardHeader><CardContent><div className="text-2xl font-bold text-blue-700">{summary.notRequired}</div></CardContent></Card>
+        <SummaryCard title="Total" icon={Users} value={summary.total} />
+        <SummaryCard
+          title="Paid"
+          icon={CheckCircle2}
+          iconClassName="text-success"
+          valueClassName="text-success"
+          value={summary.paid}
+        />
+        <SummaryCard
+          title="Unpaid"
+          icon={Clock}
+          iconClassName="text-warning"
+          valueClassName="text-warning"
+          value={summary.unpaid}
+        />
+        <SummaryCard
+          title="Overdue"
+          icon={AlertCircle}
+          iconClassName="text-danger"
+          valueClassName="text-danger"
+          value={summary.overdue}
+        />
+        <SummaryCard
+          title="Not Required"
+          icon={ShieldCheck}
+          iconClassName="text-info"
+          valueClassName="text-info"
+          value={summary.notRequired}
+        />
       </div>
 
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader><TableRow>
-              <SortHeader column="member">Member</SortHeader>
-              <SortHeader column="email">Email</SortHeader>
-              <SortHeader column="ageTier">Age Group</SortHeader>
-              <SortHeader column="xeroContactGroup">Xero Contact Group</SortHeader>
-              <SortHeader column="status">Status</SortHeader>
-              <SortHeader column="xeroInvoice">Xero Invoice</SortHeader>
-              <SortHeader column="paidAt">Paid Date</SortHeader>
-            </TableRow></TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-8 text-slate-500">Loading...</TableCell></TableRow>
-              ) : data.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-8 text-slate-500">No subscriptions found</TableCell></TableRow>
-              ) : (
-                data.map((sub) => (
-                  <TableRow key={sub.id}>
-                    <TableCell className="font-medium">
-                      <Link
-                        href={buildHrefWithReturnTo(`/admin/members/${sub.memberId}?edit=true`, currentSubscriptionsPath)}
-                        className="text-blue-600 hover:underline"
-                      >
-                        {sub.member.lastName}, {sub.member.firstName}
-                      </Link>
-                    </TableCell>
-                    <TableCell>{sub.member.email}</TableCell>
-                    <TableCell>{getAgeTierLabel(ageTierOptions, sub.member.ageTier)}</TableCell>
-                    <TableCell>
-                      {sub.xeroContactGroups.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {sub.xeroContactGroups.map((group) => (
-                            <Badge key={group.id} variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">
-                              {group.name}
-                            </Badge>
-                          ))}
-                        </div>
-                      ) : sub.member.xeroContactId && !sub.xeroContactGroupsLoaded ? (
-                        <span className="text-xs text-slate-400">Cached groups not refreshed yet</span>
-                      ) : (
-                        "—"
-                      )}
-                    </TableCell>
-                    <TableCell><Badge className={subscriptionStatusClass(sub.status)}>{subscriptionStatusLabel(sub.status)}</Badge></TableCell>
-                    <TableCell>
-                      {sub.xeroInvoiceId ? (
-                        <a
-                          href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
-                        >
-                          {sub.xeroInvoiceNumber || sub.xeroInvoiceId.slice(0, 8)}
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      ) : "—"}
-                    </TableCell>
-                    <TableCell>{sub.paidAt ? format(new Date(sub.paidAt), "d MMM yyyy") : "—"}</TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <AdminDataTable
+        aria-label="Subscriptions"
+        toolbar={
+          <p>
+            Showing {data.length} of {total} subscription{total === 1 ? "" : "s"}
+          </p>
+        }
+      >
+        <TableHeader>
+          <TableRow>
+            <SubscriptionSortHeader column="member">Member</SubscriptionSortHeader>
+            <SubscriptionSortHeader column="email">Email</SubscriptionSortHeader>
+            <SubscriptionSortHeader column="ageTier">Age Group</SubscriptionSortHeader>
+            <SubscriptionSortHeader column="xeroContactGroup">Xero Contact Group</SubscriptionSortHeader>
+            <SubscriptionSortHeader column="status">Status</SubscriptionSortHeader>
+            <SubscriptionSortHeader column="xeroInvoice">Xero Invoice</SubscriptionSortHeader>
+            <SubscriptionSortHeader column="paidAt">Paid Date</SubscriptionSortHeader>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {loading ? (
+            <TableRow>
+              <TableCell colSpan={7} className="py-10 text-center">
+                <div className="flex justify-center">
+                  <Spinner label="Loading subscriptions…" />
+                </div>
+              </TableCell>
+            </TableRow>
+          ) : data.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={7} className="p-0">
+                <EmptyState
+                  icon={Users}
+                  title="No subscriptions found"
+                  description="No subscriptions match your current filters. Try a different season or status."
+                />
+              </TableCell>
+            </TableRow>
+          ) : (
+            data.map((sub) => (
+              <TableRow key={sub.id}>
+                <TableCell className="font-medium">
+                  <Link
+                    href={buildHrefWithReturnTo(`/admin/members/${sub.memberId}?edit=true`, currentSubscriptionsPath)}
+                    className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {sub.member.lastName}, {sub.member.firstName}
+                  </Link>
+                </TableCell>
+                <TableCell className="text-sm">{sub.member.email}</TableCell>
+                <TableCell className="text-sm">{getAgeTierLabel(ageTierOptions, sub.member.ageTier)}</TableCell>
+                <TableCell>
+                  {sub.xeroContactGroups.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {sub.xeroContactGroups.map((group) => (
+                        <Badge key={group.id} variant="secondary">
+                          {group.name}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : sub.member.xeroContactId && !sub.xeroContactGroupsLoaded ? (
+                    <span className="text-xs text-muted-foreground">Cached groups not refreshed yet</span>
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
+                <TableCell>
+                  <StatusChip kind="subscription" value={sub.status as SubscriptionStatus} />
+                </TableCell>
+                <TableCell>
+                  {sub.xeroInvoiceId ? (
+                    <a
+                      href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 rounded-sm text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {sub.xeroInvoiceNumber || sub.xeroInvoiceId.slice(0, 8)}
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  ) : "—"}
+                </TableCell>
+                <TableCell className="text-sm">{sub.paidAt ? format(new Date(sub.paidAt), "d MMM yyyy") : "—"}</TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </AdminDataTable>
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-slate-500">Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}</p>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button>
-          </div>
-        </div>
-      )}
+      <Pagination
+        as="div"
+        aria-label="Subscriptions pagination"
+        page={page}
+        totalPages={totalPages}
+        onPageChange={setPage}
+        summary={`Showing ${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)} of ${total}`}
+      />
     </div>
   );
 }
