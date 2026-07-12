@@ -177,6 +177,10 @@ You do not need to re-audit these; they are recorded old-code-compatible in
 
 - The `ClubTheme` sub-AA gold theme bump only rewrites a persisted theme still on
   the old default; installs that changed their theme are untouched (#1244).
+- The `ClubTheme` generic sage-to-teal correction only rewrites the incomplete
+  `default` row when every stored theme value still exactly matches the legacy
+  generic defaults after #1244. Completed themes, partially customised themes,
+  and Tokoroa themes are untouched (#1832).
 - The `BookingGuestNight` backfill runs automatically and old code ignores the
   table.
 - The access-role backfills keep old code reading

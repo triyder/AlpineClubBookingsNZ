@@ -199,7 +199,11 @@ configurable palette):
   idempotent data migration (#1244,
   `20260705120000_bump_sub_aa_club_theme_gold`) bumps any persisted `ClubTheme`
   colour still holding `#7a8f6a` to `#8fa87c`, so existing installs converge on
-  the compliant default without an admin re-save.
+  that intermediate compliant default without an admin re-save. The later
+  `20260712100000_reseed_untouched_club_theme_teal` correction (#1832) advances
+  only an incomplete theme still matching the complete post-#1244 generic sage
+  defaults to the current teal defaults; completed, partially customised, and
+  Tokoroa themes remain untouched.
 - **Booking calendar** day buttons now expose their selected state to screen
   readers (`aria-label` gains ", selected as check-in/​check-out/​within your
   selected stay" and `aria-pressed` on the check-in/out days); previously only
