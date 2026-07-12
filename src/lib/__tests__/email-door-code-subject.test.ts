@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The live door code must never reach an email subject: EmailLog persists the
+// Live credentials must never reach an email subject: EmailLog persists the
 // subject for every template (including sensitive ones whose HTML is not
 // retained) and subjects travel in clear mail headers. These tests prove the
 // defence-in-depth render path holds even when a malicious or pre-validation
-// stored override puts {{doorCode}} (or the literal live code) in a subject.
+// stored override puts a sensitive placeholder or literal value in a subject.
 
 const LIVE_DOOR_CODE = "97531";
+const LIVE_CHORE_LINK = "https://bookings.example.org/chores/live-bearer-token";
 
 const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
   const mockTransporter = {
@@ -57,6 +58,7 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   sendBookingConfirmedEmail,
+  sendChoreRosterEmail,
   sendPreArrivalReminderEmail,
 } from "@/lib/email";
 
@@ -86,7 +88,7 @@ function allLoggedOutput(): string {
   ]);
 }
 
-describe("door code never reaches email subjects, EmailLog, or app logs", () => {
+describe("sensitive values never reach email subjects, EmailLog, or app logs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("NODE_ENV", "production");
@@ -192,6 +194,33 @@ describe("door code never reaches email subjects, EmailLog, or app logs", () => 
     const logged = mockPrisma.emailLog.create.mock.calls[0][0].data;
     expect(logged.subject).not.toContain(LIVE_DOOR_CODE);
     expect(allLoggedOutput()).not.toContain(LIVE_DOOR_CODE);
+  });
+
+  it("neutralises a chore link in a legacy stored chore-roster subject", async () => {
+    mockStoredOverride(
+      "chore-roster",
+      `Complete your chores: {{choreLink}} ${LIVE_CHORE_LINK} - {{CLUB_LODGE_NAME}}`,
+    );
+
+    await sendChoreRosterEmail(
+      "member@example.com",
+      "Ada",
+      "2026-07-10",
+      [{ name: "Sweep the kitchen", description: null }],
+      LIVE_CHORE_LINK,
+    );
+
+    expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);
+    const sent = mockTransporter.sendMail.mock.calls[0][0];
+    expect(sent.subject).not.toContain(LIVE_CHORE_LINK);
+    expect(sent.subject).not.toMatch(/\{\{\s*choreLink\s*\}\}/);
+    expect(sent.html).toContain(LIVE_CHORE_LINK);
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledTimes(1);
+    const logged = mockPrisma.emailLog.create.mock.calls[0][0].data;
+    expect(logged.subject).not.toContain(LIVE_CHORE_LINK);
+    expect(logged.htmlBody).toBeNull();
+    expect(allLoggedOutput()).not.toContain(LIVE_CHORE_LINK);
   });
 
   it("keeps the default subject clean when no override exists", async () => {

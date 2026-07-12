@@ -185,6 +185,23 @@ describe("admin email message APIs", () => {
     expect(mocks.emailTemplateOverrideUpsert).not.toHaveBeenCalled();
   });
 
+  it("rejects chore-roster subjects containing the bearer link token", async () => {
+    const response = await putEmailTemplate(
+      request("/api/admin/email-templates", {
+        templateName: "chore-roster",
+        subject: "Complete your chores: {{choreLink}}",
+        bodyText:
+          "Hi {{guestName}}, mark {{choreName}} complete: {{choreLink}}",
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe("Invalid email template");
+    expect(body.sensitiveSubjectTokens).toContain("choreLink");
+    expect(mocks.emailTemplateOverrideUpsert).not.toHaveBeenCalled();
+  });
+
   it("saves booking-confirmed overrides with the door code only in the body", async () => {
     const response = await putEmailTemplate(
       request("/api/admin/email-templates", {

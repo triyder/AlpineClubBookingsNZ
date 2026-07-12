@@ -699,6 +699,7 @@ export const APPROVED_EMAIL_TEMPLATE_TOKEN_SET = new Set<string>(
 // sensitive ones whose HTML bodies are deliberately not retained) and travel
 // in clear mail headers, so secret values are restricted to message bodies.
 const SENSITIVE_EMAIL_SUBJECT_TOKENS = [
+  "choreLink",
   "confirmationUrl",
   "doorCode",
   "payUrl",
