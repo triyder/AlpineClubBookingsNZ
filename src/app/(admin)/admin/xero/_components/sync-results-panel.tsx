@@ -19,7 +19,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
             <>
               <p>
                 <span className="text-muted-foreground">New members created:</span>{" "}
-                <span className="font-medium text-green-700">{syncResult.created}</span>
+                <span className="font-medium text-success">{syncResult.created}</span>
               </p>
               {syncResult.createdMembers && syncResult.createdMembers.length > 0 ? (
                 <ul className="ml-4 mt-1 space-y-0.5 text-sm">
@@ -28,7 +28,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
                       <span>{member.name}</span>
                       <span className="text-xs text-muted-foreground">{member.email}</span>
                       <Badge variant="outline" className="text-xs">{member.group}</Badge>
-                      <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Open in Xero</a>
+                      <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
                     </li>
                   ))}
                 </ul>
@@ -37,7 +37,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
                 <div>
                   <p>
                     <span className="text-muted-foreground">Family dependents created:</span>{" "}
-                    <span className="font-medium text-blue-700">{syncResult.createdAsDependent}</span>
+                    <span className="font-medium text-info">{syncResult.createdAsDependent}</span>
                   </p>
                   {syncResult.createdDependents && syncResult.createdDependents.length > 0 ? (
                     <ul className="ml-4 mt-1 space-y-0.5 text-sm">
@@ -47,7 +47,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
                           <span className="text-xs text-muted-foreground">{member.email}</span>
                           <Badge variant="outline" className="text-xs">{member.group}</Badge>
                           <span className="text-xs text-muted-foreground">Linked to {member.parentName}</span>
-                          <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Open in Xero</a>
+                          <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
                         </li>
                       ))}
                     </ul>
@@ -67,7 +67,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
                           <span>{member.name}</span>
                           <span className="text-xs text-muted-foreground">{member.email}</span>
                           <Badge variant="outline" className="text-xs">{member.group}</Badge>
-                          <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Open in Xero</a>
+                          <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
                         </li>
                       ))}
                     </ul>
@@ -82,7 +82,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
                       {syncResult.skippedNoEmailDetails.map((contact, index) => (
                         <li key={`${contact.xeroContactId}-${index}`} className="flex items-center gap-2">
                           <span>{contact.name}</span>
-                          <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Open in Xero</a>
+                          <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
                         </li>
                       ))}
                     </ul>
@@ -99,7 +99,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
                           <span>{contact.name}</span>
                           <Badge variant="outline" className="text-xs">{contact.group}</Badge>
                           {contact.reason ? <span className="text-xs text-muted-foreground">{contact.reason}</span> : null}
-                          <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Open in Xero</a>
+                          <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
                         </li>
                       ))}
                     </ul>
@@ -115,11 +115,11 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
           {syncResult.checked !== undefined ? (
             <>
               <p><span className="text-muted-foreground">Members checked:</span> {syncResult.checked}</p>
-              {syncResult.checked === 0 ? <p className="text-amber-600">No members with linked Xero contacts found. Use the setup tools below to import and link members first.</p> : null}
+              {syncResult.checked === 0 ? <p className="text-warning">No members with linked Xero contacts found. Use the setup tools below to import and link members first.</p> : null}
             </>
           ) : null}
           {syncResult.errors !== undefined && syncResult.errors > 0 ? (
-            <div className="text-red-600">
+            <div className="text-danger">
               <p><span className="text-muted-foreground">Errors:</span> {syncResult.errors}</p>
               {syncResult.errorDetails && syncResult.errorDetails.length > 0 ? (
                 <ul className="mt-2 list-inside list-disc space-y-1 text-sm">

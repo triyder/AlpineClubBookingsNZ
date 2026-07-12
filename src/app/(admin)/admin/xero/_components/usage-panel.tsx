@@ -1,10 +1,9 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { fetchJson } from "./api"
-import { SectionCard, usageToneClass, type ToggleSection } from "./shared"
+import { BudgetStatusChip, budgetTone, SectionCard, toneFillClass, type ToggleSection } from "./shared"
 import type { XeroUsageSummary } from "./types"
 
 export function UsagePanel({
@@ -51,7 +50,7 @@ export function UsagePanel({
       onToggle={(nextOpen) => onToggle("usage", nextOpen)}
       actions={<Button variant="outline" size="sm" onClick={() => void fetchUsage()} disabled={loading}>{loading ? "Refreshing..." : "Refresh Usage"}</Button>}
     >
-      {error ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="mb-3 text-sm text-danger">{error}</p> : null}
       {loading && !usage ? (
         <p className="text-sm text-muted-foreground">Loading usage summary...</p>
       ) : usage ? (
@@ -63,7 +62,7 @@ export function UsagePanel({
             <div className="rounded-md border p-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Status</p>
               <div className="mt-1 flex items-center gap-2">
-                <Badge className={usageToneClass(usage.today.budgetStatus)}>{usage.today.budgetStatus}</Badge>
+                <BudgetStatusChip status={usage.today.budgetStatus} />
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
                 Last rate limit: {usage.today.lastRateLimitAt ? new Date(usage.today.lastRateLimitAt).toLocaleString("en-NZ") : "none"}
@@ -75,8 +74,8 @@ export function UsagePanel({
               <span>Budget progress</span>
               <span>{Math.round(usage.today.usagePercent * 100)}%</span>
             </div>
-            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-              <div className={`h-full ${usageToneClass(usage.today.budgetStatus)}`} style={{ width: `${Math.min(usage.today.usagePercent * 100, 100)}%` }} />
+            <div className="h-3 overflow-hidden rounded-full bg-muted">
+              <div className={`h-full ${toneFillClass(budgetTone(usage.today.budgetStatus))}`} style={{ width: `${Math.min(usage.today.usagePercent * 100, 100)}%` }} />
             </div>
             <p className="text-xs text-muted-foreground">Thresholds: {usage.budget.thresholds.map((threshold) => threshold.callCount).join(" / ")} calls</p>
           </div>
@@ -89,7 +88,7 @@ export function UsagePanel({
             {usage.recentFailures.length > 0 ? (
               <div className="space-y-3">
                 {usage.recentFailures.map((failure) => (
-                  <div key={failure.id} className="rounded-md bg-slate-50 p-3 text-sm">
+                  <div key={failure.id} className="rounded-md bg-muted p-3 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-medium">{failure.workflow ?? failure.operation}</span>
                       <span className="text-xs text-muted-foreground">{new Date(failure.createdAt).toLocaleString("en-NZ")}</span>
@@ -99,7 +98,7 @@ export function UsagePanel({
                       {failure.statusCode ? ` - HTTP ${failure.statusCode}` : ""}
                       {failure.rateLimitCategory ? ` - rate limit ${failure.rateLimitCategory}` : ""}
                     </p>
-                    {failure.errorMessage ? <p className="mt-2 text-xs text-red-700">{failure.errorMessage}</p> : null}
+                    {failure.errorMessage ? <p className="mt-2 text-xs text-danger">{failure.errorMessage}</p> : null}
                   </div>
                 ))}
               </div>

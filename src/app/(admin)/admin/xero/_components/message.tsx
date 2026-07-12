@@ -1,3 +1,5 @@
+import { Alert } from "@/components/ui/alert"
+
 export function Message({
   tone,
   message,
@@ -7,16 +9,18 @@ export function Message({
   message: string
   onDismiss: () => void
 }) {
-  const className =
-    tone === "error"
-      ? "mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
-      : "mb-4 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700"
   return (
-    <div className={className}>
-      {message}
-      <button onClick={onDismiss} className="ml-2 underline">
-        Dismiss
-      </button>
-    </div>
+    <Alert variant={tone === "error" ? "error" : "success"} className="mb-4">
+      <div className="flex items-start justify-between gap-3">
+        <span>{message}</span>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="shrink-0 rounded-sm underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Dismiss
+        </button>
+      </div>
+    </Alert>
   )
 }
