@@ -1,0 +1,284 @@
+import { DISPLAY_RELEVANT_MODULE_KEYS } from "./conditions";
+import {
+  DISPLAY_MODULE_NAMES,
+  type DisplayModuleName,
+} from "./template-registry";
+
+// Module metadata registry for the lobby display (LTV-026, ADR-003 §1). One
+// entry per display module — the seven content modules plus the two pieces of
+// page furniture (lodge-header / info-footer). Each entry is the ADR's module
+// contract: label + description (admin-facing), the club-module flags it
+// depends on, how it behaves when a dependency is unmet, the stable CSS-hook
+// class names admins may target, the conditions it contributes, and the embed
+// token an authored Layout/Template references it by.
+//
+// NOTE: this module is CLIENT-SAFE by design — it imports only the condition
+// key map (pure data) and the module-name registry (pure data). No
+// prisma/database import may enter here; it feeds the admin reference screen
+// (LTV-034), the render-boundary dependency guard, and the CSS-hook contract
+// test, all of which run in or alongside the client bundle.
+//
+// This registry records metadata only. Token RESOLUTION of `embedToken` is
+// LTV-028's job and the layout render engine is LTV-027 — neither lives here.
+
+/** The club-module flags a display module may depend on (the keys of the
+ * condition-namespace map, so a dependency always lines up with a generated
+ * `<module>:enabled` capability condition and with `DisplayState.capabilities`). */
+export type DisplayModuleDependencyKey =
+  keyof typeof DISPLAY_RELEVANT_MODULE_KEYS;
+
+/**
+ * How a module behaves when one of its `dependencies` is unmet:
+ * - `"degrades"` — the module still renders, in a documented reduced form
+ *   (e.g. per-booking rows instead of per-room rows). The component handles
+ *   this itself; the render-boundary guard lets it through.
+ * - `"hides"` — the module renders nothing (the guard substitutes an empty
+ *   `data-module-disabled` placeholder) rather than an empty card on the wall.
+ *
+ * Modules with no dependencies are `"degrades"` — they always render.
+ */
+export type DisplayModuleDependencyMode = "degrades" | "hides";
+
+export interface DisplayModuleMetadata {
+  /** Registry key — one of DISPLAY_MODULE_NAMES. */
+  name: DisplayModuleName;
+  /** Admin-facing short name. */
+  label: string;
+  /** Admin-facing one-liner; documents the reduced form for `"degrades"`. */
+  description: string;
+  /** Club-module flags this module needs (empty for most). */
+  dependencies: readonly DisplayModuleDependencyKey[];
+  /** What an unmet dependency does (see DisplayModuleDependencyMode). */
+  dependencyMode: DisplayModuleDependencyMode;
+  /** Stable class-name contract admins may target from Template CSS. */
+  cssHooks: readonly string[];
+  /** Condition names this module contributes to the vocabulary (§3). */
+  contributes: readonly string[];
+  /** The token an authored Layout/Template references this module by. */
+  embedToken: string;
+}
+
+function embedToken(name: DisplayModuleName): string {
+  return `{{module:${name}}}`;
+}
+
+// Metadata is authored per module. Ordered to match DISPLAY_MODULE_NAMES so the
+// registry reads as the page does, header first.
+const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
+  {
+    name: "lodge-header",
+    label: "Lodge header",
+    description:
+      "Fixed page furniture: club logo, lodge name, club name, and the live " +
+      "clock (with the admin-preview simulated-date affordance). Present on " +
+      "every template.",
+    dependencies: [],
+    dependencyMode: "degrades",
+    cssHooks: [
+      "display-lodge-header",
+      "display-header-brand",
+      "display-header-logo",
+      "display-lodge-name",
+      "display-club-name",
+      "display-header-clock",
+      "display-clock-time",
+      "display-clock-date",
+    ],
+    contributes: [],
+    embedToken: embedToken("lodge-header"),
+  },
+  {
+    name: "arrivals-board",
+    label: "Arrivals board",
+    description:
+      "The everyday bar board: one bar per booking across the nights it " +
+      "covers, with guest names and check-out day. With bed allocation on it " +
+      "groups bars into room rows; with it off it degrades to per-booking rows " +
+      "(no room lanes).",
+    dependencies: ["bedAllocation"],
+    dependencyMode: "degrades",
+    cssHooks: [
+      "display-arrivals-board",
+      "display-board-head",
+      "display-board-corner",
+      "display-board-day",
+      "display-board-row",
+      "display-board-room",
+      "display-board-room-tag",
+      "display-board-lanes",
+      "display-bar",
+      "display-bar-names",
+      "display-bar-overflow",
+      "display-bar-out",
+    ],
+    contributes: [],
+    embedToken: embedToken("arrivals-board"),
+  },
+  {
+    name: "occupancy-grid",
+    label: "Occupancy grid",
+    description:
+      "The whole-lodge blockout view. With rooms configured it renders the " +
+      "board variant (room grid with a spanning block); with bed allocation " +
+      "off it degrades to the statement variant — a full-width block statement " +
+      "plus a week occupancy strip.",
+    dependencies: ["bedAllocation"],
+    dependencyMode: "degrades",
+    cssHooks: [
+      "display-occupancy-grid",
+      "display-blockout-statement",
+      "display-blockout-kicker",
+      "display-blockout-label",
+      "display-blockout-sub",
+      "display-blockout-dates",
+      "display-week-strip",
+      "display-week-day",
+      "display-week-name",
+      "display-week-bar",
+      "display-week-count",
+    ],
+    contributes: [],
+    embedToken: embedToken("occupancy-grid"),
+  },
+  {
+    name: "welcome",
+    label: "Welcome panel",
+    description:
+      "A warm counterpart to the operational boards: greets the current " +
+      "whole-lodge group (privacy-reduced label) with size, stay dates, nights " +
+      "and an optional bunks note, or greets the lodge generally when no group " +
+      "holds it.",
+    dependencies: [],
+    dependencyMode: "degrades",
+    cssHooks: [
+      "display-welcome",
+      "display-welcome-kicker",
+      "display-welcome-group",
+      "display-welcome-note",
+      "display-welcome-tiles",
+      "display-welcome-tile",
+      "display-tile-key",
+      "display-tile-value",
+    ],
+    contributes: [],
+    embedToken: embedToken("welcome"),
+  },
+  {
+    name: "singles-board",
+    label: "Singles board",
+    description:
+      "By-booking Room | Guest | night rows, one row per guest with their own " +
+      "check-out. With bed allocation on the room label spans its guests' rows; " +
+      "with it off it degrades to a single guest column with no room grouping.",
+    dependencies: ["bedAllocation"],
+    dependencyMode: "degrades",
+    cssHooks: [
+      "display-singles-board",
+      "display-singles-head",
+      "display-singles-room",
+      "display-board-room-tag",
+      "display-singles-guest",
+      "display-singles-track",
+      "display-singles-bar",
+    ],
+    contributes: [],
+    embedToken: embedToken("singles-board"),
+  },
+  {
+    name: "chores-board",
+    label: "Chores board",
+    description:
+      "The day's chore assignments. Hard-depends on the Chores and roster " +
+      "module: with the Chores flag off it hides entirely (renders nothing) " +
+      "rather than showing an empty rail card.",
+    dependencies: ["chores"],
+    dependencyMode: "hides",
+    cssHooks: [
+      "display-chores-board",
+      "display-card-title",
+      "display-chores-day",
+      "display-chores-date",
+      "display-card-list",
+      "display-chore",
+      "display-chore-title",
+      "display-chore-assignees",
+    ],
+    contributes: ["chores:enabled", "chores:today"],
+    embedToken: embedToken("chores-board"),
+  },
+  {
+    name: "lodge-rules",
+    label: "Lodge rules",
+    description:
+      "Lodge rules / arrival information: renders the sanitised " +
+      "lodge-instruction documents; only documents with content earn a card.",
+    dependencies: [],
+    dependencyMode: "degrades",
+    cssHooks: [
+      "display-lodge-rules",
+      "display-rules-doc",
+      "display-card-title",
+      "display-rules-body",
+    ],
+    contributes: [],
+    embedToken: embedToken("lodge-rules"),
+  },
+  {
+    name: "notice-board",
+    label: "Notice board",
+    description:
+      "The committee notice: free text posted by permitted admins, rendered " +
+      "as plain text nodes (never HTML). An empty notice renders nothing.",
+    dependencies: [],
+    dependencyMode: "degrades",
+    cssHooks: [
+      "display-notice-board",
+      "display-notice-kicker",
+      "display-notice-text",
+    ],
+    contributes: [],
+    embedToken: embedToken("notice-board"),
+  },
+  {
+    name: "info-footer",
+    label: "Info footer",
+    description:
+      "Editable page furniture: Wi-Fi, contact email, and a footer note. Each " +
+      "item is shown only when its config value is set.",
+    dependencies: [],
+    dependencyMode: "degrades",
+    cssHooks: [
+      "display-info-footer",
+      "display-footer-item",
+      "display-footer-icon",
+      "display-footer-note",
+    ],
+    contributes: [],
+    embedToken: embedToken("info-footer"),
+  },
+];
+
+const MODULE_REGISTRY = new Map(
+  DISPLAY_MODULE_METADATA.map((metadata) => [metadata.name, metadata])
+);
+
+/** Every module's metadata (for the LTV-034 reference screen). */
+export function listDisplayModules(): DisplayModuleMetadata[] {
+  return DISPLAY_MODULE_METADATA.map((metadata) => ({ ...metadata }));
+}
+
+/** Metadata for one module, or undefined for an unknown name. */
+export function getDisplayModule(
+  name: DisplayModuleName
+): DisplayModuleMetadata | undefined {
+  return MODULE_REGISTRY.get(name);
+}
+
+// Guard against a name drifting out of the metadata registry: fail fast at
+// module load (in tests/build) rather than rendering a wall with a module the
+// admin reference screen cannot describe.
+for (const name of DISPLAY_MODULE_NAMES) {
+  if (!MODULE_REGISTRY.has(name)) {
+    throw new Error(`Display module "${name}" has no metadata entry`);
+  }
+}
