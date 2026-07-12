@@ -52,7 +52,7 @@ export const SINGLETONS: SingletonSpec[] = [
       "bedAllocation", "internetBankingPayments", "addressAutocomplete",
       "groupBookings", "lockers", "induction", "workParties", "promoCodes",
       "hutLeaders", "communications", "skifieldConditions", "multiLodge",
-      "twoFactor", "analytics",
+      "twoFactor", "analytics", "lobbyDisplay",
     ],
   },
   {
