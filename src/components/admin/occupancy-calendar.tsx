@@ -440,13 +440,25 @@ export function OccupancyCalendar({
               dateString > selectedStartDate &&
               dateString < selectedEndDate,
           );
+          const selectedSingleDate =
+            isSelectedStart &&
+            (mode === "single" || selectedStartDate === selectedEndDate);
+          const selectionLabel = selectedSingleDate
+            ? "Selected"
+            : isSelectedStart
+              ? "Start"
+              : isSelectedEnd
+                ? "End"
+                : isInRange
+                  ? "Stay"
+                  : "";
           const hasGuests = Boolean(night?.guestCount);
           const overlay = overlayByDate?.[dateString];
           const selectionClass =
             isSelectedStart || isSelectedEnd
-              ? "border-brand-gold bg-brand-gold text-brand-charcoal"
+              ? "border-4 border-double border-brand-gold bg-brand-gold text-brand-charcoal"
               : isInRange
-                ? "border-brand-gold bg-muted text-foreground"
+                ? "border-2 border-dashed border-brand-gold bg-muted text-foreground"
                 : overlay
                   ? overlay.emphasis === "ring"
                     ? CALENDAR_TONE_CLASSES[overlay.tone].ringCell
@@ -465,15 +477,23 @@ export function OccupancyCalendar({
               disabled={isPast}
               onClick={() => handleDayClick(dateString)}
               aria-pressed={isSelectedStart || isSelectedEnd || isInRange}
-              aria-label={`${formatDisplayDate(dateString)}, ${guestLabel}${isPast ? ", past date" : ""}${overlay ? `, ${overlay.label}` : ""}`}
+              aria-label={`${formatDisplayDate(dateString)}, ${guestLabel}${isPast ? ", past date" : ""}${overlay ? `, ${overlay.label}` : ""}${selectionLabel ? `, ${selectionLabel.toLowerCase()} selection` : ""}`}
               // Stable hooks for tests/tooling so overlay assertions target the
               // tone + emphasis rather than the token class strings, which the
               // "Restrained Alpine" restyle may re-tint.
               data-overlay-tone={overlay?.tone}
               data-overlay-emphasis={overlay ? (overlay.emphasis ?? "fill") : undefined}
-              className={`min-h-16 border-b border-r p-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground ${selectionClass}`}
+              className={`relative min-h-16 border-b border-r p-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground ${selectionClass}`}
             >
               <span className="block text-sm font-semibold leading-none">{day}</span>
+              {selectionLabel ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute right-1 top-1 rounded border border-current px-1 text-[9px] font-bold uppercase leading-tight"
+                >
+                  {selectionLabel}
+                </span>
+              ) : null}
               {hasGuests && (
                 <span className={`mt-2 inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${
                   isSelectedStart || isSelectedEnd

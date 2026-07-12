@@ -58,6 +58,7 @@ describe("#1819 final accessibility presentation contract", () => {
     );
     expect(review.match(/className="w-full sm:w-auto"/g)).toHaveLength(2);
     expect(family).not.toMatch(/className="grid grid-cols-2 gap-3"/);
+    expect(family).not.toContain('className="flex gap-2"');
     expect(family).toContain("sm:grid-cols-2");
     expect(memberHeader).toContain(
       'className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"',
@@ -93,9 +94,16 @@ describe("#1819 final accessibility presentation contract", () => {
 
     expect(bookingCalendar).toContain("seasonSuffix");
     expect(bookingCalendar).toContain('{season.type === "WINTER" ? "W" : "S"}');
+    expect(bookingCalendar).toContain('{isCheckIn ? "In" : isCheckOut ? "Out" : "Stay"}');
+    expect(bookingCalendar).toContain("!border-double");
+    expect(bookingCalendar).toContain("!border-dashed");
     expect(occupancyCalendar).toContain(
       'overlay ? `, ${overlay.label}` : ""',
     );
+    expect(occupancyCalendar).toContain('selectedSingleDate');
+    expect(occupancyCalendar).toContain('border-4 border-double');
+    expect(occupancyCalendar).toContain('border-2 border-dashed');
+    expect(occupancyCalendar).toContain('{selectionLabel}');
     expect(occupancyCalendar).not.toMatch(/hover:bg-(?:danger|warning|info|success)-muted\//);
     for (const bedSource of bedSources) {
       expect(bedSource).toContain("Focused");
@@ -122,6 +130,8 @@ describe("#1819 final accessibility presentation contract", () => {
       ["dark foreground/warning muted", "oklch(0.985 0 0)", "oklch(0.33 0.05 75)"],
       ["dark foreground/info muted", "oklch(0.985 0 0)", "oklch(0.33 0.05 250)"],
       ["dark foreground/danger muted", "oklch(0.985 0 0)", "oklch(0.33 0.05 27)"],
+      ["light danger foreground/solid", "#ffffff", "#991b1b"],
+      ["dark danger foreground/solid", "oklch(0.2 0 0)", "oklch(0.84 0.11 27)"],
     ];
 
     for (const [label, foreground, background] of pairs) {
@@ -152,5 +162,47 @@ describe("#1819 final accessibility presentation contract", () => {
       expect(text).toContain("{children}");
       expect(text).toContain('danger: "bg-danger-muted text-danger"');
     }
+  });
+
+  it("routes actual touched destructive controls through the AA danger pair", () => {
+    const button = source("src/components/ui/button.tsx");
+    const badge = source("src/components/ui/badge.tsx");
+    const destructiveSurfaces = [
+      "src/app/(admin)/admin/waitlist/page.tsx",
+      "src/app/(admin)/admin/members/[id]/_components/member-detail-header.tsx",
+      "src/app/(admin)/admin/members/[id]/_components/member-dependents-card.tsx",
+      "src/app/(admin)/admin/members/[id]/_components/member-parent-links-card.tsx",
+      "src/app/(admin)/admin/members/[id]/_components/member-delete-request-dialog.tsx",
+      "src/app/(admin)/admin/members/[id]/_components/member-deletion-card.tsx",
+      "src/app/(admin)/admin/members/[id]/_components/member-lifecycle-card.tsx",
+      "src/app/(admin)/admin/members/[id]/_components/member-delete-review-dialog.tsx",
+    ].map(source).join("\n");
+
+    for (const primitive of [button, badge]) {
+      expect(primitive).toContain("bg-danger text-danger-foreground");
+      expect(primitive).not.toMatch(/bg-destructive|text-destructive-foreground/);
+    }
+    expect(badge).not.toMatch(
+      /hover:bg-(?:success|warning|info|danger)-muted\//,
+    );
+    expect(destructiveSurfaces).toContain('variant="destructive"');
+    expect(destructiveSurfaces).toMatch(/Delete|Archive|Inactive|Overbook/);
+    expect(destructiveSurfaces).not.toMatch(/bg-destructive|text-destructive/);
+    expect(source("src/app/(admin)/admin/waitlist/page.tsx")).toContain(
+      "<AlertTriangle aria-hidden",
+    );
+  });
+
+  it("keeps partner search results contained on narrow member cards", () => {
+    const partner = source(
+      "src/app/(admin)/admin/members/[id]/_components/member-partner-link-card.tsx",
+    );
+
+    expect(partner).toContain(
+      "flex flex-col gap-2 rounded border bg-card p-2 text-card-foreground sm:flex-row",
+    );
+    expect(partner).toContain('className="min-w-0"');
+    expect(partner).toContain("break-all text-xs text-muted-foreground");
+    expect(partner).toContain('className="w-full sm:w-auto"');
   });
 });

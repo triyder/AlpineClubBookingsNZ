@@ -505,7 +505,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                   <span className="text-info">{inv.familyGroup.name}</span>
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <Button
                   size="sm"
                   disabled={respondingTo === inv.id}
@@ -673,7 +673,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                                   required
                                 />
                               </div>
-                              <div className="flex gap-2">
+                              <div className="flex flex-col gap-2 sm:flex-row">
                                 <Button type="submit" size="sm" disabled={submitting}>
                                   {submitting ? "Saving..." : "Save and Confirm"}
                                 </Button>
@@ -696,7 +696,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                                   placeholder="Why should this member be removed from this family group?"
                                 />
                               </div>
-                              <div className="flex gap-2">
+                              <div className="flex flex-col gap-2 sm:flex-row">
                                 <Button type="submit" size="sm" disabled={submitting}>
                                   {submitting ? "Submitting..." : "Submit Removal Request"}
                                 </Button>
@@ -769,7 +769,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                         They must already be a registered member. They will be able to accept or decline.
                       </p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-col gap-2 sm:flex-row">
                       <Button type="submit" size="sm" disabled={submitting}>
                         {submitting ? "Sending..." : "Send Invitation"}
                       </Button>
@@ -825,7 +825,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                         maxLength={500}
                       />
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-col gap-2 sm:flex-row">
                       <Button type="submit" size="sm" disabled={submitting}>
                         {submitting ? "Submitting..." : "Submit Request"}
                       </Button>
@@ -875,7 +875,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                         required
                       />
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-col gap-2 sm:flex-row">
                       <Button type="submit" size="sm" disabled={submitting}>
                         {submitting ? "Submitting..." : "Submit Request"}
                       </Button>
@@ -942,7 +942,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                   An admin will review and approve your request.
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <Button type="submit" size="sm" disabled={submitting}>
                   {submitting ? "Submitting..." : "Send Request"}
                 </Button>
@@ -1066,7 +1066,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                   </Button>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <Button type="submit" size="sm" disabled={submitting}>
                   {submitting ? "Submitting..." : "Submit Request"}
                 </Button>

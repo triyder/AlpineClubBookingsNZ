@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -542,7 +543,7 @@ export default function AdminWaitlistPage() {
                 <li key={d}>{d}</li>
               ))}
             </ul>
-            <div className="flex gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row">
               <Button
                 variant="outline"
                 onClick={() => setOverbookDialog(null)}
@@ -560,6 +561,7 @@ export default function AdminWaitlistPage() {
                 }
                 disabled={forceConfirming === overbookDialog.bookingId}
               >
+                <AlertTriangle aria-hidden className="h-4 w-4" />
                 {forceConfirming === overbookDialog.bookingId
                   ? "Confirming..."
                   : "Confirm Anyway (Overbook)"}

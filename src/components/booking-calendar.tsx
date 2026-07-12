@@ -157,11 +157,11 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     // Selected range uses the brand-gold accent, deliberately distinct from the
     // availability heat so the two never read as the same signal.
     if (checkIn && date.getTime() === checkIn.getTime()) {
-      classes += "!bg-brand-gold !text-brand-charcoal !border-brand-gold ";
+      classes += "!border-4 !border-double !border-brand-gold !bg-brand-gold !text-brand-charcoal ";
     } else if (checkOut && date.getTime() === checkOut.getTime()) {
-      classes += "!bg-brand-gold !text-brand-charcoal !border-brand-gold ";
+      classes += "!border-4 !border-double !border-brand-gold !bg-brand-gold !text-brand-charcoal ";
     } else if (checkIn && checkOut && date > checkIn && date < checkOut) {
-      classes += "!border-brand-gold !bg-muted !text-foreground ";
+      classes += "!border-2 !border-dashed !border-brand-gold !bg-muted !text-foreground ";
     }
 
     return classes;
@@ -276,7 +276,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
               // submit, not a hard block.
               disabled={isPast || (available <= 0 && !allowPastDates && !allowFullDates)}
               aria-label={dayLabel}
-              aria-pressed={isCheckIn || isCheckOut}
+              aria-pressed={isCheckIn || isCheckOut || inRange}
             >
               <span aria-hidden="true" className="leading-none">{day}</span>
               {season ? (
@@ -289,7 +289,14 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
                 </span>
               ) : null}
               {!isPast &&
-                (available <= 0 ? (
+                (isCheckIn || isCheckOut || inRange ? (
+                  <span
+                    aria-hidden="true"
+                    className="mt-0.5 text-[0.625rem] font-semibold uppercase leading-none tracking-wide"
+                  >
+                    {isCheckIn ? "In" : isCheckOut ? "Out" : "Stay"}
+                  </span>
+                ) : available <= 0 ? (
                   // "Full" states availability without relying on colour; the
                   // aria-label already announces "full" for screen readers.
                   <span
