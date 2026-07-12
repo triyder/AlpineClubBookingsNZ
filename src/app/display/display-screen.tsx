@@ -89,16 +89,16 @@ function formatSimulatedDate(dateStr: string): string {
  * ?previewDate and reloads — a testing tool, so a full reload is fine. While a
  * previewDate is active the clock recolours amber (data-simulated) and its date
  * line shows the simulated window start instead of today; the layout never
- * shifts. In any preview mode (LTV-036) a small "previewing against <lodge>"
- * line sits under the clock so the rendered lodge is never a silent guess. */
+ * shifts. The rendered lodge is identified on the admin preview host page
+ * around the frame (LTV-036), so no in-frame "previewing against" line is
+ * needed — a preview always renders the lodge the device or template is bound
+ * to. */
 function HeaderClock({
   generatedAt,
   windowStart,
-  lodgeName,
 }: {
   generatedAt: string;
   windowStart: string;
-  lodgeName: string;
 }) {
   const [now, setNow] = useState<Date | null>(null);
   const [preview, setPreview] = useState(() => ({
@@ -180,12 +180,6 @@ function HeaderClock({
       ) : (
         <span className="display-clock-date">{dateLine}</span>
       )}
-      {preview.isPreview && (
-        // Reuses the fallback-marker idiom: absolutely positioned under the
-        // clock, so a real unattended wall (never in preview) shows nothing and
-        // there is no layout shift.
-        <span className="display-preview-lodge">Previewing against {lodgeName}</span>
-      )}
       {simulated && (
         <span className="display-visually-hidden">
           Simulating {formatSimulatedDate(preview.previewDate as string)}
@@ -217,7 +211,6 @@ function LodgeHeader({ state }: DisplayModuleProps) {
       <HeaderClock
         generatedAt={state.generatedAt}
         windowStart={state.window.start}
-        lodgeName={state.lodge.name}
       />
     </div>
   );

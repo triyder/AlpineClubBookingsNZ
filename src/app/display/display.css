@@ -207,25 +207,6 @@
   border: 0;
 }
 
-/* "Previewing against <lodge>" line (LTV-036) — shown ONLY in an admin preview
- * (readPreviewState().isPreview), so a real unattended wall never renders it.
- * Absolutely positioned under the clock so the header never shifts, and it makes
- * the rendered lodge explicit rather than a silent default (shrinks #64). */
-.display-preview-lodge {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 0.4vmin;
-  font-size: 1.4vmin;
-  color: var(--display-muted);
-  background: var(--display-panel);
-  border: 1px solid var(--display-line);
-  border-radius: 0.6vmin;
-  padding: 0.2vmin 0.9vmin;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
 /* --- arrivals bar board ------------------------------------------------- */
 
 .display-arrivals-board {
