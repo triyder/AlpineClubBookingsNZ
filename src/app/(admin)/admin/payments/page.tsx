@@ -1,5 +1,6 @@
 "use client";
 
+import type { PaymentStatus } from "@prisma/client";
 import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -18,18 +19,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
   DollarSign,
   CreditCard,
   TrendingUp,
@@ -37,13 +32,33 @@ import {
   ExternalLink,
   FileText,
   X,
+  Landmark,
+  Receipt,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  Clock,
+  MinusCircle,
+  Wallet,
+  type LucideIcon,
 } from "lucide-react";
-import { paymentStatusClass } from "@/lib/status-colors";
 import {
   getCancellationSettlementBreakdown,
   getPaymentDisplayStatus,
 } from "@/lib/payment-status-display";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { AdminDataTable } from "@/components/admin/admin-data-table";
+import {
+  AdminFilterBar,
+  type AdminFilterChip,
+} from "@/components/admin/admin-filter-bar";
+import { SortHeader } from "@/components/admin/sort-header";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { StatusChip } from "@/components/ui/status-chip";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Spinner } from "@/components/ui/spinner";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
@@ -77,6 +92,60 @@ const paymentSortColumns = new Set<PaymentSortBy>([
   "xeroInvoice",
   "settlement",
 ]);
+
+// Presentational chip family shared with the redesigned admin tables (#1800):
+// icon + label in one of five semantic tones, so the non-status signals this
+// screen keeps inline (payment source, Xero state, settlement kind) read as one
+// calm family instead of bespoke hardcoded hues. Meaning is carried by icon +
+// label, never colour alone.
+type ChipTone = "neutral" | "info" | "success" | "warning" | "danger";
+
+const CHIP_TONE_CLASSES: Record<ChipTone, string> = {
+  neutral: "bg-muted text-foreground",
+  info: "bg-info-muted text-info",
+  success: "bg-success-muted text-success",
+  warning: "bg-warning-muted text-warning",
+  danger: "bg-danger-muted text-danger",
+};
+
+function MiniChip({
+  tone,
+  icon: Icon,
+  children,
+}: {
+  tone: ChipTone;
+  icon: LucideIcon;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-transparent px-2 py-0.5 text-xs font-medium",
+        CHIP_TONE_CLASSES[tone],
+      )}
+    >
+      <Icon aria-hidden="true" className="size-3.5 shrink-0" />
+      <span>{children}</span>
+    </span>
+  );
+}
+
+// Human labels for the active-filter chips. These mirror the option labels shown
+// in the filter selects; they are display-only and never affect which rows the
+// API returns.
+const PAYMENT_STATUS_FILTER_LABELS: Record<string, string> = {
+  PENDING: "Pending",
+  PROCESSING: "Processing (awaiting Stripe)",
+  SUCCEEDED: "Succeeded",
+  FAILED: "Failed",
+  REFUNDED: "Refunded / Credited",
+  PARTIALLY_REFUNDED: "Partially Refunded / Credited",
+};
+
+const PAYMENT_SOURCE_FILTER_LABELS: Record<string, string> = {
+  STRIPE: "Stripe",
+  INTERNET_BANKING: "Internet Banking",
+};
 
 function parsePageParam(value: string | null) {
   const page = Number(value);
@@ -171,19 +240,24 @@ function xeroStateLabel(state: string) {
   }
 }
 
-function xeroStateClass(state: string) {
+// Xero states have no StatusChip `kind`, so they render through the shared
+// MiniChip family: a semantic tone + icon carrying the same meaning the old
+// colour-only badges did (linked = success, missing/partial/pending = warning,
+// failed = danger, not-needed = neutral). Labels are unchanged (xeroStateLabel).
+function xeroStateChip(state: string): { tone: ChipTone; icon: LucideIcon } {
   switch (state) {
     case "invoiceLinked":
-      return "bg-green-100 text-green-900";
+      return { tone: "success", icon: CheckCircle2 };
     case "invoiceMissing":
-      return "bg-orange-100 text-orange-900";
+      return { tone: "warning", icon: FileText };
     case "operationFailed":
-      return "bg-red-100 text-red-900";
+      return { tone: "danger", icon: XCircle };
     case "operationPartial":
+      return { tone: "warning", icon: AlertTriangle };
     case "operationPending":
-      return "bg-amber-100 text-amber-900";
+      return { tone: "warning", icon: Clock };
     default:
-      return "bg-slate-100 text-slate-700";
+      return { tone: "neutral", icon: MinusCircle };
   }
 }
 
@@ -201,6 +275,39 @@ function settlementKindLabel(kind: string) {
     default:
       return "None";
   }
+}
+
+function SummaryCard({
+  title,
+  icon: Icon,
+  children,
+  valueClassName,
+}: {
+  title: string;
+  icon: LucideIcon;
+  children: ReactNode;
+  valueClassName?: string;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">
+          {title}
+        </CardTitle>
+        <Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+      </CardHeader>
+      <CardContent>
+        <div
+          className={cn(
+            "text-2xl font-bold tabular-nums text-foreground",
+            valueClassName,
+          )}
+        >
+          {children}
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function PaymentsPage() {
@@ -404,197 +511,285 @@ export default function PaymentsPage() {
     setSortDir(column === "member" || column === "booking" || column === "status" ? "asc" : "desc");
   }
 
-  function SortIcon({ column }: { column: PaymentSortBy }) {
-    if (sortBy !== column) {
-      return <ArrowUpDown className="ml-1 h-3 w-3 opacity-40" />;
-    }
-
-    return sortDir === "asc" ? (
-      <ArrowUp className="ml-1 h-3 w-3" />
-    ) : (
-      <ArrowDown className="ml-1 h-3 w-3" />
-    );
-  }
-
-  function SortHeader({
+  // Thin wrapper over the shared admin SortHeader (#1805): callback mode, same
+  // toggleSort behaviour, with the numeric Amount header right-aligned to sit
+  // over its tabular-figures cell.
+  function PaymentSortHeader({
     column,
     children,
-    className = "",
+    align,
   }: {
     column: PaymentSortBy;
     children: ReactNode;
-    className?: string;
+    align?: "left" | "right";
   }) {
     return (
-      <TableHead className={className}>
-        <button
-          type="button"
-          onClick={() => toggleSort(column)}
-          className="inline-flex items-center whitespace-nowrap text-left"
-        >
-          {children}
-          <SortIcon column={column} />
-        </button>
-      </TableHead>
+      <SortHeader
+        active={sortBy === column}
+        direction={sortDir}
+        onSort={() => toggleSort(column)}
+        align={align}
+      >
+        {children}
+      </SortHeader>
     );
+  }
+
+  // Active-filter chips for the filter bar. Removing a chip resets just that
+  // filter to its neutral state (the same effect selecting "All" has), so the
+  // query semantics are unchanged.
+  const advancedActiveCount =
+    (amountExact ? 1 : 0) +
+    (amountMin ? 1 : 0) +
+    (amountMax ? 1 : 0) +
+    (checkInFrom ? 1 : 0) +
+    (checkInTo ? 1 : 0);
+
+  const filterChips: AdminFilterChip[] = [];
+  if (status !== "all") {
+    filterChips.push({
+      key: "status",
+      label: "Status",
+      value: PAYMENT_STATUS_FILTER_LABELS[status] ?? status,
+      onRemove: () => { setStatus("all"); resetPage(); },
+    });
+  }
+  if (source !== "all") {
+    filterChips.push({
+      key: "source",
+      label: "Source",
+      value: PAYMENT_SOURCE_FILTER_LABELS[source] ?? source,
+      onRemove: () => { setSource("all"); resetPage(); },
+    });
+  }
+  if (xeroState !== "all") {
+    filterChips.push({
+      key: "xeroState",
+      label: "Xero",
+      value: xeroStateLabel(xeroState),
+      onRemove: () => { setXeroState("all"); resetPage(); },
+    });
+  }
+  if (settlement !== "all") {
+    filterChips.push({
+      key: "settlement",
+      label: "Settlement",
+      value: settlementKindLabel(settlement),
+      onRemove: () => { setSettlement("all"); resetPage(); },
+    });
+  }
+  if (amountExact) {
+    filterChips.push({
+      key: "amountExact",
+      label: "Amount exact",
+      value: amountExact,
+      onRemove: () => { setAmountExact(""); resetPage(); },
+    });
+  }
+  if (amountMin) {
+    filterChips.push({
+      key: "amountMin",
+      label: "Amount min",
+      value: amountMin,
+      onRemove: () => { setAmountMin(""); resetPage(); },
+    });
+  }
+  if (amountMax) {
+    filterChips.push({
+      key: "amountMax",
+      label: "Amount max",
+      value: amountMax,
+      onRemove: () => { setAmountMax(""); resetPage(); },
+    });
+  }
+  if (checkInFrom) {
+    filterChips.push({
+      key: "checkInFrom",
+      label: "Check in from",
+      value: checkInFrom,
+      onRemove: () => { setCheckInFrom(""); resetPage(); },
+    });
+  }
+  if (checkInTo) {
+    filterChips.push({
+      key: "checkInTo",
+      label: "Check in to",
+      value: checkInTo,
+      onRemove: () => { setCheckInTo(""); resetPage(); },
+    });
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Payments</h1>
-        <p className="text-sm text-slate-500 mt-1">View and filter payment records</p>
-      </div>
+      <AdminPageHeader
+        title="Payments"
+        description="View and filter payment records"
+      />
 
-      <div className="flex flex-wrap gap-3 items-end">
-        <div>
-          <Label className="text-xs">Status</Label>
-          <Select value={status} onValueChange={(v) => { setStatus(v); resetPage(); }}>
-            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="PENDING">Pending</SelectItem>
-              <SelectItem value="PROCESSING">Processing (awaiting Stripe)</SelectItem>
-              <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
-              <SelectItem value="FAILED">Failed</SelectItem>
-              <SelectItem value="REFUNDED">Refunded / Credited</SelectItem>
-              <SelectItem value="PARTIALLY_REFUNDED">Partially Refunded / Credited</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label className="text-xs">Source</Label>
-          <Select value={source} onValueChange={(v) => { setSource(getSourceFilter(v)); resetPage(); }}>
-            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All sources</SelectItem>
-              <SelectItem value="STRIPE">Stripe</SelectItem>
-              <SelectItem value="INTERNET_BANKING">Internet Banking</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label className="text-xs">Xero</Label>
-          <Select value={xeroState} onValueChange={(v) => { setXeroState(v); resetPage(); }}>
-            <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Xero states</SelectItem>
-              <SelectItem value="invoiceLinked">Invoice linked</SelectItem>
-              <SelectItem value="invoiceMissing">Invoice missing</SelectItem>
-              <SelectItem value="operationFailed">Failed activity</SelectItem>
-              <SelectItem value="operationPartial">Partial activity</SelectItem>
-              <SelectItem value="operationPending">Pending activity</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label className="text-xs">Settlement</Label>
-          <Select value={settlement} onValueChange={(v) => { setSettlement(v); resetPage(); }}>
-            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All settlements</SelectItem>
-              <SelectItem value="none">None</SelectItem>
-              <SelectItem value="cardRefund">Card refund</SelectItem>
-              <SelectItem value="accountCredit">Account credit</SelectItem>
-              <SelectItem value="mixed">Mixed</SelectItem>
-              <SelectItem value="restoredCredit">Restored credit</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs" htmlFor="payment-member-search">Member or reference</Label>
-          <Input
-            id="payment-member-search"
-            value={search}
-            onChange={(event) => {
-              setSearch(event.target.value);
-              resetPage();
-            }}
-            placeholder="Name, email, or ref..."
-            className="w-52"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs" htmlFor="payment-amount-exact">Amount exact</Label>
-          <Input
-            id="payment-amount-exact"
-            inputMode="decimal"
-            value={amountExact}
-            onChange={(event) => {
-              setAmountExact(event.target.value);
-              resetPage();
-            }}
-            placeholder="125.00"
-            className="w-32"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs" htmlFor="payment-amount-min">Amount min</Label>
-          <Input
-            id="payment-amount-min"
-            inputMode="decimal"
-            value={amountMin}
-            onChange={(event) => {
-              setAmountMin(event.target.value);
-              resetPage();
-            }}
-            placeholder="50.00"
-            className="w-32"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs" htmlFor="payment-amount-max">Amount max</Label>
-          <Input
-            id="payment-amount-max"
-            inputMode="decimal"
-            value={amountMax}
-            onChange={(event) => {
-              setAmountMax(event.target.value);
-              resetPage();
-            }}
-            placeholder="250.00"
-            className="w-32"
-          />
-        </div>
-        <DateRangeControls
-          presets={auditAndPaymentsDateRangePresets}
-          from={lastUpdatedFrom}
-          to={lastUpdatedTo}
-          presetLabel="Updated Range"
-          fromLabel="Updated From"
-          toLabel="Updated To"
-          idPrefix="payments-updated"
-          onFromChange={(value) => {
-            setLastUpdatedFrom(value);
-            resetPage();
-          }}
-          onToChange={(value) => {
-            setLastUpdatedTo(value);
-            resetPage();
-          }}
-        />
-        <DateRangeControls
-          presets={auditAndPaymentsDateRangePresets}
-          from={checkInFrom}
-          to={checkInTo}
-          presetLabel="Check In Range"
-          fromLabel="Check In From"
-          toLabel="Check In To"
-          idPrefix="payments-check-in"
-          onFromChange={(value) => {
-            setCheckInFrom(value);
-            resetPage();
-          }}
-          onToChange={(value) => {
-            setCheckInTo(value);
-            resetPage();
-          }}
-        />
-        <Button onClick={clearFilters} variant="outline" size="sm">
-          <X className="mr-1 h-4 w-4" />
-          Clear
-        </Button>
-      </div>
+      <AdminFilterBar
+        idPrefix="payments-filters"
+        advancedActiveCount={advancedActiveCount}
+        chips={filterChips}
+        search={
+          <div className="space-y-1">
+            <Label className="text-xs" htmlFor="payment-member-search">Member or reference</Label>
+            <Input
+              id="payment-member-search"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                resetPage();
+              }}
+              placeholder="Name, email, or ref..."
+              className="w-full"
+            />
+          </div>
+        }
+        primary={
+          <>
+            <div>
+              <Label className="text-xs">Status</Label>
+              <Select value={status} onValueChange={(v) => { setStatus(v); resetPage(); }}>
+                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="PENDING">Pending</SelectItem>
+                  <SelectItem value="PROCESSING">Processing (awaiting Stripe)</SelectItem>
+                  <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
+                  <SelectItem value="FAILED">Failed</SelectItem>
+                  <SelectItem value="REFUNDED">Refunded / Credited</SelectItem>
+                  <SelectItem value="PARTIALLY_REFUNDED">Partially Refunded / Credited</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Source</Label>
+              <Select value={source} onValueChange={(v) => { setSource(getSourceFilter(v)); resetPage(); }}>
+                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All sources</SelectItem>
+                  <SelectItem value="STRIPE">Stripe</SelectItem>
+                  <SelectItem value="INTERNET_BANKING">Internet Banking</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Xero</Label>
+              <Select value={xeroState} onValueChange={(v) => { setXeroState(v); resetPage(); }}>
+                <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Xero states</SelectItem>
+                  <SelectItem value="invoiceLinked">Invoice linked</SelectItem>
+                  <SelectItem value="invoiceMissing">Invoice missing</SelectItem>
+                  <SelectItem value="operationFailed">Failed activity</SelectItem>
+                  <SelectItem value="operationPartial">Partial activity</SelectItem>
+                  <SelectItem value="operationPending">Pending activity</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Settlement</Label>
+              <Select value={settlement} onValueChange={(v) => { setSettlement(v); resetPage(); }}>
+                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All settlements</SelectItem>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="cardRefund">Card refund</SelectItem>
+                  <SelectItem value="accountCredit">Account credit</SelectItem>
+                  <SelectItem value="mixed">Mixed</SelectItem>
+                  <SelectItem value="restoredCredit">Restored credit</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        }
+        actions={
+          <Button onClick={clearFilters} variant="outline" size="sm">
+            <X className="mr-1 h-4 w-4" />
+            Clear
+          </Button>
+        }
+        advanced={
+          <>
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="payment-amount-exact">Amount exact</Label>
+              <Input
+                id="payment-amount-exact"
+                inputMode="decimal"
+                value={amountExact}
+                onChange={(event) => {
+                  setAmountExact(event.target.value);
+                  resetPage();
+                }}
+                placeholder="125.00"
+                className="w-32"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="payment-amount-min">Amount min</Label>
+              <Input
+                id="payment-amount-min"
+                inputMode="decimal"
+                value={amountMin}
+                onChange={(event) => {
+                  setAmountMin(event.target.value);
+                  resetPage();
+                }}
+                placeholder="50.00"
+                className="w-32"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="payment-amount-max">Amount max</Label>
+              <Input
+                id="payment-amount-max"
+                inputMode="decimal"
+                value={amountMax}
+                onChange={(event) => {
+                  setAmountMax(event.target.value);
+                  resetPage();
+                }}
+                placeholder="250.00"
+                className="w-32"
+              />
+            </div>
+            <DateRangeControls
+              presets={auditAndPaymentsDateRangePresets}
+              from={lastUpdatedFrom}
+              to={lastUpdatedTo}
+              presetLabel="Updated Range"
+              fromLabel="Updated From"
+              toLabel="Updated To"
+              idPrefix="payments-updated"
+              onFromChange={(value) => {
+                setLastUpdatedFrom(value);
+                resetPage();
+              }}
+              onToChange={(value) => {
+                setLastUpdatedTo(value);
+                resetPage();
+              }}
+            />
+            <DateRangeControls
+              presets={auditAndPaymentsDateRangePresets}
+              from={checkInFrom}
+              to={checkInTo}
+              presetLabel="Check In Range"
+              fromLabel="Check In From"
+              toLabel="Check In To"
+              idPrefix="payments-check-in"
+              onFromChange={(value) => {
+                setCheckInFrom(value);
+                resetPage();
+              }}
+              onToChange={(value) => {
+                setCheckInTo(value);
+                resetPage();
+              }}
+            />
+          </>
+        }
+      />
 
       {invoiceError && (
         <Alert variant="error">
@@ -611,231 +806,256 @@ export default function PaymentsPage() {
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Total Revenue</CardTitle><DollarSign className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold">{formatCents(summary.totalRevenueCents)}</div></CardContent></Card>
-        <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Refunded / Credited</CardTitle><CreditCard className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold text-red-600">{formatCents(summary.refundedCents)}</div></CardContent></Card>
-        <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Payments</CardTitle><BarChart2 className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold">{summary.count}</div></CardContent></Card>
-        <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Success Rate</CardTitle><TrendingUp className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold">{successRate}%</div></CardContent></Card>
+        <SummaryCard title="Total Revenue" icon={DollarSign}>
+          {formatCents(summary.totalRevenueCents)}
+        </SummaryCard>
+        <SummaryCard title="Refunded / Credited" icon={CreditCard} valueClassName="text-danger">
+          {formatCents(summary.refundedCents)}
+        </SummaryCard>
+        <SummaryCard title="Payments" icon={BarChart2}>
+          {summary.count}
+        </SummaryCard>
+        <SummaryCard title="Success Rate" icon={TrendingUp}>
+          {successRate}%
+        </SummaryCard>
       </div>
 
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader><TableRow>
-              <SortHeader column="lastUpdated">Last Updated</SortHeader>
-              <SortHeader column="checkIn">Check In</SortHeader>
-              <SortHeader column="member">Member</SortHeader>
-              <SortHeader column="booking">Booking</SortHeader>
-              <SortHeader column="amount">Amount</SortHeader>
-              <SortHeader column="status">Status</SortHeader>
-              <SortHeader column="stripe">Stripe</SortHeader>
-              <SortHeader column="xeroInvoice">Xero Invoice</SortHeader>
-              <SortHeader column="settlement">Settlement</SortHeader>
-            </TableRow></TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow><TableCell colSpan={9} className="text-center py-8 text-slate-500">Loading...</TableCell></TableRow>
-              ) : data.length === 0 ? (
-                <TableRow><TableCell colSpan={9} className="text-center py-8 text-slate-500">No payments found</TableCell></TableRow>
-              ) : (
-                data.map((p) => {
-                  const isInternetBanking = p.source === "INTERNET_BANKING";
-                  const xeroActivityHref = buildXeroRecordActivityUrl(
-                    "Payment",
-                    p.id,
-                    currentPaymentsPath
-                  );
-                  const displayStatus = getPaymentDisplayStatus({
-                    bookingStatus: p.booking.status,
-                    paymentStatus: p.status,
-                    refundedAmountCents: p.refundedAmountCents,
-                    credits: p.booking.creditsFromCancellation,
-                  });
-                  const settlement = getCancellationSettlementBreakdown(
-                    p.refundedAmountCents,
-                    p.booking.creditsFromCancellation
-                  );
+      <AdminDataTable
+        aria-label="Payments"
+        toolbar={
+          <p>
+            Showing {data.length} of {total} payment{total === 1 ? "" : "s"}
+          </p>
+        }
+      >
+        <TableHeader>
+          <TableRow>
+            <PaymentSortHeader column="lastUpdated">Last Updated</PaymentSortHeader>
+            <PaymentSortHeader column="checkIn">Check In</PaymentSortHeader>
+            <PaymentSortHeader column="member">Member</PaymentSortHeader>
+            <PaymentSortHeader column="booking">Booking</PaymentSortHeader>
+            <PaymentSortHeader column="amount" align="right">Amount</PaymentSortHeader>
+            <PaymentSortHeader column="status">Status</PaymentSortHeader>
+            <PaymentSortHeader column="stripe">Stripe</PaymentSortHeader>
+            <PaymentSortHeader column="xeroInvoice">Xero Invoice</PaymentSortHeader>
+            <PaymentSortHeader column="settlement">Settlement</PaymentSortHeader>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {loading ? (
+            <TableRow>
+              <TableCell colSpan={9} className="py-10 text-center">
+                <div className="flex justify-center">
+                  <Spinner label="Loading payments…" />
+                </div>
+              </TableCell>
+            </TableRow>
+          ) : data.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={9} className="p-0">
+                <EmptyState
+                  icon={Receipt}
+                  title="No payments found"
+                  description="No payments match your current filters. Try clearing or adjusting them."
+                />
+              </TableCell>
+            </TableRow>
+          ) : (
+            data.map((p) => {
+              const isInternetBanking = p.source === "INTERNET_BANKING";
+              const xeroActivityHref = buildXeroRecordActivityUrl(
+                "Payment",
+                p.id,
+                currentPaymentsPath
+              );
+              const displayStatus = getPaymentDisplayStatus({
+                bookingStatus: p.booking.status,
+                paymentStatus: p.status,
+                refundedAmountCents: p.refundedAmountCents,
+                credits: p.booking.creditsFromCancellation,
+              });
+              const settlement = getCancellationSettlementBreakdown(
+                p.refundedAmountCents,
+                p.booking.creditsFromCancellation
+              );
+              const xeroChip = xeroStateChip(p.xeroState);
 
-                  return (
-                    <TableRow key={p.id}>
-                      <TableCell>{format(new Date(p.lastUpdatedAt), "d MMM yyyy")}</TableCell>
-                      <TableCell>{format(new Date(p.booking.checkIn), "d MMM yyyy")}</TableCell>
-                      <TableCell className="font-medium">
-                        <Link
-                          href={buildHrefWithReturnTo(`/admin/members/${p.booking.member.id}`, currentPaymentsPath)}
-                          className="text-blue-600 hover:underline"
-                        >
-                          {p.booking.member.lastName}, {p.booking.member.firstName}
-                        </Link>
-                      </TableCell>
-                      <TableCell>
-                        <Link
-                          href={buildHrefWithReturnTo(`/bookings/${p.booking.id}`, currentPaymentsPath)}
-                          className="text-xs text-blue-600 hover:underline"
-                        >
-                          View
-                        </Link>
-                      </TableCell>
-                      <TableCell>{formatCents(p.amountCents)}</TableCell>
-                      <TableCell>
+              return (
+                <TableRow key={p.id}>
+                  <TableCell className="text-sm">{format(new Date(p.lastUpdatedAt), "d MMM yyyy")}</TableCell>
+                  <TableCell className="text-sm">{format(new Date(p.booking.checkIn), "d MMM yyyy")}</TableCell>
+                  <TableCell className="font-medium">
+                    <Link
+                      href={buildHrefWithReturnTo(`/admin/members/${p.booking.member.id}`, currentPaymentsPath)}
+                      className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {p.booking.member.lastName}, {p.booking.member.firstName}
+                    </Link>
+                  </TableCell>
+                  <TableCell>
+                    <Link
+                      href={buildHrefWithReturnTo(`/bookings/${p.booking.id}`, currentPaymentsPath)}
+                      className="rounded-sm text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      View
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-right text-sm font-medium tabular-nums">{formatCents(p.amountCents)}</TableCell>
+                  <TableCell>
+                    <div className="space-y-1">
+                      <Link
+                        href={xeroActivityHref}
+                        className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <StatusChip
+                          kind="payment"
+                          value={displayStatus.toneStatus as PaymentStatus}
+                          label={displayStatus.label}
+                        />
+                      </Link>
+                      {displayStatus.detail && (
+                        <p className="max-w-56 text-xs text-muted-foreground">
+                          {displayStatus.detail}
+                        </p>
+                      )}
+                      {isInternetBanking && (
                         <div className="space-y-1">
-                          <Link href={xeroActivityHref} className="inline-flex">
-                            <Badge className={`${paymentStatusClass(displayStatus.toneStatus)} cursor-pointer`}>
-                              {displayStatus.label}
-                            </Badge>
-                          </Link>
-                          {displayStatus.detail && (
-                            <p className="max-w-56 text-xs text-slate-500">
-                              {displayStatus.detail}
-                            </p>
-                          )}
-                          {isInternetBanking && (
-                            <div className="space-y-1">
-                              <Badge variant="outline" className="text-xs">
-                                Internet Banking
-                              </Badge>
-                              {p.reference && (
-                                <Link
-                                  href={xeroActivityHref}
-                                  className="block max-w-56 truncate text-xs text-slate-600 hover:text-slate-900 hover:underline"
-                                  title={p.reference}
-                                >
-                                  Ref: {p.reference}
-                                </Link>
-                              )}
-                              {p.status === "PENDING" && (
-                                <p className="text-xs text-amber-700">
-                                  {formatPendingAge(p.createdAt)}
-                                </p>
-                              )}
-                            </div>
-                          )}
-                          {p.source === "STRIPE" && (
-                            <Badge variant="outline" className="text-xs">
-                              Stripe
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {p.stripePaymentIntentId ? (
-                          <a
-                            href={`https://dashboard.stripe.com/${p.stripePaymentIntentId.startsWith("pi_test_") ? "test/" : ""}payments/${p.stripePaymentIntentId}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
-                            title={p.stripePaymentIntentId}
-                          >
-                            {p.stripePaymentIntentId.slice(0, 12)}...
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                        ) : isInternetBanking ? (
-                          <span className="text-xs text-slate-600">
-                            Internet Banking
-                          </span>
-                        ) : "—"}
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <Link
-                            href={buildXeroRecordActivityUrl("Payment", p.id, currentPaymentsPath)}
-                            className="inline-flex"
-                          >
-                            <Badge
-                              variant="secondary"
-                              className={`${xeroStateClass(p.xeroState)} cursor-pointer text-xs`}
-                            >
-                              {xeroStateLabel(p.xeroState)}
-                            </Badge>
-                          </Link>
-                          {p.xeroInvoiceId ? (
-                            <a
-                              href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${p.xeroInvoiceId}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
-                            >
-                              {p.xeroInvoiceNumber || p.xeroInvoiceId.slice(0, 8)}
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          ) : queuedInvoicePaymentIds[p.id] ? (
-                            <span className="inline-flex items-center gap-1 text-xs text-amber-700">
-                              <FileText className="h-3 w-3" />
-                              Queued
-                            </span>
-                          ) : isInternetBanking ? (
+                          <MiniChip tone="info" icon={Landmark}>Internet Banking</MiniChip>
+                          {p.reference && (
                             <Link
                               href={xeroActivityHref}
-                              className="inline-flex text-xs text-amber-700 hover:text-amber-900 hover:underline"
+                              className="block max-w-56 truncate rounded-sm text-xs text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              title={p.reference}
                             >
-                              Missing Xero invoice
+                              Ref: {p.reference}
                             </Link>
-                          ) : p.status === "SUCCEEDED" ? (
-                            <button
-                              onClick={() => handleGenerateInvoice(p.id)}
-                              disabled={generatingInvoice === p.id}
-                              className="text-xs text-orange-600 hover:text-orange-800 hover:underline inline-flex items-center gap-1 disabled:opacity-50"
-                            >
-                              <FileText className="h-3 w-3" />
-                              {generatingInvoice === p.id ? "Creating..." : "Generate Invoice"}
-                            </button>
-                          ) : (
-                            <span>—</span>
                           )}
-                          <Link
-                            href={xeroActivityHref}
-                            className="inline-flex text-xs text-slate-600 hover:text-slate-900 hover:underline"
-                          >
-                            View activity
-                          </Link>
-                          {p.xeroActivity.failed > 0 ? (
-                            <p className="text-xs text-red-700">{p.xeroActivity.failed} failed</p>
-                          ) : null}
-                          {p.xeroActivity.partial > 0 ? (
-                            <p className="text-xs text-amber-700">{p.xeroActivity.partial} partial</p>
-                          ) : null}
-                          {p.xeroActivity.pending > 0 ? (
-                            <p className="text-xs text-slate-700">{p.xeroActivity.pending} pending</p>
-                          ) : null}
+                          {p.status === "PENDING" && (
+                            <p className="text-xs text-warning">
+                              {formatPendingAge(p.createdAt)}
+                            </p>
+                          )}
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <Badge variant="outline" className="text-xs">
-                            {settlementKindLabel(p.settlementKind)}
-                          </Badge>
-                          {p.refundedAmountCents > 0 ? (
-                            <div className="space-y-1 text-xs text-slate-600">
-                            {settlement.refundToOriginalMethodCents > 0 && (
-                              <p>Card refund: {formatCents(settlement.refundToOriginalMethodCents)}</p>
-                            )}
-                            {settlement.accountCreditCents > 0 && (
-                              <p>Account credit: {formatCents(settlement.accountCreditCents)}</p>
-                            )}
-                            {settlement.restoredAppliedCreditCents > 0 && (
-                              <p>Restored credit: {formatCents(settlement.restoredAppliedCreditCents)}</p>
-                            )}
-                          </div>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+                      )}
+                      {p.source === "STRIPE" && (
+                        <MiniChip tone="info" icon={CreditCard}>Stripe</MiniChip>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {p.stripePaymentIntentId ? (
+                      <a
+                        href={`https://dashboard.stripe.com/${p.stripePaymentIntentId.startsWith("pi_test_") ? "test/" : ""}payments/${p.stripePaymentIntentId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-sm text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        title={p.stripePaymentIntentId}
+                      >
+                        {p.stripePaymentIntentId.slice(0, 12)}...
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    ) : isInternetBanking ? (
+                      <span className="text-xs text-muted-foreground">
+                        Internet Banking
+                      </span>
+                    ) : "—"}
+                  </TableCell>
+                  <TableCell>
+                    <div className="space-y-1">
+                      <Link
+                        href={buildXeroRecordActivityUrl("Payment", p.id, currentPaymentsPath)}
+                        className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <MiniChip tone={xeroChip.tone} icon={xeroChip.icon}>
+                          {xeroStateLabel(p.xeroState)}
+                        </MiniChip>
+                      </Link>
+                      {p.xeroInvoiceId ? (
+                        <a
+                          href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${p.xeroInvoiceId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded-sm text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {p.xeroInvoiceNumber || p.xeroInvoiceId.slice(0, 8)}
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      ) : queuedInvoicePaymentIds[p.id] ? (
+                        <span className="inline-flex items-center gap-1 text-xs text-warning">
+                          <FileText className="h-3 w-3" />
+                          Queued
+                        </span>
+                      ) : isInternetBanking ? (
+                        <Link
+                          href={xeroActivityHref}
+                          className="inline-flex rounded-sm text-xs text-warning hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          Missing Xero invoice
+                        </Link>
+                      ) : p.status === "SUCCEEDED" ? (
+                        <button
+                          onClick={() => handleGenerateInvoice(p.id)}
+                          disabled={generatingInvoice === p.id}
+                          className="inline-flex items-center gap-1 rounded-sm text-xs text-warning hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                        >
+                          <FileText className="h-3 w-3" />
+                          {generatingInvoice === p.id ? "Creating..." : "Generate Invoice"}
+                        </button>
+                      ) : (
+                        <span>—</span>
+                      )}
+                      <Link
+                        href={xeroActivityHref}
+                        className="inline-flex rounded-sm text-xs text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        View activity
+                      </Link>
+                      {p.xeroActivity.failed > 0 ? (
+                        <p className="text-xs text-danger">{p.xeroActivity.failed} failed</p>
+                      ) : null}
+                      {p.xeroActivity.partial > 0 ? (
+                        <p className="text-xs text-warning">{p.xeroActivity.partial} partial</p>
+                      ) : null}
+                      {p.xeroActivity.pending > 0 ? (
+                        <p className="text-xs text-muted-foreground">{p.xeroActivity.pending} pending</p>
+                      ) : null}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="space-y-1">
+                      <MiniChip tone="neutral" icon={Wallet}>
+                        {settlementKindLabel(p.settlementKind)}
+                      </MiniChip>
+                      {p.refundedAmountCents > 0 ? (
+                        <div className="space-y-1 text-xs text-muted-foreground">
+                        {settlement.refundToOriginalMethodCents > 0 && (
+                          <p className="tabular-nums">Card refund: {formatCents(settlement.refundToOriginalMethodCents)}</p>
+                        )}
+                        {settlement.accountCreditCents > 0 && (
+                          <p className="tabular-nums">Account credit: {formatCents(settlement.accountCreditCents)}</p>
+                        )}
+                        {settlement.restoredAppliedCreditCents > 0 && (
+                          <p className="tabular-nums">Restored credit: {formatCents(settlement.restoredAppliedCreditCents)}</p>
+                        )}
+                      </div>
+                      ) : null}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })
+          )}
+        </TableBody>
+      </AdminDataTable>
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-slate-500">Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}</p>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button>
-          </div>
-        </div>
-      )}
+      <Pagination
+        as="div"
+        aria-label="Payments pagination"
+        page={page}
+        totalPages={totalPages}
+        onPageChange={setPage}
+        summary={`Showing ${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)} of ${total}`}
+      />
     </div>
   );
 }
