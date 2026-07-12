@@ -88,7 +88,7 @@ function CopyToken({ token }: { token: string }) {
           setTimeout(() => setCopied(false), 1500);
         });
       }}
-      className="bg-muted hover:bg-muted/70 inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs break-all"
+      className="bg-muted hover:bg-accent inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs break-all"
     >
       {token}
       <span className="text-muted-foreground">{copied ? "✓" : "⧉"}</span>
