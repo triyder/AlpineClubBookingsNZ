@@ -34,6 +34,17 @@ export function normalizeCancellationRules(
   return rules.map(normalizeCancellationRule)
 }
 
+export function hasDuplicateCancellationThresholds(
+  rules: readonly Pick<CancellationRuleLike, "daysBeforeStay">[]
+): boolean {
+  const seen = new Set<number>()
+  return rules.some((rule) => {
+    if (seen.has(rule.daysBeforeStay)) return true
+    seen.add(rule.daysBeforeStay)
+    return false
+  })
+}
+
 export function normalizeStoredCancellationRules(
   rules: unknown
 ): NormalizedCancellationRule[] {

@@ -104,14 +104,22 @@ export function describePublicCancellationRules(
     .map(normalizeCancellationRule)
     .sort((a, b) => b.daysBeforeStay - a.daysBeforeStay);
   if (rules.length === 0) return [];
-  const rows = rules.map((rule, index) => {
-    const previous = rules[index - 1];
+  // Array#sort is stable: equal thresholds retain persisted order, matching
+  // getRefundTier. Keep the first and discard unreachable dirty duplicates.
+  const seenThresholds = new Set<number>();
+  const reachableRules = rules.filter((rule) => {
+    if (seenThresholds.has(rule.daysBeforeStay)) return false;
+    seenThresholds.add(rule.daysBeforeStay);
+    return true;
+  });
+  const rows = reachableRules.map((rule, index) => {
+    const previous = reachableRules[index - 1];
     const range = index === 0
       ? `${rule.daysBeforeStay} or more days before check-in`
       : `${rule.daysBeforeStay}–${Math.max(rule.daysBeforeStay, previous.daysBeforeStay - 1)} days before check-in`;
     return { description: `${range}: ${describeCancellationTerms(rule)}` };
   });
-  const lowest = rules.at(-1)?.daysBeforeStay;
+  const lowest = reachableRules.at(-1)?.daysBeforeStay;
   if (lowest !== undefined && lowest > 0) {
     const range = lowest === 1
         ? "0 days before check-in"

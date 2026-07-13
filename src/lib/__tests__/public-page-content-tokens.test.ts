@@ -166,6 +166,18 @@ describe("public PageContent token view models", () => {
     ]);
   });
 
+  it("keeps the first persisted rule when dirty JSON repeats a threshold", () => {
+    expect(describePublicCancellationRules([
+      { daysBeforeStay: 7, refundPercentage: 75 },
+      { daysBeforeStay: 7, refundPercentage: 10 },
+      { daysBeforeStay: 0, refundPercentage: 0 },
+    ])).toEqual([
+      { description: "7 or more days before check-in: 75% refund" },
+      { description: "0–6 days before check-in: 0% refund" },
+      { description: "After check-in: no refund" },
+    ]);
+  });
+
   it("uses the same accurate ranges for named booking-period cancellation rules", async () => {
     mocks.cancellation.mockResolvedValue([]);
     mocks.periods.mockResolvedValue([{ name: "Holiday", startDate: new Date("2026-12-01"), endDate: new Date("2026-12-31"), lodgeId: null, cancellationRules: [

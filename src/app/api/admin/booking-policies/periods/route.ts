@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import {
+  hasDuplicateCancellationThresholds,
   normalizeCancellationRules,
   normalizeStoredCancellationRules,
 } from "@/lib/cancellation-rules";
@@ -35,6 +36,14 @@ const createSchema = z.object({
   // club-wide (null lodgeId). Any rows for a lodge REPLACE the club-wide
   // set at runtime for that lodge.
   lodgeId: z.string().min(1).optional(),
+}).superRefine((data, ctx) => {
+  if (hasDuplicateCancellationThresholds(data.cancellationRules)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["cancellationRules"],
+      message: "Cancellation rule day thresholds must be unique",
+    });
+  }
 });
 
 export async function GET(request: NextRequest) {

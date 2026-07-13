@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import {
+  hasDuplicateCancellationThresholds,
   normalizeCancellationRules,
   normalizeStoredCancellationRules,
 } from "@/lib/cancellation-rules";
@@ -31,6 +32,14 @@ const updateSchema = z.object({
   nonMemberHoldDays: z.number().int().min(1).max(365).optional(),
   cancellationRules: z.array(cancellationRuleSchema).min(1).optional(),
   active: z.boolean().optional(),
+}).superRefine((data, ctx) => {
+  if (data.cancellationRules && hasDuplicateCancellationThresholds(data.cancellationRules)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["cancellationRules"],
+      message: "Cancellation rule day thresholds must be unique",
+    });
+  }
 });
 
 export async function GET(
