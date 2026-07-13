@@ -101,6 +101,8 @@ keeping their own check-out date.
 |---|---|
 | [`brief.md`](brief.md) | The feature brief: goals, non-goals, settled decisions, open questions, success criteria |
 | [`design.md`](design.md) | Technical design: data model, pairing/auth, display-state API, template model, testing strategy |
+| [`phone-visibility.md`](phone-visibility.md) | Member phone-number opt-in (#37): the two-sided consent gate, the staff-kiosk exemption, and where each control lives |
+| [`config-transfer-workflow.md`](config-transfer-workflow.md) | Moving display config between environments as bundles |
 | `decisions/` | ADRs (pairing/auth model; template model + storage) — authored with their keystone tasks |
 | [`mockups/`](mockups/) | The full design-exploration catalogue, organised by concept |
 
