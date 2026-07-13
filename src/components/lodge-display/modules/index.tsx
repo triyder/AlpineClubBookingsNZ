@@ -6,9 +6,12 @@ import type { DisplayPanelOptions } from "./module-options";
 import { ArrivalsBoard } from "./arrivals-board";
 import { ChoresBoard } from "./chores-board";
 import { LodgeRules } from "./lodge-rules";
+import { NightColumns } from "./night-columns";
 import { NoticeBoard } from "./notice-board";
 import { OccupancyGrid } from "./occupancy-grid";
+import { RoomCards } from "./room-cards";
 import { SinglesBoard } from "./singles-board";
+import { StatusBoard } from "./status-board";
 import { WelcomePanel } from "./welcome-panel";
 
 // Module name -> renderer map for the lobby display (fork issue #30). Every
@@ -67,6 +70,9 @@ export const DISPLAY_MODULE_COMPONENTS: Partial<
   "occupancy-grid": withModuleGuard("occupancy-grid", OccupancyGrid),
   welcome: withModuleGuard("welcome", WelcomePanel),
   "singles-board": withModuleGuard("singles-board", SinglesBoard),
+  "room-cards": withModuleGuard("room-cards", RoomCards),
+  "night-columns": withModuleGuard("night-columns", NightColumns),
+  "status-board": withModuleGuard("status-board", StatusBoard),
   "chores-board": withModuleGuard("chores-board", ChoresBoard),
   "lodge-rules": withModuleGuard("lodge-rules", LodgeRules),
   "notice-board": withModuleGuard("notice-board", NoticeBoard),

@@ -185,6 +185,85 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     embedToken: embedToken("singles-board"),
   },
   {
+    name: "room-cards",
+    label: "Room cards",
+    description:
+      "Tonight's rooms: a card per room showing who sleeps there tonight with " +
+      "their stay span and an arrive/stay/depart dot; unoccupied rooms show a " +
+      "dashed free card. Needs bed allocation — with it off it degrades to a " +
+      "short note (the arrivals / status boards cover the roomless view).",
+    dependencies: ["bedAllocation"],
+    dependencyMode: "degrades",
+    cssHooks: [
+      "display-room-cards",
+      "display-room-card",
+      "display-room-card-empty",
+      "display-room-card-head",
+      "display-room-name",
+      "display-room-card-count",
+      "display-room-people",
+      "display-room-person",
+      "display-room-dot",
+      "display-room-person-name",
+      "display-room-span",
+    ],
+    contributes: [],
+    embedToken: embedToken("room-cards"),
+  },
+  {
+    name: "night-columns",
+    label: "Next nights",
+    description:
+      "Next-N-nights look-ahead: a column per upcoming night listing the " +
+      "bookings active that night, marked arriving/staying/departing with their " +
+      "check-out. With bed allocation on (and the show-rooms option) each row is " +
+      "annotated with its room; with it off it degrades to the plain look-ahead.",
+    dependencies: ["bedAllocation"],
+    dependencyMode: "degrades",
+    cssHooks: [
+      "display-night-columns",
+      "display-night-col",
+      "display-night-col-today",
+      "display-night-col-head",
+      "display-night-col-date",
+      "display-night-col-count",
+      "display-night-list",
+      "display-night-row",
+      "display-night-dot",
+      "display-night-name",
+      "display-night-room",
+      "display-night-span",
+      "display-night-empty",
+    ],
+    contributes: [],
+    embedToken: embedToken("night-columns"),
+  },
+  {
+    name: "status-board",
+    label: "Status board",
+    description:
+      "Allocation-off status board: three columns for tonight — Arriving, " +
+      "Staying, Leaving today — with no room boxes. Room-agnostic; renders the " +
+      "same whether or not bed allocation is on, and is the natural rotation " +
+      "target when rooms are off (condition affinity bed-allocation:enabled = false).",
+    dependencies: [],
+    dependencyMode: "degrades",
+    cssHooks: [
+      "display-status-board",
+      "display-status-group",
+      "display-status-group-head",
+      "display-status-dot",
+      "display-status-title",
+      "display-status-list",
+      "display-status-row",
+      "display-status-name",
+      "display-status-span",
+      "display-status-empty",
+    ],
+    contributes: [],
+    embedToken: embedToken("status-board"),
+  },
+  {
     name: "chores-board",
     label: "Chores board",
     description:

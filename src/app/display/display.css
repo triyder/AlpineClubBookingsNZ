@@ -788,3 +788,259 @@
   padding: 0.4vmin 1.2vmin;
   font-weight: 600;
 }
+
+/* --- shared status dot (issue #115) --------------------------------------- */
+
+/* A status dot for the tonight / look-ahead boards, coloured by data-status.
+ * Green arriving, muted staying, amber departing — the same semantic tokens
+ * the bar boards use, so the whole surface reads as one palette. */
+.display-room-dot,
+.display-night-dot,
+.display-status-dot {
+  width: 1.4vmin;
+  height: 1.4vmin;
+  border-radius: 50%;
+  flex: none;
+  background: var(--display-muted);
+}
+.display-room-dot[data-status="arriving"],
+.display-night-dot[data-status="arriving"],
+.display-status-dot[data-status="arriving"] {
+  background: var(--display-arriving);
+}
+.display-room-dot[data-status="departing"],
+.display-night-dot[data-status="departing"],
+.display-status-dot[data-status="departing"] {
+  background: var(--display-departing);
+}
+
+/* --- tonight's rooms (issue #115; mock O2) -------------------------------- */
+
+.display-room-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2vmin;
+  height: 100%;
+  min-height: 0;
+  align-content: start;
+}
+
+.display-room-card {
+  background: var(--display-panel);
+  border: 1px solid var(--display-line);
+  border-radius: 1.6vmin;
+  padding: 1.8vmin;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.display-room-card-empty {
+  border-style: dashed;
+  opacity: 0.6;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--display-muted);
+  font-size: 2vmin;
+}
+
+.display-room-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1vmin;
+  margin-bottom: 1.2vmin;
+}
+
+.display-room-name { font-size: 2.4vmin; font-weight: 750; }
+
+.display-room-card-count {
+  color: var(--display-muted);
+  font-size: 1.9vmin;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.display-room-people {
+  display: flex;
+  flex-direction: column;
+  gap: 1vmin;
+  min-height: 0;
+}
+
+.display-room-person {
+  display: flex;
+  align-items: center;
+  gap: 1.1vmin;
+  font-size: 2.1vmin;
+}
+
+.display-room-person-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.display-room-person[data-group] .display-room-person-name { color: var(--display-group); }
+
+.display-room-span {
+  color: var(--display-muted);
+  font-size: 1.7vmin;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- next nights look-ahead (issue #115; mocks O3 / C1a) ------------------ */
+
+.display-night-columns {
+  display: grid;
+  grid-template-columns: repeat(var(--display-days, 3), 1fr);
+  gap: 2.2vmin;
+  height: 100%;
+  min-height: 0;
+  align-content: start;
+}
+
+.display-night-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.display-night-col-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1vmin;
+  padding-bottom: 1.2vmin;
+  border-bottom: 0.24vmin solid var(--display-line);
+  margin-bottom: 1.4vmin;
+}
+
+.display-night-col-today .display-night-col-head { border-color: var(--display-accent); }
+
+.display-night-col-date { font-size: 2.4vmin; font-weight: 750; }
+
+.display-night-col-count {
+  color: var(--display-muted);
+  font-size: 1.8vmin;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.display-night-col-today .display-night-col-count { color: var(--display-accent); font-weight: 700; }
+
+.display-night-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2vmin;
+  min-height: 0;
+}
+
+.display-night-row {
+  display: flex;
+  align-items: center;
+  gap: 1.1vmin;
+  font-size: 2vmin;
+}
+
+.display-night-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.display-night-row[data-group] .display-night-name { color: var(--display-group); }
+
+.display-night-room {
+  color: var(--display-ink);
+  font-weight: 700;
+  font-size: 1.7vmin;
+  background: var(--display-panel);
+  border: 1px solid var(--display-line);
+  border-radius: 0.8vmin;
+  padding: 0.2vmin 0.9vmin;
+  white-space: nowrap;
+}
+
+.display-night-span {
+  color: var(--display-muted);
+  font-size: 1.7vmin;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.display-night-empty {
+  color: var(--display-muted);
+  font-size: 1.9vmin;
+  font-style: italic;
+}
+
+/* --- status board, allocation off (issue #115; mock O4) ------------------- */
+
+.display-status-board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2.4vmin;
+  height: 100%;
+  min-height: 0;
+  align-content: start;
+}
+
+.display-status-group {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.display-status-group-head {
+  display: flex;
+  align-items: center;
+  gap: 1vmin;
+  margin-bottom: 1.4vmin;
+}
+
+.display-status-title {
+  font-size: 2.2vmin;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.display-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1vmin;
+  min-height: 0;
+}
+
+.display-status-row {
+  display: flex;
+  align-items: center;
+  gap: 1.1vmin;
+  font-size: 2.1vmin;
+}
+
+.display-status-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.display-status-row[data-group] .display-status-name { color: var(--display-group); }
+
+.display-status-span {
+  color: var(--display-muted);
+  font-size: 1.7vmin;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.display-status-empty {
+  color: var(--display-muted);
+  font-size: 1.9vmin;
+  font-style: italic;
+}
+
+/* --- room-cards allocation-off fallback (issue #115) ---------------------- */
+
+.display-room-cards-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.display-room-cards-note {
+  color: var(--display-muted);
+  font-size: 2.2vmin;
+  font-style: italic;
+}

@@ -337,6 +337,12 @@ new embed modules (the `{{skifield-conditions}}` pattern):
 - `{{display-occupancy-grid}}` — whole-lodge blockout grid.
 - `{{display-welcome}}` — welcome panel.
 - `{{display-singles-board}}` — by-booking Room | Guest rows.
+- `{{display-room-cards}}` — tonight's rooms: a card per room with who sleeps
+  there tonight (needs bed allocation; degrades to a note when off).
+- `{{display-night-columns:days=3}}` — next-N-nights look-ahead; annotates each
+  row with its room when allocation is on and `show-rooms` holds.
+- `{{display-status-board}}` — allocation-off Arriving / Staying / Leaving
+  columns for tonight (room-agnostic; closes #114).
 - `{{display-chores-board}}` — the day's chore assignments.
 - `{{display-lodge-rules}}` — lodge rules / arrival information.
 - Text tokens: `{{lodge-name}}`, `{{display-date}}`, and **config tokens**

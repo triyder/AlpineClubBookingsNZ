@@ -20,5 +20,30 @@ export function intOption(
   return Math.min(bounds.max, Math.max(bounds.min, Math.floor(value)));
 }
 
+/**
+ * A boolean option. Accepts a real boolean, the strings true/false/1/0/yes/no
+ * (case-insensitive), or a number (0 is false). Anything else — including an
+ * unset option — falls back to the documented default (issue #30 AC6: a bad
+ * template edit never throws, it just uses the default).
+ */
+export function boolOption(
+  options: DisplayPanelOptions | undefined,
+  key: string,
+  fallback: boolean
+): boolean {
+  const raw = options?.[key];
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw !== 0 : fallback;
+  if (typeof raw === "string") {
+    const value = raw.trim().toLowerCase();
+    if (value === "true" || value === "1" || value === "yes") return true;
+    if (value === "false" || value === "0" || value === "no") return false;
+  }
+  return fallback;
+}
+
 export const ARRIVALS_BOARD_DEFAULT_DAYS = 3;
 export const ARRIVALS_BOARD_MAX_NAMES = 5;
+
+export const NIGHT_COLUMNS_DEFAULT_DAYS = 3;
+export const NIGHT_COLUMNS_MAX_DAYS = 5;
