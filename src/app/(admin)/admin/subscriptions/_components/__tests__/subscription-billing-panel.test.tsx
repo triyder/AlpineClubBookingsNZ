@@ -21,17 +21,19 @@ vi.mock("@/lib/date-only", () => ({
 
 import { SubscriptionBillingPanel } from "@/app/(admin)/admin/subscriptions/_components/subscription-billing-panel";
 
-function payload() {
+function payload(options: { decisionDate?: string; membershipTypeName?: string } = {}) {
+  const decisionDate = options.decisionDate ?? "2026-07-13";
+  const membershipTypeName = options.membershipTypeName ?? "Full";
   return {
     preview: {
       seasonYear: 2026,
-      decisionDate: "2026-07-13",
+      decisionDate,
       dueDays: 30,
       totalCents: 12_000,
       confirmationToken: "a".repeat(64),
       entries: [{
         key: "entry-1",
-        membershipTypeName: "Full",
+        membershipTypeName,
         billingBasis: "PER_MEMBER",
         prorationRule: "NONE",
         chargedAmountCents: 12_000,
@@ -136,5 +138,41 @@ describe("subscription billing panel", () => {
     expect(await screen.findByText("Due days saved")).toBeTruthy();
     await waitFor(() => expect(screen.getByRole("button", { name: "Confirm and queue annual batch" })).toBeTruthy());
     expect(screen.getByText("Due days saved")).toBeTruthy();
+  });
+
+  it("reloads the latest selection when an older-selection mutation completes", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockReset();
+    let resolvePost: ((value: Response) => void) | undefined;
+    const pendingPost = new Promise<Response>((resolve) => {
+      resolvePost = resolve;
+    });
+    const getUrls: string[] = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      if (init?.method === "POST") return pendingPost;
+      const url = String(input);
+      getUrls.push(url);
+      if (url.includes("decisionDate=2026-08-01")) {
+        return { ok: true, json: async () => payload({ decisionDate: "2026-08-01", membershipTypeName: "August Full" }) } as Response;
+      }
+      return { ok: true, json: async () => payload() } as Response;
+    });
+
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findByText(/^Full · Member One$/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save due days" }));
+    fireEvent.change(screen.getByLabelText("Decision date"), { target: { value: "2026-08-01" } });
+    expect(await screen.findByText(/^August Full · Member One$/)).toBeTruthy();
+
+    await act(async () => {
+      resolvePost?.({ ok: true, json: async () => ({ message: "Due days saved" }) } as Response);
+      await pendingPost;
+    });
+    expect(await screen.findByText("Due days saved")).toBeTruthy();
+    expect(await screen.findByText(/^August Full · Member One$/)).toBeTruthy();
+    expect(screen.queryByText(/^Full · Member One$/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Confirm and queue annual batch" }).hasAttribute("disabled")).toBe(false);
+    expect(getUrls.at(-1)).toContain("decisionDate=2026-08-01");
   });
 });

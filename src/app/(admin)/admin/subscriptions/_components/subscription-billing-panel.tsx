@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, MailWarning, ReceiptText, RefreshCw } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -61,17 +61,19 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
   const [loadFeedback, setLoadFeedback] = useState<{ kind: "error"; text: string } | null>(null);
   const [mutationFeedback, setMutationFeedback] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const loadGeneration = useRef(0);
+  const selectionRef = useRef({ seasonYear, decisionDate });
   const visibleExceptions = data
     ? [...new Map([...data.preview.exceptions, ...data.exceptions].map((item) => [item.fingerprint, item])).values()]
     : [];
 
   const load = useCallback(async () => {
+    const selection = selectionRef.current;
     const generation = ++loadGeneration.current;
     setLoading(true);
     setData(null);
     setLoadFeedback(null);
     try {
-      const response = await fetch(`/api/admin/subscription-billing?seasonYear=${seasonYear}&decisionDate=${decisionDate}`);
+      const response = await fetch(`/api/admin/subscription-billing?seasonYear=${selection.seasonYear}&decisionDate=${selection.decisionDate}`);
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Could not load billing preview.");
       if (generation !== loadGeneration.current) return;
@@ -84,9 +86,15 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     } finally {
       if (generation === loadGeneration.current) setLoading(false);
     }
+  }, []);
+
+  useLayoutEffect(() => {
+    selectionRef.current = { seasonYear, decisionDate };
   }, [decisionDate, seasonYear]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load, decisionDate, seasonYear]);
 
   async function post(body: Record<string, unknown>) {
     setWorking(true);
