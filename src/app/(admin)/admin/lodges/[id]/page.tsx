@@ -11,6 +11,7 @@ import {
   Gauge,
   KeyRound,
   Lock,
+  Monitor,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,6 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { LodgeDisplaySettingsCard } from "./_components/lodge-display-settings-card";
 
 // Lodge configuration hub (ADR-003): one place to see a lodge's setup state,
 // with links into the existing per-area pages pre-filtered via ?lodgeId=.
@@ -499,7 +499,25 @@ export default function LodgeConfigurationHubPage() {
           lodge, not the club default. Gated on the lobbyDisplay module, matching
           the module gating the area cards below use. */}
       {modules.lobbyDisplay === true && (
-        <LodgeDisplaySettingsCard lodgeId={lodgeId} />
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Monitor className="h-4 w-4" />
+              Lobby display
+            </CardTitle>
+            <CardDescription>
+              Per-lodge display values — guest name granularity, committee
+              notice, and {"{{config:key}}"} values for this lodge.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex items-center justify-end">
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/admin/lodges/${encodeURIComponent(lodgeId)}/display`}>
+                Configure
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
       )}
 
       <div className="grid gap-4 md:grid-cols-2">
