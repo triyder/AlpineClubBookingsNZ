@@ -1,0 +1,139 @@
+# ADR-001: Exclusive (whole-lodge) booking hold
+
+**Status:** Proposed (owner-approved shape, 2026-07-13). Not yet scheduled for
+implementation — may be built to back the lobby-display whole-lodge treatment,
+or delivered as separate work.
+
+**Risk:** Critical (booking capacity + availability). Requires high/xhigh-effort
+implementation, adversarial capacity tests, and owner review before merge.
+
+## Context
+
+A booking can need **sole occupancy of a lodge** — most commonly a school or
+club group — such that no other beds may be booked for its nights **even if
+beds are theoretically free**. Today there is no such concept:
+
+- **Capacity is pure bed arithmetic** (`src/lib/capacity.ts`,
+  `checkCapacityForGuestRanges`): per night, `available = lodgeCapacity −
+  occupiedBeds − proposedBeds`; a booking is admitted if `available ≥ 0` across
+  its nights, under a per-lodge capacity lock. A 30-guest school in a 40-bed
+  lodge leaves 10 beds bookable by anyone else.
+- The **display "whole lodge" is a display-time heuristic only**
+  (`src/lib/lodge-display-state.ts`): sole-occupancy-on-nights + (organisation
+  or ≥ `WHOLE_LODGE_MIN_GUESTS`=8). It infers from live bookings and has no
+  effect on booking or capacity.
+
+We want an **explicit, intentional** flag — independent of headcount and bed
+allocation — that reserves the whole lodge and blocks further admissions.
+
+## Decision
+
+Introduce an explicit **exclusive hold** on a booking. It is a booking-model
+concept (not display-only); the display reads it.
+
+### Owner decisions (2026-07-13)
+
+1. **Conflicts are allowed, surfaced, and resolved manually.** Exclusivity can
+   be *requested or set even when other bookings already overlap those nights.*
+   The system does **not** auto-displace or refuse; it makes the conflict
+   **obvious** to the booking officer, who declines or negotiates. No
+   displacement engine.
+2. **Two entry points.** A requester (school/group) can **request** exclusivity
+   as part of a booking request; an admin can **set** exclusivity on **any**
+   booking directly. The underlying flag is booking-generic — "school" is the
+   primary front-door wording, re-usable/re-wordable for other groups.
+3. **Pricing unchanged.** Per-guest pricing/quoting is untouched. (A separate,
+   independent idea — rendering a whole-lodge invoice as a single line rather
+   than a per-person breakdown — is out of scope here.)
+4. **The flag is authoritative for the display.** The display's `wholeLodge`
+   treatment is driven by the flag; the ≥8/sole-occupancy heuristic is demoted
+   to a fallback (or retired once the flag is in use).
+5. **The hold blocks new admissions even against an admin over-capacity
+   override** (recommended default, open to revision). The whole point is "no
+   other beds even if capacity exists," so an over-capacity override must not
+   punch into a held lodge; to add anyone, an admin removes/adjusts the hold.
+
+### Model
+
+- `Booking.wholeLodgeHold: Boolean @default(false)` — the authoritative flag.
+  Additive, nullable-safe migration (expand-only). Fits the existing pattern of
+  admin capacity fields on `Booking` (`adminCapacityHoldAt`,
+  `capacityOverriddenAt`).
+- `BookingRequest.exclusivityRequested: Boolean @default(false)` — the request
+  path; an admin approving the request may set `wholeLodgeHold` on the resulting
+  booking.
+- Set-by and set-at audit fields (who/when), mirroring the capacity-override
+  audit pattern, since this is an admin capacity action.
+
+### Capacity rule (two-sided, in the capacity lock)
+
+- **Admitting a NEW booking:** if any capacity-holding booking overlapping a
+  night has `wholeLodgeHold = true`, that night is **hard-blocked** — `available
+  = 0` regardless of bed math. Distinct signal/message from ordinary
+  over-capacity ("lodge held exclusively", not "N beds short"), and **not**
+  bypassable by the over-capacity override (decision 5).
+- **Setting the hold:** allowed regardless of existing overlaps (decision 1).
+  No empty-lodge precondition; no auto-displacement.
+
+### Conflict surfacing (decision 1 is only useful if conflicts are obvious)
+
+- When an admin sets/approves exclusivity over existing overlapping bookings:
+  a prominent warning listing the conflicting bookings.
+- On the ordinary bookings/bed-allocation admin views: existing bookings that
+  overlap an exclusive hold are visibly flagged.
+- Capacity status (`getLodgeCapacityStatus`) reports the affected nights as
+  exclusively held.
+
+### Bed allocation
+
+- Short-circuit per-bed allocation for an exclusive hold: the group implicitly
+  occupies all rooms/beds; no individual bed assignment. The bed-allocation UI
+  and lifecycle special-case (or skip) these bookings.
+
+### Display
+
+- `buildDisplayState` sets `wholeLodge` from `booking.wholeLodgeHold`
+  (authoritative). The existing heuristic remains only as a fallback for
+  un-flagged bookings, or is retired. No change to the occupancy-grid module
+  (it already renders `wholeLodge`).
+
+## Consequences
+
+- A small group (e.g. 12 in a 40-bed lodge) can be a true whole-lodge booking
+  when flagged — the display and capacity both respect intent, not headcount.
+- The booking officer carries the conflict-resolution responsibility by design;
+  the system's contract is *visibility + blocking new admissions*, not
+  automated displacement.
+- The capacity engine gains its first non-arithmetic rule; this is the highest-
+  risk surface and needs the most test coverage (concurrent admissions,
+  handovers on the hold's edges, edits to the hold's dates, override attempts).
+
+## Security / safety considerations
+
+- **Capacity integrity:** the two-sided rule must run inside the existing
+  `acquireLodgeCapacityLock` so a hold and a concurrent admission cannot race.
+  A hold set concurrently with an in-flight admission must resolve
+  deterministically (lock-serialised).
+- **Authorisation:** setting/clearing an exclusive hold is an admin capacity
+  action — gate it like the over-capacity override (admin/full-admin), audited.
+  A member request only sets `BookingRequest.exclusivityRequested`, never the
+  booking flag directly.
+- **No silent data effects:** setting a hold never cancels or mutates existing
+  conflicting bookings; it only blocks *new* admissions and surfaces conflicts.
+- **Privacy:** unchanged — the display still withholds individual names for a
+  whole-lodge booking, showing only the group/organisation label + headcount.
+- **Money adjacency:** pricing is unchanged, but because this governs who can
+  book, it is money-adjacent and owner-reviewed before merge.
+
+## Implementation surface (for the epic)
+
+1. Schema + migration: `Booking.wholeLodgeHold` (+ audit),
+   `BookingRequest.exclusivityRequested`; ledger row.
+2. Capacity engine: hard-block new admissions on held nights; settable over
+   conflicts; not override-bypassable.
+3. Conflict surfacing: admin warnings both directions; capacity-status
+   reporting.
+4. Bed-allocation short-circuit for holds.
+5. Request path (requester asks) + admin toggle (set on any booking) — API + UI.
+6. Display: `wholeLodge` from the flag; heuristic → fallback.
+7. Tests (capacity crown-jewel coverage), docs, full gate.
