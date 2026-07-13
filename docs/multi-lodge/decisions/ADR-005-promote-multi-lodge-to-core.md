@@ -99,8 +99,16 @@ explicit test focus (Jordan's caveat).
 2. `ClubModuleSettings.multiLodge`: left vestigial this release (#129); physical
    `DROP COLUMN` deferred to a later contract migration (#139, blue/green-safe).
 3. Sidebar/nav: single Lodges entry; one-item lodge list; Add Lodge always;
-   retire scattered lodge-config entries into the hub.
+   retire scattered lodge-config entries into the hub. ✅ #130 (Chores, Lockers,
+   Hut Fees & Seasons retired; Bed Allocation kept as operational).
 4. Lodge hub: every lodge-scoped editor as a Configure card; `LodgeSelect`
-   hidden/auto for a single lodge.
+   hidden/auto for a single lodge. ✅ Satisfied by ADR-003 (the hub at
+   `/admin/lodges/[id]` already hosts Rooms & Beds, Lockers, Seasons & Rates,
+   Chores, Lobby display, and Capacity/Identity) and ADR-002 (`LodgeSelect`
+   renders nothing and reports the sole lodge when <2 lodges exist —
+   `src/components/lodge-select.tsx`, tested in `lodge-select.test.tsx`).
+   Verified for #131: rooms-beds (via `RoomsBedsManager`), seasons, chores,
+   lockers, and bed-allocation all consume `LodgeSelect`/`useLodgeOptions`, so
+   each auto-resolves to the single lodge with no picker shown.
 5. Tests + backward-compat verification (single-lodge install; frozen
    route-area snapshots; module-gate tests) + docs lockstep.
