@@ -91,8 +91,11 @@ Per lodge:
 > `src/lib/lodge-display/built-in-seeds.ts` and **seeded create-if-missing** by
 > `ensureBuiltInDisplays(prisma)`, wired into `prisma/seed.ts` (the formal seed
 > entry point; admins can also import them via the config-transfer bundle). The
-> upsert-by-`key` carries an **empty update**, so an admin who customised a
-> built-in keeps their version — a re-run never clobbers admin edits. Visual
+> upsert-by-`key` **refreshes the built-in's definition from code on every
+> re-seed** (owner decision A, #111): built-ins are code-managed scaffolding, so
+> improvements to the shipped designs propagate to already-seeded installs, and
+> an admin customises by **duplicating** a built-in into a new row (editing one
+> in place is overwritten on the next re-seed). Visual
 > parity with the LTV-015/016 mocks is preserved by re-creating the legacy page
 > grid (the `.display-screen:has(.display-region-side)` two-column board+rail, the
 > `.display-region-stack` side rail, and the compact notice card) inside each
