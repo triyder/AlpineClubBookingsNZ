@@ -7,11 +7,9 @@ import {
   LayoutDashboard,
   Users,
   ArrowRightLeft,
-  CalendarRange,
   BookOpen,
   Clock,
   Tag,
-  CheckSquare,
   ClipboardCheck,
   ClipboardList,
   XCircle,
@@ -192,11 +190,9 @@ const navSections: NavSection[] = [
   {
     label: "Rates & Policies",
     items: [
-      {
-        href: "/admin/seasons",
-        label: "Hut Fees & Seasons",
-        icon: CalendarRange,
-      },
+      // Hut Fees & Seasons is lodge-scoped (#130, ADR-005) — reached via the
+      // lodge hub's "Seasons & Rates" card (/admin/lodges/[id]), not a standalone
+      // sidebar entry.
       { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
       { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
       {
@@ -241,7 +237,8 @@ const navSections: NavSection[] = [
       },
       { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
       { href: "/admin/communications", label: "Communications", icon: Mail },
-      { href: "/admin/lockers", label: "Lockers", icon: House },
+      // Lockers is lodge-scoped (#130, ADR-005) — reached via the lodge hub's
+      // "Lockers" card, not a standalone sidebar entry.
       { href: "/admin/family-groups", label: "Family Groups", icon: Users },
       {
         href: "/admin/family-suggestions",
@@ -326,11 +323,8 @@ const navSections: NavSection[] = [
         label: "Notifications & Email",
         icon: Bell,
       },
-      {
-        href: "/admin/chores",
-        label: "Chores",
-        icon: CheckSquare,
-      },
+      // Chores is lodge-scoped (#130, ADR-005) — reached via the lodge hub's
+      // "Chores" card, not a standalone sidebar entry.
       {
         href: "/admin/access-roles",
         label: "Access Roles",
