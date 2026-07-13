@@ -411,6 +411,11 @@ model Member {
   phoneCountryCode String? // e.g. "64"
   phoneAreaCode    String? // e.g. "27"
   phoneNumber      String? // e.g. "4224115"
+  // Per-member opt-in to show this member's phone number on lodge screens
+  // (kiosk + lobby display), default OFF (#37/#124). Only ever surfaced when the
+  // lodge also enables it (Lodge.showGuestPhonesOnScreens) AND the member is an
+  // adult — enforced in the serving serialisers, never in templates.
+  lodgeScreenPhoneOptIn Boolean @default(false)
 
   // Physical address (Xero STREET type)
   streetAddressLine1 String?
@@ -2765,6 +2770,10 @@ model Lodge {
   // rendered as text nodes only ({{config:<key>}} placeholders resolve
   // inside it). Null = no notice.
   displayNotice          String?  @db.VarChar(2000)
+  // Per-lodge toggle: show guest phone numbers on this lodge's screens (kiosk +
+  // lobby display), default OFF (#37/#124). Combined with the per-member opt-in
+  // and an adults-only rule, enforced in the serving serialisers.
+  showGuestPhonesOnScreens Boolean @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
