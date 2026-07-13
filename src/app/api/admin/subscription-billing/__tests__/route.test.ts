@@ -78,6 +78,21 @@ describe("admin subscription billing route", () => {
     await expect(response.json()).resolves.toMatchObject({ preview, charges: [], exceptions: [], settings: { invoiceDueDays: 30 } });
   });
 
+  it("deduplicates a persisted exception already present in the current preview", async () => {
+    mocks.buildPreview.mockResolvedValue({
+      ...preview,
+      exceptions: [{ fingerprint: "same", message: "Current exception" }],
+    });
+    mocks.exceptions.findMany.mockResolvedValue([
+      { id: "persisted-same", fingerprint: "same", message: "Current exception" },
+      { id: "persisted-other", fingerprint: "other", message: "Earlier exception" },
+    ]);
+    const response = await GET(new NextRequest("http://localhost/api/admin/subscription-billing?seasonYear=2026&decisionDate=2026-07-13"));
+    await expect(response.json()).resolves.toMatchObject({
+      exceptions: [{ id: "persisted-other", fingerprint: "other" }],
+    });
+  });
+
   it("rejects an annual run without the literal explicit confirmation", async () => {
     const response = await POST(request({
       action: "CONFIRM_ANNUAL_BATCH", seasonYear: 2026, decisionDate: "2026-07-13",

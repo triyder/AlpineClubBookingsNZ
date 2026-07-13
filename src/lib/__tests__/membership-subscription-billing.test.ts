@@ -5,11 +5,16 @@ const mocks = vi.hoisted(() => ({
   coverage: { findMany: vi.fn() },
   members: { findMany: vi.fn() },
   membershipTypes: { findMany: vi.fn() },
+  charges: { findMany: vi.fn() },
   effectiveFee: vi.fn(),
+  mapping: vi.fn(),
 }));
 
 vi.mock("@/lib/authoritative-fees", () => ({
   getEffectiveMembershipAnnualFee: mocks.effectiveFee,
+}));
+vi.mock("@/lib/xero-mappings", () => ({
+  getResolvedAccountMapping: mocks.mapping,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -18,6 +23,7 @@ vi.mock("@/lib/prisma", () => ({
     membershipSubscriptionChargeCoverage: mocks.coverage,
     member: mocks.members,
     membershipType: mocks.membershipTypes,
+    membershipSubscriptionCharge: mocks.charges,
   },
 }));
 
@@ -25,6 +31,10 @@ import {
   buildSubscriptionBillingPreview,
   calculateMembershipCharge,
 } from "@/lib/membership-subscription-billing";
+import {
+  __setFinancialYearEndMonthForTesting,
+  DEFAULT_FINANCIAL_YEAR_END_MONTH,
+} from "@/lib/financial-year";
 
 function fee(overrides: Record<string, unknown> = {}) {
   return {
@@ -86,7 +96,31 @@ describe("membership subscription billing", () => {
     mocks.coverage.findMany.mockResolvedValue([]);
     mocks.members.findMany.mockResolvedValue([]);
     mocks.membershipTypes.findMany.mockResolvedValue([]);
+    mocks.charges.findMany.mockResolvedValue([]);
     mocks.effectiveFee.mockResolvedValue(fee());
+    mocks.mapping.mockResolvedValue({ code: "203", itemCode: "SUB", codeExplicitlyConfigured: true });
+    __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
+  });
+
+  it("handles January-start full-year and inclusive proration bounds", () => {
+    __setFinancialYearEndMonthForTesting(12);
+    expect(calculateMembershipCharge({
+      annualAmountCents: 12_000,
+      prorationRule: "NONE",
+      seasonYear: 2026,
+      decisionDate: new Date("2026-01-01T00:00:00.000Z"),
+    })).toMatchObject({
+      amountCents: 12_000,
+      coveredMonths: 12,
+      coverageStart: new Date("2026-01-01T00:00:00.000Z"),
+      coverageEnd: new Date("2026-12-31T00:00:00.000Z"),
+    });
+    expect(calculateMembershipCharge({
+      annualAmountCents: 12_000,
+      prorationRule: "REMAINING_MONTHS_INCLUSIVE",
+      seasonYear: 2026,
+      decisionDate: new Date("2026-10-15T00:00:00.000Z"),
+    })).toMatchObject({ amountCents: 3_000, coveredMonths: 3 });
   });
 
   it("charges a full year for NONE and applies inclusive-month half-up cent proration", () => {
@@ -136,6 +170,24 @@ describe("membership subscription billing", () => {
       coveredMonths: 9,
       recipient: { id: "m1" },
       coveredMembers: [{ id: "m1" }],
+      xeroAccountCode: "203",
+      xeroItemCode: "SUB",
+    });
+  });
+
+  it("produces one visible exception and no invoice charges when subscriptionIncome is not explicitly configured", async () => {
+    mocks.mapping.mockResolvedValue({ code: "203", itemCode: null, codeExplicitlyConfigured: false });
+    mocks.members.findMany.mockResolvedValue([member("m1"), member("m2")]);
+    const preview = await buildSubscriptionBillingPreview({
+      seasonYear: 2026,
+      decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+    });
+    expect(preview.entries).toHaveLength(0);
+    expect(preview.exceptions).toHaveLength(1);
+    expect(preview.exceptions[0]).toMatchObject({
+      code: "MISSING_XERO_ACCOUNT_MAPPING",
+      memberId: null,
+      context: { affectedChargeCount: 2 },
     });
   });
 
@@ -162,6 +214,34 @@ describe("membership subscription billing", () => {
       recipient: { id: "billing-1" },
     });
     expect(preview.entries[0].coveredMembers.map((row) => row.id)).toEqual(["m1", "m2"]);
+  });
+
+  it("does not create a second family invoice when a late member joins an already-billed family", async () => {
+    const annual = fee({ billingBasis: "PER_FAMILY", prorationRule: "NONE" });
+    mocks.effectiveFee.mockResolvedValue(annual);
+    mocks.charges.findMany.mockResolvedValue([{
+      id: "charge-existing",
+      familyGroupId: "family-1",
+      membershipAnnualFeeId: "fee-1",
+    }]);
+    mocks.members.findMany.mockResolvedValue([
+      member("late", {
+        familyGroupMemberships: [familyMembership()],
+      }),
+    ]);
+    const preview = await buildSubscriptionBillingPreview({
+      seasonYear: 2026,
+      decisionDate: new Date("2026-08-01T00:00:00.000Z"),
+      memberIds: ["late"],
+    });
+    expect(preview.entries).toHaveLength(0);
+    expect(preview.exceptions).toEqual([
+      expect.objectContaining({
+        code: "FAMILY_ALREADY_BILLED",
+        memberId: "late",
+        context: expect.objectContaining({ existingFamilyChargeId: "charge-existing" }),
+      }),
+    ]);
   });
 
   it("never invoices a missing or invalid family recipient", async () => {

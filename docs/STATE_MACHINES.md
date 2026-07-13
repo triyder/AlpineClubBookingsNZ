@@ -591,11 +591,14 @@ QUEUED -> outbox claim -> invoice create OR exact existing-invoice adoption
 invoice identity persisted locally -> INVOICE_CREATED -> Xero email -> EMAILED
 INVOICE_CREATED -> email fails -> EMAIL_FAILED -> retry -> same invoice -> EMAILED
 provider reference exists but snapshot differs -> CONFLICT (no provider rewrite)
+provider reference exists but is not AUTHORISED -> CONFLICT (never emailed)
+late member joins already-billed family -> FAMILY_ALREADY_BILLED exception (old coverage unchanged; no second invoice)
 NO_INVOICE -> NOT_REQUIRED (zero-cent durable snapshot; no provider work)
 ```
 
 To verify: preview digest changes with fee/recipient/due-day inputs; only finance
-edit can confirm/retry/configure; concurrent/replayed confirmation creates one
+edit can confirm/retry/configure; explicit account/item mapping is frozen;
+concurrent/replayed confirmation creates one
 coverage row; fee/family changes do not mutate history; invoice identity commits
 before email; email retry never calls create for a persisted invoice; exact
 existing invoices are adopted; amount/contact/account mismatch becomes visible

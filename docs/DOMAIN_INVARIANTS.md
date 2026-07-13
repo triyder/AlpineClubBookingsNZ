@@ -15,20 +15,26 @@ Future reviews and issues should cite this file when proposing changes.
 - Admin adjustments need audit, approval, and a visible business reason.
 - A confirmed `MembershipSubscriptionCharge` is an immutable snapshot: fee and
   membership type, billing basis, annual/charged cents, proration, dates/months,
-  covered subscriptions, family, recipient, due days, and reference never
-  change. Only delivery/status/Xero metadata may advance.
+  covered subscriptions, family, recipient name/email, due days, frozen
+  `subscriptionIncome` account/item identifiers, and reference never change.
+  Only delivery/status/Xero metadata may advance.
 - Every `MemberSubscription` can be covered by at most one charge. A
   season-scoped advisory lock plus the unique coverage constraint makes annual
   confirmation, approval replay, and concurrent operators idempotent.
 - `PER_MEMBER` bills that member. `PER_FAMILY` requires one explicit active,
   unarchived recipient in the exact family. `NO_INVOICE` is an explicit
   zero-cent outcome, not missing configuration.
+- One family/annual-fee/membership-year tuple can have at most one durable
+  charge. A later family member produces a visible exception; neither coverage
+  mutation nor a second invoice is allowed.
 - Membership approval remains authoritative when billing setup is incomplete:
   billing records a visible post-approval exception/warning and never rolls the
   member transaction back.
 - Xero invoice identity is persisted before Xero email. Email retries reuse it.
-  Existing invoices are adopted only on an exact snapshot match; conflicts are
-  visible and never trigger a silent provider rewrite.
+  Existing invoices are adopted only on an exact `AUTHORISED` snapshot match;
+  conflicts are visible and never trigger a silent provider rewrite. Xero
+  delivery resolves the snapshotted recipient member's current contact/email;
+  frozen name/email remain audit evidence rather than a stale delivery target.
 
 ## Booking Dates And Capacity
 

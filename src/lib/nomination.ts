@@ -1484,7 +1484,7 @@ export async function approveMemberApplication(
     });
     if (subscriptionBilling.exceptionCount > 0) {
       warnings.push(
-        `${subscriptionBilling.exceptionCount} membership subscription billing exception${subscriptionBilling.exceptionCount === 1 ? "" : "s"} require Finance review`,
+        `${subscriptionBilling.exceptionCount} membership subscription billing exception${subscriptionBilling.exceptionCount === 1 ? " requires" : "s require"} Finance review`,
       );
     }
   } catch (err) {

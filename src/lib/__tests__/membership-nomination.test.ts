@@ -138,6 +138,10 @@ import { hashActionToken } from "@/lib/action-tokens";
 describe("membership nomination workflow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    subscriptionBillingMock.queueApprovedMembershipSubscriptionCharges.mockResolvedValue({
+      chargeIds: ["charge-1"],
+      exceptionCount: 0,
+    });
     vi.mocked(prisma.memberApplication.update).mockResolvedValue({} as never);
     vi.mocked(prisma.nominationToken.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.nominationToken.updateMany).mockResolvedValue({
@@ -778,6 +782,10 @@ describe("membership nomination workflow", () => {
       })
     );
     expect(result.warnings).toEqual([]);
+    expect(subscriptionBillingMock.queueApprovedMembershipSubscriptionCharges).toHaveBeenCalledWith({
+      memberIds: ["member-1", "member-2"],
+      approvedByMemberId: "admin-1",
+    });
   });
 
   it("persists post-approval side-effect warnings for admin recovery visibility", async () => {
@@ -866,6 +874,10 @@ describe("membership nomination workflow", () => {
     vi.mocked(sendMembershipApplicationApprovedEmail).mockRejectedValue(
       new Error("smtp down")
     );
+    subscriptionBillingMock.queueApprovedMembershipSubscriptionCharges.mockResolvedValue({
+      chargeIds: [],
+      exceptionCount: 1,
+    });
 
     const result = await approveMemberApplication(
       "app-warn",
@@ -875,6 +887,7 @@ describe("membership nomination workflow", () => {
 
     expect(result.warnings).toEqual([
       "Xero contact sync failed for member member-1",
+      "1 membership subscription billing exception requires Finance review",
       "Entrance fee invoice could not be queued automatically",
       "The approval email could not be sent automatically",
     ]);
@@ -882,7 +895,7 @@ describe("membership nomination workflow", () => {
       where: { id: "app-warn" },
       data: {
         adminNotes:
-          "Committee approved\n\nPost-approval follow-up warnings:\n- Xero contact sync failed for member member-1\n- Entrance fee invoice could not be queued automatically\n- The approval email could not be sent automatically",
+          "Committee approved\n\nPost-approval follow-up warnings:\n- Xero contact sync failed for member member-1\n- 1 membership subscription billing exception requires Finance review\n- Entrance fee invoice could not be queued automatically\n- The approval email could not be sent automatically",
       },
     });
     expect(logAudit).toHaveBeenCalledWith(
@@ -894,6 +907,19 @@ describe("membership nomination workflow", () => {
           postApprovalWarnings: result.warnings,
         }),
       })
+    );
+
+    subscriptionBillingMock.queueApprovedMembershipSubscriptionCharges.mockRejectedValue(
+      new Error("billing queue down")
+    );
+    const retryResult = await approveMemberApplication(
+      "app-warn",
+      "admin-1",
+      "Committee approved"
+    );
+    expect(retryResult.application.status).toBe("APPROVED");
+    expect(retryResult.warnings).toContain(
+      "Membership subscription billing could not be queued automatically"
     );
   });
 

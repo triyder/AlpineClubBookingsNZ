@@ -127,7 +127,8 @@ recommended reading paths.
    Treasurers then use **Admin > Subscriptions** to preview an annual billing
    batch, resolve configuration/recipient exceptions, set invoice due days
    (30 by default), and explicitly confirm immutable charges before authorised,
-   GST-inclusive Xero invoices are queued. New-member approval queues the same
+   GST-inclusive Xero invoices are queued. Confirmation requires and freezes the
+   explicit `subscriptionIncome` account/item mapping. New-member approval queues the same
    durable workflow when configuration is complete and never rolls approval
    back when it is not.
 8. Use **Admin > Committee** to review seeded committee master roles and

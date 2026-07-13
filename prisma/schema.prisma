@@ -873,6 +873,8 @@ model MembershipSubscriptionCharge {
   recipientName         String
   recipientEmail        String
   dueDays               Int
+  xeroAccountCode       String?
+  xeroItemCode          String?
   invoiceReference      String                             @unique
   xeroInvoiceId         String?                            @unique
   xeroInvoiceNumber     String?
@@ -896,6 +898,7 @@ model MembershipSubscriptionCharge {
   @@index([seasonYear, status, createdAt])
   @@index([recipientMemberId, seasonYear])
   @@index([familyGroupId, seasonYear])
+  @@unique([seasonYear, membershipAnnualFeeId, familyGroupId], map: "MembershipCharge_family_fee_year_key")
 }
 
 model MembershipSubscriptionChargeCoverage {

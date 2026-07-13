@@ -29,6 +29,9 @@ describe("Xero membership subscription invoice adoption", () => {
     ["account mismatch", invoice({ lineItems: [{ quantity: 1, unitAmount: 120, lineAmount: 120, accountCode: "200" }] })],
     ["GST treatment mismatch", invoice({ lineItems: [{ quantity: 1, unitAmount: 120, lineAmount: 120, accountCode: "203", taxType: "NONE" }] })],
     ["reference mismatch", invoice({ reference: "manual-reference" })],
+    ["draft invoice", invoice({ status: Invoice.StatusEnum.DRAFT })],
+    ["submitted invoice", invoice({ status: Invoice.StatusEnum.SUBMITTED })],
+    ["paid invoice", invoice({ status: Invoice.StatusEnum.PAID })],
     ["voided invoice", invoice({ status: Invoice.StatusEnum.VOIDED })],
   ])("rejects %s without provider correction", (_label, providerInvoice) => {
     expect(subscriptionInvoiceMatchesSnapshot({ invoice: providerInvoice, ...snapshot })).toBe(false);

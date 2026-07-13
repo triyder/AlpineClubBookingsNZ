@@ -806,6 +806,41 @@ export async function refreshAllMembershipStatuses(
         .filter((contactId): contactId is string => Boolean(contactId))
     )
   );
+  const changedInvoiceIds = Array.from(
+    new Set(
+      changedInvoices
+        .map((invoice) => invoice.invoiceID)
+        .filter((invoiceId): invoiceId is string => Boolean(invoiceId))
+    )
+  );
+  const changedChargeCoverage = changedInvoiceIds.length > 0
+    ? await prisma.membershipSubscriptionChargeCoverage.findMany({
+        where: {
+          charge: { xeroInvoiceId: { in: changedInvoiceIds } },
+          subscription: { member: { active: true, archivedAt: null } },
+        },
+        select: {
+          charge: { select: { xeroInvoiceId: true } },
+          subscription: {
+            select: {
+              member: {
+                select: {
+                  id: true,
+                  email: true,
+                  firstName: true,
+                  lastName: true,
+                  xeroContactId: true,
+                  updatedAt: true,
+                },
+              },
+            },
+          },
+        },
+      })
+    : [];
+  const changedCoveredMemberIds = Array.from(new Set(
+    changedChargeCoverage.map((coverage) => coverage.subscription.member.id)
+  ));
   const retryMemberIds = Array.from(new Set(cursorMetadata.retryMemberIds ?? []));
   const memberWhereClauses: Array<Record<string, unknown>> = [];
   if (changedContactIds.length > 0) {
@@ -813,6 +848,9 @@ export async function refreshAllMembershipStatuses(
   }
   if (retryMemberIds.length > 0) {
     memberWhereClauses.push({ id: { in: retryMemberIds } });
+  }
+  if (changedCoveredMemberIds.length > 0) {
+    memberWhereClauses.push({ id: { in: changedCoveredMemberIds } });
   }
 
   const incrementalAffectedMembers =
@@ -914,6 +952,7 @@ export async function refreshAllMembershipStatuses(
   );
 
   const changedInvoiceIdsByContact = new Map<string, Set<string>>();
+  const changedInvoiceIdsByCoveredMember = new Map<string, Set<string>>();
   for (const invoice of changedInvoices) {
     const contactId = invoice.contact?.contactID;
     const invoiceId = invoice.invoiceID;
@@ -925,6 +964,14 @@ export async function refreshAllMembershipStatuses(
       changedInvoiceIdsByContact.get(contactId) ?? new Set<string>();
     existingIds.add(invoiceId);
     changedInvoiceIdsByContact.set(contactId, existingIds);
+  }
+  for (const coverage of changedChargeCoverage) {
+    const invoiceId = coverage.charge.xeroInvoiceId;
+    if (!invoiceId) continue;
+    const memberId = coverage.subscription.member.id;
+    const existingIds = changedInvoiceIdsByCoveredMember.get(memberId) ?? new Set<string>();
+    existingIds.add(invoiceId);
+    changedInvoiceIdsByCoveredMember.set(memberId, existingIds);
   }
 
   let checked = 0;
@@ -946,9 +993,12 @@ export async function refreshAllMembershipStatuses(
         },
       });
       const result = await checkMembershipStatus(member.id, year, {
-        changedInvoiceIds: member.xeroContactId
-          ? changedInvoiceIdsByContact.get(member.xeroContactId)
-          : undefined,
+        changedInvoiceIds: new Set([
+          ...(member.xeroContactId
+            ? changedInvoiceIdsByContact.get(member.xeroContactId) ?? []
+            : []),
+          ...(changedInvoiceIdsByCoveredMember.get(member.id) ?? []),
+        ]),
       });
       checked++;
 
@@ -1005,13 +1055,7 @@ export async function refreshAllMembershipStatuses(
     cursorFrom: cursor?.cursorDateTime?.toISOString() ?? null,
     cursorTo: syncStartedAt.toISOString(),
     changedInvoices: changedInvoices.length,
-    changedInvoiceIds: Array.from(
-      new Set(
-        changedInvoices
-          .map((invoice) => invoice.invoiceID)
-          .filter((invoiceId): invoiceId is string => Boolean(invoiceId))
-      )
-    ),
+    changedInvoiceIds,
     affectedMembers: affectedMembersList.length,
     checked,
     updated,

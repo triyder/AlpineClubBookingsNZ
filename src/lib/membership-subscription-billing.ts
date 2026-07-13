@@ -11,6 +11,7 @@ import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only
 import { getSeasonStartMonth } from "@/lib/financial-year";
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole } from "@/lib/membership-types";
+import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import { XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 
@@ -20,7 +21,9 @@ export type SubscriptionBillingExceptionCode =
   | "MISSING_FAMILY"
   | "AMBIGUOUS_FAMILY"
   | "MISSING_FAMILY_RECIPIENT"
-  | "INVALID_FAMILY_RECIPIENT";
+  | "INVALID_FAMILY_RECIPIENT"
+  | "MISSING_XERO_ACCOUNT_MAPPING"
+  | "FAMILY_ALREADY_BILLED";
 
 export type SubscriptionBillingPlanEntry = {
   key: string;
@@ -40,6 +43,8 @@ export type SubscriptionBillingPlanEntry = {
   familyGroupId: string | null;
   recipient: { id: string; name: string; email: string };
   coveredMembers: Array<{ id: string; name: string }>;
+  xeroAccountCode: string | null;
+  xeroItemCode: string | null;
 };
 
 export type SubscriptionBillingPlanException = {
@@ -71,10 +76,9 @@ function digest(value: unknown) {
 
 function seasonBounds(seasonYear: number) {
   const startMonth = getSeasonStartMonth();
-  const startYear = startMonth === 1 ? seasonYear : seasonYear;
-  const endYear = startMonth === 1 ? seasonYear : seasonYear + 1;
-  const start = new Date(Date.UTC(startYear, startMonth - 1, 1));
-  const end = new Date(Date.UTC(endYear, startMonth - 1, 0));
+  const start = new Date(Date.UTC(seasonYear, startMonth - 1, 1));
+  const nextStart = new Date(Date.UTC(seasonYear + 1, startMonth - 1, 1));
+  const end = new Date(nextStart.getTime() - 24 * 60 * 60 * 1000);
   return { start, end };
 }
 
@@ -143,7 +147,7 @@ export async function buildSubscriptionBillingPreview(input: {
   if (decisionDate < bounds.start || decisionDate > bounds.end) {
     throw new Error(`Decision date must fall within membership year ${input.seasonYear}.`);
   }
-  const [dueDays, alreadyCovered, members] = await Promise.all([
+  const [dueDays, alreadyCovered, existingFamilyCharges, members] = await Promise.all([
     getSubscriptionBillingDueDays(db),
     db.membershipSubscriptionChargeCoverage.findMany({
       where: {
@@ -153,6 +157,19 @@ export async function buildSubscriptionBillingPreview(input: {
         },
       },
       select: { memberId: true },
+    }),
+    db.membershipSubscriptionCharge.findMany({
+      where: {
+        seasonYear: input.seasonYear,
+        billingBasis: "PER_FAMILY",
+        familyGroupId: { not: null },
+        membershipAnnualFeeId: { not: null },
+      },
+      select: {
+        id: true,
+        familyGroupId: true,
+        membershipAnnualFeeId: true,
+      },
     }),
     db.member.findMany({
       where: {
@@ -216,6 +233,10 @@ export async function buildSubscriptionBillingPreview(input: {
   const fallbackTypeByKey = new Map(fallbackTypes.map((type) => [type.key, type]));
 
   const coveredSet = new Set(alreadyCovered.map((row) => row.memberId));
+  const billedFamilyFees = new Map(existingFamilyCharges.map((charge) => [
+    `${input.seasonYear}:${charge.membershipAnnualFeeId}:family:${charge.familyGroupId}`,
+    charge.id,
+  ]));
   const entries: SubscriptionBillingPlanEntry[] = [];
   const exceptions: SubscriptionBillingPlanException[] = [];
   const familyGroups = new Map<string, SubscriptionBillingPlanEntry>();
@@ -303,6 +324,19 @@ export async function buildSubscriptionBillingPreview(input: {
     const groupingKey = fee.billingBasis === "PER_FAMILY"
       ? `${input.seasonYear}:${fee.id}:family:${familyGroupId}`
       : `${input.seasonYear}:${fee.id}:member:${member.id}`;
+    const existingFamilyChargeId = billedFamilyFees.get(groupingKey);
+    if (existingFamilyChargeId) {
+      exceptions.push(exception({
+        code: "FAMILY_ALREADY_BILLED",
+        message: `${memberName} joined family ${familyGroupId} after its ${membershipType.name} fee was billed. The immutable family charge was not changed and no second invoice was created.`,
+        seasonYear: input.seasonYear,
+        memberId: member.id,
+        familyGroupId,
+        membershipTypeId: membershipType.id,
+        context: { memberName, existingFamilyChargeId, membershipAnnualFeeId: fee.id },
+      }));
+      continue;
+    }
     const current = familyGroups.get(groupingKey);
     if (current) {
       current.coveredMembers.push({ id: member.id, name: memberName });
@@ -326,6 +360,8 @@ export async function buildSubscriptionBillingPreview(input: {
       familyGroupId,
       recipient,
       coveredMembers: [{ id: member.id, name: memberName }],
+      xeroAccountCode: null,
+      xeroItemCode: null,
     };
     familyGroups.set(groupingKey, entry);
     entries.push(entry);
@@ -335,6 +371,29 @@ export async function buildSubscriptionBillingPreview(input: {
     entry.coveredMembers.sort((left, right) => left.id.localeCompare(right.id));
   }
   entries.sort((left, right) => left.key.localeCompare(right.key));
+  const invoiceEntries = entries.filter((entry) => entry.billingBasis !== "NO_INVOICE");
+  if (invoiceEntries.length > 0) {
+    const mapping = await getResolvedAccountMapping("subscriptionIncome", db);
+    if (!mapping.code || !mapping.codeExplicitlyConfigured) {
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        if (entries[index].billingBasis !== "NO_INVOICE") entries.splice(index, 1);
+      }
+      exceptions.push(exception({
+        code: "MISSING_XERO_ACCOUNT_MAPPING",
+        message: "The subscriptionIncome Xero account mapping must be explicitly configured before membership invoices can be queued.",
+        seasonYear: input.seasonYear,
+        memberId: null,
+        familyGroupId: null,
+        membershipTypeId: null,
+        context: { affectedChargeCount: invoiceEntries.length },
+      }));
+    } else {
+      for (const entry of invoiceEntries) {
+        entry.xeroAccountCode = mapping.code;
+        entry.xeroItemCode = mapping.itemCode;
+      }
+    }
+  }
   exceptions.sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
   const scopeMemberIds = input.memberIds?.length ? [...new Set(input.memberIds)].sort() : null;
   const tokenPayload = { seasonYear: input.seasonYear, decisionDate: decisionDateOnly, dueDays, scopeMemberIds, entries, exceptions };
@@ -417,7 +476,12 @@ export async function confirmSubscriptionBillingPreview(input: {
       where: {
         seasonYear: preview.seasonYear,
         status: "OPEN",
-        ...(input.source === "NEW_MEMBER_APPROVAL" ? { memberId: { in: scopedMemberIds } } : {}),
+        ...(input.source === "NEW_MEMBER_APPROVAL" ? {
+          OR: [
+            { memberId: { in: scopedMemberIds } },
+            { code: "MISSING_XERO_ACCOUNT_MAPPING", memberId: null },
+          ],
+        } : {}),
         ...(currentFingerprints.length ? { fingerprint: { notIn: currentFingerprints } } : {}),
       },
       data: { status: "RESOLVED", resolvedAt: new Date() },
@@ -468,6 +532,8 @@ export async function confirmSubscriptionBillingPreview(input: {
           recipientName: entry.recipient.name,
           recipientEmail: entry.recipient.email,
           dueDays: preview.dueDays,
+          xeroAccountCode: entry.xeroAccountCode,
+          xeroItemCode: entry.xeroItemCode,
           invoiceReference: `MEMSUB-${idempotencyKey.slice(0, 24)}`,
           confirmedByMemberId: input.confirmedByMemberId,
           confirmedAt: new Date(),

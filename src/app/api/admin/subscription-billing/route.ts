@@ -60,7 +60,16 @@ export async function GET(request: NextRequest) {
       }),
       prisma.membershipSubscriptionBillingSettings.findUnique({ where: { id: "default" } }),
     ]);
-    return NextResponse.json({ preview, charges, exceptions, settings: { invoiceDueDays: settings?.invoiceDueDays ?? 30 } });
+    const previewFingerprints = new Set(preview.exceptions.map((item) => item.fingerprint));
+    const visiblePersistentExceptions = exceptions.filter(
+      (item) => !previewFingerprints.has(item.fingerprint)
+    );
+    return NextResponse.json({
+      preview,
+      charges,
+      exceptions: visiblePersistentExceptions,
+      settings: { invoiceDueDays: settings?.invoiceDueDays ?? 30 },
+    });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Could not build subscription billing preview." }, { status: 409 });
   }

@@ -10,7 +10,6 @@ import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { findOrCreateXeroContact } from "@/lib/xero-contacts";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { formatDate } from "@/lib/xero-invoice-helpers";
-import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -46,8 +45,7 @@ export function subscriptionInvoiceMatchesSnapshot(input: {
     && invoice.lineItems?.[0]?.taxType === "OUTPUT2"
     && invoice.type === Invoice.TypeEnum.ACCREC
     && invoice.lineAmountTypes === LineAmountTypes.Inclusive
-    && invoice.status !== Invoice.StatusEnum.VOIDED
-    && invoice.status !== Invoice.StatusEnum.DELETED;
+    && invoice.status === Invoice.StatusEnum.AUTHORISED;
 }
 
 export async function enqueueMembershipSubscriptionChargeOperation(
@@ -135,8 +133,22 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
   const contactId = await findOrCreateXeroContact(charge.recipientMemberId, {
     createdByMemberId: input.createdByMemberId,
   });
-  const mapping = await getResolvedAccountMapping("subscriptionIncome");
-  if (!mapping.code) throw new Error("The subscriptionIncome Xero account mapping is not configured.");
+  const accountCode = charge.xeroAccountCode;
+  if (!accountCode) {
+    await prisma.membershipSubscriptionCharge.update({
+      where: { id: charge.id },
+      data: {
+        status: "CONFLICT",
+        lastErrorCode: "MISSING_MAPPING_SNAPSHOT",
+        lastErrorMessage: "This charge has no immutable subscriptionIncome account mapping snapshot.",
+      },
+    });
+    await completeXeroSyncOperation(input.syncOperationId, {
+      status: "SUCCEEDED",
+      responsePayload: { conflict: "MISSING_MAPPING_SNAPSHOT" },
+    });
+    return null;
+  }
 
   let invoiceId = charge.xeroInvoiceId;
   let invoiceNumber = charge.xeroInvoiceNumber;
@@ -155,7 +167,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
     if (existing[0]) {
       if (!subscriptionInvoiceMatchesSnapshot({
         invoice: existing[0], contactId, amountCents: charge.chargedAmountCents,
-        accountCode: mapping.code, reference: charge.invoiceReference,
+        accountCode, reference: charge.invoiceReference,
       })) {
         await prisma.membershipSubscriptionCharge.update({
           where: { id: charge.id },
@@ -176,8 +188,8 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
         lineItems: [{
           quantity: 1,
           unitAmount: charge.chargedAmountCents / 100,
-          accountCode: mapping.code,
-          ...(mapping.itemCode ? { itemCode: mapping.itemCode } : {}),
+          accountCode,
+          ...(charge.xeroItemCode ? { itemCode: charge.xeroItemCode } : {}),
           description: `${charge.membershipTypeName} membership ${charge.seasonYear}/${charge.seasonYear + 1} (${charge.coveredMonths} month${charge.coveredMonths === 1 ? "" : "s"})`,
           taxType: "OUTPUT2",
         }],

@@ -27,6 +27,8 @@ CREATE TABLE "MembershipSubscriptionCharge" (
   "recipientName" TEXT NOT NULL,
   "recipientEmail" TEXT NOT NULL,
   "dueDays" INTEGER NOT NULL,
+  "xeroAccountCode" TEXT,
+  "xeroItemCode" TEXT,
   "invoiceReference" TEXT NOT NULL,
   "xeroInvoiceId" TEXT,
   "xeroInvoiceNumber" TEXT,
@@ -92,6 +94,7 @@ CREATE TABLE "MembershipSubscriptionBillingSettings" (
 CREATE UNIQUE INDEX "MembershipSubscriptionCharge_idempotencyKey_key" ON "MembershipSubscriptionCharge"("idempotencyKey");
 CREATE UNIQUE INDEX "MembershipSubscriptionCharge_invoiceReference_key" ON "MembershipSubscriptionCharge"("invoiceReference");
 CREATE UNIQUE INDEX "MembershipSubscriptionCharge_xeroInvoiceId_key" ON "MembershipSubscriptionCharge"("xeroInvoiceId");
+CREATE UNIQUE INDEX "MembershipCharge_family_fee_year_key" ON "MembershipSubscriptionCharge"("seasonYear", "membershipAnnualFeeId", "familyGroupId");
 CREATE INDEX "MembershipSubscriptionCharge_seasonYear_status_createdAt_idx" ON "MembershipSubscriptionCharge"("seasonYear", "status", "createdAt");
 CREATE INDEX "MembershipSubscriptionCharge_recipientMemberId_seasonYear_idx" ON "MembershipSubscriptionCharge"("recipientMemberId", "seasonYear");
 CREATE INDEX "MembershipSubscriptionCharge_familyGroupId_seasonYear_idx" ON "MembershipSubscriptionCharge"("familyGroupId", "seasonYear");

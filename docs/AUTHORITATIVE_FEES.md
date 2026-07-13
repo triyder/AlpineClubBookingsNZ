@@ -26,19 +26,30 @@ billing workflow below.
 
 1. Open **Admin > Subscriptions**, choose the membership year and decision date,
    and refresh the preview. The preview is read-only and makes no provider call.
-2. Resolve every listed fee, assignment, family, and recipient exception. A
+2. Resolve every listed fee, assignment, family, recipient, and
+   `subscriptionIncome` mapping exception. A
    per-family recipient must be active, unarchived, and a member of that exact
    family; login holder and family admin are never inferred.
 3. Review each recipient, covered member, billing basis, inclusive month count,
-   GST-inclusive integer-cent amount, total, and current due-days setting.
+   GST-inclusive integer-cent amount, total, current due-days setting, and the
+   explicitly configured Xero account/item mapping that confirmation freezes.
 4. Explicitly confirm the unchanged preview. Confirmation snapshots those
    values and creates durable outbox work. A later fee, family, or recipient
    change affects future previews only and never rewrites existing charges.
+   A member added to an already-billed family is left uncovered with a visible
+   `FAMILY_ALREADY_BILLED` exception; the old family snapshot is not expanded
+   and a second family invoice is not created.
 5. Watch the durable charge queue. `EMAIL_FAILED` can be retried safely because
    the Xero invoice identifier is persisted before email. `CONFLICT` means an
    invoice with the immutable reference exists but its contact, account, amount,
    type, or state does not match; inspect Xero and the local snapshot. The app
    never silently rewrites that provider invoice.
+
+Only an exact `AUTHORISED` invoice is adoptable. Draft, submitted, paid, voided,
+deleted, or otherwise mismatched records are conflicts and are not emailed by
+this workflow. Recipient name/email are audit snapshots. Delivery intentionally
+uses the recipient member's current Xero contact identity and current Xero
+contact email at dispatch time; changing them does not rewrite the snapshot.
 
 Annual invoice runs are never implicit: production operators must review and
 confirm the preview. Newly approved members are the exception to the annual-batch
