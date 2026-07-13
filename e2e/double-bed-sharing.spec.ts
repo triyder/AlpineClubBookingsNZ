@@ -310,16 +310,36 @@ test.beforeAll(async ({ browser }) => {
   await createPartnerLink(members.carol.id, members.dave.id);
   await createPartnerLink(members.erin.id, members.frank.id);
 
-  // Retype one active SINGLE bed (no bunk group, no allocations) to DOUBLE so
-  // the lodge gains partner-shared headroom and a placeable shared double.
+  // Pick future, in-season, capacity-empty windows before choosing the temporary
+  // DOUBLE: a non-capacity-holding review booking can still have a manual bed
+  // allocation on one of those nights.
+  await deriveHoldingWindows();
+
+  // Retype one active SINGLE bed (no bunk group and no allocation in the S4
+  // window) to DOUBLE so the lodge gains partner-shared headroom and a placeable
+  // shared double.
+  const s4Board = await getBoard(S4_WINDOW.checkIn, S4_WINDOW.checkOut);
+  const s4AllocatedBedIds = new Set(
+    s4Board.allocations.map((allocation: { bedId: string }) => allocation.bedId),
+  );
   const config = await getRoomsConfig();
   const candidateBed = config.rooms
     .flatMap((room: { beds: Array<{ id: string; active: boolean; bedType: string; bunkGroup: string | null }> }) => room.beds)
     .find(
-      (bed: { active: boolean; bedType: string; bunkGroup: string | null }) =>
-        bed.active && bed.bedType === "SINGLE" && !bed.bunkGroup,
+      (bed: { id: string; active: boolean; bedType: string; bunkGroup: string | null }) =>
+        bed.active &&
+        bed.bedType === "SINGLE" &&
+        !bed.bunkGroup &&
+        !s4AllocatedBedIds.has(bed.id),
     );
-  expect(candidateBed, "no plain active SINGLE bed to retype to DOUBLE").toBeTruthy();
+  expect(
+    candidateBed,
+    "no plain active SINGLE bed without an S4-window allocation to retype to DOUBLE",
+  ).toBeTruthy();
+  expect(
+    s4AllocatedBedIds.has(candidateBed.id),
+    "the temporary double must be empty throughout the S4 window",
+  ).toBe(false);
   doubleBedId = candidateBed.id;
   doubleBedOriginalType = candidateBed.bedType;
   await setBedType(doubleBedId, "DOUBLE");
@@ -343,9 +363,6 @@ test.beforeAll(async ({ browser }) => {
     },
   });
   expect(ibPut.ok(), `enable holdBedSlots (${ibPut.status()})`).toBeTruthy();
-
-  // Pick future, in-season, empty windows for the S2/S4 holding bookings.
-  await deriveHoldingWindows();
 
   // Resolve the seeded bookings S1 and S3 read (by owner name off the board).
   carolBookingId = await resolveBookingIdByMember(
