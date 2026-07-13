@@ -651,6 +651,32 @@ Booking and subscription enforcement is season-aware:
 automatically reprice existing future bookings, rewrite
 subscription/Xero/payment history, or call external providers.
 
+### Membership subscription billing
+
+Finance editors operate annual subscription billing from `/admin/subscriptions`.
+The preview resolves the selected membership year's effective annual fee,
+explicit family recipient, billing basis, and proration rule without writing or
+calling Xero. The preview also requires an explicitly configured
+`subscriptionIncome` account mapping and freezes its account/item identifiers;
+the legacy account-code fallback is not sufficient for a billing run. `NONE`
+charges the full GST-inclusive integer-cent annual amount;
+`REMAINING_MONTHS_INCLUSIVE` charges annual cents multiplied by the decision
+month through membership-year end, divided by 12 and rounded to cents. The
+decision month is included.
+
+An operator must explicitly confirm the unchanged preview token before durable
+charge snapshots and Xero outbox rows are created. Invoice due days are persisted
+in `MembershipSubscriptionBillingSettings` and default to 30. Missing seasonal
+type, fee schedule, family, or active same-family billing recipient becomes a
+visible exception and never produces an invoice. `NO_INVOICE` produces a
+zero-cent, not-required snapshot rather than being confused with missing setup.
+If a member joins a family after that family/membership-type/year was billed, the existing
+charge remains immutable and a `FAMILY_ALREADY_BILLED` exception replaces a
+second family invoice.
+New-member approval runs the same planner after the membership transaction;
+failure or incomplete configuration is a warning/exception and cannot undo the
+approval.
+
 ## Member Import And Addresses
 
 Admin member CSV import treats a member identity as the normalized email plus

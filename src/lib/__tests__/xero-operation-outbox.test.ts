@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   createXeroEntranceFeeInvoice: vi.fn(),
   createXeroInvoiceForBooking: vi.fn(),
   createXeroInvoiceForGroupSettlement: vi.fn(),
+  createXeroMembershipSubscriptionInvoice: vi.fn(),
   updateXeroBookingInvoiceForBooking: vi.fn(),
   createXeroSupplementaryInvoice: vi.fn(),
   createXeroMembershipCancellationCreditNote: vi.fn(),
@@ -91,6 +92,9 @@ vi.mock("@/lib/xero-sync", () => ({
 
 vi.mock("@/lib/xero-group-settlement-invoices", () => ({
   createXeroInvoiceForGroupSettlement: mocks.createXeroInvoiceForGroupSettlement,
+}));
+vi.mock("@/lib/xero-subscription-invoices", () => ({
+  createXeroMembershipSubscriptionInvoice: mocks.createXeroMembershipSubscriptionInvoice,
 }));
 
 // #1208: xero-operation-outbox now imports from the source domain modules
@@ -1245,7 +1249,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       direction: "OUTBOUND",
       queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
     });
-    expect(args.where.queueType.in).toHaveLength(13);
+    expect(args.where.queueType.in).toHaveLength(14);
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
@@ -1921,6 +1925,19 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.createXeroInvoiceForGroupSettlement,
     },
+    MEMBERSHIP_SUBSCRIPTION_INVOICE: {
+      op: {
+        id: "op_subscription_charge_1",
+        localId: "charge_1",
+        localModel: "MembershipSubscriptionCharge",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE",
+          chargeId: "charge_1",
+        },
+      },
+      handler: mocks.createXeroMembershipSubscriptionInvoice,
+    },
   };
 
   beforeEach(() => {
@@ -1947,6 +1964,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       skippedReason: null,
     });
     mocks.createXeroInvoiceForGroupSettlement.mockResolvedValue("inv");
+    mocks.createXeroMembershipSubscriptionInvoice.mockResolvedValue("inv");
   });
 
   it("has one dispatch fixture for every queue type and no extras", () => {

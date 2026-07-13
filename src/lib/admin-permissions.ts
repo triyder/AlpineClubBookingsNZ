@@ -152,6 +152,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/refund-requests",
       "/api/admin/reports",
       "/api/admin/subscriptions",
+      "/api/admin/subscription-billing",
       "/api/admin/fee-configuration",
       "/api/admin/credit-approvals",
       "/api/admin/setup/finance-report-mappings",

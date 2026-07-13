@@ -11,6 +11,30 @@ runtime.
 Source of truth for behavior is always the code. This map was produced by the
 2026-07 quality wave (issue #1128) and reflects the codebase at that date.
 
+## Membership subscription invoices
+
+`MEMBERSHIP_SUBSCRIPTION_INVOICE` is an outbound outbox discriminator anchored
+on `MembershipSubscriptionCharge`. Its correlation key is charge-stable.
+Dispatch resolves the snapshotted recipient and uses the account/item mapping
+frozen at confirmation,
+then searches by the immutable `MEMSUB-*` reference. Zero matches creates an
+AUTHORISED ACCREC invoice with inclusive line amounts and `OUTPUT2`; one exact
+contact/account/item/amount/due-interval/type/state match is adopted. Only `AUTHORISED` is
+adoptable; draft, submitted, paid, voided, and deleted invoices conflict rather
+than being emailed. Duplicates or a mismatch set
+the charge to `CONFLICT` without calling an Xero update endpoint.
+
+Creation/adoption is committed locally (charge, covered subscriptions, canonical
+Xero link) before `emailInvoice`. If email fails the operation is `PARTIAL` and
+the charge is `EMAIL_FAILED`. Retrying enqueues the same charge key; the stored
+`xeroInvoiceId` makes dispatch skip lookup/create and retry only email with its
+stable email idempotency key. Crash recovery follows that same path.
+
+The frozen recipient name/email are audit evidence. Dispatch deliberately uses
+that recipient member's current Xero contact identity and Xero contact email.
+Inbound invoice changes are joined back through charge coverage so a shared
+family invoice updates recipient and non-recipient subscriptions together.
+
 ## Bird's-eye dataflow
 
 ```mermaid

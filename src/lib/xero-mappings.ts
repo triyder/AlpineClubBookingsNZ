@@ -6,7 +6,7 @@
  * idempotency keys for entrance-fee invoices.
  */
 
-import { EntranceFeeCategory } from "@prisma/client";
+import { EntranceFeeCategory, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 import { getEffectiveEntranceFee } from "@/lib/authoritative-fees";
@@ -46,9 +46,12 @@ export type ResolvedAccountMapping = {
   codeExplicitlyConfigured: boolean;
 };
 
-export async function getResolvedAccountMapping(key: string): Promise<ResolvedAccountMapping> {
+export async function getResolvedAccountMapping(
+  key: string,
+  store: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<ResolvedAccountMapping> {
   try {
-    const mapping = await prisma.xeroAccountMapping.findUnique({
+    const mapping = await store.xeroAccountMapping.findUnique({
       where: { key },
       select: { code: true, itemCode: true },
     });

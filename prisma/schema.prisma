@@ -156,6 +156,26 @@ enum MembershipFeeProrationRule {
   REMAINING_MONTHS_INCLUSIVE
 }
 
+enum MembershipSubscriptionChargeSource {
+  ANNUAL_BATCH
+  NEW_MEMBER_APPROVAL
+}
+
+enum MembershipSubscriptionChargeStatus {
+  NOT_REQUIRED
+  QUEUED
+  PROCESSING
+  INVOICE_CREATED
+  EMAIL_FAILED
+  EMAILED
+  CONFLICT
+}
+
+enum MembershipBillingExceptionStatus {
+  OPEN
+  RESOLVED
+}
+
 enum MembershipAssignmentSource {
   ADMIN
   /// retired (2026-07 audit, #1525 S4): never written in code (`source` always defaults to ADMIN); kept because Postgres enum-value removal requires a type rebuild.
@@ -505,6 +525,9 @@ model Member {
   twoFactorRecoveryCodes                     TwoFactorRecoveryCode[]
   twoFactorSessionChallenges                 TwoFactorSessionChallenge[]
   subscriptions                              MemberSubscription[]
+  membershipChargesReceived                  MembershipSubscriptionCharge[]          @relation("MembershipChargeRecipient")
+  membershipChargesConfirmed                 MembershipSubscriptionCharge[]          @relation("MembershipChargeConfirmer")
+  membershipBillingExceptions                MembershipBillingException[]            @relation("MembershipBillingExceptionMember")
   seasonalMembershipAssignments              SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentMember")
   seasonalMembershipAssignmentsAssigned      SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentAssignedBy")
   accessRoles                                MemberAccessRole[]                         @relation("MemberAccessRoleMember")
@@ -816,11 +839,115 @@ model MemberSubscription {
 
   // Relations
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  chargeCoverage MembershipSubscriptionChargeCoverage?
 
   @@unique([memberId, seasonYear])
   @@index([memberId])
   @@index([seasonYear])
   @@index([seasonYear, status])
+}
+
+// Immutable financial snapshot for one membership subscription invoice decision.
+// Only operational delivery fields (status/Xero/email metadata) may change after
+// creation; fee, coverage, recipient and proration columns never do.
+model MembershipSubscriptionCharge {
+  id                    String                             @id @default(cuid())
+  idempotencyKey        String                             @unique
+  seasonYear            Int
+  source                MembershipSubscriptionChargeSource
+  status                MembershipSubscriptionChargeStatus @default(QUEUED)
+  membershipAnnualFeeId String?
+  membershipTypeId      String
+  membershipTypeKey     String
+  membershipTypeName    String
+  billingBasis          MembershipFeeBillingBasis
+  prorationRule         MembershipFeeProrationRule
+  annualAmountCents     Int
+  chargedAmountCents    Int
+  coveredMonths         Int
+  decisionDate          DateTime                           @db.Date
+  coverageStart         DateTime                           @db.Date
+  coverageEnd           DateTime                           @db.Date
+  familyGroupId         String?
+  recipientMemberId     String
+  recipientName         String
+  recipientEmail        String
+  dueDays               Int
+  xeroAccountCode       String?
+  xeroItemCode          String?
+  invoiceReference      String                             @unique
+  xeroInvoiceId         String?                            @unique
+  xeroInvoiceNumber     String?
+  xeroInvoiceUrl        String?
+  xeroInvoiceAdopted    Boolean                            @default(false)
+  invoicePersistedAt    DateTime?
+  emailAttemptCount     Int                                @default(0)
+  emailLastAttemptAt    DateTime?
+  emailSentAt           DateTime?
+  lastErrorCode         String?
+  lastErrorMessage      String?
+  confirmedByMemberId   String?
+  confirmedAt           DateTime?
+  createdAt             DateTime                           @default(now())
+  updatedAt             DateTime                           @updatedAt
+
+  recipient   Member   @relation("MembershipChargeRecipient", fields: [recipientMemberId], references: [id], onDelete: Restrict)
+  confirmedBy Member?  @relation("MembershipChargeConfirmer", fields: [confirmedByMemberId], references: [id], onDelete: SetNull)
+  coverage    MembershipSubscriptionChargeCoverage[]
+
+  @@index([seasonYear, status, createdAt])
+  @@index([recipientMemberId, seasonYear])
+  @@index([familyGroupId, seasonYear])
+  @@unique([seasonYear, membershipTypeId, familyGroupId], map: "MembershipCharge_family_type_year_key")
+}
+
+model MembershipSubscriptionChargeCoverage {
+  id             String   @id @default(cuid())
+  chargeId       String
+  subscriptionId String   @unique
+  memberId       String
+  memberName     String
+  createdAt      DateTime @default(now())
+
+  charge       MembershipSubscriptionCharge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+  subscription MemberSubscription            @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+
+  @@unique([chargeId, subscriptionId], map: "MembershipChargeCoverage_charge_subscription_key")
+  @@index([chargeId])
+  @@index([memberId, createdAt])
+}
+
+model MembershipBillingException {
+  id             String                           @id @default(cuid())
+  fingerprint    String                           @unique
+  seasonYear     Int
+  source         MembershipSubscriptionChargeSource
+  status         MembershipBillingExceptionStatus @default(OPEN)
+  code           String
+  message        String
+  memberId       String?
+  familyGroupId  String?
+  membershipTypeId String?
+  context        Json?
+  firstSeenAt    DateTime                         @default(now())
+  lastSeenAt     DateTime                         @default(now())
+  resolvedAt     DateTime?
+  createdAt      DateTime                         @default(now())
+  updatedAt      DateTime                         @updatedAt
+
+  member Member? @relation("MembershipBillingExceptionMember", fields: [memberId], references: [id], onDelete: SetNull)
+
+  @@index([status, seasonYear, lastSeenAt])
+  @@index([memberId, status])
+  @@index([familyGroupId, status])
+}
+
+model MembershipSubscriptionBillingSettings {
+  id                String   @id @default("default")
+  invoiceDueDays    Int      @default(30)
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------

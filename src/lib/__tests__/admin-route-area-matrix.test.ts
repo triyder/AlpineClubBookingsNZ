@@ -285,6 +285,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/site-style": "content",
   "/api/admin/stuck-states": "support",
   "/api/admin/subscriptions": "finance",
+  "/api/admin/subscription-billing": "finance",
   "/api/admin/waitlist": "bookings",
   "/api/admin/work-parties": "lodge",
   "/api/admin/work-parties/[id]": "lodge",

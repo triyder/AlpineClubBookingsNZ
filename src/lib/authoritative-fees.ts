@@ -123,8 +123,9 @@ export async function getEffectiveEntranceFee(
 export async function getEffectiveMembershipAnnualFee(
   membershipTypeId: string,
   asOf: Date = getTodayDateOnly(),
+  store: Prisma.TransactionClient | typeof prisma = prisma,
 ) {
-  return prisma.membershipAnnualFee.findFirst({
+  return store.membershipAnnualFee.findFirst({
     where: {
       membershipTypeId,
       effectiveFrom: { lte: asOf },

@@ -277,6 +277,9 @@ function meaningfulMemberSubscriptionWhere(
       { xeroInvoiceNumber: { not: null } },
       { xeroOnlineInvoiceUrl: { not: null } },
       { paidAt: { not: null } },
+      // Even a zero-cent NO_INVOICE subscription is immutable charge coverage
+      // and must block hard deletion rather than surfacing a late FK failure.
+      { chargeCoverage: { isNot: null } },
     ],
   };
 }
