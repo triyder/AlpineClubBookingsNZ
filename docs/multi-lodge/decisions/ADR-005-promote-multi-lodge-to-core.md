@@ -38,9 +38,10 @@ only "add lodge"; the maintainer went further and approved making multi-lodge
 
 - **No flag.** Remove `multiLodge` from the module registry (`src/config/modules.ts`),
   the feature-route gating (`src/config/feature-routes.ts` — lodge routes always
-  available), and `ClubModuleSettings` (drop the column via a contract migration,
-  or leave it vestigial — decided at the schema child). Remove all code reads of
-  `modules.multiLodge`.
+  available), and all code reads of `modules.multiLodge` (done in #128). The
+  `ClubModuleSettings.multiLodge` **column is left vestigial** (`@default(false)`,
+  no longer read or written) rather than dropped in this release — see the schema
+  decision below.
 - **Start with one, Add Lodge as needed.** Every install has ≥1 lodge; the "Add
   Lodge" action is always available. The UI assumes N lodges regardless of count.
 - **Lodge hub is the single home for lodge config** (ADR-003): all lodge-scoped
@@ -79,17 +80,24 @@ explicit test focus (Jordan's caveat).
   removing an *auth* gate.
 - **No capacity/money/PII surface.** This is nav + routing + a config-column
   removal; it does not touch booking capacity, pricing, or member PII.
-- **Schema safety.** Dropping `ClubModuleSettings.multiLodge` is a contract
-  migration — sequence it old-code-compatibly (old colour must not require the
-  column) with a blue/green ledger row; or defer the drop and leave the column
-  vestigial to keep the change expand-only.
+- **Schema safety — DECISION: defer the drop, leave the column vestigial.**
+  A column DROP is not old-colour-compatible under blue/green: the release
+  immediately prior to this change still writes `ClubModuleSettings.multiLodge`,
+  so dropping it in the same release that removes the code would break old-colour
+  instances mid-deploy. #128 therefore keeps the column (`@default(false)`,
+  now unread/unwritten — `normalizeClubModuleSettings` iterates `MODULE_KEYS`
+  only, and upserts rely on the default). The physical `DROP COLUMN` is a
+  **separate contract migration to run one release later**, once the
+  multi-lodge-core release is deployed everywhere — tracked in **#139** and
+  blocked until then. This keeps the multi-lodge-core change expand-only.
 - **Backward-compat is the risk.** A single-lodge install must not regress;
   cover it explicitly in tests before any upstream PR.
 
 ## Implementation surface (see #123 children)
 
-1. Remove the flag + gating (module registry, feature-routes; lodge routes on).
-2. `ClubModuleSettings` migration (drop `multiLodge`) + blue/green ledger.
+1. Remove the flag + gating (module registry, feature-routes; lodge routes on). ✅ #128
+2. `ClubModuleSettings.multiLodge`: left vestigial this release (#129); physical
+   `DROP COLUMN` deferred to a later contract migration (#139, blue/green-safe).
 3. Sidebar/nav: single Lodges entry; one-item lodge list; Add Lodge always;
    retire scattered lodge-config entries into the hub.
 4. Lodge hub: every lodge-scoped editor as a Configure card; `LodgeSelect`
