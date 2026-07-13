@@ -88,6 +88,19 @@ describe("feature route map", () => {
     ).toBeNull();
   });
 
+  it("keeps lodge management reachable for a bare single-lodge install (#132 backward-compat)", () => {
+    // A single-lodge club with every optional module OFF must still reach the
+    // Lodges admin surface — the whole point of promoting multi-lodge to core
+    // (ADR-005). Gating it on a now-removed flag would have hidden it here.
+    const allOff = Object.fromEntries(
+      MODULE_KEYS.map((key) => [key, false])
+    ) as FeatureFlags;
+    for (const href of ["/admin/lodges", "/api/admin/lodges"]) {
+      expect(getDisabledFeatureForPath(href, allOff)).toBeNull();
+      expect(isFeatureHrefVisible(href, allOff)).toBe(true);
+    }
+  });
+
   it("blocks each new module's pages AND api routes when it is off", () => {
     // Both a page and an API route 404 when the module is disabled — i.e. an
     // off module is fully gated, not just hidden in the UI.

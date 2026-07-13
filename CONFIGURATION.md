@@ -302,14 +302,13 @@ on and setting up a second lodge. Design rationale lives in
 `docs/multi-lodge/` (start with `feature-overview.md`); this is the operator
 how-to.
 
-### 1. Enable the Multiple lodges module
+### 1. Open the Lodges page
 
-Admin > Modules > **Multiple lodges** (default OFF). Enabling it exposes the
-lodge-management admin surface (the Lodges page and per-lodge settings). It
-does **not** by itself change anything members see — member-facing screens
-only gain a lodge dimension once a *second active lodge actually exists*. The
-module cannot be turned off again while more than one active lodge exists, so a
-multi-lodge club can never strand itself without the UI to manage its lodges.
+Multi-lodge is **core** — there is no module to enable (ADR-005). Admin >
+**Lodges** is always available; every club starts with one seeded lodge and
+adds more with **Add lodge** as needed. Adding a lodge does **not** by itself
+change anything members see — member-facing screens only gain a lodge dimension
+once a *second active lodge actually exists*.
 
 ### 2. Create the lodge
 
@@ -719,7 +718,6 @@ cannot be read, optional modules fail closed.
 | Hut leaders | on | Hut-leader assignments, kiosk access, and auto-assignment. |
 | Communications | on | Admin bulk email to members. Transactional notifications are unaffected. |
 | Ski-field conditions | on | Live mountain/road status panel, public API routes, and admin cache controls. |
-| Multiple lodges | off | Lodge-management admin surface for clubs with more than one lodge property. The lodge data model is core and always present; member-facing screens only change once a second active lodge exists. Cannot be turned off while more than one active lodge exists. See `docs/multi-lodge/README.md`. |
 | Two-factor authentication | off | Requires users to complete authenticator-app, email-code, or recovery-code verification after password login. |
 | Google Analytics | off | Consent-gated GA4 tracking on public website and public account pages. Requires `NEXT_PUBLIC_GA_MEASUREMENT_ID`; GA scripts load only after a visitor accepts the analytics banner. |
 
