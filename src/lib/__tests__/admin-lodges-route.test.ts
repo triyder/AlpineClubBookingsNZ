@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   memberLodgeAccessCount: vi.fn(),
   auditLogCreate: vi.fn(),
   transaction: vi.fn(),
+  revalidatePublicPageContent: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -25,6 +26,9 @@ vi.mock("@/lib/session-guards", () => ({
   requireAdmin: async () =>
     (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
   requireActiveSessionUser: mocks.requireActiveSessionUser,
+}));
+vi.mock("@/lib/public-content-revalidation", () => ({
+  revalidatePublicPageContent: mocks.revalidatePublicPageContent,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -172,6 +176,7 @@ describe("POST /api/admin/lodges", () => {
       }),
     );
     expect(mocks.auditLogCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.revalidatePublicPageContent).toHaveBeenCalledOnce();
     // Door codes are physical-access secrets: the audit log must record only
     // that one is set, never the code itself.
     expect(mocks.auditLogCreate).toHaveBeenCalledWith(
@@ -212,6 +217,7 @@ describe("PATCH /api/admin/lodges/[id]", () => {
       params("missing"),
     );
     expect(response.status).toBe(404);
+    expect(mocks.revalidatePublicPageContent).not.toHaveBeenCalled();
   });
 
   it("rejects deactivating the last active lodge", async () => {
@@ -238,6 +244,7 @@ describe("PATCH /api/admin/lodges/[id]", () => {
       params("lodge-1"),
     );
     expect(response.status).toBe(200);
+    expect(mocks.revalidatePublicPageContent).toHaveBeenCalledOnce();
     expect(mocks.lodgeUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ data: { active: false } }),
     );

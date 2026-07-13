@@ -45,6 +45,8 @@ export type PublicCancellationPolicy = {
   periods: Array<{ name: string; dateRange: string; tiers: Array<{ description: string }> }>;
 };
 
+type PublicCancellationRuleInput = Parameters<typeof normalizeCancellationRule>[0];
+
 function money(amountCents: number): PublicMoney {
   return {
     amountCents,
@@ -78,6 +80,46 @@ function dateRange(start: Date, end: Date): string {
 function sentenceCase(value: string): string {
   const text = value.replaceAll("_", " ").toLowerCase();
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function describeCancellationTerms(rawRule: PublicCancellationRuleInput): string {
+  const rule = normalizeCancellationRule(rawRule);
+  const cardFee = rule.fixedFeeCents > 0 ? ` less a ${money(rule.fixedFeeCents).label} fee` : "";
+  const creditFee = rule.creditFixedFeeCents > 0 ? ` less a ${money(rule.creditFixedFeeCents).label} fee` : "";
+  const differs = rule.refundPercentage !== rule.creditRefundPercentage || rule.fixedFeeCents !== rule.creditFixedFeeCents;
+  return differs
+    ? `${rule.refundPercentage}% card refund${cardFee}; ${rule.creditRefundPercentage}% credit refund${creditFee}`
+    : `${rule.refundPercentage}% refund${cardFee}`;
+}
+
+/**
+ * Mirrors getRefundTier's descending threshold semantics without suggesting
+ * that a zero-day tier applies after check-in. Every schedule ends with the
+ * explicit no-refund result used when daysUntilCheckIn is negative.
+ */
+export function describePublicCancellationRules(
+  rawRules: PublicCancellationRuleInput[],
+): Array<{ description: string }> {
+  const rules = rawRules
+    .map(normalizeCancellationRule)
+    .sort((a, b) => b.daysBeforeStay - a.daysBeforeStay);
+  if (rules.length === 0) return [];
+  const rows = rules.map((rule, index) => {
+    const previous = rules[index - 1];
+    const range = index === 0
+      ? `${rule.daysBeforeStay} or more days before check-in`
+      : `${rule.daysBeforeStay}–${Math.max(rule.daysBeforeStay, previous.daysBeforeStay - 1)} days before check-in`;
+    return { description: `${range}: ${describeCancellationTerms(rule)}` };
+  });
+  const lowest = rules.at(-1)?.daysBeforeStay;
+  if (lowest !== undefined && lowest > 0) {
+    const range = lowest === 1
+        ? "0 days before check-in"
+        : `0–${lowest - 1} days before check-in`;
+    rows.push({ description: `${range}: no refund` });
+  }
+  rows.push({ description: "After check-in: no refund" });
+  return rows;
 }
 
 async function findPublicLodge(slug: string): Promise<PublicTokenLodge & { id: string } | null> {
@@ -234,7 +276,7 @@ export async function loadPublicBookingPolicy(slug?: string): Promise<PublicBook
   const effectiveMinimumStays = (lodge ? resolvePolicyRowsForLodge(minimumStays, lodge.id) : minimumStays).filter((policy) => policy.endDate >= today);
   const holdText = (enabled: boolean, days: number) => enabled
     ? `Non-member bookings may be held provisionally for up to ${days} ${days === 1 ? "day" : "days"}.`
-    : null;
+    : "Non-member bookings are not held provisionally.";
   return {
     lodge: lodge ? { name: lodge.name, slug: lodge.slug } : null,
     hold: defaults ? holdText(defaults.nonMemberHoldEnabled, defaults.nonMemberHoldDays) : null,
@@ -286,26 +328,14 @@ export async function loadPublicCancellationPolicy(slug?: string): Promise<Publi
   const effectiveRows = lodge ? resolvePolicyRowsForLodge(rows, lodge.id) : rows;
   const today = getTodayDateOnly();
   const effectivePeriods = (lodge ? resolvePolicyRowsForLodge(periods, lodge.id) : periods).filter((period) => period.endDate >= today);
-  const describeRule = (rawRow: Parameters<typeof normalizeCancellationRule>[0]) => {
-    const row = normalizeCancellationRule(rawRow);
-    const timing = row.daysBeforeStay === 0
-      ? "On or after check-in"
-      : `${row.daysBeforeStay} ${row.daysBeforeStay === 1 ? "day" : "days"} before check-in`;
-    const cardFee = row.fixedFeeCents > 0 ? ` less a ${money(row.fixedFeeCents).label} fee` : "";
-    const creditFee = row.creditFixedFeeCents > 0 ? ` less a ${money(row.creditFixedFeeCents).label} fee` : "";
-    const differs = row.refundPercentage !== row.creditRefundPercentage || row.fixedFeeCents !== row.creditFixedFeeCents;
-    return { description: differs
-      ? `${timing}: ${row.refundPercentage}% card refund${cardFee}; ${row.creditRefundPercentage}% credit refund${creditFee}`
-      : `${timing}: ${row.refundPercentage}% refund${cardFee}` };
-  };
   return {
     lodge: lodge ? { name: lodge.name, slug: lodge.slug } : null,
-    tiers: effectiveRows.map(describeRule),
+    tiers: describePublicCancellationRules(effectiveRows),
     periods: effectivePeriods.map((period) => ({
       name: period.name,
       dateRange: dateRange(period.startDate, period.endDate),
       tiers: Array.isArray(period.cancellationRules)
-        ? (period.cancellationRules as unknown as Parameters<typeof normalizeCancellationRule>[0][]).map(describeRule)
+        ? describePublicCancellationRules(period.cancellationRules as unknown as PublicCancellationRuleInput[])
         : [],
     })),
   };

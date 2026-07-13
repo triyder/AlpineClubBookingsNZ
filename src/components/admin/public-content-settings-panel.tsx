@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { useAdminAreaEditAccess, ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action";
 
 type Settings = {
   membershipTypes: boolean;
@@ -26,6 +27,7 @@ export function PublicContentSettingsPanel() {
   const [saving, setSaving] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const canEdit = useAdminAreaEditAccess("content");
+  const viewOnlyReasonId = useId();
   function load() {
     setLoadFailed(false);
     void fetch("/api/admin/public-content-settings").then(async (response) => {
@@ -49,5 +51,5 @@ export function PublicContentSettingsPanel() {
     } catch { toast.error("Could not update public content visibility."); }
     finally { setSaving(false); }
   }
-  return <div className="space-y-4"><p className="text-sm text-muted-foreground">A token renders no authoritative fee or policy data until its family is enabled here. Membership types must also be individually marked for public listing.</p><div className="grid gap-3 sm:grid-cols-2">{labels.map(([key, label]) => <label key={key} className="flex items-center gap-3 rounded-md border p-3"><input type="checkbox" checked={settings[key]} disabled={!canEdit} title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined} onChange={(event) => setSettings({ ...settings, [key]: event.target.checked })} /><span>{label}</span></label>)}</div><Button disabled={saving || !canEdit} title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined} onClick={save}>{saving ? "Saving…" : "Save visibility"}</Button></div>;
+  return <div className="space-y-4"><p className="text-sm text-muted-foreground">A token renders no authoritative fee or policy data until its family is enabled here. Membership types must also be individually marked for public listing.</p>{!canEdit ? <div id={viewOnlyReasonId}><AdminViewOnlyNotice>Content view access can inspect public visibility. Content edit access is required to change it.</AdminViewOnlyNotice></div> : null}<div className="grid gap-3 sm:grid-cols-2">{labels.map(([key, label]) => <label key={key} className="flex items-center gap-3 rounded-md border p-3"><input type="checkbox" checked={settings[key]} disabled={!canEdit} aria-describedby={!canEdit ? viewOnlyReasonId : undefined} onChange={(event) => setSettings({ ...settings, [key]: event.target.checked })} /><span>{label}</span></label>)}</div><ViewOnlyActionButton canEdit={canEdit} disabled={saving} onClick={save}>{saving ? "Saving…" : "Save visibility"}</ViewOnlyActionButton></div>;
 }

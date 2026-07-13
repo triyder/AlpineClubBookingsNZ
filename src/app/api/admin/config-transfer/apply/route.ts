@@ -14,6 +14,7 @@ import {
   requireFullAdminForConfigTransfer,
 } from "@/lib/config-transfer/route-helpers";
 import { configTransferErrorResponse } from "@/lib/config-transfer/route-error";
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 
 // POST /api/admin/config-transfer/apply — full-admin only.
 // Applies a previewed bundle: backup → one transaction { advisory lock →
@@ -58,6 +59,7 @@ export async function POST(request: Request) {
       selectedCategories,
       resolutions,
     });
+    revalidatePublicPageContent();
     return NextResponse.json({ result });
   } catch (error) {
     if (error instanceof ConfigImportDriftError) {

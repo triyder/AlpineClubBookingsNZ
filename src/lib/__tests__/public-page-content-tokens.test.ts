@@ -38,6 +38,7 @@ import {
   loadPublicHutFees,
   loadPublicMembershipTypes,
   loadPublicBookingPolicy,
+  describePublicCancellationRules,
 } from "@/lib/public-page-content-tokens";
 
 describe("public PageContent token view models", () => {
@@ -54,8 +55,15 @@ describe("public PageContent token view models", () => {
 
   it("keeps every block hidden when its persisted opt-in row is absent", async () => {
     mocks.settings.mockResolvedValue(null);
+    await expect(loadPublicMembershipTypes()).resolves.toEqual([]);
     await expect(loadPublicEntranceFees()).resolves.toEqual([]);
+    await expect(loadPublicHutFees()).resolves.toEqual([]);
+    await expect(loadPublicBookingPolicy()).resolves.toBeNull();
+    await expect(loadPublicCancellationPolicy()).resolves.toBeNull();
     expect(mocks.entranceFees).not.toHaveBeenCalled();
+    expect(mocks.membershipTypes).not.toHaveBeenCalled();
+    expect(mocks.lodges).not.toHaveBeenCalled();
+    expect(mocks.cancellation).not.toHaveBeenCalled();
   });
 
   it("uses only current EntranceFee schedules and omits missing categories", async () => {
@@ -75,6 +83,10 @@ describe("public PageContent token view models", () => {
   it("fails closed for an invalid lodge slug", async () => {
     mocks.lodge.mockResolvedValue(null);
     await expect(loadPublicHutFees("missing-lodge")).resolves.toEqual([]);
+    await expect(loadPublicBookingPolicy("missing-lodge")).resolves.toBeNull();
+    await expect(loadPublicCancellationPolicy("missing-lodge")).resolves.toBeNull();
+    expect(mocks.seasons).not.toHaveBeenCalled();
+    expect(mocks.cancellation).not.toHaveBeenCalled();
   });
 
   it("publishes only listed membership types and distinguishes no-invoice schedules", async () => {
@@ -121,7 +133,58 @@ describe("public PageContent token view models", () => {
     }]);
     const policy = await loadPublicCancellationPolicy();
     expect(policy?.tiers[0]?.description).toBe(
-      "14 days before check-in: 80% card refund less a $25.00 fee; 100% credit refund",
+      "14 or more days before check-in: 80% card refund less a $25.00 fee; 100% credit refund",
     );
+    expect(policy?.tiers.slice(1)).toEqual([
+      { description: "0–13 days before check-in: no refund" },
+      { description: "After check-in: no refund" },
+    ]);
+  });
+
+  it("renders threshold ranges, a nonzero same-day tier, and post-check-in fallback accurately", () => {
+    expect(describePublicCancellationRules([
+      { daysBeforeStay: 14, refundPercentage: 100 },
+      { daysBeforeStay: 7, refundPercentage: 50 },
+      { daysBeforeStay: 0, refundPercentage: 25 },
+    ])).toEqual([
+      { description: "14 or more days before check-in: 100% refund" },
+      { description: "7–13 days before check-in: 50% refund" },
+      { description: "0–6 days before check-in: 25% refund" },
+      { description: "After check-in: no refund" },
+    ]);
+  });
+
+  it("adds an implicit no-refund gap when a schedule has no zero-day tier", () => {
+    expect(describePublicCancellationRules([
+      { daysBeforeStay: 10, refundPercentage: 80 },
+      { daysBeforeStay: 3, refundPercentage: 20 },
+    ])).toEqual([
+      { description: "10 or more days before check-in: 80% refund" },
+      { description: "3–9 days before check-in: 20% refund" },
+      { description: "0–2 days before check-in: no refund" },
+      { description: "After check-in: no refund" },
+    ]);
+  });
+
+  it("uses the same accurate ranges for named booking-period cancellation rules", async () => {
+    mocks.cancellation.mockResolvedValue([]);
+    mocks.periods.mockResolvedValue([{ name: "Holiday", startDate: new Date("2026-12-01"), endDate: new Date("2026-12-31"), lodgeId: null, cancellationRules: [
+      { daysBeforeStay: 5, refundPercentage: 40, creditRefundPercentage: 60, fixedFeeCents: 500 },
+    ] }]);
+    const policy = await loadPublicCancellationPolicy();
+    expect(policy?.tiers).toEqual([]);
+    expect(policy?.periods[0]?.tiers).toEqual([
+      { description: "5 or more days before check-in: 40% card refund less a $5.00 fee; 60% credit refund less a $5.00 fee" },
+      { description: "0–4 days before check-in: no refund" },
+      { description: "After check-in: no refund" },
+    ]);
+  });
+
+  it("states when provisional holds are disabled globally and for a period", async () => {
+    mocks.defaults.mockResolvedValue({ nonMemberHoldEnabled: false, nonMemberHoldDays: 7 });
+    mocks.periods.mockResolvedValue([{ name: "Peak", startDate: new Date("2026-12-01"), endDate: new Date("2026-12-10"), nonMemberHoldEnabled: false, nonMemberHoldDays: 2, lodgeId: null }]);
+    const policy = await loadPublicBookingPolicy();
+    expect(policy?.hold).toBe("Non-member bookings are not held provisionally.");
+    expect(policy?.periods[0]?.hold).toBe("Non-member bookings are not held provisionally.");
   });
 });

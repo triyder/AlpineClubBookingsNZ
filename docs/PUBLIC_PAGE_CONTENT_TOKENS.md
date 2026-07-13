@@ -26,7 +26,10 @@ public entrance blocks never use deprecated Xero mappings. Hut fees use active
 lodge seasons/rates and configured age-tier labels. Booking summaries include
 only customer-facing periods, provisional holds, minimum stays, and enabled
 group discounts. Cancellation blocks include persisted default and named-period
-rules, including distinct card/credit percentages and fixed fees.
+rules, including distinct card/credit percentages and fixed fees. Their labels
+mirror the settlement threshold ranges, including implicit no-refund gaps and a
+separate post-check-in no-refund fallback. Disabled provisional holds are stated
+explicitly rather than silently omitted.
 
 Content-area view roles can inspect visibility but cannot change it. Content
 edit roles can save it. Saves are audited with before/after state and invalidate

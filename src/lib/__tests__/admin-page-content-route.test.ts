@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
     ipAddress: "127.0.0.1",
     userAgent: "vitest",
   })),
+  revalidatePublicPageContent: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -33,6 +34,9 @@ vi.mock("@/lib/session-guards", () => ({
 vi.mock("@/lib/audit", () => ({
   buildStructuredAuditLogCreateArgs: mocks.buildStructuredAuditLogCreateArgs,
   getAuditRequestContext: mocks.getAuditRequestContext,
+}));
+vi.mock("@/lib/public-content-revalidation", () => ({
+  revalidatePublicPageContent: mocks.revalidatePublicPageContent,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -106,6 +110,7 @@ describe("POST /api/admin/page-content", () => {
         data: expect.objectContaining({ headerText: "<p>ok</p>" }),
       }),
     );
+    expect(mocks.revalidatePublicPageContent).toHaveBeenCalledOnce();
   });
 
   it("rejects slugs containing reserved segments", async () => {
@@ -115,6 +120,7 @@ describe("POST /api/admin/page-content", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.pageContentCreate).not.toHaveBeenCalled();
+    expect(mocks.revalidatePublicPageContent).not.toHaveBeenCalled();
   });
 
   it("rejects duplicate slugs", async () => {
@@ -166,6 +172,7 @@ describe("PUT /api/admin/page-content", () => {
         }),
       }),
     );
+    expect(mocks.revalidatePublicPageContent).toHaveBeenCalledOnce();
   });
 
   it("rejects slugs containing reserved segments", async () => {
@@ -175,6 +182,7 @@ describe("PUT /api/admin/page-content", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.pageContentUpdate).not.toHaveBeenCalled();
+    expect(mocks.revalidatePublicPageContent).not.toHaveBeenCalled();
   });
 });
 
@@ -238,6 +246,7 @@ describe("PATCH /api/admin/page-content (publish toggle)", () => {
         }),
       }),
     );
+    expect(mocks.revalidatePublicPageContent).toHaveBeenCalledOnce();
   });
 
   it("blocks hiding a system page", async () => {
@@ -254,6 +263,7 @@ describe("PATCH /api/admin/page-content (publish toggle)", () => {
 
     expect(response.status).toBe(422);
     expect(mocks.pageContentUpdate).not.toHaveBeenCalled();
+    expect(mocks.revalidatePublicPageContent).not.toHaveBeenCalled();
   });
 
   it("blocks hiding a built-in design page", async () => {
