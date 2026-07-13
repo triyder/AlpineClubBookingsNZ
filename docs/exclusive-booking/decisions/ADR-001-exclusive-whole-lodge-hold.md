@@ -49,9 +49,16 @@ concept (not display-only); the display reads it.
    treatment is driven by the flag; the ≥8/sole-occupancy heuristic is demoted
    to a fallback (or retired once the flag is in use).
 5. **The hold blocks new admissions even against an admin over-capacity
-   override** (recommended default, open to revision). The whole point is "no
-   other beds even if capacity exists," so an over-capacity override must not
-   punch into a held lodge; to add anyone, an admin removes/adjusts the hold.
+   override** (confirmed). The whole point is "no other beds even if capacity
+   exists," so an over-capacity override must not punch into a held lodge; to add
+   anyone, an admin removes/adjusts the hold.
+6. **Indistinguishable from a full lodge to everyone but admins** (confirmed).
+   Members and the public are **never told** a lodge is exclusively held — the
+   held nights simply present as **no availability**, exactly as if every bed
+   were occupied. All member-facing behaviour is identical to a genuinely full
+   lodge (same "no space" messaging, same **waitlist** behaviour, same emails —
+   nothing is special-cased). The exclusive nature is visible **only** on
+   admin surfaces (decision 1 / conflict surfacing).
 
 ### Model
 
@@ -69,11 +76,15 @@ concept (not display-only); the display reads it.
 
 - **Admitting a NEW booking:** if any capacity-holding booking overlapping a
   night has `wholeLodgeHold = true`, that night is **hard-blocked** — `available
-  = 0` regardless of bed math. Distinct signal/message from ordinary
-  over-capacity ("lodge held exclusively", not "N beds short"), and **not**
-  bypassable by the over-capacity override (decision 5).
+  = 0`, presented to the booking user **exactly as a full lodge** (no exclusive
+  message; decision 6). The reason is known internally (for admin surfacing) but
+  never surfaced to members/public, and the block is **not** bypassable by the
+  over-capacity override (decision 5).
 - **Setting the hold:** allowed regardless of existing overlaps (decision 1).
   No empty-lodge precondition; no auto-displacement.
+- **Member-facing parity:** waitlist, availability calendars, "no space"
+  messaging and emails behave identically to a genuinely full lodge — the hold
+  changes *availability*, not the member experience.
 
 ### Conflict surfacing (decision 1 is only useful if conflicts are obvious)
 
