@@ -216,13 +216,13 @@ describe("membership subscription billing", () => {
     expect(preview.entries[0].coveredMembers.map((row) => row.id)).toEqual(["m1", "m2"]);
   });
 
-  it("does not create a second family invoice when a late member joins an already-billed family", async () => {
-    const annual = fee({ billingBasis: "PER_FAMILY", prorationRule: "NONE" });
+  it("does not create a second family invoice after the effective fee row rolls over and a late member joins", async () => {
+    const annual = fee({ id: "fee-new", billingBasis: "PER_FAMILY", prorationRule: "NONE" });
     mocks.effectiveFee.mockResolvedValue(annual);
     mocks.charges.findMany.mockResolvedValue([{
       id: "charge-existing",
       familyGroupId: "family-1",
-      membershipAnnualFeeId: "fee-1",
+      membershipTypeId: "type-1",
     }]);
     mocks.members.findMany.mockResolvedValue([
       member("late", {
@@ -239,7 +239,10 @@ describe("membership subscription billing", () => {
       expect.objectContaining({
         code: "FAMILY_ALREADY_BILLED",
         memberId: "late",
-        context: expect.objectContaining({ existingFamilyChargeId: "charge-existing" }),
+        context: expect.objectContaining({
+          existingFamilyChargeId: "charge-existing",
+          membershipAnnualFeeId: "fee-new",
+        }),
       }),
     ]);
   });

@@ -29,20 +29,46 @@ function invoiceCents(invoice: Invoice) {
     sum + (line.lineAmount ?? ((line.quantity ?? 1) * (line.unitAmount ?? 0))), 0) * 100);
 }
 
+function normalizeXeroDateOnly(value: unknown): string | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return formatDate(value);
+  }
+  if (typeof value !== "string") return null;
+  const dateOnly = value.match(/^(\d{4}-\d{2}-\d{2})(?:T|$)/)?.[1];
+  if (dateOnly) return dateOnly;
+  const microsoftJsonMs = value.match(/^\/Date\((-?\d+)(?:[+-]\d{4})?\)\/$/)?.[1];
+  if (!microsoftJsonMs) return null;
+  const parsed = new Date(Number(microsoftJsonMs));
+  return Number.isNaN(parsed.getTime()) ? null : formatDate(parsed);
+}
+
+function invoiceDueIntervalDays(invoice: Invoice): number | null {
+  const issueDate = normalizeXeroDateOnly(invoice.date);
+  const dueDate = normalizeXeroDateOnly(invoice.dueDate);
+  if (!issueDate || !dueDate) return null;
+  const issueMs = Date.parse(`${issueDate}T00:00:00.000Z`);
+  const dueMs = Date.parse(`${dueDate}T00:00:00.000Z`);
+  return (dueMs - issueMs) / (24 * 60 * 60 * 1000);
+}
+
 export function subscriptionInvoiceMatchesSnapshot(input: {
   invoice: Invoice;
   contactId: string;
   amountCents: number;
   accountCode: string;
+  itemCode: string | null;
+  dueDays: number;
   reference: string;
 }) {
-  const { invoice, contactId, amountCents, accountCode, reference } = input;
+  const { invoice, contactId, amountCents, accountCode, itemCode, dueDays, reference } = input;
   return invoice.reference === reference
     && invoice.contact?.contactID === contactId
     && invoiceCents(invoice) === amountCents
     && (invoice.lineItems ?? []).length === 1
     && invoice.lineItems?.[0]?.accountCode === accountCode
+    && (invoice.lineItems?.[0]?.itemCode ?? null) === itemCode
     && invoice.lineItems?.[0]?.taxType === "OUTPUT2"
+    && invoiceDueIntervalDays(invoice) === dueDays
     && invoice.type === Invoice.TypeEnum.ACCREC
     && invoice.lineAmountTypes === LineAmountTypes.Inclusive
     && invoice.status === Invoice.StatusEnum.AUTHORISED;
@@ -167,7 +193,8 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
     if (existing[0]) {
       if (!subscriptionInvoiceMatchesSnapshot({
         invoice: existing[0], contactId, amountCents: charge.chargedAmountCents,
-        accountCode, reference: charge.invoiceReference,
+        accountCode, itemCode: charge.xeroItemCode, dueDays: charge.dueDays,
+        reference: charge.invoiceReference,
       })) {
         await prisma.membershipSubscriptionCharge.update({
           where: { id: charge.id },

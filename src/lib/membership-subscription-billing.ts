@@ -163,12 +163,11 @@ export async function buildSubscriptionBillingPreview(input: {
         seasonYear: input.seasonYear,
         billingBasis: "PER_FAMILY",
         familyGroupId: { not: null },
-        membershipAnnualFeeId: { not: null },
       },
       select: {
         id: true,
         familyGroupId: true,
-        membershipAnnualFeeId: true,
+        membershipTypeId: true,
       },
     }),
     db.member.findMany({
@@ -233,8 +232,8 @@ export async function buildSubscriptionBillingPreview(input: {
   const fallbackTypeByKey = new Map(fallbackTypes.map((type) => [type.key, type]));
 
   const coveredSet = new Set(alreadyCovered.map((row) => row.memberId));
-  const billedFamilyFees = new Map(existingFamilyCharges.map((charge) => [
-    `${input.seasonYear}:${charge.membershipAnnualFeeId}:family:${charge.familyGroupId}`,
+  const billedFamilyTypes = new Map(existingFamilyCharges.map((charge) => [
+    `${input.seasonYear}:${charge.membershipTypeId}:family:${charge.familyGroupId}`,
     charge.id,
   ]));
   const entries: SubscriptionBillingPlanEntry[] = [];
@@ -322,9 +321,9 @@ export async function buildSubscriptionBillingPreview(input: {
       };
     }
     const groupingKey = fee.billingBasis === "PER_FAMILY"
-      ? `${input.seasonYear}:${fee.id}:family:${familyGroupId}`
+      ? `${input.seasonYear}:${membershipType.id}:family:${familyGroupId}`
       : `${input.seasonYear}:${fee.id}:member:${member.id}`;
-    const existingFamilyChargeId = billedFamilyFees.get(groupingKey);
+    const existingFamilyChargeId = billedFamilyTypes.get(groupingKey);
     if (existingFamilyChargeId) {
       exceptions.push(exception({
         code: "FAMILY_ALREADY_BILLED",

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -59,7 +59,7 @@ function payload() {
 }
 
 function successResponse(body = payload()) {
-  return Promise.resolve({ ok: true, json: async () => body });
+  return Promise.resolve({ ok: true, json: async () => body } as Response);
 }
 
 describe("subscription billing panel", () => {
@@ -95,5 +95,46 @@ describe("subscription billing panel", () => {
     expect(screen.queryByRole("button", { name: "Confirm and queue annual batch" })).toBeNull();
     expect(await screen.findByText("preview unavailable")).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("button", { name: "Confirm and queue annual batch" })).toBeNull());
+  });
+
+  it("ignores an older preview response after the newer date request fails", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    let resolveOlder: ((value: Response) => void) | undefined;
+    const older = new Promise<Response>((resolve) => {
+      resolveOlder = resolve;
+    });
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementationOnce(() => older);
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    fetchMock.mockRejectedValueOnce(new Error("newer preview failed"));
+    fireEvent.change(screen.getByLabelText("Decision date"), { target: { value: "2026-08-01" } });
+    expect(await screen.findByText("newer preview failed")).toBeTruthy();
+
+    await act(async () => {
+      resolveOlder?.({ ok: true, json: async () => payload() } as Response);
+      await older;
+    });
+    expect(screen.getByText("newer preview failed")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Confirm and queue annual batch" })).toBeNull();
+  });
+
+  it("clears a load error after refresh succeeds and preserves mutation success through its reload", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockRejectedValueOnce(new Error("temporary preview failure"));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findByText("temporary preview failure")).toBeTruthy();
+    fetchMock.mockImplementationOnce(() => successResponse());
+    fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
+    expect(await screen.findByRole("button", { name: "Confirm and queue annual batch" })).toBeTruthy();
+    expect(screen.queryByText("temporary preview failure")).toBeNull();
+
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ message: "Due days saved" }) } as never)
+      .mockImplementationOnce(() => successResponse());
+    fireEvent.click(screen.getByRole("button", { name: "Save due days" }));
+    expect(await screen.findByText("Due days saved")).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm and queue annual batch" })).toBeTruthy());
+    expect(screen.getByText("Due days saved")).toBeTruthy();
   });
 });

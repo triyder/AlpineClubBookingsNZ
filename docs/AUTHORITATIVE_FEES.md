@@ -45,7 +45,8 @@ billing workflow below.
    type, or state does not match; inspect Xero and the local snapshot. The app
    never silently rewrites that provider invoice.
 
-Only an exact `AUTHORISED` invoice is adoptable. Draft, submitted, paid, voided,
+Only an exact `AUTHORISED` invoice with the frozen account/item identifiers and
+issue-to-due interval is adoptable. Draft, submitted, paid, voided,
 deleted, or otherwise mismatched records are conflicts and are not emailed by
 this workflow. Recipient name/email are audit snapshots. Delivery intentionally
 uses the recipient member's current Xero contact identity and current Xero

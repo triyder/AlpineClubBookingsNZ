@@ -898,7 +898,7 @@ model MembershipSubscriptionCharge {
   @@index([seasonYear, status, createdAt])
   @@index([recipientMemberId, seasonYear])
   @@index([familyGroupId, seasonYear])
-  @@unique([seasonYear, membershipAnnualFeeId, familyGroupId], map: "MembershipCharge_family_fee_year_key")
+  @@unique([seasonYear, membershipTypeId, familyGroupId], map: "MembershipCharge_family_type_year_key")
 }
 
 model MembershipSubscriptionChargeCoverage {

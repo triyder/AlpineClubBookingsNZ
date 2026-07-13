@@ -24,7 +24,7 @@ Future reviews and issues should cite this file when proposing changes.
 - `PER_MEMBER` bills that member. `PER_FAMILY` requires one explicit active,
   unarchived recipient in the exact family. `NO_INVOICE` is an explicit
   zero-cent outcome, not missing configuration.
-- One family/annual-fee/membership-year tuple can have at most one durable
+- One family/membership-type/membership-year tuple can have at most one durable
   charge. A later family member produces a visible exception; neither coverage
   mutation nor a second invoice is allowed.
 - Membership approval remains authoritative when billing setup is incomplete:

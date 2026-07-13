@@ -75,8 +75,10 @@ function providerInvoice(overrides: Partial<Invoice> = {}): Invoice {
     reference: "MEMSUB-charge-1",
     contact: { contactID: "contact-1" },
     lineAmountTypes: LineAmountTypes.Inclusive,
+    date: "2026-07-01",
+    dueDate: "2026-07-31",
     total: 120,
-    lineItems: [{ accountCode: "203", taxType: "OUTPUT2", quantity: 1, unitAmount: 120, lineAmount: 120 }],
+    lineItems: [{ accountCode: "203", itemCode: "SUB", taxType: "OUTPUT2", quantity: 1, unitAmount: 120, lineAmount: 120 }],
     ...overrides,
   };
 }

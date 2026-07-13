@@ -19,7 +19,7 @@ Dispatch resolves the snapshotted recipient and uses the account/item mapping
 frozen at confirmation,
 then searches by the immutable `MEMSUB-*` reference. Zero matches creates an
 AUTHORISED ACCREC invoice with inclusive line amounts and `OUTPUT2`; one exact
-contact/account/amount/type/state match is adopted. Only `AUTHORISED` is
+contact/account/item/amount/due-interval/type/state match is adopted. Only `AUTHORISED` is
 adoptable; draft, submitted, paid, voided, and deleted invoices conflict rather
 than being emailed. Duplicates or a mismatch set
 the charge to `CONFLICT` without calling an Xero update endpoint.

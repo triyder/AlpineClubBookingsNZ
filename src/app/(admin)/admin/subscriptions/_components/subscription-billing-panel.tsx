@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, MailWarning, ReceiptText, RefreshCw } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -58,25 +58,31 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
   const [dueDays, setDueDays] = useState("30");
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
-  const [feedback, setFeedback] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const [loadFeedback, setLoadFeedback] = useState<{ kind: "error"; text: string } | null>(null);
+  const [mutationFeedback, setMutationFeedback] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const loadGeneration = useRef(0);
   const visibleExceptions = data
     ? [...new Map([...data.preview.exceptions, ...data.exceptions].map((item) => [item.fingerprint, item])).values()]
     : [];
 
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     setLoading(true);
     setData(null);
+    setLoadFeedback(null);
     try {
       const response = await fetch(`/api/admin/subscription-billing?seasonYear=${seasonYear}&decisionDate=${decisionDate}`);
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Could not load billing preview.");
+      if (generation !== loadGeneration.current) return;
       setData(body);
       setDueDays(String(body.settings.invoiceDueDays));
     } catch (error) {
+      if (generation !== loadGeneration.current) return;
       setData(null);
-      setFeedback({ kind: "error", text: error instanceof Error ? error.message : "Could not load billing preview." });
+      setLoadFeedback({ kind: "error", text: error instanceof Error ? error.message : "Could not load billing preview." });
     } finally {
-      setLoading(false);
+      if (generation === loadGeneration.current) setLoading(false);
     }
   }, [decisionDate, seasonYear]);
 
@@ -84,7 +90,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
 
   async function post(body: Record<string, unknown>) {
     setWorking(true);
-    setFeedback(null);
+    setMutationFeedback(null);
     try {
       const response = await fetch("/api/admin/subscription-billing", {
         method: "POST",
@@ -93,11 +99,11 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Billing action failed.");
-      setFeedback({ kind: "success", text: result.message || "Billing action completed." });
+      setMutationFeedback({ kind: "success", text: result.message || "Billing action completed." });
       await load();
     } catch (error) {
       setData(null);
-      setFeedback({ kind: "error", text: error instanceof Error ? error.message : "Billing action failed." });
+      setMutationFeedback({ kind: "error", text: error instanceof Error ? error.message : "Billing action failed." });
     } finally {
       setWorking(false);
     }
@@ -137,7 +143,8 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
           <ViewOnlyActionButton canEdit={canEditFinance} type="button" variant="outline" disabled={working || Number(dueDays) < 1 || Number(dueDays) > 365} onClick={() => void post({ action: "UPDATE_SETTINGS", invoiceDueDays: Number(dueDays) })}>Save due days</ViewOnlyActionButton>
         </div>
         {!canEditFinance ? <AdminViewOnlyNotice>Finance view access can inspect previews and charge history. Finance edit access is required to change settings, confirm billing, or retry Xero delivery.</AdminViewOnlyNotice> : null}
-        {feedback ? <Alert variant={feedback.kind === "success" ? "success" : "error"}>{feedback.text}</Alert> : null}
+        {mutationFeedback ? <Alert variant={mutationFeedback.kind === "success" ? "success" : "error"}>{mutationFeedback.text}</Alert> : null}
+        {loadFeedback ? <Alert variant="error">{loadFeedback.text}</Alert> : null}
         {loading ? <Spinner label="Building subscription billing preview…" /> : data ? (
           <>
             <div className="grid gap-3 sm:grid-cols-4">

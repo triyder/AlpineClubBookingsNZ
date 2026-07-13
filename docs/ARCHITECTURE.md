@@ -598,7 +598,7 @@ season-scoped advisory transaction lock. Provider calls happen later through a
 `MEMBERSHIP_SUBSCRIPTION_INVOICE` Xero outbox operation.
 
 `xero-subscription-invoices.ts` queries by the charge's immutable reference,
-adopts only an exact AUTHORISED contact/account/amount/ACCREC match, or creates
+adopts only an exact AUTHORISED contact/account/item/amount/due-interval/ACCREC match, or creates
 one AUTHORISED GST-inclusive invoice with the snapshotted `subscriptionIncome`
 mapping. Draft/submitted/paid matches remain conflicts. It
 persists invoice identity to the charge and every covered subscription before
