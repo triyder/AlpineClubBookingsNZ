@@ -23,6 +23,7 @@ type GetBody = {
   displayConfig: Record<string, string>;
   displayNameGranularity: string | null;
   displayNotice: string | null;
+  showGuestPhonesOnScreens: boolean;
 };
 
 const fetchMock = vi.fn();
@@ -54,6 +55,7 @@ function lodge(overrides: Partial<GetBody>): GetBody {
     displayConfig: {},
     displayNameGranularity: null,
     displayNotice: null,
+    showGuestPhonesOnScreens: false,
     ...overrides,
   };
 }
@@ -156,6 +158,40 @@ describe("LodgeDisplaySettingsCard", () => {
     const sent = JSON.parse((putCall[1] as RequestInit).body as string);
     expect(sent.lodgeId).toBe("lodge-grads");
     expect(sent.lodgeId).not.toBe("lodge-default");
+  });
+
+  it("loads and round-trips the guest phone-display toggle (#126 / #37)", async () => {
+    stubFetch({
+      "lodge-whakapapa": lodge({
+        lodgeId: "lodge-whakapapa",
+        lodgeName: "Whakapapa River Lodge",
+        showGuestPhonesOnScreens: false,
+      }),
+    });
+
+    render(<LodgeDisplaySettingsCard lodgeId="lodge-whakapapa" />);
+
+    const toggle = (await screen.findByLabelText(
+      "Show guest phone numbers on the lobby display",
+    )) as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+
+    fireEvent.click(toggle);
+    expect(toggle.checked).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save display settings" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([, init]) => (init as RequestInit | undefined)?.method === "PUT",
+        ),
+      ).toBe(true),
+    );
+    const putCall = fetchMock.mock.calls.find(
+      ([, init]) => (init as RequestInit | undefined)?.method === "PUT",
+    )!;
+    const sent = JSON.parse((putCall[1] as RequestInit).body as string);
+    expect(sent.showGuestPhonesOnScreens).toBe(true);
   });
 
   it("surfaces the route's validation error on a bad save (400)", async () => {

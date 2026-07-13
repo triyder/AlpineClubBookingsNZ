@@ -25,6 +25,10 @@ const putSchema = z.object({
     .max(2000, "The notice must be 2000 characters or fewer")
     .nullable()
     .optional(),
+  // #126 / #37: per-lodge config for whether opted-in adult phone numbers may
+  // appear on the PUBLIC lobby display. The serialiser also requires the
+  // member's opt-in; this is the lodge (config) side of the two-sided gate.
+  showGuestPhonesOnScreens: z.boolean().optional(),
 });
 
 async function resolveLodgeId(requested: string | null): Promise<string> {
@@ -44,6 +48,7 @@ export async function GET(req: NextRequest) {
       displayConfig: true,
       displayNameGranularity: true,
       displayNotice: true,
+      showGuestPhonesOnScreens: true,
     },
   });
   if (!lodge) {
@@ -55,6 +60,7 @@ export async function GET(req: NextRequest) {
     displayConfig: lodge.displayConfig ?? {},
     displayNameGranularity: lodge.displayNameGranularity,
     displayNotice: lodge.displayNotice,
+    showGuestPhonesOnScreens: lodge.showGuestPhonesOnScreens,
   });
 }
 
@@ -116,6 +122,9 @@ export async function PUT(req: NextRequest) {
         : {}),
       ...(body.displayNotice !== undefined
         ? { displayNotice: body.displayNotice }
+        : {}),
+      ...(body.showGuestPhonesOnScreens !== undefined
+        ? { showGuestPhonesOnScreens: body.showGuestPhonesOnScreens }
         : {}),
     },
   });

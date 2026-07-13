@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -33,6 +34,7 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
   const [config, setConfig] = useState<Array<{ key: string; value: string }>>([]);
   const [granularity, setGranularity] = useState<string>("");
   const [notice, setNotice] = useState<string>("");
+  const [showGuestPhones, setShowGuestPhones] = useState<boolean>(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const loadSettings = useCallback(async () => {
@@ -44,12 +46,14 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
         displayConfig: Record<string, string>;
         displayNameGranularity: string | null;
         displayNotice: string | null;
+        showGuestPhonesOnScreens: boolean;
       };
       setConfig(
         Object.entries(body.displayConfig).map(([key, value]) => ({ key, value })),
       );
       setGranularity(body.displayNameGranularity ?? "");
       setNotice(body.displayNotice ?? "");
+      setShowGuestPhones(body.showGuestPhonesOnScreens ?? false);
     }
   }, [lodgeId]);
 
@@ -72,6 +76,7 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
         displayConfig,
         displayNameGranularity: granularity === "" ? null : granularity,
         displayNotice: notice.trim() === "" ? null : notice,
+        showGuestPhonesOnScreens: showGuestPhones,
       }),
     });
     const body = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -127,6 +132,26 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
           <p className="text-muted-foreground text-xs">
             Shown wherever a template places the notice module; leave empty to
             skip the module entirely.
+          </p>
+        </div>
+
+        <div className="space-y-1">
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="show-guest-phones"
+              className="mt-0.5"
+              checked={showGuestPhones}
+              onCheckedChange={(checked) => setShowGuestPhones(checked)}
+            />
+            <Label htmlFor="show-guest-phones" className="font-normal">
+              Show guest phone numbers on the lobby display
+            </Label>
+          </div>
+          <p className="text-muted-foreground text-xs">
+            Off by default. A number appears on the public display only when this
+            is on AND the member has opted in on their profile AND they are an
+            adult. The staff check-in kiosk always shows adult contact numbers
+            regardless of this setting.
           </p>
         </div>
 
