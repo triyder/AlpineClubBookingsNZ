@@ -373,7 +373,12 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(lodgeId).toBe("default-lodge");
   });
 
-  it("formats member guest phone numbers for the kiosk guest list API", async () => {
+  // #125 / #37 (owner decision on AC5): the kiosk is the authenticated staff
+  // check-in surface, so the phone opt-in gate does NOT apply here — leaders
+  // keep the contact use case. This test is the no-regression guard: an adult
+  // member's phone is served to staff WITHOUT any opt-in flag. (The opt-in gate
+  // governs the PUBLIC lobby wall — see lodge-display-state.test.ts.)
+  it("serves an adult member phone to staff without requiring opt-in (kiosk leader exemption, AC5)", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
     });
@@ -415,7 +420,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(data.bookings[0].guests[0].phone).toBe("+64 27 4224115");
   });
 
-  it("hides non-adult phone numbers in the kiosk guest list API", async () => {
+  it("hides non-adult phone numbers in the kiosk guest list API (adults-only floor)", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
     });
