@@ -42,8 +42,30 @@ export function boolOption(
   return fallback;
 }
 
+/**
+ * A closed-set string option. Returns the matching allowed value (case-sensitive
+ * against `allowed`), else the documented fallback — so a bad template edit never
+ * throws (issue #30 AC6).
+ */
+export function enumOption<T extends string>(
+  options: DisplayPanelOptions | undefined,
+  key: string,
+  fallback: T,
+  allowed: readonly T[]
+): T {
+  const raw = options?.[key];
+  if (typeof raw === "string" && (allowed as readonly string[]).includes(raw)) {
+    return raw as T;
+  }
+  return fallback;
+}
+
 export const ARRIVALS_BOARD_DEFAULT_DAYS = 3;
 export const ARRIVALS_BOARD_MAX_NAMES = 5;
+/** Bar-board name rendering: full names (up to max-names) or lead name + count. */
+export const ARRIVALS_BOARD_NAME_STYLES = ["names", "lead-count"] as const;
+/** Whole-lodge blockout rendering: auto by rooms presence, or force board/statement. */
+export const OCCUPANCY_GRID_VARIANTS = ["auto", "board", "statement"] as const;
 
 export const NIGHT_COLUMNS_DEFAULT_DAYS = 3;
 export const NIGHT_COLUMNS_MAX_DAYS = 5;

@@ -6,6 +6,8 @@ import type {
 import {
   ARRIVALS_BOARD_DEFAULT_DAYS,
   ARRIVALS_BOARD_MAX_NAMES,
+  ARRIVALS_BOARD_NAME_STYLES,
+  enumOption,
   intOption,
   type DisplayPanelOptions,
 } from "./module-options";
@@ -75,13 +77,22 @@ export function computeBarLayout(
   };
 }
 
-/** "Jane S, Rewi P +2" — up to max names, then an explicit overflow count. */
+/** "Jane S, Rewi P +2" — up to max names, then an explicit overflow count. When
+ * `leadOnly` (name-style: lead-count, mock A2) only the first guest shows, with
+ * everyone else folded into the +N overflow ("Jane S +2"). */
 export function barNames(
   row: DisplayStateBooking,
-  maxNames: number
+  maxNames: number,
+  leadOnly = false
 ): { names: string[]; overflow: number } {
   if (!row.guests || row.guests.length === 0) {
     return { names: [row.label], overflow: 0 };
+  }
+  if (leadOnly) {
+    return {
+      names: [row.guests[0].label],
+      overflow: Math.max(0, row.guests.length - 1),
+    };
   }
   const names = row.guests.slice(0, maxNames).map((guest) => guest.label);
   return { names, overflow: Math.max(0, row.guests.length - names.length) };
@@ -133,6 +144,9 @@ export function ArrivalsBoard({
     min: 1,
     max: 10,
   });
+  const leadOnly =
+    enumOption(options, "name-style", "names", ARRIVALS_BOARD_NAME_STYLES) ===
+    "lead-count";
   const windowDates = windowDatesOf(state).slice(0, days);
 
   const rowGroups: Array<{ heading: string | null; rows: DisplayStateBooking[] }> =
@@ -181,7 +195,7 @@ export function ArrivalsBoard({
               {group.rows.map((row) => {
                 const layout = computeBarLayout(row, windowDates);
                 if (!layout) return null;
-                const { names, overflow } = barNames(row, maxNames);
+                const { names, overflow } = barNames(row, maxNames, leadOnly);
                 const grouped = row.guests === null;
                 return (
                   <div

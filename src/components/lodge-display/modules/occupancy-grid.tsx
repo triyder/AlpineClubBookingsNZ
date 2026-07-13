@@ -3,6 +3,8 @@ import type { DisplayState } from "@/lib/lodge-display-state";
 import {
   ARRIVALS_BOARD_DEFAULT_DAYS,
   ARRIVALS_BOARD_MAX_NAMES,
+  OCCUPANCY_GRID_VARIANTS,
+  enumOption,
   intOption,
   type DisplayPanelOptions,
 } from "./module-options";
@@ -99,6 +101,11 @@ export function OccupancyGrid({
     min: 1,
     max: 10,
   });
+  // `variant`: "auto" (board when rooms exist, else statement) or force one.
+  // "statement" gives the summary + week-strip look (mock B1b) even for a lodge
+  // that has rooms; "board" only draws when rooms exist (else it degrades to the
+  // statement, which needs no room axis).
+  const variant = enumOption(options, "variant", "auto", OCCUPANCY_GRID_VARIANTS);
   const windowDates = windowDatesOf(state).slice(0, days);
   const wholeLodgeRow = state.bookings.find((row) => row.wholeLodge) ?? null;
   const note = state.config["whole-lodge-note"] ?? null;
@@ -113,8 +120,12 @@ export function OccupancyGrid({
     );
   }
 
-  // --- statement variant: no rooms to draw ---------------------------------
-  if (state.rooms === null || state.rooms.length === 0) {
+  // --- statement variant: no rooms to draw, or forced (B1b) ----------------
+  if (
+    variant === "statement" ||
+    state.rooms === null ||
+    state.rooms.length === 0
+  ) {
     const maxStaying = Math.max(1, ...state.occupancy.map((day) => day.staying));
     const blockLayout = computeBarLayout(wholeLodgeRow, windowDates);
     return (

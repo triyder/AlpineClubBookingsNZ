@@ -135,6 +135,51 @@ describe("bar names overflow (AC2)", () => {
     expect(result.names).toEqual(["Harakeke College"]);
     expect(result.overflow).toBe(0);
   });
+
+  it("lead-count style (A2) shows only the lead name + everyone else as +N", () => {
+    const guests = ["A", "B", "C", "D", "E", "F", "G"].map((n) => ({
+      label: `${n} X`,
+      stayStart: "2026-04-13",
+      stayEnd: "2026-04-14",
+    }));
+    const result = barNames(row({ guests, guestCount: 7 }), 5, true);
+    expect(result.names).toEqual(["A X"]);
+    expect(result.overflow).toBe(6);
+  });
+});
+
+describe("ArrivalsBoard name-style option (A2)", () => {
+  it("renders the lead name + count when name-style=lead-count", () => {
+    const guests = ["Alex B", "Sam R", "Jo K"].map((label) => ({
+      label,
+      stayStart: "2026-04-13",
+      stayEnd: "2026-04-16",
+    }));
+    render(
+      <ArrivalsBoard
+        state={state({ bookings: [row({ guests, guestCount: 3 })] })}
+        options={{ "name-style": "lead-count" }}
+      />
+    );
+    expect(screen.getByText("Alex B")).toBeDefined();
+    expect(screen.getByText("+2")).toBeDefined();
+    expect(screen.queryByText("Sam R")).toBeNull();
+  });
+
+  it("falls back to full names on an unknown name-style (AC6)", () => {
+    const guests = ["Alex B", "Sam R"].map((label) => ({
+      label,
+      stayStart: "2026-04-13",
+      stayEnd: "2026-04-16",
+    }));
+    render(
+      <ArrivalsBoard
+        state={state({ bookings: [row({ guests, guestCount: 2 })] })}
+        options={{ "name-style": "banana" }}
+      />
+    );
+    expect(screen.getByText("Alex B, Sam R")).toBeDefined();
+  });
 });
 
 describe("ArrivalsBoard", () => {
@@ -219,6 +264,31 @@ describe("OccupancyGrid / WelcomePanel (whole-lodge treatment, AC3/AC5)", () => 
     const { container } = render(<OccupancyGrid state={blockoutState} />);
     expect(screen.getByText("The lodge is fully booked")).toBeDefined();
     expect(container.querySelectorAll(".display-week-day").length).toBe(3);
+  });
+
+  it("variant=statement forces the summary + week strip even when rooms exist (B1b)", () => {
+    const withRooms = state({
+      rooms: [
+        { id: "room-1", name: "A - Kea" },
+        { id: "room-2", name: "B - Tui" },
+      ],
+      bookings: [
+        row({
+          wholeLodge: true,
+          label: "Harakeke College",
+          guests: null,
+          guestCount: 14,
+          stayEnd: "2026-04-15",
+        }),
+      ],
+    });
+    const { container } = render(
+      <OccupancyGrid state={withRooms} options={{ variant: "statement" }} />
+    );
+    // Forced statement look, not the room-grid board, despite rooms being set.
+    expect(screen.getByText("The lodge is fully booked")).toBeDefined();
+    expect(container.querySelectorAll(".display-week-day").length).toBe(3);
+    expect(container.querySelector(".display-blockout-board")).toBeNull();
   });
 
   it("board variant blocks only the booked nights and keeps other bars (part-week, issue #58)", () => {
