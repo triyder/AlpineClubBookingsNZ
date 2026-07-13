@@ -6,7 +6,7 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
-import { canServeMemberPhoneOnLodgeSurface, formatXeroPhone } from "@/lib/phone";
+import { formatXeroPhone } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
@@ -62,15 +62,11 @@ export async function GET(
     throw err;
   }
 
-  // #125 / #37: phone numbers only reach the kiosk under the two-sided consent
-  // gate — the lodge must enable phone display AND the member must have opted in
-  // (adults only, enforced per-guest below). Config side is read once here.
-  const lodgeConfig = await prisma.lodge.findUnique({
-    where: { id: lodgeId },
-    select: { showGuestPhonesOnScreens: true },
-  });
-  const lodgeShowGuestPhonesOnScreens =
-    lodgeConfig?.showGuestPhonesOnScreens ?? false;
+  // #125 / #37: the kiosk is the authenticated staff check-in surface, so the
+  // member phone-display OPT-IN gate does NOT apply here — leaders keep the
+  // contact use case (owner decision on #37 AC5; the opt-in gate governs the
+  // PUBLIC lobby wall in lodge-display-state.ts instead). Adults-only and the
+  // staying-guest redaction below still hold.
 
   // Default scope is stay-night compatible for roster allocation.
   // Lodge-list scope also includes guests on their checkout/departure date.
@@ -104,7 +100,6 @@ export async function GET(
           member: {
             select: {
               ageTier: true,
-              lodgeScreenPhoneOptIn: true,
               phoneCountryCode: true,
               phoneAreaCode: true,
               phoneNumber: true,
@@ -149,13 +144,7 @@ export async function GET(
             arrivedAt: g.arrivedAt?.toISOString() ?? null,
             departedAt: g.departedAt?.toISOString() ?? null,
             phone:
-              canViewGuestContactDetails &&
-              g.member &&
-              canServeMemberPhoneOnLodgeSurface({
-                lodgeShowGuestPhonesOnScreens,
-                memberOptedIn: g.member.lodgeScreenPhoneOptIn,
-                ageTier,
-              })
+              canViewGuestContactDetails && ageTier === "ADULT" && g.member
                 ? formatXeroPhone(g.member)
                 : null,
           };

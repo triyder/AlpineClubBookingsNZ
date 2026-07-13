@@ -50,7 +50,6 @@ const {
     },
     lodge: {
       findFirst: vi.fn(),
-      findUnique: vi.fn(),
     },
     $transaction: vi.fn(),
   },
@@ -106,10 +105,6 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     mockPrisma.choreAssignment.deleteMany.mockResolvedValue({ count: 0 });
     mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
     mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
-    // #125 / #37: phone display defaults OFF; individual tests opt the lodge in.
-    mockPrisma.lodge.findUnique.mockResolvedValue({
-      showGuestPhonesOnScreens: false,
-    });
     mockPrisma.$transaction.mockImplementation(
       async (callback: (tx: typeof mockPrisma) => Promise<unknown>) =>
         callback(mockPrisma)
@@ -378,11 +373,16 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(lodgeId).toBe("default-lodge");
   });
 
-  // #125 / #37: the kiosk phone number is now gated by the two-sided consent
-  // model — lodge config ON *and* member opted in *and* adult. A single adult
-  // guest booking is reused across the matrix; only the two flags vary.
-  function adultKioskBooking(optedIn: boolean) {
-    return [
+  // #125 / #37 (owner decision on AC5): the kiosk is the authenticated staff
+  // check-in surface, so the phone opt-in gate does NOT apply here — leaders
+  // keep the contact use case. This test is the no-regression guard: an adult
+  // member's phone is served to staff WITHOUT any opt-in flag. (The opt-in gate
+  // governs the PUBLIC lobby wall — see lodge-display-state.test.ts.)
+  it("serves an adult member phone to staff without requiring opt-in (kiosk leader exemption, AC5)", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
+    });
+    mockPrisma.booking.findMany.mockResolvedValue([
       {
         id: "booking-1",
         checkIn: new Date("2026-07-10T00:00:00.000Z"),
@@ -400,7 +400,6 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
             departedAt: null,
             member: {
               ageTier: "ADULT",
-              lodgeScreenPhoneOptIn: optedIn,
               phoneCountryCode: "64",
               phoneAreaCode: "27",
               phoneNumber: "4224115",
@@ -408,64 +407,22 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
           },
         ],
       },
-    ];
-  }
+    ]);
 
-  async function kioskGuests() {
     const { GET } = await import("@/app/api/lodge/guests/[date]/route");
     const res = await GET(
       new Request("http://localhost/api/lodge/guests/2026-07-10") as any,
       { params: Promise.resolve({ date: "2026-07-10" }) }
     );
+
     expect(res.status).toBe(200);
-    return res.json();
-  }
-
-  it("serves an adult member phone when the lodge enables it AND the member opted in (AC1)", async () => {
-    mockAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
-    });
-    mockPrisma.lodge.findUnique.mockResolvedValue({
-      showGuestPhonesOnScreens: true,
-    });
-    mockPrisma.booking.findMany.mockResolvedValue(adultKioskBooking(true));
-
-    const data = await kioskGuests();
+    const data = await res.json();
     expect(data.bookings[0].guests[0].phone).toBe("+64 27 4224115");
   });
 
-  it("withholds the phone when the member has NOT opted in, even with lodge config on (AC1)", async () => {
+  it("hides non-adult phone numbers in the kiosk guest list API (adults-only floor)", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
-    });
-    mockPrisma.lodge.findUnique.mockResolvedValue({
-      showGuestPhonesOnScreens: true,
-    });
-    mockPrisma.booking.findMany.mockResolvedValue(adultKioskBooking(false));
-
-    const data = await kioskGuests();
-    expect(data.bookings[0].guests[0].phone).toBeNull();
-  });
-
-  it("withholds the phone when the lodge config is off, even if the member opted in (AC1)", async () => {
-    mockAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
-    });
-    mockPrisma.lodge.findUnique.mockResolvedValue({
-      showGuestPhonesOnScreens: false,
-    });
-    mockPrisma.booking.findMany.mockResolvedValue(adultKioskBooking(true));
-
-    const data = await kioskGuests();
-    expect(data.bookings[0].guests[0].phone).toBeNull();
-  });
-
-  it("hides non-adult phone numbers even when config is on and the member opted in (AC2)", async () => {
-    mockAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
-    });
-    mockPrisma.lodge.findUnique.mockResolvedValue({
-      showGuestPhonesOnScreens: true,
     });
     mockPrisma.booking.findMany.mockResolvedValue([
       {
@@ -485,7 +442,6 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
             departedAt: null,
             member: {
               ageTier: "YOUTH",
-              lodgeScreenPhoneOptIn: true,
               phoneCountryCode: "64",
               phoneAreaCode: "27",
               phoneNumber: "4224115",

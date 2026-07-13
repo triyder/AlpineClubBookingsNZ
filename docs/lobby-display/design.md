@@ -736,9 +736,12 @@ documents; a `notice` field ships null until LTV-011.
   (`Lodge.showGuestPhonesOnScreens`) AND the member has opted in
   (`Member.lodgeScreenPhoneOptIn`) AND the guest is an adult on a row that
   already shows individual names. Both flags default off, so no phone enters
-  the payload by default. The same gate governs the kiosk `guests/[date]`
-  serialiser; enforcement lives only in these serialisers, never in a
-  template or client component.
+  the public payload by default. Enforcement lives only in this serialiser,
+  never in a template or client component. The authenticated kiosk
+  `guests/[date]` serialiser is a STAFF check-in surface and is deliberately
+  exempt from the opt-in gate (owner decision on #37 AC5) — it keeps the
+  hut-leader contact use case (adults only), so the opt-in gate is a
+  public-wall control, not a kiosk one.
 - The display surface performs no writes except its own pairing/heartbeat
   bookkeeping.
 - Security-sensitive tasks (pairing/auth, serialiser) carry `risk:high`
