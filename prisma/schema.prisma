@@ -505,7 +505,6 @@ model Member {
   twoFactorRecoveryCodes                     TwoFactorRecoveryCode[]
   twoFactorSessionChallenges                 TwoFactorSessionChallenge[]
   subscriptions                              MemberSubscription[]
-  familyBillingGroups                        FamilyGroup[]                                  @relation("FamilyBillingMember")
   seasonalMembershipAssignments              SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentMember")
   seasonalMembershipAssignmentsAssigned      SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentAssignedBy")
   accessRoles                                MemberAccessRole[]                         @relation("MemberAccessRoleMember")
@@ -868,7 +867,7 @@ model MembershipAnnualFee {
   membershipType MembershipType @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
 
   @@unique([membershipTypeId, effectiveFrom])
-  @@index([membershipTypeId, effectiveFrom, effectiveTo])
+  @@index([membershipTypeId, effectiveFrom, effectiveTo], map: "MembershipAnnualFee_effective_lookup_idx")
 }
 
 model EntranceFee {
@@ -3325,10 +3324,8 @@ model FamilyGroup {
   memberships   FamilyGroupMember[]
   joinRequests  FamilyGroupJoinRequest[]
   partnerInviteTokens PartnerInviteToken[]
-  billingMemberId String?
-  billingMember   Member?                  @relation("FamilyBillingMember", fields: [billingMemberId], references: [id], onDelete: SetNull)
-
-  @@index([billingMemberId])
+  billingMembershipId String?            @unique
+  billingMembership   FamilyGroupMember? @relation("FamilyBillingMembership", fields: [billingMembershipId], references: [id], onDelete: SetNull)
 }
 
 model FamilyGroupMember {
@@ -3340,6 +3337,7 @@ model FamilyGroupMember {
 
   familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
   member      Member      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  billedFamilyGroup FamilyGroup? @relation("FamilyBillingMembership")
 
   @@unique([familyGroupId, memberId])
   @@index([memberId])

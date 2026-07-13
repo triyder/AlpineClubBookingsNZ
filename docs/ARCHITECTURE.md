@@ -545,7 +545,7 @@ distinct `publicDescription` and opt-in `publiclyListed` flag; all existing and
 new types start hidden. `MembershipAnnualFee` and `EntranceFee` are inclusive
 effective-date schedules with integer-cent amounts and application plus
 database overlap guards. Annual rows independently record billing basis and
-proration policy per type. `FamilyGroup.billingMemberId` is an explicit
+proration policy per type. `FamilyGroup.billingMembershipId` is an explicit
 finance-owned recipient validated against active group members; membered groups
 without one are visible billing exceptions. Provider item/account codes remain
 Xero mappings. During the one-release bridge, entrance amount reads are

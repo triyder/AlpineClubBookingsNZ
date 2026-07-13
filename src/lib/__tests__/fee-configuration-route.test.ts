@@ -84,7 +84,7 @@ describe("fee configuration route", () => {
     mocks.entranceFeeDelete.mockResolvedValue({ id: "entrance-1" });
     mocks.familyGroupFindMany.mockResolvedValue([]);
     mocks.familyGroupFindUnique.mockResolvedValue({ id: "family-1" });
-    mocks.familyGroupMemberFindUnique.mockResolvedValue({ member: { active: true, archivedAt: null } });
+    mocks.familyGroupMemberFindUnique.mockResolvedValue({ id: "membership-1", member: { active: true, archivedAt: null } });
     mocks.familyGroupUpdate.mockResolvedValue({ id: "family-1" });
     mocks.itemMappingFindFirst.mockResolvedValue(null);
     mocks.accountMappingFindUnique.mockResolvedValue(null);
@@ -95,6 +95,17 @@ describe("fee configuration route", () => {
     mocks.requireAdmin.mockResolvedValueOnce({ ok: false, response });
     expect((await GET()).status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "finance", level: "view" } });
+  });
+
+  it("requires finance edit before parsing writes", async () => {
+    const forbidden = Response.json({ error: "Forbidden" }, { status: 403 });
+    mocks.requireAdmin.mockResolvedValueOnce({ ok: false, response: forbidden });
+    expect((await post({ action: "not-even-parsed" })).status).toBe(403);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "finance", level: "edit" } });
+  });
+
+  it("rejects invalid mutation input", async () => {
+    expect((await post({ action: "CREATE_ENTRANCE_FEE", category: "ADULT", amountCents: 12.5, effectiveFrom: "bad" })).status).toBe(400);
   });
 
   it("returns an explicit read-only capability for finance viewers", async () => {
@@ -121,6 +132,22 @@ describe("fee configuration route", () => {
     expect(mocks.entranceFeeDelete).toHaveBeenCalledWith({ where: { id: "entrance-1" } });
   });
 
+  it("updates/deletes membership, creates entrance, clears family, and revalidates every action", async () => {
+    mocks.membershipFeeFindUnique.mockResolvedValue({ id: "fee-1", membershipTypeId: "type-1" });
+    expect((await post({ action: "UPDATE_MEMBERSHIP_FEE", id: "fee-1", amountCents: 2000, billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2026-08-01", effectiveTo: null })).status).toBe(200);
+    expect((await post({ action: "DELETE_MEMBERSHIP_FEE", id: "fee-1" })).status).toBe(200);
+    expect((await post({ action: "CREATE_ENTRANCE_FEE", category: "YOUTH", amountCents: 2500, effectiveFrom: "2026-08-01", effectiveTo: null })).status).toBe(200);
+    expect((await post({ action: "SET_FAMILY_BILLING_MEMBER", familyGroupId: "family-1", billingMemberId: null })).status).toBe(200);
+    expect(mocks.familyGroupUpdate).toHaveBeenCalledWith({ where: { id: "family-1" }, data: { billingMembershipId: null } });
+    expect(mocks.revalidatePath).toHaveBeenCalledTimes(4);
+  });
+
+  it("returns not found for stale update and delete targets", async () => {
+    expect((await post({ action: "UPDATE_MEMBERSHIP_FEE", id: "missing", amountCents: 2000, billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2026-08-01", effectiveTo: null })).status).toBe(404);
+    expect((await post({ action: "DELETE_ENTRANCE_FEE", id: "missing" })).status).toBe(404);
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
   it("rejects an overlapping range without writing", async () => {
     mocks.membershipFeeFindFirst.mockResolvedValueOnce({ id: "existing" });
     const response = await post({
@@ -136,8 +163,8 @@ describe("fee configuration route", () => {
     expect((await post({ action: "SET_FAMILY_BILLING_MEMBER", familyGroupId: "family-1", billingMemberId: "outsider" })).status).toBe(422);
     expect(mocks.familyGroupUpdate).not.toHaveBeenCalled();
 
-    mocks.familyGroupMemberFindUnique.mockResolvedValueOnce({ member: { active: true, archivedAt: null } });
+    mocks.familyGroupMemberFindUnique.mockResolvedValueOnce({ id: "membership-1", member: { active: true, archivedAt: null } });
     expect((await post({ action: "SET_FAMILY_BILLING_MEMBER", familyGroupId: "family-1", billingMemberId: "member-1" })).status).toBe(200);
-    expect(mocks.familyGroupUpdate).toHaveBeenCalledWith({ where: { id: "family-1" }, data: { billingMemberId: "member-1" } });
+    expect(mocks.familyGroupUpdate).toHaveBeenCalledWith({ where: { id: "family-1" }, data: { billingMembershipId: "membership-1" } });
   });
 });

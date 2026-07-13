@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DollarSign, Pencil, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 
 type Fee = { id: string; amountCents: number; effectiveFrom: string; effectiveTo: string | null; billingBasis?: string; prorationRule?: string };
 type Data = {
@@ -48,6 +50,8 @@ export default function FeeConfigurationPage() {
   const [editingMembershipFeeId, setEditingMembershipFeeId] = useState<string | null>(null);
   const [editingEntranceFeeId, setEditingEntranceFeeId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ action: "DELETE_MEMBERSHIP_FEE" | "DELETE_ENTRANCE_FEE"; id: string; label: string } | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const { scrollToError } = useScrollToFeedback();
 
   const load = useCallback(async () => {
     const response = await fetch("/api/admin/fee-configuration");
@@ -59,6 +63,7 @@ export default function FeeConfigurationPage() {
   useEffect(() => {
     if (!membershipTypeId && data?.membershipTypes[0]) setMembershipTypeId(data.membershipTypes[0].id);
   }, [data, membershipTypeId]);
+  useEffect(() => { if (error) scrollToError(errorRef); }, [error, scrollToError]);
 
   const exceptions = useMemo(() => data?.familyGroups.filter((group) => group.billingException) ?? [], [data]);
   async function mutate(payload: Record<string, unknown>) {
@@ -68,8 +73,23 @@ export default function FeeConfigurationPage() {
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Failed to save fee configuration");
       setData(body);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to save"); }
+      const action = String(payload.action);
+      toast.success(action.startsWith("DELETE_") ? "Fee schedule deleted" : action === "SET_FAMILY_BILLING_MEMBER" ? "Billing member updated" : "Fee schedule saved");
+      return true;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Failed to save";
+      setError(message);
+      toast.error(message);
+      return false;
+    }
     finally { setSaving(false); }
+  }
+  function resetMembershipForm() {
+    setEditingMembershipFeeId(null); setMembershipAmount(""); setBillingBasis("PER_MEMBER");
+    setProrationRule("NONE"); setMembershipFrom(today); setMembershipTo("");
+  }
+  function resetEntranceForm() {
+    setEditingEntranceFeeId(null); setEntranceAmount(""); setEntranceFrom(today); setEntranceTo("");
   }
   function saveMembershipFee() {
     const amountCents = parseDecimalDollarsToCents(membershipAmount);
@@ -78,7 +98,7 @@ export default function FeeConfigurationPage() {
       action: editingMembershipFeeId ? "UPDATE_MEMBERSHIP_FEE" : "CREATE_MEMBERSHIP_FEE",
       ...(editingMembershipFeeId ? { id: editingMembershipFeeId } : { membershipTypeId }),
       amountCents, billingBasis, prorationRule, effectiveFrom: membershipFrom, effectiveTo: membershipTo || null,
-    }).then(() => setEditingMembershipFeeId(null));
+    }).then((saved) => { if (saved) resetMembershipForm(); });
   }
   function saveEntranceFee() {
     const amountCents = parseDecimalDollarsToCents(entranceAmount);
@@ -87,12 +107,12 @@ export default function FeeConfigurationPage() {
       action: editingEntranceFeeId ? "UPDATE_ENTRANCE_FEE" : "CREATE_ENTRANCE_FEE",
       ...(editingEntranceFeeId ? { id: editingEntranceFeeId } : { category: entranceCategory }),
       amountCents, effectiveFrom: entranceFrom, effectiveTo: entranceTo || null,
-    }).then(() => setEditingEntranceFeeId(null));
+    }).then((saved) => { if (saved) resetEntranceForm(); });
   }
 
   return <div className="space-y-6">
     <AdminPageHeader title="Membership & Entrance Fees" description="Manage the authoritative, effective-dated fee schedules and family invoice recipients." />
-    {error && <Alert variant="error">{error}</Alert>}
+    {error && <div ref={errorRef}><Alert variant="error">{error}</Alert></div>}
     {data && !data.canEdit && <Alert>Finance view access is read-only. Ask a finance editor to change fee schedules or family billing members.</Alert>}
     {exceptions.length > 0 && <Alert variant="warning">
       <span>{exceptions.length} membered {exceptions.length === 1 ? "family has" : "families have"} no billing member. They will be omitted from family invoice generation.</span>
@@ -108,7 +128,7 @@ export default function FeeConfigurationPage() {
         <div><Label htmlFor="membership-from">Effective from</Label><Input id="membership-from" type="date" value={membershipFrom} onChange={(event) => setMembershipFrom(event.target.value)} disabled={!data?.canEdit} /></div>
         <div><Label htmlFor="membership-to">Effective to (optional)</Label><Input id="membership-to" type="date" value={membershipTo} onChange={(event) => setMembershipTo(event.target.value)} disabled={!data?.canEdit} /></div>
       </div>
-      <div className="flex gap-2"><Button disabled={saving || !membershipTypeId || !data?.canEdit} onClick={saveMembershipFee}><DollarSign className="mr-1 h-4 w-4" />{editingMembershipFeeId ? "Update annual fee" : "Add annual fee"}</Button>{editingMembershipFeeId && <Button variant="outline" onClick={() => setEditingMembershipFeeId(null)}>Cancel edit</Button>}</div>
+      <div className="flex gap-2"><Button disabled={saving || !membershipTypeId || !data?.canEdit} onClick={saveMembershipFee}><DollarSign className="mr-1 h-4 w-4" />{editingMembershipFeeId ? "Update annual fee" : "Add annual fee"}</Button>{editingMembershipFeeId && <Button variant="outline" onClick={resetMembershipForm}>Cancel edit</Button>}</div>
       <div className="space-y-3">{data?.membershipTypes.map((type) => <div key={type.id} className="rounded-md border p-3"><div className="font-medium">{type.name}</div>{type.annualFees.length === 0 ? <p className="text-sm text-muted-foreground">Not configured</p> : type.annualFees.map((fee) => <div key={fee.id} className="mt-2 flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">{dollars(fee.amountCents)}</Badge><span>{fee.billingBasis?.replaceAll("_", " ")}</span><span>{fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span><Button size="icon" variant="ghost" aria-label={`Edit ${type.name} fee`} disabled={saving || !data.canEdit} onClick={() => { setEditingMembershipFeeId(fee.id); setMembershipTypeId(type.id); setMembershipAmount((fee.amountCents / 100).toFixed(2)); setBillingBasis(fee.billingBasis ?? "PER_MEMBER"); setProrationRule(fee.prorationRule ?? "NONE"); setMembershipFrom(fee.effectiveFrom); setMembershipTo(fee.effectiveTo ?? ""); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${type.name} fee`} disabled={saving || !data.canEdit} onClick={() => setDeleteTarget({ action: "DELETE_MEMBERSHIP_FEE", id: fee.id, label: `${type.name} annual fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></div>)}</div>)}</div>
     </CardContent></Card>
 
@@ -119,7 +139,7 @@ export default function FeeConfigurationPage() {
         <div><Label htmlFor="entrance-from">Effective from</Label><Input id="entrance-from" type="date" value={entranceFrom} onChange={(event) => setEntranceFrom(event.target.value)} disabled={!data?.canEdit} /></div>
         <div><Label htmlFor="entrance-to">Effective to (optional)</Label><Input id="entrance-to" type="date" value={entranceTo} onChange={(event) => setEntranceTo(event.target.value)} disabled={!data?.canEdit} /></div>
       </div>
-      <div className="flex gap-2"><Button disabled={saving || !data?.canEdit} onClick={saveEntranceFee}>{editingEntranceFeeId ? "Update entrance fee" : "Add entrance fee"}</Button>{editingEntranceFeeId && <Button variant="outline" onClick={() => setEditingEntranceFeeId(null)}>Cancel edit</Button>}</div>
+      <div className="flex gap-2"><Button disabled={saving || !data?.canEdit} onClick={saveEntranceFee}>{editingEntranceFeeId ? "Update entrance fee" : "Add entrance fee"}</Button>{editingEntranceFeeId && <Button variant="outline" onClick={resetEntranceForm}>Cancel edit</Button>}</div>
       <div className="grid gap-3 md:grid-cols-2">{categories.map((category) => { const current = data?.currentEntranceFees.find((fee) => fee.category === category); const rows = data?.entranceFees.filter((fee) => fee.category === category) ?? []; return <div key={category} className="rounded-md border p-3"><div className="flex items-center justify-between"><span className="font-medium">{category}</span><Badge variant={current?.source === "SCHEDULE" ? "default" : "outline"}>{current?.source === "LEGACY_MAPPING" ? "Compatibility fallback" : current?.source ?? "None"}</Badge></div><p className="text-sm">Current: {dollars(current?.amountCents ?? null)}</p>{rows.map((fee) => <div key={fee.id} className="mt-2 flex items-center gap-2 text-sm"><span>{dollars(fee.amountCents)} · {fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span><Button size="icon" variant="ghost" aria-label={`Edit ${category} fee`} disabled={saving || !data?.canEdit} onClick={() => { setEditingEntranceFeeId(fee.id); setEntranceCategory(category); setEntranceAmount((fee.amountCents / 100).toFixed(2)); setEntranceFrom(fee.effectiveFrom); setEntranceTo(fee.effectiveTo ?? ""); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${category} fee`} disabled={saving || !data?.canEdit} onClick={() => setDeleteTarget({ action: "DELETE_ENTRANCE_FEE", id: fee.id, label: `${category} entrance fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></div>)}</div>; })}</div>
     </CardContent></Card>
 
@@ -131,7 +151,7 @@ export default function FeeConfigurationPage() {
     <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !saving) setDeleteTarget(null); }}>
       <DialogContent showCloseButton={false}>
         <DialogHeader><DialogTitle>Delete fee schedule?</DialogTitle><DialogDescription>Delete {deleteTarget?.label}? This removes configuration, not historical invoices. A deprecated entrance mapping may become the active compatibility fallback.</DialogDescription></DialogHeader>
-        <DialogFooter><Button variant="outline" disabled={saving} onClick={() => setDeleteTarget(null)}>Cancel</Button><Button variant="destructive" disabled={saving || !deleteTarget} onClick={async () => { if (!deleteTarget) return; await mutate({ action: deleteTarget.action, id: deleteTarget.id }); setDeleteTarget(null); }}>Delete fee</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" disabled={saving} onClick={() => setDeleteTarget(null)}>Cancel</Button><Button variant="destructive" disabled={saving || !deleteTarget} onClick={async () => { if (!deleteTarget) return; if (await mutate({ action: deleteTarget.action, id: deleteTarget.id })) setDeleteTarget(null); }}>Delete fee</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   </div>;

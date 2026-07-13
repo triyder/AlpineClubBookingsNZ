@@ -28,7 +28,7 @@ CREATE TABLE "MembershipAnnualFee" (
 
 CREATE UNIQUE INDEX "MembershipAnnualFee_membershipTypeId_effectiveFrom_key"
   ON "MembershipAnnualFee"("membershipTypeId", "effectiveFrom");
-CREATE INDEX "MembershipAnnualFee_membershipTypeId_effectiveFrom_effectiveTo_idx"
+CREATE INDEX "MembershipAnnualFee_effective_lookup_idx"
   ON "MembershipAnnualFee"("membershipTypeId", "effectiveFrom", "effectiveTo");
 ALTER TABLE "MembershipAnnualFee" ADD CONSTRAINT "MembershipAnnualFee_no_overlap"
   EXCLUDE USING gist (
@@ -59,19 +59,20 @@ ALTER TABLE "EntranceFee" ADD CONSTRAINT "EntranceFee_no_overlap"
     daterange("effectiveFrom", COALESCE("effectiveTo", 'infinity'::date), '[]') WITH &&
   );
 
-ALTER TABLE "FamilyGroup" ADD COLUMN "billingMemberId" TEXT;
-CREATE INDEX "FamilyGroup_billingMemberId_idx" ON "FamilyGroup"("billingMemberId");
-ALTER TABLE "FamilyGroup" ADD CONSTRAINT "FamilyGroup_billingMemberId_fkey"
-  FOREIGN KEY ("billingMemberId") REFERENCES "Member"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "FamilyGroup" ADD COLUMN "billingMembershipId" TEXT;
+CREATE UNIQUE INDEX "FamilyGroup_billingMembershipId_key" ON "FamilyGroup"("billingMembershipId");
+ALTER TABLE "FamilyGroup" ADD CONSTRAINT "FamilyGroup_billingMembershipId_fkey"
+  FOREIGN KEY ("billingMembershipId") REFERENCES "FamilyGroupMember"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
--- Backfill the new authority from granular entrance mappings. CURRENT_DATE is
+-- Backfill the new authority from granular entrance mappings. The explicit
+-- Pacific/Auckland date is
 -- an honest migration boundary; old mappings did not retain historical dates.
 INSERT INTO "EntranceFee" ("id", "category", "amountCents", "effectiveFrom", "updatedAt")
 SELECT
   'entrance-fee-backfill-' || lower(e."entranceFeeCategory"::text),
   e."entranceFeeCategory",
   e."amountCents",
-  CURRENT_DATE,
+  timezone('Pacific/Auckland', statement_timestamp())::date,
   timezone('UTC', statement_timestamp())
 FROM "XeroItemCodeMapping" e
 WHERE e."category" = 'ENTRANCE_FEE'
@@ -98,7 +99,7 @@ SELECT
   'entrance-fee-legacy-' || lower(c.category::text),
   c.category,
   l.amount::integer,
-  CURRENT_DATE,
+  timezone('Pacific/Auckland', statement_timestamp())::date,
   timezone('UTC', statement_timestamp())
 FROM categories c
 CROSS JOIN legacy l
@@ -106,11 +107,3 @@ WHERE NOT EXISTS (
   SELECT 1 FROM "EntranceFee" f WHERE f."category" = c.category
 )
 ON CONFLICT ("category", "effectiveFrom") DO NOTHING;
-
--- A billing member must remain in the same family. PostgreSQL 15+ permits a
--- column-specific SET NULL action, preserving the FamilyGroup primary key while
--- clearing only the optional billing recipient on every join-row removal path.
-ALTER TABLE "FamilyGroup" ADD CONSTRAINT "FamilyGroup_billing_membership_fkey"
-  FOREIGN KEY ("id", "billingMemberId")
-  REFERENCES "FamilyGroupMember"("familyGroupId", "memberId")
-  ON DELETE SET NULL ("billingMemberId");

@@ -72,8 +72,13 @@ async function loadConfiguration(canEdit: boolean) {
       where: { memberships: { some: {} } },
       orderBy: [{ name: "asc" }, { createdAt: "asc" }],
       select: {
-        id: true, name: true, billingMemberId: true,
-        billingMember: { select: { id: true, firstName: true, lastName: true, email: true, active: true, archivedAt: true } },
+        id: true, name: true, billingMembershipId: true,
+        billingMembership: {
+          select: {
+            familyGroupId: true,
+            member: { select: { id: true, firstName: true, lastName: true, email: true, active: true, archivedAt: true } },
+          },
+        },
         memberships: {
           where: { member: { archivedAt: null } },
           select: { member: { select: { id: true, firstName: true, lastName: true, email: true, active: true, ageTier: true } } },
@@ -96,7 +101,13 @@ async function loadConfiguration(canEdit: boolean) {
     currentEntranceFees,
     familyGroups: familyGroups.map((group) => ({
       ...group,
-      billingException: group.billingMember == null || !group.billingMember.active || group.billingMember.archivedAt != null,
+      billingMemberId: group.billingMembership?.member.id ?? null,
+      billingException: group.billingMembership == null
+        || group.billingMembership.familyGroupId !== group.id
+        || !group.billingMembership.member.active
+        || group.billingMembership.member.archivedAt != null,
+      billingMembership: undefined,
+      billingMembershipId: undefined,
       members: group.memberships.map(({ member }) => member),
       memberships: undefined,
     })),
@@ -178,15 +189,17 @@ export async function POST(request: Request) {
         const group = await tx.familyGroup.findUnique({ where: { id: input.familyGroupId }, select: { id: true } });
         if (!group) throw new FeeScheduleValidationError("Family group not found.", 404);
         if (input.billingMemberId) {
-          const member = await tx.familyGroupMember.findUnique({
+          const membership = await tx.familyGroupMember.findUnique({
             where: { familyGroupId_memberId: { familyGroupId: input.familyGroupId, memberId: input.billingMemberId } },
-            select: { member: { select: { active: true, archivedAt: true } } },
+            select: { id: true, member: { select: { active: true, archivedAt: true } } },
           });
-          if (!member || !member.member.active || member.member.archivedAt) {
+          if (!membership || !membership.member.active || membership.member.archivedAt) {
             throw new FeeScheduleValidationError("Billing member must be an active, unarchived member of this family.");
           }
+          await tx.familyGroup.update({ where: { id: input.familyGroupId }, data: { billingMembershipId: membership.id } });
+        } else {
+          await tx.familyGroup.update({ where: { id: input.familyGroupId }, data: { billingMembershipId: null } });
         }
-        await tx.familyGroup.update({ where: { id: input.familyGroupId }, data: { billingMemberId: input.billingMemberId } });
         targetId = input.familyGroupId;
       }
       await createAuditLog({

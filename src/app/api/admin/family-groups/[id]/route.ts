@@ -148,9 +148,6 @@ export async function PUT(
         await tx.familyGroup.update({ where: { id }, data: { name: name.trim() } });
       }
       if (toRemove.length > 0) {
-        if (existing.billingMemberId && toRemove.includes(existing.billingMemberId)) {
-          await tx.familyGroup.update({ where: { id }, data: { billingMemberId: null } });
-        }
         await tx.familyGroupMember.deleteMany({
           where: { familyGroupId: id, memberId: { in: toRemove } },
         });

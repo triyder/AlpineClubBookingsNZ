@@ -17,17 +17,22 @@ describe("authoritative fee migration", () => {
   it("backfills granular amounts before the flat legacy fallback without providers", () => {
     expect(sql).toContain('FROM "XeroItemCodeMapping" e');
     expect(sql).toContain('WHERE "key" = \'entranceFeeAmountCents\'');
-    expect(sql).toContain("CURRENT_DATE");
+    expect(sql).toContain("timezone('Pacific/Auckland', statement_timestamp())::date");
+    expect(sql).not.toContain("CURRENT_DATE");
     expect(sql).toContain("timezone('UTC', statement_timestamp())");
     expect(sql).toContain("\"code\" ~ '^[0-9]{1,10}$'");
     expect(sql).toContain('"code"::bigint <= 2147483647');
     expect(sql).not.toMatch(/https?:\/\//);
   });
 
-  it("clears a billing recipient whenever the same-family membership disappears", () => {
-    expect(sql).toContain('CONSTRAINT "FamilyGroup_billing_membership_fkey"');
-    expect(sql).toContain('REFERENCES "FamilyGroupMember"("familyGroupId", "memberId")');
-    expect(sql).toContain('ON DELETE SET NULL ("billingMemberId")');
+  it("stores a Prisma-representable membership-row recipient that clears on removal", () => {
+    expect(sql).toContain('"billingMembershipId" TEXT');
+    expect(sql).toContain('CONSTRAINT "FamilyGroup_billingMembershipId_fkey"');
+    expect(sql).toContain('REFERENCES "FamilyGroupMember"("id") ON DELETE SET NULL');
+  });
+
+  it("uses the explicitly mapped short annual-fee lookup index name", () => {
+    expect(sql).toContain('CREATE INDEX "MembershipAnnualFee_effective_lookup_idx"');
   });
 
   it("enforces cents, date ordering, no-invoice zero, and database overlap guards", () => {
