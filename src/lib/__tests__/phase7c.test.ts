@@ -20,7 +20,7 @@ const mockPrisma = {
   choreTemplate: { findMany: vi.fn() },
   hutLeaderAssignment: { count: vi.fn(), findUnique: vi.fn() },
   memberLodgeAccess: { findMany: vi.fn() },
-  lodge: { findFirst: vi.fn() },
+  lodge: { findFirst: vi.fn(), findUnique: vi.fn() },
   $transaction: vi.fn(),
 };
 

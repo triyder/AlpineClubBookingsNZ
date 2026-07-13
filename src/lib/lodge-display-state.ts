@@ -17,6 +17,7 @@ import { getSanitizedLodgeInstructions } from "./lodge-instructions";
 import { DISPLAY_RELEVANT_MODULE_KEYS } from "./lodge-display/conditions";
 import { lodgeNullTolerantScope } from "./lodges";
 import { loadEffectiveModuleFlags } from "./module-settings";
+import { canServeMemberPhoneOnLodgeSurface, formatXeroPhone } from "./phone";
 import type { ModuleKey } from "@/config/modules";
 import { prisma } from "./prisma";
 
@@ -24,9 +25,16 @@ import { prisma } from "./prisma";
 // docs/lobby-display/design.md §5 and §10). THIS FILE IS THE SINGLE
 // ENFORCEMENT POINT for what a public screen may show: names leave here
 // already reduced to the configured granularity, minors are never
-// individually named at any level, and no monetary, contact, or member-id
-// field is ever selected. Every display module renders as a pure function of
-// the DisplayState payload — templates cannot reach past it.
+// individually named at any level, and no monetary or member-id field is ever
+// selected. Every display module renders as a pure function of the DisplayState
+// payload — templates cannot reach past it.
+//
+// The ONE contact exception (#125 / #37) is a member phone number, and it is
+// released per-guest ONLY under the two-sided consent gate
+// (`canServeMemberPhoneOnLodgeSurface`): the lodge has enabled phone display
+// AND the member has opted in AND the guest is an adult AND the row already
+// shows individual names. Both config flags default off, so by default no phone
+// ever enters the payload.
 
 export const DEFAULT_DISPLAY_NAME_GRANULARITY: DisplayNameGranularity =
   "FIRST_NAME_SURNAME_INITIAL";
@@ -46,6 +54,10 @@ export interface DisplayStateGuest {
   label: string;
   stayStart: string;
   stayEnd: string;
+  /** Adult member phone number — present ONLY when the two-sided consent gate
+   * allows it (#125 / #37); omitted otherwise, so the default payload carries
+   * no contact field. */
+  phone?: string;
 }
 
 export interface DisplayStateBooking {
@@ -211,6 +223,7 @@ export async function buildDisplayState(
         displayConfig: true,
         displayNameGranularity: true,
         displayNotice: true,
+        showGuestPhonesOnScreens: true,
       },
     }),
     loadEffectiveModuleFlags(),
@@ -249,6 +262,17 @@ export async function buildDisplayState(
             ageTier: true,
             stayStart: true,
             stayEnd: true,
+            // #125 / #37: the member's opt-in + phone, released per-guest only
+            // under `canServeMemberPhoneOnLodgeSurface` in the row builder.
+            member: {
+              select: {
+                ageTier: true,
+                lodgeScreenPhoneOptIn: true,
+                phoneCountryCode: true,
+                phoneAreaCode: true,
+                phoneNumber: true,
+              },
+            },
             nights: { select: { stayDate: true } },
             bedAllocations: {
               where: {
@@ -411,12 +435,28 @@ export async function buildDisplayState(
         wholeLodge,
         roomId,
         guests: namesAllowed
-          ? guests.map((guest) => ({
-              label:
-                reduceName(guest.firstName, guest.lastName, granularity) ?? "",
-              stayStart: formatDateOnly(getGuestStayStart(guest, booking)),
-              stayEnd: formatDateOnly(getGuestStayEnd(guest, booking)),
-            }))
+          ? guests.map((guest) => {
+              // Phone rides the same row that already shows an individual name.
+              // The member's own age tier decides adulthood (falls back to the
+              // guest tier for a non-member guest, who has no opt-in and so is
+              // filtered out anyway).
+              const phone =
+                guest.member &&
+                canServeMemberPhoneOnLodgeSurface({
+                  lodgeShowGuestPhonesOnScreens: lodge.showGuestPhonesOnScreens,
+                  memberOptedIn: guest.member.lodgeScreenPhoneOptIn,
+                  ageTier: guest.member.ageTier ?? guest.ageTier,
+                })
+                  ? formatXeroPhone(guest.member)
+                  : null;
+              return {
+                label:
+                  reduceName(guest.firstName, guest.lastName, granularity) ?? "",
+                stayStart: formatDateOnly(getGuestStayStart(guest, booking)),
+                stayEnd: formatDateOnly(getGuestStayEnd(guest, booking)),
+                ...(phone ? { phone } : {}),
+              };
+            })
           : null,
         guestCount: guests.length,
         stayStart: formatDateOnly(new Date(Math.min(...stayStarts))),

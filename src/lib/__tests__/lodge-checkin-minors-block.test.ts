@@ -26,6 +26,7 @@ vi.mock("@/lib/prisma", () => ({
       findMany: prismaMocks.bookingGuestFindMany,
     },
     booking: { findMany: prismaMocks.bookingFindMany },
+    lodge: { findUnique: vi.fn() },
     choreTemplate: { findMany: prismaMocks.choreTemplateFindMany },
     choreAssignment: { findMany: prismaMocks.choreAssignmentFindMany },
   },

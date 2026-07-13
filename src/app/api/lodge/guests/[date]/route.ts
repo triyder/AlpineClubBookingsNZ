@@ -6,7 +6,7 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
-import { formatXeroPhone } from "@/lib/phone";
+import { canServeMemberPhoneOnLodgeSurface, formatXeroPhone } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
@@ -62,6 +62,16 @@ export async function GET(
     throw err;
   }
 
+  // #125 / #37: phone numbers only reach the kiosk under the two-sided consent
+  // gate — the lodge must enable phone display AND the member must have opted in
+  // (adults only, enforced per-guest below). Config side is read once here.
+  const lodgeConfig = await prisma.lodge.findUnique({
+    where: { id: lodgeId },
+    select: { showGuestPhonesOnScreens: true },
+  });
+  const lodgeShowGuestPhonesOnScreens =
+    lodgeConfig?.showGuestPhonesOnScreens ?? false;
+
   // Default scope is stay-night compatible for roster allocation.
   // Lodge-list scope also includes guests on their checkout/departure date.
   const bookings = await prisma.booking.findMany({
@@ -94,6 +104,7 @@ export async function GET(
           member: {
             select: {
               ageTier: true,
+              lodgeScreenPhoneOptIn: true,
               phoneCountryCode: true,
               phoneAreaCode: true,
               phoneNumber: true,
@@ -138,7 +149,13 @@ export async function GET(
             arrivedAt: g.arrivedAt?.toISOString() ?? null,
             departedAt: g.departedAt?.toISOString() ?? null,
             phone:
-              canViewGuestContactDetails && ageTier === "ADULT" && g.member
+              canViewGuestContactDetails &&
+              g.member &&
+              canServeMemberPhoneOnLodgeSurface({
+                lodgeShowGuestPhonesOnScreens,
+                memberOptedIn: g.member.lodgeScreenPhoneOptIn,
+                ageTier,
+              })
                 ? formatXeroPhone(g.member)
                 : null,
           };
