@@ -800,6 +800,15 @@ invalid app, email, or recovery-code attempts lock the two-factor challenge for
 
 ## Finance dashboard
 
+### Membership and entrance fee authority
+
+Annual membership and entrance amounts are database configuration, not
+environment variables or provider metadata. Membership editors own public
+descriptions/listing under `/admin/membership-types`; Finance editors own
+effective-dated amounts and family billing members under
+`/admin/fee-configuration`. Hut fees remain lodge season/rate configuration.
+See `docs/AUTHORITATIVE_FEES.md` for operator and compatibility rules.
+
 The finance dashboard reads its revenue, cost, and balance figures from the
 single operational Xero connection configured above. There are no separate
 finance Xero credentials. The finance report sync requires these granular Xero

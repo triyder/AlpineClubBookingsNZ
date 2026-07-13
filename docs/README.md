@@ -56,6 +56,8 @@ AlpineClubBookingsNZ.
   for safe cutover.
 - `CANCELLATIONS.md` documents membership cancellation refund, credit-note,
   and GST policy.
+- `AUTHORITATIVE_FEES.md` documents membership/entrance fee schedules, public
+  listing review, family billing exceptions, and the compatibility window.
 - `AUDIT_RETENTION_ARCHIVE_RUNBOOK.md` covers audit-log retention and optional
   archival.
 - `TOKEN_HASHING.md` documents the current hash-at-rest token design.

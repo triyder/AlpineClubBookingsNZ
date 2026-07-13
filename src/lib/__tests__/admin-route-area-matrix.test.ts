@@ -184,6 +184,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/family-suggestions": "membership",
   "/api/admin/family-suggestions/hide": "membership",
   "/api/admin/family-suggestions/reset": "membership",
+  "/api/admin/fee-configuration": "finance",
   "/api/admin/health": "support",
   "/api/admin/hut-leaders": "lodge",
   "/api/admin/hut-leaders/[id]": "lodge",

@@ -567,6 +567,20 @@ rewrite subscription/payment/Xero history, or call provider systems. The saved
 assignment is enforced the next time a booking is quoted, created, confirmed
 from draft, joined, or repriced by an allowed modification path.
 
+## Fee Configuration Lifecycle
+
+```text
+migration -> public membership types hidden
+legacy entrance amount -> authoritative row at migration-date boundary
+membership editor -> public copy/listing review -> audited save -> cache invalidation
+finance editor -> validate cents/dates -> lock schedule key -> reject overlap | audited save
+family recipient removed -> billing member cleared -> visible billing exception
+```
+
+This lifecycle creates no invoice and calls no provider. During the one-release
+bridge, a category with no current entrance schedule reads its deprecated
+granular/flat mapping amount; a current schedule always wins.
+
 ## Committee Assignment Lifecycle
 
 ```text

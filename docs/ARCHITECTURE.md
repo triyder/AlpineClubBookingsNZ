@@ -540,7 +540,16 @@ tier.
 Seasonal membership types are policy records, not access roles. `MembershipType`
 stores the stable identifier, display text, active/archive state, sort order,
 booking behavior, subscription behavior, allowed age tiers, and optional Xero
-contact-group rules for built-in and admin-defined types. The admin settings
+contact-group rules for built-in and admin-defined types. It also stores a
+distinct `publicDescription` and opt-in `publiclyListed` flag; all existing and
+new types start hidden. `MembershipAnnualFee` and `EntranceFee` are inclusive
+effective-date schedules with integer-cent amounts and application plus
+database overlap guards. Annual rows independently record billing basis and
+proration policy per type. `FamilyGroup.billingMemberId` is an explicit
+finance-owned recipient validated against active group members; membered groups
+without one are visible billing exceptions. Provider item/account codes remain
+Xero mappings. During the one-release bridge, entrance amount reads are
+schedule-first and use mapping amounts only as fallback. The admin settings
 page presents types as an ordered policy list; create/edit opens a dedicated
 editor for identity, behavior, allowed tiers, and Xero rule configuration, while
 seasonal assignment roll-forward sits in its own preview/run section. The

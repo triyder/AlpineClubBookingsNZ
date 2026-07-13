@@ -9,6 +9,7 @@
 import { EntranceFeeCategory } from "@prisma/client";
 import { prisma } from "./prisma";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
+import { getEffectiveEntranceFee } from "@/lib/authoritative-fees";
 
 export interface EntranceFeeContext {
   category: EntranceFeeCategory;
@@ -118,8 +119,9 @@ export async function getHutFeeItemCodeMap(): Promise<Map<string, string>> {
 }
 
 /**
- * Get the entrance fee item code and amount for a specific category.
- * Falls back to the legacy flat entranceFeeItem/entranceFeeAmountCents if the new table is empty.
+ * Get the Xero item code and authoritative entrance amount for a category.
+ * Amounts resolve schedule-first, with deprecated mapping fallback retained
+ * for one compatibility release. Provider item codes remain Xero mappings.
  */
 async function getEntranceFeeMapping(
   category: EntranceFeeCategory
@@ -128,23 +130,13 @@ async function getEntranceFeeMapping(
     where: { category: "ENTRANCE_FEE", entranceFeeCategory: category },
   });
 
-  if (row) {
-    return { itemCode: row.itemCode, amountCents: row.amountCents };
-  }
-
-  // Fallback to legacy flat mappings
-  const [legacyItemCode, legacyAmount] = await Promise.all([
-    getItemCodeMapping("entranceFeeItem"),
-    prisma.xeroAccountMapping.findUnique({
-      where: { key: "entranceFeeAmountCents" },
-      select: { code: true },
-    }),
+  const [legacyItemCode, effectiveFee] = await Promise.all([
+    row?.itemCode ? Promise.resolve(row.itemCode) : getItemCodeMapping("entranceFeeItem"),
+    getEffectiveEntranceFee(category),
   ]);
-
-  const amountCents = legacyAmount?.code ? parseInt(legacyAmount.code, 10) : null;
   return {
-    itemCode: legacyItemCode,
-    amountCents: isNaN(amountCents as number) ? null : amountCents,
+    itemCode: row?.itemCode ?? legacyItemCode,
+    amountCents: effectiveFee.amountCents,
   };
 }
 

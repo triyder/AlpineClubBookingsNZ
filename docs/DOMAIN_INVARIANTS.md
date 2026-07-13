@@ -6,6 +6,9 @@ Future reviews and issues should cite this file when proposing changes.
 ## Money
 
 - Store and calculate money as integer cents.
+- Annual membership and entrance fee authorities store non-negative integer
+  cents in inclusive, non-overlapping effective-date ranges. `NO_INVOICE`
+  annual rows are zero cents. Fee changes affect future resolution only.
 - Do not introduce floating point money arithmetic.
 - Refunds, credits, discounts, Stripe amounts, Xero invoice amounts, and
   membership fees must reconcile back to cent-based ledger records.
@@ -1418,6 +1421,10 @@ A `FamilyGroup` with zero `FamilyGroupMember` rows is inert: it never affects
 booking eligibility, pricing, or any member-visible UI, because family
 visibility and eligibility everywhere derive from `familyGroupMemberships`
 (`getMemberFamily`, `resolveMemberFamily`), never from bare `FamilyGroup` rows.
+Family billing never infers a recipient from group role, login holder, or email
+inheritance. The explicit billing member must be an active, unarchived member
+of that family; missing or removed recipients are visible exceptions and those
+families are omitted from invoice generation.
 Memberless groups are created intentionally ahead of approval — the member
 "create group from scratch" flow (#1681) files a memberless group with a
 `PENDING` `GROUP_CREATE` request, and the legacy request-join flow leaves a

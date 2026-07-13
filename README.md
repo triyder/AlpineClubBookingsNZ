@@ -119,6 +119,11 @@ recommended reading paths.
    previewing affected future bookings, drafts, waitlist records, and
    subscription history;
    existing future bookings are not automatically repriced by this change.
+   Membership editors also maintain the distinct public description and must
+   explicitly enable public listing; migrated and new types start hidden.
+   Finance editors use **Admin > Membership & Entrance Fees** for effective-dated
+   amounts and explicit family billing members. See
+   `docs/AUTHORITATIVE_FEES.md`.
 8. Use **Admin > Committee** to review seeded committee master roles and
    member-linked committee assignments. Assignments remain hidden/unpublished
    until an admin explicitly enables their presentation flags; public contact

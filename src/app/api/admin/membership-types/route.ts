@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
@@ -27,6 +28,8 @@ const membershipTypeSelect = {
   key: true,
   name: true,
   description: true,
+  publicDescription: true,
+  publiclyListed: true,
   isActive: true,
   isBuiltIn: true,
   bookingBehavior: true,
@@ -68,6 +71,8 @@ const createSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().max(1000).nullable().optional(),
+    publicDescription: z.string().trim().max(4000).nullable().optional(),
+    publiclyListed: z.boolean().optional().default(false),
     bookingBehavior: z.enum(MEMBERSHIP_TYPE_BOOKING_BEHAVIORS),
     subscriptionBehavior: z.enum(MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS),
     isActive: z.boolean().optional().default(true),
@@ -143,6 +148,8 @@ export async function POST(request: Request) {
     key,
     name,
     description: normalizeMembershipTypeText(parsed.data.description),
+    publicDescription: normalizeMembershipTypeText(parsed.data.publicDescription),
+    publiclyListed: parsed.data.publiclyListed,
     isActive: parsed.data.isActive,
     isBuiltIn: false,
     bookingBehavior: parsed.data.bookingBehavior,
@@ -195,6 +202,7 @@ export async function POST(request: Request) {
 
     return membershipTypeWithRules;
   });
+  revalidatePath("/", "layout");
 
   return NextResponse.json(
     {
