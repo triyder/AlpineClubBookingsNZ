@@ -522,11 +522,23 @@ export default function ConfigTransferPage() {
                 </p>
               )}
 
-              {plan.categories.map((cat) => (
+              {plan.categories.map((cat) => {
+                // Show changed rows (create/update) before unchanged, so real
+                // changes are never hidden under the 50-row display cap in a big
+                // category (e.g. lodge-config's rooms/beds/seasons).
+                const sorted = [...cat.items].sort((a, b) => {
+                  const rank = (x: PlanItem) => (x.action === "unchanged" ? 1 : 0);
+                  return rank(a) - rank(b);
+                });
+                const shown = sorted.slice(0, 50);
+                const hiddenUnchanged = sorted
+                  .slice(50)
+                  .filter((i) => i.action === "unchanged").length;
+                return (
                 <div key={cat.category}>
                   <p className="font-medium">{CATEGORY_LABELS[cat.category]}</p>
                   <ul className="ml-1 space-y-1">
-                    {cat.items.slice(0, 50).map((item) => {
+                    {shown.map((item) => {
                       const changed = item.action !== "unchanged";
                       const badge = ACTION_BADGE[item.action];
                       return (
@@ -574,13 +586,20 @@ export default function ConfigTransferPage() {
                       );
                     })}
                   </ul>
+                  {hiddenUnchanged > 0 && (
+                    <p className="ml-1 text-xs text-muted-foreground">
+                      …and {hiddenUnchanged} more unchanged row
+                      {hiddenUnchanged === 1 ? "" : "s"} not shown.
+                    </p>
+                  )}
                   {cat.warnings.map((w) => (
                     <p key={w} className="text-amber-800">
                       {w}
                     </p>
                   ))}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
