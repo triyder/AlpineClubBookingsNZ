@@ -49,7 +49,8 @@ recommended reading paths.
 - Admin-editable public website pages and footer sections with sanitised HTML
   content, embed/text tokens where supported, and a menu generated from page
   settings (see `CONFIGURATION.md`, "Website Page Content" and "Website Site
-  Content"); every admin rich-text editor includes a token help button listing
+  Content"). Authoritative public fee and policy blocks remain hidden until
+  explicitly enabled in Admin > Page Content; every admin rich-text editor includes a token help button listing
   the tokens it supports
 - Admin-managed site banners (urgent/warning/notify) shown above the site
   header for a set NZ date window, dismissible per browser
@@ -344,6 +345,8 @@ forks or public CI. Configure your own service accounts and secrets.
   validation and first deployment
 - `docs/ARCHITECTURE.md` - system structure, data model, business logic,
   integrations, cron, and deployment shape
+- `docs/PUBLIC_PAGE_CONTENT_TOKENS.md` - content-editor workflow and safety
+  contract for authoritative public PageContent data blocks
 - `CONFIGURATION.md` - environment variables, module controls, site style,
   and `config/club.json` schema
 - `DEPLOYMENT.md` - reference Lightsail, Docker Compose, Caddy, blue/green, and

@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -8,6 +9,7 @@ import {
   normalizeCancellationRules,
   normalizeStoredCancellationRules,
 } from "@/lib/cancellation-rules";
+import { logAudit } from "@/lib/audit";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -98,6 +100,9 @@ export async function PUT(
       },
     });
 
+    logAudit({ action: "booking-period.update", memberId: guard.session.user.id, targetId: id, details: JSON.stringify({ lodgeId: existing.lodgeId, before: existing, after: period }) });
+
+    revalidatePublicPageContent();
     return NextResponse.json(period);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -122,7 +127,11 @@ export async function DELETE(
   const { id } = await params;
 
   try {
+    const existing = await prisma.bookingPeriod.findUnique({ where: { id } });
+    if (!existing) return NextResponse.json({ error: "Period not found" }, { status: 404 });
     await prisma.bookingPeriod.delete({ where: { id } });
+    logAudit({ action: "booking-period.delete", memberId: guard.session.user.id, targetId: id, details: JSON.stringify({ lodgeId: existing.lodgeId, before: existing }) });
+    revalidatePublicPageContent();
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json(

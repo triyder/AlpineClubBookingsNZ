@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
@@ -82,9 +83,11 @@ export async function POST(request: NextRequest) {
     logAudit({
       action: "minimum-stay-policy.create",
       memberId: session.user.id,
-      details: `Created "${data.name}": min ${data.minimumNights} nights`,
+      targetId: policy.id,
+      details: JSON.stringify({ lodgeId: policy.lodgeId, after: policy }),
     })
 
+    revalidatePublicPageContent()
     return NextResponse.json(policy, { status: 201 })
   } catch (error) {
     if (error instanceof z.ZodError) {

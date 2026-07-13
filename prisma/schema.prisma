@@ -3835,6 +3835,21 @@ model GroupDiscountSetting {
   updatedAt    DateTime @updatedAt
 }
 
+// Public PageContent data blocks are opt-in. Inserting a token is not enough:
+// an administrator must also enable its family here before any authoritative
+// fee or policy data is rendered publicly.
+model PublicContentSettings {
+  id                   String   @id @default("default")
+  membershipTypes      Boolean  @default(false)
+  entranceFees         Boolean  @default(false)
+  hutFees              Boolean  @default(false)
+  bookingPolicySummary Boolean  @default(false)
+  cancellationPolicy   Boolean  @default(false)
+  updatedByMemberId    String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
 // ---------------------------------------------------------------------------
 // Club Theme (public website visual branding)
 // ---------------------------------------------------------------------------

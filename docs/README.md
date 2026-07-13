@@ -16,6 +16,8 @@ AlpineClubBookingsNZ.
 
 - `ARCHITECTURE.md` explains the runtime shape, module boundaries, data model,
   integrations, cron jobs, and deployment approach.
+- `PUBLIC_PAGE_CONTENT_TOKENS.md` is the content-editor and operator guide for
+  publishing authoritative membership, fee, booking, and cancellation blocks.
 - `DOMAIN_INVARIANTS.md`, `STATE_MACHINES.md`,
   `END_TO_END_TEST_MATRIX.md`, and `UX_FLOW_MAP.md` capture the first-pass
   domain and review map used by Codex issue work.

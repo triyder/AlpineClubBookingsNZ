@@ -4,6 +4,12 @@ Annual membership fees and entrance fees are persisted, effective-dated club
 configuration. Hut fees remain the lodge-scoped `Season` and `SeasonRate`
 records managed under **Admin > Hut Fees & Seasons**.
 
+Public PageContent blocks are double opt-in: their family is enabled in Admin >
+Page Content and membership types are individually public. Entrance blocks omit
+categories without a current schedule and never expose the compatibility Xero
+fallback. Hut-rate blocks use active seasons/rates plus configured age-tier
+labels. Visibility writes are audited and invalidate public routes.
+
 ## Operator workflow
 
 1. A Membership editor opens **Admin > Membership Types**, writes a distinct

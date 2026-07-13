@@ -168,7 +168,12 @@ menu.
   `{{member-application-form}}`, `{{join-apply-form}}`, `{{contact-form}}`,
   `{{skifield-whakapapa}}`, `{{skifield-conditions:dataHash}}`,
   `{{photo-gallery}}`, `{{photo-gallery:path}}`, `{{photo-slideshow}}`, and
-  `{{photo-slideshow:path}}`. Legal and help-copy pages can also use text
+  `{{photo-slideshow:path}}`. Authoritative embeds are `{{membership-types}}`,
+  `{{entrance-fees}}`, `{{hut-fees}}`, `{{booking-policy-summary}}`, and
+  `{{cancellation-policy}}`; the last three accept `:lodge-slug`. They default
+  hidden until enabled in Admin > Page Content, and membership types also need
+  their individual public-listing flag. Unknown/inactive lodge slugs render no
+  data rather than another lodge's fallback. Legal and help-copy pages can also use text
   tokens `{{club-name}}`, `{{currency}}`, `{{lodge-capacity}}`,
   `{{lodge-capacity:lodge-slug}}` (a named lodge's capacity; unknown slug falls
   back to the default lodge), `{{hut-leader}}`, and `{{hut-leader-lower}}`, which

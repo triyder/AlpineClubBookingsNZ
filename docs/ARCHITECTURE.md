@@ -5,6 +5,12 @@ operations. It is built around Next.js App Router route handlers,
 Prisma/PostgreSQL, Stripe, Xero, AWS SES, cron jobs, and Docker Compose
 deployment.
 
+PageContent embeds use one server-only registry and renderer across home,
+code-backed, catch-all, and database-backed 404 routes. Authoritative fee and
+policy loaders return narrow display view models only. Default-false persisted
+visibility gates and exact active-lodge lookup prevent accidental publication,
+cross-lodge fallback, and leakage of provider or internal configuration fields.
+
 ## Runtime Shape
 
 ```text

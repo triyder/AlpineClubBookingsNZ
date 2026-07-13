@@ -258,6 +258,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/site-style",
       "/admin/mountain-conditions",
       "/api/admin/page-content",
+      "/api/admin/public-content-settings",
       "/api/admin/site-banners",
       "/api/admin/site-content",
       "/api/admin/image-manager",

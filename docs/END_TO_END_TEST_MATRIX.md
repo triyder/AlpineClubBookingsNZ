@@ -4,6 +4,12 @@ This first-pass matrix links personas, journeys, risks, test types, and likely
 validation commands. Use it to plan focused issues and avoid claiming coverage
 that does not exist yet.
 
+Public CMS authoritative-block coverage must exercise enabled/disabled states,
+home/code-backed/catch-all/404 parity, global and lodge variants, current-date
+fee boundaries, divergent card/credit cancellation terms, invalid lodges,
+sanitisation, and authority-write cache invalidation. Signed-out output must
+contain no ids, provider codes, internal settings, or legacy entrance fallback.
+
 The rows marked "Playwright E2E" below now have automated browser coverage in
 `e2e/` run against the staging compose stack — see
 [`E2E_PLAYWRIGHT.md`](E2E_PLAYWRIGHT.md). This spans the Critical booking,

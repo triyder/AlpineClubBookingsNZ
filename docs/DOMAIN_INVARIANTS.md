@@ -3,6 +3,15 @@
 These are non-negotiable business and technical rules for AlpineClubBookingsNZ.
 Future reviews and issues should cite this file when proposing changes.
 
+## Public authoritative content
+
+- Fee/policy PageContent blocks are explicitly enabled and server-rendered; a
+  token alone publishes nothing.
+- Public fees use current effective-dated schedules. Entrance fees never use
+  legacy Xero mapping fallbacks.
+- Named lodge tokens resolve exactly one active lodge or no data, never the
+  default lodge. Public view models exclude ids, provider codes, and secrets.
+
 ## Money
 
 - Store and calculate money as integer cents.

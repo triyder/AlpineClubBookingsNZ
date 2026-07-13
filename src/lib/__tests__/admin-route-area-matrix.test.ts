@@ -260,6 +260,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/notifications": "support",
   "/api/admin/occupancy": "bookings",
   "/api/admin/page-content": "content",
+  "/api/admin/public-content-settings": "content",
   "/api/admin/payments": "finance",
   "/api/admin/payments/[id]/generate-invoice": "finance",
   "/api/admin/pending-counts": "overview",

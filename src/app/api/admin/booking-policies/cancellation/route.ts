@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { logAudit } from "@/lib/audit"
 import { normalizeCancellationRule } from "@/lib/cancellation-rules"
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
 
 const policySchema = z
   .object({
@@ -189,5 +190,6 @@ export async function PUT(req: NextRequest) {
     details: `Updated to ${sortedRules.length} rules, holdEnabled=${nonMemberHoldEnabled ?? "unchanged"}, holdDays=${nonMemberHoldDays ?? "unchanged"}, waitlistOrder=${waitlistCrossLodgeOrder ?? "unchanged"}, lodge=${lodgeId ?? "club-wide"}`,
   })
 
+  revalidatePublicPageContent()
   return NextResponse.json(result)
 }
