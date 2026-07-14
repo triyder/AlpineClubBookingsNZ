@@ -773,6 +773,7 @@ describe("membership nomination workflow", () => {
     expect(findOrCreateXeroContact).toHaveBeenCalledTimes(2);
     expect(enqueueXeroEntranceFeeInvoiceOperation).toHaveBeenCalledWith("member-1", {
       createdByMemberId: "admin-1",
+      store: tx,
     });
     expect(sendMembershipApplicationApprovedEmail).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -786,6 +787,90 @@ describe("membership nomination workflow", () => {
       memberIds: ["member-1", "member-2"],
       approvedByMemberId: "admin-1",
     });
+  });
+
+  it("enqueues the entrance-fee outbox row inside the approval transaction and kicks the worker only after commit (#1886, F22)", async () => {
+    const application = {
+      id: "app-atomic",
+      applicantFirstName: "Jane",
+      applicantLastName: "Doe",
+      applicantEmail: "jane@test.com",
+      applicantDateOfBirth: new Date("1990-05-01T00:00:00.000Z"),
+      applicantPhone: "64 21 5551234",
+      applicantAddress: null,
+      familyMembers: [],
+      nominator1Email: "nominator1@test.com",
+      nominator2Email: "nominator2@test.com",
+      nominator1Id: null,
+      nominator2Id: null,
+      nominator1ConfirmedAt: new Date("2026-04-12T01:00:00.000Z"),
+      nominator2ConfirmedAt: new Date("2026-04-12T02:00:00.000Z"),
+      status: "PENDING_ADMIN",
+      adminNotes: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      createdAt: new Date("2026-04-12T00:00:00.000Z"),
+      updatedAt: new Date("2026-04-12T00:00:00.000Z"),
+    };
+    vi.mocked(prisma.memberApplication.findUnique).mockResolvedValue(
+      application as never
+    );
+
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
+      member: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({
+          id: "member-1",
+          email: "jane@test.com",
+          firstName: "Jane",
+          lastName: "Doe",
+        }),
+        update: vi.fn().mockResolvedValue({ id: "member-1" }),
+      },
+      familyGroup: { create: vi.fn() },
+      familyGroupMember: { create: vi.fn() },
+      passwordResetToken: {
+        deleteMany: vi.fn().mockResolvedValue(undefined),
+        create: vi.fn().mockResolvedValue(undefined),
+      },
+      memberApplication: {
+        findUnique: vi.fn().mockResolvedValue(application),
+        update: vi.fn().mockResolvedValue({ id: "app-atomic", status: "APPROVED" }),
+      },
+    };
+
+    // Snapshot the mock call counts at the moment the transaction callback
+    // finishes — i.e. at the commit point. The durable outbox enqueue must
+    // already have happened by then (atomic with the approval), while the
+    // worker kick (the live Xero dispatch) must not have.
+    let enqueueCallsAtCommit = -1;
+    let workerKicksAtCommit = -1;
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback: any) => {
+      const result = await callback(tx);
+      enqueueCallsAtCommit =
+        xeroOutboxMock.enqueueXeroEntranceFeeInvoiceOperation.mock.calls.length;
+      workerKicksAtCommit =
+        xeroOutboxMock.processQueuedXeroOutboxOperations.mock.calls.length;
+      return result;
+    });
+
+    await approveMemberApplication("app-atomic", "admin-1");
+
+    // The outbox row write joins the approval transaction: it is called with
+    // the SAME transaction client the approval writes use (store: tx), before
+    // the transaction commits — a crash now rolls back approval + fee
+    // together instead of committing the approval and losing the fee.
+    expect(enqueueXeroEntranceFeeInvoiceOperation).toHaveBeenCalledTimes(1);
+    expect(enqueueXeroEntranceFeeInvoiceOperation).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ createdByMemberId: "admin-1", store: tx })
+    );
+    expect(enqueueCallsAtCommit).toBe(1);
+
+    // The worker kick that performs the live Xero call stays post-commit.
+    expect(workerKicksAtCommit).toBe(0);
+    expect(xeroOutboxMock.processQueuedXeroOutboxOperations).toHaveBeenCalledTimes(1);
   });
 
   it("persists post-approval side-effect warnings for admin recovery visibility", async () => {

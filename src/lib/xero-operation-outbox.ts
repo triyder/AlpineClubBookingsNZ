@@ -112,9 +112,23 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
     createdByMemberId?: string;
     amountCents?: number | null;
     description?: string | null;
+    store?: Prisma.TransactionClient;
   }
 ) {
-  const existingLink = await prisma.xeroObjectLink.findFirst({
+  // Optional transaction client (#1886, F22) so membership approval can write
+  // this outbox row inside the same transaction that creates the member and
+  // approves the application — the entrance fee then commits atomically with
+  // the approval instead of riding a post-commit crash window that silently
+  // lost the invoice. Every internal read/write goes through the same client
+  // (mirroring enqueueXeroRefundCreditNoteOperation, #1357) so the member and
+  // family-group rows created in that still-open transaction are visible and
+  // the #1354 correlation-key dedupe sees a consistent state. Defaults to the
+  // global `prisma`, keeping existing callers unchanged. Only the durable row
+  // write happens here — dispatching the live Xero call stays a post-commit
+  // concern for the caller.
+  const db = options?.store ?? prisma;
+
+  const existingLink = await db.xeroObjectLink.findFirst({
     where: {
       localModel: "Member",
       localId: memberId,
@@ -132,7 +146,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
     };
   }
 
-  const entranceFee = await getEntranceFeeContext(memberId);
+  const entranceFee = await getEntranceFeeContext(memberId, db);
 
   // Organisations/schools are exempt from entrance fees (owner decision,
   // 2026-07-07) — checked before the amount override so an explicitly
@@ -161,7 +175,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
     feeAmountCents
   );
 
-  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+  const existingQueuedOperation = await db.xeroSyncOperation.findFirst({
     where: {
       correlationKey,
       direction: "OUTBOUND",
@@ -202,6 +216,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
       ...(description ? { description } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
+    store: db,
   });
 
   return {

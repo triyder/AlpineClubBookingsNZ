@@ -153,9 +153,13 @@ async function getEntranceFeeMapping(
  * - CHILD: child or infant-tier member
  */
 export async function determineEntranceFeeCategory(
-  memberId: string
+  memberId: string,
+  // Optional transaction client (#1886): the membership-approval flow calls
+  // this for a member (and family group) created inside a still-open
+  // transaction, so those rows are only visible through that same client.
+  store: Prisma.TransactionClient | typeof prisma = prisma
 ): Promise<EntranceFeeCategory> {
-  const member = await prisma.member.findUnique({
+  const member = await store.member.findUnique({
     where: { id: memberId },
     select: { ageTier: true },
   });
@@ -171,13 +175,13 @@ export async function determineEntranceFeeCategory(
   // decision, 2026-07-07).
 
   // ADULT tier — check if they qualify for FAMILY rate
-  const familyMemberships = await prisma.familyGroupMember.findMany({
+  const familyMemberships = await store.familyGroupMember.findMany({
     where: { memberId },
     select: { familyGroupId: true },
   });
 
   for (const fm of familyMemberships) {
-    const groupMembers = await prisma.familyGroupMember.findMany({
+    const groupMembers = await store.familyGroupMember.findMany({
       where: { familyGroupId: fm.familyGroupId },
       include: { member: { select: { ageTier: true } } },
     });
@@ -198,9 +202,14 @@ export async function determineEntranceFeeCategory(
 }
 
 export async function getEntranceFeeContext(
-  memberId: string
+  memberId: string,
+  // Optional transaction client (#1886) — see determineEntranceFeeCategory.
+  // Only the member/family reads go through it; the fee-mapping lookups below
+  // read committed configuration tables the caller's transaction never
+  // touches, so they intentionally stay on the global client.
+  store: Prisma.TransactionClient | typeof prisma = prisma
 ): Promise<EntranceFeeContext> {
-  const member = await prisma.member.findUnique({
+  const member = await store.member.findUnique({
     where: { id: memberId },
     select: { ageTier: true },
   });
@@ -215,7 +224,7 @@ export async function getEntranceFeeContext(
     };
   }
 
-  const category = await determineEntranceFeeCategory(memberId);
+  const category = await determineEntranceFeeCategory(memberId, store);
   const feeMapping = await getEntranceFeeMapping(category);
 
   return { category, feeMapping };
