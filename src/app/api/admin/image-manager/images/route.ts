@@ -35,6 +35,9 @@ export async function GET(request: NextRequest) {
 
   const images = await Promise.all(
     imageFiles.map(async (e) => {
+      // absDir is contained under IMAGES_ROOT; e.name comes from readdir of that
+      // directory, not from request input.
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const filePath = path.join(absDir, e.name);
       const stat = await fs.stat(filePath);
       return {
@@ -93,6 +96,9 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Invalid directory" }, { status: 400 });
   }
 
+  // absDir is resolveInImagesRoot-contained and filename is rejected above if it
+  // contains a separator; the startsWith check below re-confirms containment.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const filePath = path.join(absDir, filename);
   if (filePath !== absDir && !filePath.startsWith(absDir + path.sep)) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });

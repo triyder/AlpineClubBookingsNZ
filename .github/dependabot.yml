@@ -5,6 +5,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Wait 7 days before proposing updates to newly published versions so a
+    # compromised or unstable release has time to be yanked before we adopt it.
+    cooldown:
+      default-days: 7
     ignore:
       # Keep Node runtime types aligned with package.json engines.
       # Remove this when the app runtime moves beyond Node 24.
@@ -21,12 +25,16 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     ignore:
       # Keep production images on Active/Maintenance LTS Node releases.
       # Remove this once Node 26 enters Active LTS.

@@ -22,6 +22,9 @@ async function collectDirs(absDir: string, relBase: string): Promise<string[]> {
     if (entry.isDirectory()) {
       const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
       result.push(rel);
+      // absDir is contained under IMAGES_ROOT; entry.name comes from readdir of
+      // that directory, not from request input.
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const children = await collectDirs(path.join(absDir, entry.name), rel);
       result.push(...children);
     }
@@ -78,6 +81,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid parent path" }, { status: 400 });
   }
 
+  // parentAbs is resolveInImagesRoot-contained and name is charset-validated
+  // above; the startsWith check below re-confirms containment before mkdir.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const newAbs = path.join(parentAbs, name);
   if (newAbs !== IMAGES_ROOT && !newAbs.startsWith(IMAGES_ROOT + path.sep)) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
@@ -166,6 +172,9 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
 
+  // oldAbs is resolveInImagesRoot-contained and newName is charset-validated
+  // above; the startsWith check below re-confirms containment before rename.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const newAbs = path.join(path.dirname(oldAbs), newName);
   if (!newAbs.startsWith(IMAGES_ROOT + path.sep)) {
     return NextResponse.json(
