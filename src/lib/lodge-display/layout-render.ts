@@ -21,7 +21,10 @@ import {
 // trust model AND display token resolution are applied at SERVE time:
 //
 //  1. Every admin-authored HTML field (the layout body, each authored slot's
-//     html, the footer) passes through the website content sanitiser, and the
+//     html, the footer) passes through the website content sanitiser with its
+//     display img-src restriction (issue #161, ADR-003 residual: an <img> src
+//     is constrained to relative/self paths or data: URIs, matching the
+//     display CSP's img-src 'self' data: — src/lib/csp.ts), and the
 //     CSS blocks (defaultCss + cssOverrides) are hardened by sanitiseDisplayCss
 //     (external url()/@import/@charset/</style/</expression/-moz-binding
 //     neutralised, length-capped — ADR-003 §4, LTV-029) then scopeDisplayCss
@@ -99,7 +102,16 @@ function replaceModuleEmbeds(html: string): string {
  * both steps; the caller swaps them for inert markers as the final step.
  */
 function renderAuthoredHtml(html: string, state: DisplayState): string {
-  return resolveDisplayHtml(sanitizePageContentHtml(html), state);
+  // restrictImgSrc: true (issue #161, ADR-003 residual) — the display's own
+  // img-src CSP is 'self' data:, so an <img src="https://…"> an author saved
+  // before this change (or hand-edited around the save-time warning) has its
+  // src stripped here too rather than being served to fail silently against
+  // the tighter CSP. The CMS's own sanitizePageContentHtml() default (used for
+  // public-site page content) is untouched — see page-content-html.ts.
+  return resolveDisplayHtml(
+    sanitizePageContentHtml(html, { restrictImgSrc: true }),
+    state
+  );
 }
 
 /**

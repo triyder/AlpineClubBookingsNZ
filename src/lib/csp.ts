@@ -53,8 +53,18 @@ export function buildContentSecurityPolicy(nonce: string, options: CspOptions = 
   //    state API.
   //  • /admin/display/preview: frame-src 'self' so it may embed the /display
   //    iframe.
+  // A third, TIGHTER relaxation applies to both (issue #161, ADR-003 residual):
+  // admin-authored display HTML/CSS can embed an <img>, and the global img-src
+  // otherwise allows any https host — an authoring admin could exfiltrate the
+  // display's own token values (config, occupancy, …) via an image-beacon `src`.
+  // /display and /admin/display/preview drop the `https:` wildcard, leaving only
+  // `'self' data:`; every other route's img-src is unchanged.
   const isDisplay = pathname === "/display";
   const isPreviewHost = pathname === "/admin/display/preview";
+  const imgSrc =
+    isDisplay || isPreviewHost
+      ? "img-src 'self' data:"
+      : "img-src 'self' data: https: https://www.google-analytics.com https://*.google-analytics.com";
 
   const directives = [
     "default-src 'self'",
@@ -69,7 +79,7 @@ export function buildContentSecurityPolicy(nonce: string, options: CspOptions = 
     // Keep inline styles during the script nonce rollout; Tailwind/Radix and
     // selected editor-rendered content can still emit runtime style attributes.
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: https: https://www.google-analytics.com https://*.google-analytics.com",
+    imgSrc,
     "font-src 'self' data:",
     [
       "connect-src",

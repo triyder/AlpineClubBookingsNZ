@@ -87,6 +87,61 @@ describe("validateLayoutForSave (LTV-030 save contract)", () => {
     }
   });
 
+  it("WARNS (but still saves) when bodyHtml carries an external <img> src (issue #161)", () => {
+    const result = validateLayoutForSave({
+      ...CLEAN_LAYOUT,
+      bodyHtml: `${CLEAN_LAYOUT.bodyHtml}<img src="https://evil.example/beacon.gif" />`,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.warnings).toEqual([
+        {
+          path: "bodyHtml",
+          message: expect.stringContaining("external <img> src blocked"),
+        },
+      ]);
+    }
+  });
+
+  it("WARNS when an area's defaultContent html carries an external <img> src", () => {
+    const result = validateLayoutForSave({
+      ...CLEAN_LAYOUT,
+      areas: [
+        {
+          key: "main",
+          description: "Main",
+          kind: "static",
+          defaultContent: {
+            html: '<img src="https://evil.example/x.png" />',
+          },
+        },
+      ],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.warnings).toEqual([
+        {
+          path: "areas.main.defaultContent",
+          message: expect.stringContaining("external <img> src blocked"),
+        },
+      ]);
+    }
+  });
+
+  it("does NOT warn on a relative, protocol-relative, or data: <img> src", () => {
+    // Protocol-relative is already stripped by the CMS default sanitiser
+    // (nothing display-specific about it); relative/data: are allowed outright.
+    const result = validateLayoutForSave({
+      ...CLEAN_LAYOUT,
+      bodyHtml:
+        `${CLEAN_LAYOUT.bodyHtml}<img src="/branding/lodge.jpg" />` +
+        '<img src="data:image/png;base64,aGVsbG8=" />' +
+        '<img src="//evil.example/x.png" />',
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.warnings).toEqual([]);
+  });
+
   it("reports BOTH a structural error and a CSS warning together", () => {
     const result = validateLayoutForSave({
       bodyHtml: "{{area:missing}}",
