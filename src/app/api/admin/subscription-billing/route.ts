@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
+import { DEFAULT_FAMILY_BILLING_MODE, FAMILY_BILLING_MODES } from "@/lib/authoritative-fees";
 import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import {
   buildSubscriptionBillingPreview,
@@ -25,7 +26,13 @@ const mutationSchema = z.discriminatedUnion("action", [
     confirmed: z.literal(true),
   }).strict(),
   z.object({ action: z.literal("RETRY_CHARGE"), chargeId: z.string().min(1) }).strict(),
-  z.object({ action: z.literal("UPDATE_SETTINGS"), invoiceDueDays: z.number().int().min(1).max(365) }).strict(),
+  z.object({
+    action: z.literal("UPDATE_SETTINGS"),
+    invoiceDueDays: z.number().int().min(1).max(365),
+    // Optional so the existing due-days save path stays a single-field write;
+    // when present it switches the club-level family billing model.
+    familyBillingMode: z.enum(FAMILY_BILLING_MODES).optional(),
+  }).strict(),
 ]);
 
 function invalidate() {
@@ -68,7 +75,10 @@ export async function GET(request: NextRequest) {
       preview,
       charges,
       exceptions: visiblePersistentExceptions,
-      settings: { invoiceDueDays: settings?.invoiceDueDays ?? 30 },
+      settings: {
+        invoiceDueDays: settings?.invoiceDueDays ?? 30,
+        familyBillingMode: settings?.familyBillingMode ?? DEFAULT_FAMILY_BILLING_MODE,
+      },
     });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Could not build subscription billing preview." }, { status: 409 });
@@ -85,21 +95,35 @@ export async function POST(request: Request) {
   try {
     if (parsed.data.action === "UPDATE_SETTINGS") {
       const action = parsed.data;
+      // Only write familyBillingMode when the client sent it, so a plain
+      // due-days save never disturbs the mode (and vice versa). A create falls
+      // back to the schema default when the mode is absent.
+      const settingsFields = {
+        invoiceDueDays: action.invoiceDueDays,
+        ...(action.familyBillingMode ? { familyBillingMode: action.familyBillingMode } : {}),
+        updatedByMemberId: guard.session.user.id,
+      };
       await prisma.$transaction(async (tx) => {
         await tx.membershipSubscriptionBillingSettings.upsert({
           where: { id: "default" },
-          update: { invoiceDueDays: action.invoiceDueDays, updatedByMemberId: guard.session.user.id },
-          create: { id: "default", invoiceDueDays: action.invoiceDueDays, updatedByMemberId: guard.session.user.id },
+          update: settingsFields,
+          create: { id: "default", ...settingsFields },
         });
         await createAuditLog({
           action: "membership-subscription-billing.settings.update",
           memberId: guard.session.user.id,
           targetId: "default",
-          details: JSON.stringify({ invoiceDueDays: action.invoiceDueDays }),
+          details: JSON.stringify({
+            invoiceDueDays: action.invoiceDueDays,
+            ...(action.familyBillingMode ? { familyBillingMode: action.familyBillingMode } : {}),
+          }),
         }, tx);
       });
       invalidate();
-      return NextResponse.json({ success: true, message: "Subscription invoice due days updated." });
+      return NextResponse.json({
+        success: true,
+        message: action.familyBillingMode ? "Subscription billing settings updated." : "Subscription invoice due days updated.",
+      });
     }
     if (parsed.data.action === "RETRY_CHARGE") {
       const result = await enqueueMembershipSubscriptionChargeOperation(parsed.data.chargeId, { createdByMemberId: guard.session.user.id });

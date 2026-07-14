@@ -33,6 +33,20 @@ Future reviews and issues should cite this file when proposing changes.
 - `PER_MEMBER` bills that member. `PER_FAMILY` requires one explicit active,
   unarchived recipient in the exact family. `NO_INVOICE` is an explicit
   zero-cent outcome, not missing configuration.
+- The club-level `familyBillingMode` on `MembershipSubscriptionBillingSettings`
+  decides whether family billing exists at all. `BILL_FAMILY_VIA_BILLING_MEMBER`
+  (the default, preserving pre-#159 behaviour) allows `PER_FAMILY` schedules and
+  invoices each family via its nominated billing member.
+  `BILL_MEMBERS_INDIVIDUALLY` invoices every member directly: the fee-config
+  family-billing card is hidden, no billing-member exception is ever raised, and
+  `PER_FAMILY` schedules are blocked server-side on create/update. A stale
+  `PER_FAMILY` schedule left over from a mode switch is never silently
+  reinterpreted as per-member; the billing engine surfaces it as a visible
+  `PER_FAMILY_FEE_IN_INDIVIDUAL_MODE` exception and invoices nothing for it. The
+  guard sits ahead of every per-family branch, so it makes the per-family
+  family-resolution branches (including `MISSING_FAMILY` / `AMBIGUOUS_FAMILY` /
+  `MISSING_FAMILY_RECIPIENT` / `INVALID_FAMILY_RECIPIENT`) unreachable in
+  individual mode by construction.
 - One family/membership-type/membership-year tuple can have at most one durable
   charge. A later family member produces a visible exception; neither coverage
   mutation nor a second invoice is allowed.
@@ -1453,9 +1467,12 @@ booking eligibility, pricing, or any member-visible UI, because family
 visibility and eligibility everywhere derive from `familyGroupMemberships`
 (`getMemberFamily`, `resolveMemberFamily`), never from bare `FamilyGroup` rows.
 Family billing never infers a recipient from group role, login holder, or email
-inheritance. The explicit billing member must be an active, unarchived member
-of that family; missing or removed recipients are visible exceptions and those
-families are omitted from invoice generation.
+inheritance. In `BILL_FAMILY_VIA_BILLING_MEMBER` mode the explicit billing
+member must be an active, unarchived member of that family; missing or removed
+recipients are visible exceptions and those families are omitted from invoice
+generation. In `BILL_MEMBERS_INDIVIDUALLY` mode there is no family-billing
+surface: no billing member is required, requested, or flagged, because every
+member is invoiced directly.
 Memberless groups are created intentionally ahead of approval — the member
 "create group from scratch" flow (#1681) files a memberless group with a
 `PENDING` `GROUP_CREATE` request, and the legacy request-join flow leaves a

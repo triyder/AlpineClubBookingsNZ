@@ -128,7 +128,33 @@ describe("admin subscription billing route", () => {
     const response = await POST(request({ action: "UPDATE_SETTINGS", invoiceDueDays: 45 }));
     expect(response.status).toBe(200);
     expect(mocks.settings.upsert).toHaveBeenCalledWith(expect.objectContaining({ update: expect.objectContaining({ invoiceDueDays: 45 }) }));
+    // A plain due-days save never writes the family billing mode.
+    expect(mocks.settings.upsert.mock.calls[0][0].update.familyBillingMode).toBeUndefined();
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "membership-subscription-billing.settings.update" }), expect.anything());
+  });
+
+  it("defaults the family billing mode in the preview settings", async () => {
+    const response = await GET(new NextRequest("http://localhost/api/admin/subscription-billing?seasonYear=2026&decisionDate=2026-07-13"));
+    await expect(response.json()).resolves.toMatchObject({ settings: { familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER" } });
+  });
+
+  it("persists and audits the family billing mode when provided", async () => {
+    const response = await POST(request({ action: "UPDATE_SETTINGS", invoiceDueDays: 30, familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY" }));
+    expect(response.status).toBe(200);
+    expect(mocks.settings.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({ invoiceDueDays: 30, familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY" }),
+      create: expect.objectContaining({ id: "default", familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY" }),
+    }));
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ details: JSON.stringify({ invoiceDueDays: 30, familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY" }) }),
+      expect.anything(),
+    );
+  });
+
+  it("rejects an invalid family billing mode", async () => {
+    const response = await POST(request({ action: "UPDATE_SETTINGS", invoiceDueDays: 30, familyBillingMode: "NONSENSE" }));
+    expect(response.status).toBe(400);
+    expect(mocks.settings.upsert).not.toHaveBeenCalled();
   });
 
   it("queues email/invoice retry without creating provider work inline", async () => {

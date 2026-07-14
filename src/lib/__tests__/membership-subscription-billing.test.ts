@@ -7,11 +7,13 @@ const mocks = vi.hoisted(() => ({
   membershipTypes: { findMany: vi.fn() },
   charges: { findMany: vi.fn() },
   effectiveFee: vi.fn(),
+  familyMode: vi.fn(),
   mapping: vi.fn(),
 }));
 
 vi.mock("@/lib/authoritative-fees", () => ({
   getEffectiveMembershipAnnualFee: mocks.effectiveFee,
+  getFamilyBillingMode: mocks.familyMode,
 }));
 vi.mock("@/lib/xero-mappings", () => ({
   getResolvedAccountMapping: mocks.mapping,
@@ -98,6 +100,7 @@ describe("membership subscription billing", () => {
     mocks.membershipTypes.findMany.mockResolvedValue([]);
     mocks.charges.findMany.mockResolvedValue([]);
     mocks.effectiveFee.mockResolvedValue(fee());
+    mocks.familyMode.mockResolvedValue("BILL_FAMILY_VIA_BILLING_MEMBER");
     mocks.mapping.mockResolvedValue({ code: "203", itemCode: "SUB", codeExplicitlyConfigured: true });
     __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
   });
@@ -264,6 +267,38 @@ describe("membership subscription billing", () => {
     const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
     expect(preview.entries).toHaveLength(0);
     expect(preview.exceptions.map((row) => row.code)).toEqual(["INVALID_FAMILY_RECIPIENT", "MISSING_FAMILY_RECIPIENT"]);
+  });
+
+  it("surfaces a per-family fee as a config exception under individual billing without touching the recipient path", async () => {
+    mocks.familyMode.mockResolvedValue("BILL_MEMBERS_INDIVIDUALLY");
+    const annual = fee({ billingBasis: "PER_FAMILY", prorationRule: "NONE" });
+    mocks.effectiveFee.mockResolvedValue(annual);
+    const assignment = { membershipType: { id: "type-1", key: "FAMILY", name: "Family", subscriptionBehavior: "REQUIRED", annualFees: [annual] } };
+    mocks.members.findMany.mockResolvedValue([
+      // Missing recipient in family mode would raise MISSING_FAMILY_RECIPIENT.
+      member("no-recipient", {
+        seasonalMembershipAssignments: [assignment],
+        familyGroupMemberships: [{ familyGroupId: "family-1", familyGroup: { billingMembership: null } }],
+      }),
+      // A member not in any family would raise MISSING_FAMILY in family mode.
+      member("no-family", { seasonalMembershipAssignments: [assignment], familyGroupMemberships: [] }),
+    ]);
+    const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
+    expect(preview.entries).toHaveLength(0);
+    // Only the mode exception; the never-infer-recipient family codes are unreachable.
+    expect(preview.exceptions.map((row) => row.code)).toEqual([
+      "PER_FAMILY_FEE_IN_INDIVIDUAL_MODE",
+      "PER_FAMILY_FEE_IN_INDIVIDUAL_MODE",
+    ]);
+    expect(preview.exceptions.some((row) => row.code === "MISSING_FAMILY_RECIPIENT" || row.code === "INVALID_FAMILY_RECIPIENT" || row.code === "MISSING_FAMILY")).toBe(false);
+  });
+
+  it("still bills per-member charges under individual billing", async () => {
+    mocks.familyMode.mockResolvedValue("BILL_MEMBERS_INDIVIDUALLY");
+    mocks.members.findMany.mockResolvedValue([member("m1")]);
+    const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+    expect(preview.exceptions).toHaveLength(0);
+    expect(preview.entries[0]).toMatchObject({ billingBasis: "PER_MEMBER", recipient: { id: "m1" } });
   });
 
   it("records missing assignment and missing effective fee as visible exceptions", async () => {

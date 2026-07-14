@@ -63,6 +63,24 @@ confirm the preview. Newly approved members are the exception to the annual-batc
 trigger only: their configured charge is queued automatically after approval;
 incomplete setup records a visible exception without blocking membership.
 
+## Family billing mode
+
+The club-level `familyBillingMode` on `MembershipSubscriptionBillingSettings`
+(edited from **Admin > Subscriptions**) decides whether family billing exists at
+all, so it changes the operator and subscription rules above.
+
+- `BILL_FAMILY_VIA_BILLING_MEMBER` (the default, preserving pre-#159 behaviour):
+  per-family fee schedules are allowed and each family is invoiced once via its
+  nominated billing member, exactly as the operator and subscription workflows
+  above describe.
+- `BILL_MEMBERS_INDIVIDUALLY`: every member is invoiced directly. Per-family fee
+  schedules are disabled in the admin UI and blocked server-side with a 409 on
+  create/update, and the family billing members card is hidden. A `PER_FAMILY`
+  schedule left over from a mode switch is never reinterpreted as per-member; the
+  billing preview raises a `PER_FAMILY_FEE_IN_INDIVIDUAL_MODE` exception, creates
+  no invoice, and the schedule's basis must be changed to per-member or
+  no-invoice before it can be invoiced.
+
 ## Entrance-fee compatibility window
 
 The migration backfills granular Xero mapping amounts, then the old flat

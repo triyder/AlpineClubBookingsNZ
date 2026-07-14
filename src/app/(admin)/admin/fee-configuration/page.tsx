@@ -1,5 +1,6 @@
 "use client";
 
+import type { FamilyBillingMode } from "@prisma/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DollarSign, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -19,6 +20,7 @@ import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 type Fee = { id: string; amountCents: number; effectiveFrom: string; effectiveTo: string | null; billingBasis?: string; prorationRule?: string };
 type Data = {
   canEdit: boolean;
+  familyBillingMode: FamilyBillingMode;
   membershipTypes: Array<{ id: string; name: string; isActive: boolean; annualFees: Fee[] }>;
   entranceFees: Array<Fee & { category: string }>;
   currentEntranceFees: Array<{ category: string; amountCents: number | null; source: string }>;
@@ -77,6 +79,14 @@ export default function FeeConfigurationPage() {
   useEffect(() => { if (error) scrollToError(errorRef); }, [error, scrollToError]);
 
   const exceptions = useMemo(() => data?.familyGroups.filter((group) => group.billingException) ?? [], [data]);
+  // When the club bills members individually there is no family-billing surface:
+  // the card is hidden and per-family fee schedules are disallowed. The server
+  // enforces both; these flags only drive what the operator sees.
+  const familyBillingActive = data?.familyBillingMode === "BILL_FAMILY_VIA_BILLING_MEMBER";
+  const hasPerFamilySchedule = useMemo(
+    () => data?.membershipTypes.some((type) => type.annualFees.some((fee) => fee.billingBasis === "PER_FAMILY")) ?? false,
+    [data],
+  );
   async function mutate(payload: Record<string, unknown>, options?: { silent?: boolean }) {
     setSaving(true); setError(null);
     try {
@@ -158,11 +168,14 @@ export default function FeeConfigurationPage() {
 
     <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Annual membership fees</CardTitle>{data?.canEdit && !membershipEditing && <Button variant="outline" size="sm" aria-label="Edit membership fees" onClick={() => setMembershipEditing(true)}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
       <p className="text-sm text-muted-foreground">Amounts are GST-inclusive integer cents after saving. Effective ranges are inclusive and may not overlap for one membership type.</p>
+      {!familyBillingActive && hasPerFamilySchedule && <Alert variant="warning">
+        <span>This club bills members individually, but one or more schedules still use the per-family basis. Those schedules cannot be invoiced and are not reinterpreted; edit each one to a per-member or no-invoice basis. Per-family can only be chosen after switching the family billing mode on the subscription billing settings.</span>
+      </Alert>}
       {membershipEditing && <>
         <div className="grid gap-3 md:grid-cols-3">
           <div><Label htmlFor="membership-type">Membership type</Label><Select value={membershipTypeId} onValueChange={setMembershipTypeId} disabled={!!editingMembershipFeeId}><SelectTrigger id="membership-type"><SelectValue /></SelectTrigger><SelectContent>{data?.membershipTypes.map((type) => <SelectItem key={type.id} value={type.id}>{type.name}</SelectItem>)}</SelectContent></Select></div>
           <div><Label htmlFor="membership-amount">Annual amount (NZD)</Label><Input id="membership-amount" inputMode="decimal" value={membershipAmount} onChange={(event) => setMembershipAmount(event.target.value)} placeholder="150.00" disabled={billingBasis === "NO_INVOICE"} /></div>
-          <div><Label htmlFor="billing-basis">Billing basis</Label><Select value={billingBasis} onValueChange={(value) => { setBillingBasis(value); if (value === "NO_INVOICE") setMembershipAmount("0"); }}><SelectTrigger id="billing-basis"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PER_MEMBER">Per member</SelectItem><SelectItem value="PER_FAMILY">Per family</SelectItem><SelectItem value="NO_INVOICE">No invoice</SelectItem></SelectContent></Select></div>
+          <div><Label htmlFor="billing-basis">Billing basis</Label><Select value={billingBasis} onValueChange={(value) => { setBillingBasis(value); if (value === "NO_INVOICE") setMembershipAmount("0"); }}><SelectTrigger id="billing-basis"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PER_MEMBER">Per member</SelectItem>{familyBillingActive && <SelectItem value="PER_FAMILY">Per family</SelectItem>}<SelectItem value="NO_INVOICE">No invoice</SelectItem></SelectContent></Select></div>
           <div><Label htmlFor="proration-rule">Proration</Label><Select value={prorationRule} onValueChange={setProrationRule}><SelectTrigger id="proration-rule"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="NONE">Full annual fee</SelectItem><SelectItem value="REMAINING_MONTHS_INCLUSIVE">Remaining months, including decision month</SelectItem></SelectContent></Select></div>
           <div><Label htmlFor="membership-from">Effective from</Label><Input id="membership-from" type="date" value={membershipFrom} onChange={(event) => setMembershipFrom(event.target.value)} /></div>
           <div><Label htmlFor="membership-to">Effective to (optional)</Label><Input id="membership-to" type="date" value={membershipTo} onChange={(event) => setMembershipTo(event.target.value)} /></div>
@@ -185,12 +198,12 @@ export default function FeeConfigurationPage() {
       <div className="grid gap-3 md:grid-cols-2">{categories.map((category) => { const current = data?.currentEntranceFees.find((fee) => fee.category === category); const rows = data?.entranceFees.filter((fee) => fee.category === category) ?? []; return <div key={category} className="rounded-md border p-3"><div className="flex items-center justify-between"><span className="font-medium">{category}</span><Badge variant={current?.source === "SCHEDULE" ? "default" : "outline"}>{current?.source === "LEGACY_MAPPING" ? "Compatibility fallback" : current?.source ?? "None"}</Badge></div><p className="text-sm">Current: {dollars(current?.amountCents ?? null)}</p>{rows.map((fee) => <div key={fee.id} className="mt-2 flex items-center gap-2 text-sm"><span>{dollars(fee.amountCents)} · {fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{entranceEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${category} fee`} disabled={saving} onClick={() => { setEditingEntranceFeeId(fee.id); setEntranceCategory(category); setEntranceAmount((fee.amountCents / 100).toFixed(2)); setEntranceFrom(fee.effectiveFrom); setEntranceTo(fee.effectiveTo ?? ""); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${category} fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_ENTRANCE_FEE", id: fee.id, label: `${category} entrance fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>)}</div>; })}</div>
     </CardContent></Card>
 
-    <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Family billing members</CardTitle>{data?.canEdit && !familyEditing && <Button variant="outline" size="sm" aria-label="Edit family billing" onClick={startFamilyEditing}>Edit</Button>}</CardHeader><CardContent className="space-y-3">
+    {familyBillingActive && <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Family billing members</CardTitle>{data?.canEdit && !familyEditing && <Button variant="outline" size="sm" aria-label="Edit family billing" onClick={startFamilyEditing}>Edit</Button>}</CardHeader><CardContent className="space-y-3">
       <p className="text-sm text-muted-foreground">Choose the explicit invoice recipient for each membered family. Login holder and family admin are not inferred.</p>
       {data?.familyGroups.length === 0 && <p className="text-sm text-muted-foreground">No membered families.</p>}
       {data?.familyGroups.map((group) => { const selectId = `family-billing-${group.id}`; return <div key={group.id} className="grid items-center gap-2 rounded-md border p-3 md:grid-cols-[1fr_2fr]"><div><div className="font-medium">{group.name || "Unnamed family"}</div>{group.billingException && <span className="text-sm text-amber-700">Billing exception</span>}</div><div>{familyEditing ? <><Label htmlFor={selectId}>Billing member</Label><Select value={stagedBilling[group.id] ?? "none"} onValueChange={(value) => setStagedBilling((prev) => ({ ...prev, [group.id]: value === "none" ? null : value }))} disabled={saving}><SelectTrigger id={selectId}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">No billing member</SelectItem>{group.members.map((member) => <SelectItem key={member.id} value={member.id} disabled={!member.active}>{memberName(member)} · {member.email}{member.active ? "" : " (inactive)"}</SelectItem>)}</SelectContent></Select></> : <><div className="text-sm text-muted-foreground">Billing member</div><p className="text-sm">{billingMemberLabel(group)}</p></>}</div></div>; })}
       {familyEditing && <div className="flex gap-2"><Button disabled={saving} onClick={() => void saveFamilyBilling()}>Save billing members</Button><Button variant="ghost" disabled={saving} onClick={cancelFamilyEditing}>Cancel</Button></div>}
-    </CardContent></Card>
+    </CardContent></Card>}
     <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !saving) setDeleteTarget(null); }}>
       <DialogContent showCloseButton={false}>
         <DialogHeader><DialogTitle>Delete fee schedule?</DialogTitle><DialogDescription>Delete {deleteTarget?.label}? This removes configuration, not historical invoices. A deprecated entrance mapping may become the active compatibility fallback.</DialogDescription></DialogHeader>

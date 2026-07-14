@@ -176,6 +176,11 @@ enum MembershipBillingExceptionStatus {
   RESOLVED
 }
 
+enum FamilyBillingMode {
+  BILL_FAMILY_VIA_BILLING_MEMBER
+  BILL_MEMBERS_INDIVIDUALLY
+}
+
 enum MembershipAssignmentSource {
   ADMIN
   /// retired (2026-07 audit, #1525 S4): never written in code (`source` always defaults to ADMIN); kept because Postgres enum-value removal requires a type rebuild.
@@ -944,11 +949,17 @@ model MembershipBillingException {
 }
 
 model MembershipSubscriptionBillingSettings {
-  id                String   @id @default("default")
-  invoiceDueDays    Int      @default(30)
+  id                String            @id @default("default")
+  invoiceDueDays    Int               @default(30)
+  // Club billing model. BILL_FAMILY_VIA_BILLING_MEMBER (the default, preserving
+  // pre-#159 behaviour) invoices each family once via its nominated billing
+  // member and allows PER_FAMILY fee schedules. BILL_MEMBERS_INDIVIDUALLY
+  // invoices every member directly, hides the family-billing surface, and
+  // disallows PER_FAMILY schedules.
+  familyBillingMode FamilyBillingMode @default(BILL_FAMILY_VIA_BILLING_MEMBER)
   updatedByMemberId String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 }
 
 // ---------------------------------------------------------------------------

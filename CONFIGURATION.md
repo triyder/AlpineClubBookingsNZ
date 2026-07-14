@@ -672,7 +672,30 @@ decision month is included.
 
 An operator must explicitly confirm the unchanged preview token before durable
 charge snapshots and Xero outbox rows are created. Invoice due days are persisted
-in `MembershipSubscriptionBillingSettings` and default to 30. Missing seasonal
+in `MembershipSubscriptionBillingSettings` and default to 30. The same settings
+row holds `familyBillingMode`, the club billing model, also editable from
+`/admin/subscriptions`:
+
+- `BILL_FAMILY_VIA_BILLING_MEMBER` (the default, preserving pre-#159 behaviour):
+  each family is invoiced once via its nominated billing member, `PER_FAMILY`
+  fee schedules are allowed, and a missing or inactive same-family billing
+  recipient is a visible exception.
+- `BILL_MEMBERS_INDIVIDUALLY`: every member is invoiced directly. The
+  fee-configuration family-billing card is hidden, no billing-member exception
+  is raised, and `PER_FAMILY` schedules are rejected server-side on
+  create/update. A `PER_FAMILY` schedule left over from a mode switch is not
+  reinterpreted as per-member; it surfaces as a
+  `PER_FAMILY_FEE_IN_INDIVIDUAL_MODE` exception and must be changed to a
+  per-member or no-invoice basis before it can be invoiced.
+
+Operator rollout: a club that invoices each member directly should switch
+`familyBillingMode` to `BILL_MEMBERS_INDIVIDUALLY` from `/admin/subscriptions`
+after this feature deploys. Before flipping the mode, re-base any existing
+`PER_FAMILY` fee schedules to per-member or no-invoice; a `PER_FAMILY` schedule
+left in place becomes an uninvoiceable `PER_FAMILY_FEE_IN_INDIVIDUAL_MODE`
+exception under individual billing.
+
+Missing seasonal
 type, fee schedule, family, or active same-family billing recipient becomes a
 visible exception and never produces an invoice. `NO_INVOICE` produces a
 zero-cent, not-required snapshot rather than being confused with missing setup.
@@ -841,13 +864,17 @@ effective-dated amounts and family billing members under
 `/admin/fee-configuration`. Hut fees remain lodge season/rate configuration.
 See `docs/AUTHORITATIVE_FEES.md` for operator and compatibility rules.
 
-Each of the three `/admin/fee-configuration` sections (annual membership fees,
-entrance fees, family billing members) loads read-only. Use the section's Edit
-button to expose its form and per-row controls; changes are staged locally and
-only written when you commit that section (Add/Update fee, or Save billing
-members). Leaving a section without committing (Close section on the fee
-sections, Cancel on family billing) discards staged changes without an API
-call, and finance view-only users see the saved values with no Edit buttons.
+The `/admin/fee-configuration` page shows annual membership fees, entrance fees,
+and (only when `familyBillingMode` is `BILL_FAMILY_VIA_BILLING_MEMBER`) family
+billing members. Each section loads read-only. Use the section's Edit button to
+expose its form and per-row controls; changes are staged locally and only
+written when you commit that section (Add/Update fee, or Save billing members).
+Leaving a section without committing (Close section on the fee sections, Cancel
+on family billing) discards staged changes without an API call, and finance
+view-only users see the saved values with no Edit buttons. When the club bills
+members individually the family-billing card is hidden entirely, the membership
+billing-basis picker omits the per-family option, and any pre-existing
+per-family schedule shows a warning prompting an operator to change its basis.
 
 The finance dashboard reads its revenue, cost, and balance figures from the
 single operational Xero connection configured above. There are no separate

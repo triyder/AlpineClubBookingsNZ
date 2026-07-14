@@ -1,5 +1,6 @@
 "use client";
 
+import type { FamilyBillingMode } from "@prisma/client";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, MailWarning, ReceiptText, RefreshCw } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
@@ -8,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { useConfirm } from "@/components/confirm-dialog";
 import { AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action";
@@ -47,7 +49,7 @@ type BillingData = {
     coverage: Array<{ memberName: string }>;
   }>;
   exceptions: Array<{ id: string; fingerprint: string; message: string }>;
-  settings: { invoiceDueDays: number };
+  settings: { invoiceDueDays: number; familyBillingMode: FamilyBillingMode };
 };
 
 export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number }) {
@@ -56,6 +58,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
   const [decisionDate, setDecisionDate] = useState(() => todayDateOnlyForTimeZone());
   const [data, setData] = useState<BillingData | null>(null);
   const [dueDays, setDueDays] = useState("30");
+  const [familyBillingMode, setFamilyBillingMode] = useState<FamilyBillingMode>("BILL_FAMILY_VIA_BILLING_MEMBER");
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [loadFeedback, setLoadFeedback] = useState<{ kind: "error"; text: string } | null>(null);
@@ -79,6 +82,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
       if (generation !== loadGeneration.current) return;
       setData(body);
       setDueDays(String(body.settings.invoiceDueDays));
+      setFamilyBillingMode(body.settings.familyBillingMode);
     } catch (error) {
       if (generation !== loadGeneration.current) return;
       setData(null);
@@ -149,6 +153,30 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
           <Button type="button" variant="outline" onClick={() => void load()} disabled={loading || working}><RefreshCw className="mr-1 h-4 w-4" /> Refresh preview</Button>
           <div className="space-y-1"><Label htmlFor="subscription-due-days">Invoice due days</Label><Input id="subscription-due-days" className="w-28" type="number" min={1} max={365} value={dueDays} disabled={!canEditFinance} onChange={(event) => setDueDays(event.target.value)} /></div>
           <ViewOnlyActionButton canEdit={canEditFinance} type="button" variant="outline" disabled={working || Number(dueDays) < 1 || Number(dueDays) > 365} onClick={() => void post({ action: "UPDATE_SETTINGS", invoiceDueDays: Number(dueDays) })}>Save due days</ViewOnlyActionButton>
+        </div>
+        <div className="space-y-2 rounded-md border p-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="family-billing-mode">Family billing mode</Label>
+              <Select value={familyBillingMode} onValueChange={(value) => setFamilyBillingMode(value as FamilyBillingMode)} disabled={!canEditFinance || working}>
+                <SelectTrigger id="family-billing-mode" className="w-80"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="BILL_FAMILY_VIA_BILLING_MEMBER">Bill families via a billing member</SelectItem>
+                  <SelectItem value="BILL_MEMBERS_INDIVIDUALLY">Bill members individually</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {/* Save the mode with the last-SAVED due days (data.settings), not the
+                possibly-dirty input, so switching the mode never silently
+                persists an unsaved due-days edit. Due days are changed only via
+                the separate "Save due days" button above. */}
+            <ViewOnlyActionButton canEdit={canEditFinance} type="button" variant="outline" disabled={working || !data} onClick={() => { if (!data) return; void post({ action: "UPDATE_SETTINGS", invoiceDueDays: data.settings.invoiceDueDays, familyBillingMode }); }}>Save billing mode</ViewOnlyActionButton>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {familyBillingMode === "BILL_FAMILY_VIA_BILLING_MEMBER"
+              ? "Each family is invoiced once, to the billing member nominated on Membership & Entrance Fees. Per-family fee schedules are allowed and families without an active billing member are flagged as exceptions."
+              : "Every member is invoiced directly. The family billing members card is hidden, no billing-member exceptions are raised, and per-family fee schedules are disabled."}
+          </p>
         </div>
         {!canEditFinance ? <AdminViewOnlyNotice>Finance view access can inspect previews and charge history. Finance edit access is required to change settings, confirm billing, or retry Xero delivery.</AdminViewOnlyNotice> : null}
         {mutationFeedback ? <Alert variant={mutationFeedback.kind === "success" ? "success" : "error"}>{mutationFeedback.text}</Alert> : null}

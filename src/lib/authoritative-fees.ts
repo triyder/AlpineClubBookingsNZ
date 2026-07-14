@@ -1,5 +1,6 @@
 import type {
   EntranceFeeCategory,
+  FamilyBillingMode,
   MembershipFeeBillingBasis,
   MembershipFeeProrationRule,
   Prisma,
@@ -12,6 +13,29 @@ export const MEMBERSHIP_FEE_BILLING_BASES = [
   "PER_FAMILY",
   "NO_INVOICE",
 ] as const satisfies readonly MembershipFeeBillingBasis[];
+
+export const FAMILY_BILLING_MODES = [
+  "BILL_FAMILY_VIA_BILLING_MEMBER",
+  "BILL_MEMBERS_INDIVIDUALLY",
+] as const satisfies readonly FamilyBillingMode[];
+
+// Behaviour-preserving default: existing deployments and a missing settings row
+// both read as the pre-#159 family-billing model. Kept in lockstep with the
+// schema column default on MembershipSubscriptionBillingSettings.
+export const DEFAULT_FAMILY_BILLING_MODE = "BILL_FAMILY_VIA_BILLING_MEMBER" as const satisfies FamilyBillingMode;
+
+// Reads the club-level family billing mode from the singleton settings row.
+// A missing row means the club has never edited billing settings, which is
+// exactly the behaviour-preserving family-billing default.
+export async function getFamilyBillingMode(
+  store: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<FamilyBillingMode> {
+  const row = await store.membershipSubscriptionBillingSettings.findUnique({
+    where: { id: "default" },
+    select: { familyBillingMode: true },
+  });
+  return row?.familyBillingMode ?? DEFAULT_FAMILY_BILLING_MODE;
+}
 
 export const MEMBERSHIP_FEE_PRORATION_RULES = [
   "NONE",

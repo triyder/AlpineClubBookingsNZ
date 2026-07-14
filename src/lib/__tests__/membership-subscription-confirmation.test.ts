@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   mapping: vi.fn(),
   fee: vi.fn(),
+  familyMode: vi.fn(),
   client: null as unknown,
 }));
 
@@ -35,7 +36,7 @@ vi.mock("@/lib/prisma", () => {
   mocks.client = client;
   return { prisma: client };
 });
-vi.mock("@/lib/authoritative-fees", () => ({ getEffectiveMembershipAnnualFee: mocks.fee }));
+vi.mock("@/lib/authoritative-fees", () => ({ getEffectiveMembershipAnnualFee: mocks.fee, getFamilyBillingMode: mocks.familyMode }));
 vi.mock("@/lib/xero-mappings", () => ({ getResolvedAccountMapping: mocks.mapping }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
 
@@ -48,6 +49,7 @@ describe("membership subscription confirmation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.settingsFind.mockResolvedValue({ invoiceDueDays: 30 });
+    mocks.familyMode.mockResolvedValue("BILL_FAMILY_VIA_BILLING_MEMBER");
     mocks.coverageFindMany.mockResolvedValue([]);
     mocks.coverageFindUnique.mockResolvedValue(null);
     mocks.memberFindMany.mockResolvedValue([{
