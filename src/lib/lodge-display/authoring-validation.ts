@@ -5,6 +5,8 @@ import {
   validateDisplayLayoutDefinition,
   validateDisplaySlotContent,
   validateHtmlModuleEmbeds,
+  type DisplayAreaDefinition,
+  type DisplaySlotContentMap,
 } from "./layout-registry";
 import { MAX_AUTHORED_CSS_CHARS, sanitiseDisplayCss } from "./css-tokens";
 
@@ -18,19 +20,23 @@ import { MAX_AUTHORED_CSS_CHARS, sanitiseDisplayCss } from "./css-tokens";
 //
 // The judgement wraps the pieces the render pipeline already trusts at serve
 // time (layout-render.ts): the layout-registry structural validators, the
-// module-embed / token checks inside authored html, and the authored-CSS
-// sanitiser. It splits its findings two ways (ADR-003 §5 — required, not
-// optional):
+// module-embed / token checks inside authored html, the authored-CSS
+// sanitiser, and (issue #161) the display's img-src restriction on authored
+// html. It splits its findings two ways (ADR-003 §5 — required, not optional):
 //
 //   • ERROR   — structural invalidity. The definition cannot render safely, so
 //               the save MUST be refused (`ok: false`). Mirrors the fail-fast
 //               stance buildLayoutRender takes at serve time.
 //   • WARNING — content the CSS sanitiser neutralised (an external url(),
-//               `@import`, an `expression(` vector, an over-length block, …).
-//               The save is ALLOWED — serve time re-sanitises identically, so
-//               the wall is safe regardless — but the author is told exactly
-//               what was stripped so a surprise is surfaced at authoring time,
-//               not discovered on the wall.
+//               `@import`, an `expression(` vector, an over-length block, …)
+//               or an absolute `http(s)` `<img>` src the display's img-src
+//               restriction blocks (see {@link isDisplayBlockedImgSrc} — a
+//               protocol-relative src is excluded because the CMS default
+//               already silently strips it, so it is not a display-specific
+//               surprise). The save is ALLOWED — serve time re-sanitises
+//               identically, so the wall is safe regardless — but the author
+//               is told exactly what was stripped so a surprise is surfaced at
+//               authoring time, not discovered on the wall.
 //
 // Marked `server-only`: this is the server-side save contract. It imports only
 // client-safe helpers (the validators and the CSS sanitiser are pure), but the
@@ -132,6 +138,84 @@ function cssSanitisationWarnings(css: string, path: string): ValidationIssue[] {
   return warnings;
 }
 
+// ---------------------------------------------------------------------------
+// HTML img-src warning (issue #161, ADR-003 residual)
+// ---------------------------------------------------------------------------
+
+/** An `<img>` src the CMS default sanitiser allows (an absolute `http`/`https`
+ * URL — page-content-html.ts's `allowedSchemesByTag.img`) but the display's
+ * `restrictImgSrc` variant blocks. Deliberately narrower than
+ * {@link isExternalCssUrl}: a protocol-relative `//host` src is already
+ * stripped by the CMS default (nothing display-specific to warn about there),
+ * and `data:` is exactly what the display variant newly ALLOWS relative to the
+ * CMS default (the opposite direction — never a warning). */
+function isDisplayBlockedImgSrc(target: string): boolean {
+  return /^https?:/i.test(target.trim());
+}
+
+/**
+ * Report when the display's img-src restriction would strip an `<img>` src
+ * from one authored HTML field — so an accepted save still warns the author
+ * (serve time applies the identical restriction, so the wall is safe either
+ * way; without this the author would only discover it as a missing image on
+ * an unattended screen). Scans the ORIGINAL for the vector the restriction
+ * blocks, mirroring {@link cssSanitisationWarnings}'s approach.
+ */
+function htmlImgSanitisationWarnings(html: string, path: string): ValidationIssue[] {
+  if (typeof html !== "string" || html === "") return [];
+
+  const imgSrcRegex = /<img\b[^>]*\ssrc\s*=\s*(['"])(.*?)\1/gi;
+  let match: RegExpExecArray | null;
+  while ((match = imgSrcRegex.exec(html)) !== null) {
+    if (isDisplayBlockedImgSrc(match[2])) {
+      return [
+        {
+          path,
+          message:
+            "external <img> src blocked — only relative paths and data: URIs " +
+            "render on the wall (display img-src is 'self' data:)",
+        },
+      ];
+    }
+  }
+  return [];
+}
+
+/** As {@link htmlImgSanitisationWarnings}, over every `defaultContent.html`
+ * carried by a validated Layout's areas — the Layout-level fallback content
+ * renders through the same restricted path as everything else (layout-render's
+ * `renderAreas`). */
+function areaDefaultContentImgWarnings(
+  areas: DisplayAreaDefinition[]
+): ValidationIssue[] {
+  const warnings: ValidationIssue[] = [];
+  for (const area of areas) {
+    if (area.defaultContent && "html" in area.defaultContent) {
+      warnings.push(
+        ...htmlImgSanitisationWarnings(
+          area.defaultContent.html,
+          `areas.${area.key}.defaultContent`
+        )
+      );
+    }
+  }
+  return warnings;
+}
+
+/** As {@link htmlImgSanitisationWarnings}, over every html slot in a validated
+ * Template's slotContent (module slots carry no html, so are skipped). */
+function slotContentImgWarnings(
+  slotContent: DisplaySlotContentMap
+): ValidationIssue[] {
+  const warnings: ValidationIssue[] = [];
+  for (const [key, content] of Object.entries(slotContent)) {
+    if ("html" in content) {
+      warnings.push(...htmlImgSanitisationWarnings(content.html, `slotContent.${key}`));
+    }
+  }
+  return warnings;
+}
+
 /** Map a thrown validator error to a structured issue. Only the layout/registry
  * validators throw InvalidDisplayLayoutError; anything else is unexpected and
  * still reported (fail closed) rather than leaking as a 500 in the caller. */
@@ -159,16 +243,23 @@ export interface LayoutForSave {
  * Judge a Layout before it is saved (#79). Structural failure (bodyHtml/areas
  * disagree, a bad slug, an unknown module embed in a default slot, …) is an
  * ERROR that refuses the save; anything the CSS sanitiser would strip from
- * `defaultCss` is a WARNING (serve time re-sanitises, so the wall is safe).
+ * `defaultCss`, or the display img-src restriction would strip from `bodyHtml`
+ * / an area's default content, is a WARNING (serve time re-sanitises, so the
+ * wall is safe either way — issue #161).
  */
 export function validateLayoutForSave(input: LayoutForSave): SaveValidationResult {
   const errors: ValidationIssue[] = [];
+  let imgWarnings = htmlImgSanitisationWarnings(input.bodyHtml, "bodyHtml");
   try {
-    validateDisplayLayoutDefinition(input.bodyHtml, input.areas);
+    const areas = validateDisplayLayoutDefinition(input.bodyHtml, input.areas);
+    imgWarnings = [...imgWarnings, ...areaDefaultContentImgWarnings(areas)];
   } catch (error) {
     errors.push(issueFromError(error, "layout"));
   }
-  const warnings = cssSanitisationWarnings(input.defaultCss, "defaultCss");
+  const warnings = [
+    ...cssSanitisationWarnings(input.defaultCss, "defaultCss"),
+    ...imgWarnings,
+  ];
   return verdict(errors, warnings);
 }
 
@@ -186,18 +277,22 @@ export interface TemplateForSave {
  * validated against its Layout's areas (an unknown slot key, a bad module, a
  * malformed embed in authored html is an ERROR); the footer html is checked for
  * malformed/unknown module embeds; anything the CSS sanitiser would strip from
- * `cssOverrides` is a WARNING. When the bound Layout itself is structurally
- * invalid the slot check cannot run, so that surfaces as a `layout` error.
+ * `cssOverrides`, or the display img-src restriction would strip from a slot's
+ * html / the footer html, is a WARNING (issue #161). When the bound Layout
+ * itself is structurally invalid the slot check cannot run, so that surfaces
+ * as a `layout` error.
  */
 export function validateTemplateForSave(input: TemplateForSave): SaveValidationResult {
   const errors: ValidationIssue[] = [];
+  let slotImgWarnings: ValidationIssue[] = [];
   try {
     const areas = validateDisplayLayoutDefinition(
       input.layout.bodyHtml,
       input.layout.areas
     );
     try {
-      validateDisplaySlotContent(areas, input.slotContent);
+      const slotContent = validateDisplaySlotContent(areas, input.slotContent);
+      slotImgWarnings = slotContentImgWarnings(slotContent);
     } catch (error) {
       errors.push(issueFromError(error, "slotContent"));
     }
@@ -211,6 +306,10 @@ export function validateTemplateForSave(input: TemplateForSave): SaveValidationR
   } catch (error) {
     errors.push(issueFromError(error, "footerHtml"));
   }
-  const warnings = cssSanitisationWarnings(input.cssOverrides, "cssOverrides");
+  const warnings = [
+    ...cssSanitisationWarnings(input.cssOverrides, "cssOverrides"),
+    ...slotImgWarnings,
+    ...htmlImgSanitisationWarnings(input.footerHtml, "footerHtml"),
+  ];
   return verdict(errors, warnings);
 }

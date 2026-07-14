@@ -135,6 +135,53 @@ describe("buildLayoutRender — LTV-028 value-token resolution", () => {
   });
 });
 
+// Issue #161 (ADR-003 residual): the display img-src CSP is now 'self' data:,
+// so an <img> pointed at an external host — including one saved BEFORE this
+// change — must render with its src stripped, not throw and blank the board.
+describe("buildLayoutRender — display img-src restriction (issue #161)", () => {
+  it("strips an external <img> src from every authored html surface without throwing", () => {
+    const render = buildLayoutRender(
+      input({
+        bodyHtml:
+          '<h1>{{lodge-name}}</h1><img src="https://evil.example/beacon.gif" />' +
+          "{{area:main}}{{area:withdefault}}",
+        slotContent: {
+          main: { html: '<img src="https://evil.example/x.png" alt="x" />' },
+        },
+        footerHtml: '<img src="https://evil.example/y.png" />Wi-Fi info',
+      }),
+      state()
+    );
+
+    expect(render.bodyHtml).not.toContain("evil.example");
+    expect(render.bodyHtml).toContain("<img />");
+    expect(slotHtml(render, "main")).not.toContain("evil.example");
+    expect(slotHtml(render, "main")).toBe('<img alt="x" />');
+    expect(render.footerHtml).not.toContain("evil.example");
+    // The rest of the board still renders — never a blank board.
+    expect(render.bodyHtml).toContain("Silverpeak Lodge");
+    expect(render.footerHtml).toContain("Wi-Fi info");
+  });
+
+  it("keeps a relative/self <img> src and a data: <img> src (matches display CSP img-src 'self' data:)", () => {
+    const render = buildLayoutRender(
+      input({
+        slotContent: {
+          main: {
+            html:
+              '<img src="/branding/lodge.jpg" alt="a" />' +
+              '<img src="data:image/png;base64,aGVsbG8=" alt="b" />',
+          },
+        },
+      }),
+      state()
+    );
+    expect(slotHtml(render, "main")).toBe(
+      '<img src="/branding/lodge.jpg" alt="a" /><img src="data:image/png;base64,aGVsbG8=" alt="b" />'
+    );
+  });
+});
+
 describe("buildLayoutRender — LTV-041 marker replacement (issue #96)", () => {
   it("keeps an area marker INSIDE an authored container (nesting preserved)", () => {
     // The 2+1 case: two placeholders nested two containers deep. The marker must
