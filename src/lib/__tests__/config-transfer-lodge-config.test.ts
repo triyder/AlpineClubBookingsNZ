@@ -29,6 +29,7 @@ function sourceDb(): ReadDb {
           displayConfig: { "wifi-code": "alpine1234" },
           displayNameGranularity: "FULL_NAME",
           displayNotice: "Working bee Sunday",
+          showGuestPhonesOnScreens: true,
         },
       ]),
     },
@@ -171,6 +172,8 @@ describe("config-transfer lobby display (issue #50)", () => {
     expect(lodge.displayConfig).toEqual({ "wifi-code": "alpine1234" });
     expect(lodge.displayNameGranularity).toBe("FULL_NAME");
     expect(lodge.displayNotice).toBe("Working bee Sunday");
+    // Phone-display toggle travels with the descriptor (#137 / #37).
+    expect(lodge.showGuestPhonesOnScreens).toBe(true);
 
     // The retired club-wide template file is no longer emitted (LTV-024).
     expect(files.get("lodge-config/display-templates.json")).toBeUndefined();

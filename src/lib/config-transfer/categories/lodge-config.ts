@@ -53,6 +53,10 @@ const LODGE_FIELDS = [
   // {{config:<key>}} glob, the name-granularity override, and the committee
   // notice travel with the lodge descriptor.
   "displayConfig", "displayNameGranularity", "displayNotice",
+  // Whether opted-in adult guest phone numbers may show on the public lobby
+  // display (#137 / #37). Travels with the lodge descriptor like the other
+  // per-lodge display settings.
+  "showGuestPhonesOnScreens",
 ] as const;
 
 const DISPLAY_GRANULARITIES = [
@@ -213,6 +217,9 @@ function buildLodgeData(descriptor: Record<string, unknown>, slug: string): Reco
   if ("displayNotice" in descriptor) {
     data.displayNotice = asNullableStr(descriptor.displayNotice);
   }
+  if ("showGuestPhonesOnScreens" in descriptor) {
+    data.showGuestPhonesOnScreens = coerceBool(descriptor.showGuestPhonesOnScreens);
+  }
   return data;
 }
 
@@ -227,6 +234,7 @@ interface LodgeCurrent {
   displayConfig: unknown;
   displayNameGranularity: string | null;
   displayNotice: string | null;
+  showGuestPhonesOnScreens: boolean;
 }
 interface SeasonCurrent {
   id: string;
@@ -256,6 +264,7 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
       id: true, slug: true, name: true, active: true, travelNote: true,
       doorCode: true, isDefault: true,
       displayConfig: true, displayNameGranularity: true, displayNotice: true,
+      showGuestPhonesOnScreens: true,
     },
   });
   const lodges = new Map(lodgeRows.map((l) => [l.slug, l]));
@@ -339,6 +348,7 @@ export const lodgeConfigExporter: CategoryExporter = {
         slug: true, name: true, active: true, travelNote: true,
         doorCode: true, isDefault: true,
         displayConfig: true, displayNameGranularity: true, displayNotice: true,
+      showGuestPhonesOnScreens: true,
       },
     });
     const rooms = await ctx.db.lodgeRoom.findMany({
@@ -385,6 +395,7 @@ export const lodgeConfigExporter: CategoryExporter = {
         displayConfig: lodge.displayConfig ?? null,
         displayNameGranularity: lodge.displayNameGranularity,
         displayNotice: lodge.displayNotice,
+        showGuestPhonesOnScreens: lodge.showGuestPhonesOnScreens,
       };
       if (ctx.includeDoorCodes) descriptor.doorCode = lodge.doorCode;
       entries.push({
@@ -486,6 +497,13 @@ function parseLodgeFolder(
       errors.push(`${paths.lodge}: displayNotice must be text of at most ${DISPLAY_NOTICE_MAX} characters or null`);
       delete descriptor.displayNotice;
     }
+  }
+  if (
+    "showGuestPhonesOnScreens" in descriptor &&
+    typeof descriptor.showGuestPhonesOnScreens !== "boolean"
+  ) {
+    errors.push(`${paths.lodge}: showGuestPhonesOnScreens must be true or false`);
+    delete descriptor.showGuestPhonesOnScreens;
   }
 
   const out: ParsedLodgeRows = { slug, descriptor, rooms: [], beds: [], seasons: [], rates: [] };
