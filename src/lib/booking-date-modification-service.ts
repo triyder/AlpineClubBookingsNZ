@@ -33,6 +33,8 @@ import {
 import {
   OverCapacityConfirmationRequiredError,
   overCapacityNights,
+  wholeLodgeBlockedNights,
+  WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
@@ -406,6 +408,12 @@ export async function modifyBookingDates({
           throw new OverCapacityConfirmationRequiredError(
             overCapacityNights(capacity),
           );
+        }
+        // Confirmed override cannot bypass an exclusive hold (ADR-001 decision
+        // 5, issue #118) — refuse before stamping capacityOverridden.
+        const blocked = wholeLodgeBlockedNights(capacity);
+        if (blocked.length > 0) {
+          throw new WholeLodgeHoldBlockedError(blocked);
         }
         capacityOverridden = true;
       }
@@ -1229,6 +1237,12 @@ export async function adminShiftBookingDates({
         throw new OverCapacityConfirmationRequiredError(
           overCapacityNights(capacity),
         );
+      }
+      // Confirmed override cannot bypass an exclusive hold (ADR-001 decision 5,
+      // issue #118) — refuse before stamping capacityOverridden.
+      const blocked = wholeLodgeBlockedNights(capacity);
+      if (blocked.length > 0) {
+        throw new WholeLodgeHoldBlockedError(blocked);
       }
       capacityOverridden = true;
     }

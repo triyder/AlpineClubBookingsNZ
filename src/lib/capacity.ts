@@ -26,6 +26,13 @@ export interface NightAvailability {
   date: Date;
   occupiedBeds: number;
   availableBeds: number;
+  // True when a capacity-holding booking overlapping this night holds the
+  // whole lodge exclusively (ADR-001, issue #118). A held night is hard-blocked:
+  // availableBeds is pinned to 0 (never negative, so it stays OUT of the
+  // over-capacity confirm set) and `available` is forced false. To members it is
+  // indistinguishable from a genuinely full lodge (decision 6); an admin
+  // over-capacity override cannot punch into it (decision 5).
+  wholeLodgeHeld?: boolean;
 }
 
 // The admin-override over-capacity error/helpers (issue #1668) live in
@@ -136,6 +143,48 @@ export function getOccupiedBedsForNight(
   return getOccupiedBedsForNightFromIndex(night, buildOccupancyIndex(bookings));
 }
 
+type WholeLodgeHoldBooking = {
+  checkIn?: Date | null;
+  checkOut?: Date | null;
+  wholeLodgeHold?: boolean | null;
+};
+
+type WholeLodgeHoldEntry = { checkInKey: string; checkOutKey: string };
+
+/**
+ * Precompute the date-only spans of the overlapping bookings that hold the
+ * whole lodge exclusively (ADR-001, issue #118). A booking holds a night when
+ * `checkIn <= night < checkOut` — the [checkIn, checkOut) half-open span, so a
+ * held booking departing on day D does NOT block another booking arriving that
+ * night (back-to-back handovers stay correct).
+ */
+function buildWholeLodgeHoldIndex(
+  bookings: WholeLodgeHoldBooking[]
+): WholeLodgeHoldEntry[] {
+  const index: WholeLodgeHoldEntry[] = [];
+  for (const booking of bookings) {
+    if (!booking.wholeLodgeHold || !booking.checkIn || !booking.checkOut) {
+      continue;
+    }
+    index.push({
+      checkInKey: formatDateOnlyForTimeZone(booking.checkIn),
+      checkOutKey: formatDateOnlyForTimeZone(booking.checkOut),
+    });
+  }
+  return index;
+}
+
+function isNightWholeLodgeHeld(
+  night: Date,
+  index: WholeLodgeHoldEntry[]
+): boolean {
+  if (index.length === 0) return false;
+  const nightKey = formatDateOnly(night);
+  return index.some(
+    (entry) => nightKey >= entry.checkInKey && nightKey < entry.checkOutKey
+  );
+}
+
 /**
  * Check if there's enough capacity for a given number of guests across all nights.
  */
@@ -173,20 +222,29 @@ export async function checkCapacity(
   });
 
   const occupancyIndex = buildOccupancyIndex(overlappingBookings);
+  const holdIndex = buildWholeLodgeHoldIndex(overlappingBookings);
   const nightDetails: NightAvailability[] = nights.map((night) => {
     const occupiedBeds = getOccupiedBedsForNightFromIndex(night, occupancyIndex);
+    const wholeLodgeHeld = isNightWholeLodgeHeld(night, holdIndex);
 
     return {
       date: night,
       occupiedBeds,
-      availableBeds: lodgeCapacity - occupiedBeds,
+      // A held night is hard-blocked at 0 — never negative, so it stays out of
+      // the over-capacity confirm set and cannot be bypassed by an admin
+      // override (ADR-001 decision 5, issue #118).
+      availableBeds: wholeLodgeHeld ? 0 : lodgeCapacity - occupiedBeds,
+      wholeLodgeHeld,
     };
   });
 
   const minAvailable = Math.min(...nightDetails.map((n) => n.availableBeds));
+  const hasHeld = nightDetails.some((n) => n.wholeLodgeHeld);
 
   return {
-    available: minAvailable >= guestCount,
+    // A held night presents exactly as a full lodge (decision 6): unavailable
+    // regardless of the numeric bed count.
+    available: minAvailable >= guestCount && !hasHeld,
     minAvailable,
     nightDetails,
   };
@@ -230,24 +288,33 @@ export async function checkCapacityForGuestRanges(
   });
 
   const occupancyIndex = buildOccupancyIndex(overlappingBookings);
+  const holdIndex = buildWholeLodgeHoldIndex(overlappingBookings);
   const nightDetails: NightAvailability[] = nights.map((night) => {
     const occupiedBeds = getOccupiedBedsForNightFromIndex(night, occupancyIndex);
     const proposedBeds = countActiveGuestsForNight(guests, night, {
       checkIn: start,
       checkOut: exclusiveEnd,
     });
+    const wholeLodgeHeld = isNightWholeLodgeHeld(night, holdIndex);
 
     return {
       date: night,
       occupiedBeds: occupiedBeds + proposedBeds,
-      availableBeds: lodgeCapacity - occupiedBeds - proposedBeds,
+      // A held night is hard-blocked at 0 — never negative, so it stays out of
+      // the over-capacity confirm set (overCapacityNights) and cannot be
+      // bypassed by an admin override (ADR-001 decision 5, issue #118).
+      availableBeds: wholeLodgeHeld ? 0 : lodgeCapacity - occupiedBeds - proposedBeds,
+      wholeLodgeHeld,
     };
   });
 
   const minAvailable = Math.min(...nightDetails.map((n) => n.availableBeds));
+  const hasHeld = nightDetails.some((n) => n.wholeLodgeHeld);
 
   return {
-    available: minAvailable >= 0,
+    // A held night presents exactly as a full lodge (decision 6): unavailable
+    // even when the numeric bed arithmetic would fit.
+    available: minAvailable >= 0 && !hasHeld,
     minAvailable,
     nightDetails,
   };
@@ -469,11 +536,21 @@ export async function checkCapacityForPartnerSharedAdmission(
   });
 
   const occupancyIndex = buildOccupancyIndex(overlappingBookings);
+  const holdIndex = buildWholeLodgeHoldIndex(overlappingBookings);
   let reason: string | null = null;
   const nightDetails: PartnerSharedNightDetail[] = nights.map((night) => {
     const nightKey = formatDateOnly(night);
     const occupied = getOccupiedBedsForNightFromIndex(night, occupancyIndex);
     const ordinary = countActiveGuestsForNight(ordinaryGuests, night, envelope);
+    const wholeLodgeHeld = isNightWholeLodgeHeld(night, holdIndex);
+    if (wholeLodgeHeld) {
+      // A whole-lodge hold (ADR-001, issue #118) hard-blocks this night even for
+      // the admin-initiated partner-shared admission path — decision 5: a hold is
+      // not bypassable by any admin override. Pinned to availableBeds 0 (never
+      // negative) and surfaced via `reason`.
+      reason ??=
+        "The lodge is exclusively held for another booking for part of the requested stay.";
+    }
 
     let sharersPresent = 0;
     for (const [index, sharer] of sharers.entries()) {
@@ -521,9 +598,12 @@ export async function checkCapacityForPartnerSharedAdmission(
     return {
       date: night,
       occupiedBeds: occupied + totalProposed,
-      availableBeds: baseCapacity + headroom - occupied - totalProposed,
+      availableBeds: wholeLodgeHeld
+        ? 0
+        : baseCapacity + headroom - occupied - totalProposed,
       sharedSlotsUsed: sharedUsed,
       sharedSlotsNeeded: sharedNeeded,
+      wholeLodgeHeld,
     };
   });
 
@@ -552,6 +632,7 @@ export async function getMonthAvailability(
 ): Promise<Map<string, number>> {
   const startDate = getMonthStartDateOnly(year, month);
   const endDate = getNextMonthStartDateOnly(year, month);
+  const lodgeCapacity = await getLodgeCapacity(lodgeId);
 
   const overlappingBookings = await prisma.booking.findMany({
     where: {
@@ -573,9 +654,17 @@ export async function getMonthAvailability(
   const availability = new Map<string, number>();
   const nights = eachDateOnlyInRange(startDate, endDate);
   const occupancyIndex = buildOccupancyIndex(overlappingBookings);
+  const holdIndex = buildWholeLodgeHoldIndex(overlappingBookings);
 
   for (const night of nights) {
-    const occupiedBeds = getOccupiedBedsForNightFromIndex(night, occupancyIndex);
+    // A whole-lodge-held night (ADR-001, issue #118) must be indistinguishable
+    // from a genuinely full lodge on the public calendar (decision 6): report
+    // full occupancy so no free beds are ever shown, regardless of the real
+    // headcount on that night. Otherwise a held-but-not-full night would leak
+    // the hold — a member could tell it apart from a full lodge.
+    const occupiedBeds = isNightWholeLodgeHeld(night, holdIndex)
+      ? lodgeCapacity
+      : getOccupiedBedsForNightFromIndex(night, occupancyIndex);
 
     const key = formatDateOnly(night);
     availability.set(key, occupiedBeds);

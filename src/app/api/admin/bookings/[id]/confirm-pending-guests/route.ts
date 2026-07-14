@@ -16,6 +16,7 @@ import {
   checkCapacityForGuestRanges,
   type NightAvailability,
 } from "@/lib/capacity";
+import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -201,6 +202,20 @@ export async function POST(
           tx
         );
 
+        // Exclusive whole-lodge hold (ADR-001 decision 5, issue #118): refuse
+        // even under allowOverbook, before any status advance. Held nights are
+        // pinned to 0 so they never appear in overbookDates — this is the only
+        // guard that catches them.
+        const blockedNights = wholeLodgeBlockedNights({ nightDetails });
+        if (blockedNights.length > 0) {
+          return {
+            error: "WHOLE_LODGE_HOLD_BLOCKED" as const,
+            code: "WHOLE_LODGE_HOLD_BLOCKED" as const,
+            blockedNights,
+            status: 409,
+          };
+        }
+
         if (!available && !allowOverbook) {
           return {
             error: "CAPACITY_EXCEEDED" as const,
@@ -236,8 +251,12 @@ export async function POST(
         return NextResponse.json(
           {
             error: zeroResult.error,
+            ...("code" in zeroResult ? { code: zeroResult.code } : {}),
             ...("overbookDates" in zeroResult
               ? { overbookDates: zeroResult.overbookDates }
+              : {}),
+            ...("blockedNights" in zeroResult
+              ? { blockedNights: zeroResult.blockedNights }
               : {}),
           },
           { status: zeroResult.status }
@@ -320,6 +339,17 @@ export async function POST(
         bookingId,
         tx
       );
+      // Exclusive whole-lodge hold (ADR-001 decision 5, issue #118): refuse even
+      // under allowOverbook, before the CONFIRMED claim and any Stripe charge.
+      const blockedNights = wholeLodgeBlockedNights({ nightDetails });
+      if (blockedNights.length > 0) {
+        return {
+          error: "WHOLE_LODGE_HOLD_BLOCKED" as const,
+          code: "WHOLE_LODGE_HOLD_BLOCKED" as const,
+          blockedNights,
+          status: 409,
+        };
+      }
       if (!available && !allowOverbook) {
         return {
           error: "CAPACITY_EXCEEDED" as const,
@@ -377,8 +407,12 @@ export async function POST(
       return NextResponse.json(
         {
           error: claim.error,
+          ...("code" in claim ? { code: claim.code } : {}),
           ...("overbookDates" in claim
             ? { overbookDates: claim.overbookDates }
+            : {}),
+          ...("blockedNights" in claim
+            ? { blockedNights: claim.blockedNights }
             : {}),
         },
         { status: claim.status }

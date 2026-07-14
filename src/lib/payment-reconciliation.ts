@@ -244,6 +244,19 @@ export async function markBookingPaymentSucceeded({
       // Persisted capacity override (#1771): this booking was deliberately
       // admitted above the ceiling by an admin. Settle it instead of cancelling
       // — fall through to the PAID update below.
+      //
+      // Whole-lodge hold (ADR-001, issue #118) is DELIBERATELY not enforced on
+      // this settle path (and the other persisted-override settlements: cron-
+      // confirm-pending, switch-to-internet-banking, charge-saved-method,
+      // payment-link, xero-inbound invoice-paid-effects, group-settlement).
+      // Those settle a PRE-EXISTING overridden booking; a hold may have been
+      // placed over it AFTERWARDS. Per ADR-001 decision 1 (conflicts are
+      // allowed, surfaced, and manually resolved — no auto-displacement/refusal)
+      // an already-admitted booking is not a "new admission", so auto-refusing
+      // it here would contradict decision 1. The hold blocks only NEW admissions
+      // (decision 5), enforced at the admission choke points (booking-create,
+      // date/modify-plan, and the admin allowOverbook routes force-confirm /
+      // confirm-pending-guests / capacity-hold).
       logger.info(
         { bookingId: booking.id },
         "Settling an over-capacity booking with a persisted capacity override (#1771); skipping the capacity cancel"

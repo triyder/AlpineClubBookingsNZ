@@ -9,7 +9,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgeTier, BookingStatus } from "@prisma/client";
-import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
+import {
+  OverCapacityConfirmationRequiredError,
+  WholeLodgeHoldBlockedError,
+} from "@/lib/over-capacity-confirmation";
 import { addDaysDateOnly, getTodayDateOnly, formatDateOnly } from "@/lib/date-only";
 
 const h = vi.hoisted(() => ({
@@ -313,6 +316,32 @@ describe("createConfirmedBooking retroactive behaviour (#1695)", () => {
       capacityOverridden: true,
       notifyMember: true,
     });
+  });
+
+  it("override NON-BYPASS: a confirmed on-behalf over-capacity create onto a whole-lodge-held night throws WholeLodgeHoldBlockedError and never creates the booking (ADR-001 decision 5, issue #118)", async () => {
+    // Numeric beds are irrelevant: the night is held (availableBeds pinned to 0,
+    // never negative) so it is not confirmable. Even with confirmOverCapacity
+    // the admin is refused.
+    h.checkCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      nightDetails: [
+        { date: pastCheckIn, occupiedBeds: 2, availableBeds: 0, wholeLodgeHeld: true },
+      ],
+    });
+
+    let thrown: unknown;
+    try {
+      await createConfirmedBooking(retroInput({ confirmOverCapacity: true }));
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(WholeLodgeHoldBlockedError);
+    expect((thrown as WholeLodgeHoldBlockedError).blockedNights).toEqual([
+      formatDateOnly(pastCheckIn),
+    ]);
+    // The whole point: no booking is written onto a held lodge.
+    expect(h.bookingCreate).not.toHaveBeenCalled();
   });
 
   it("suppresses the $0 confirmation email when notifyMember is false", async () => {

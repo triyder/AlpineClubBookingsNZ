@@ -265,6 +265,43 @@ describe("POST /api/admin/bookings/[id]/capacity-hold (Admin Hold)", () => {
     });
   });
 
+  it("refuses with 409 WHOLE_LODGE_HOLD_BLOCKED when another booking holds the lodge, even with allowOverbook (issue #118)", async () => {
+    // ADR-001 decision 5: an exclusive hold on the target nights is not
+    // bypassable. Held nights are pinned to availableBeds 0 (never negative), so
+    // they never appear in overbookDates — the hold guard is the only refusal.
+    mocks.checkCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      minAvailable: 0,
+      nightDetails: [
+        {
+          date: new Date("2026-09-01T00:00:00.000Z"),
+          occupiedBeds: 4,
+          availableBeds: 0,
+          wholeLodgeHeld: true,
+        },
+        {
+          date: new Date("2026-09-02T00:00:00.000Z"),
+          occupiedBeds: 4,
+          availableBeds: 0,
+          wholeLodgeHeld: true,
+        },
+      ],
+    });
+
+    const response = await POST(
+      holdRequest({ allowOverbook: true }),
+      routeParams(),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe("WHOLE_LODGE_HOLD_BLOCKED");
+    expect(body.code).toBe("WHOLE_LODGE_HOLD_BLOCKED");
+    expect(body.blockedNights).toEqual(["2026-09-01", "2026-09-02"]);
+    expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
   it("rejects a booking that is not PAYMENT_PENDING (v1 scope)", async () => {
     mocks.tx.booking.findUnique.mockResolvedValue(
       paymentPendingBooking({ status: "PENDING" }),

@@ -253,6 +253,53 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(confirmData.capacityOverriddenByMemberId).toBe("admin1");
   });
 
+  // ADR-001 decision 5 (issue #118): an exclusive whole-lodge hold on the target
+  // nights is NOT bypassable — even with allowOverbook the confirm is refused,
+  // before any CONFIRMED claim, Stripe charge, or $0 PAID advance.
+  const HELD = {
+    available: false,
+    minAvailable: 0,
+    nightDetails: [
+      {
+        date: new Date("2026-07-15T00:00:00.000Z"),
+        occupiedBeds: 4,
+        // Pinned to 0 (never negative) so it never appears in overbookDates.
+        availableBeds: 0,
+        wholeLodgeHeld: true,
+      },
+    ],
+  };
+
+  it("refuses the charge branch with 409 WHOLE_LODGE_HOLD_BLOCKED even with allowOverbook, never charging or claiming", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+    mocks.checkCapacity.mockResolvedValue(HELD);
+
+    const res = await POST(makeRequest({ allowOverbook: true }), { params });
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toBe("WHOLE_LODGE_HOLD_BLOCKED");
+    expect(body.code).toBe("WHOLE_LODGE_HOLD_BLOCKED");
+    expect(body.blockedNights).toEqual(["2026-07-15"]);
+    expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
+  });
+
+  it("refuses the $0 branch with 409 WHOLE_LODGE_HOLD_BLOCKED even with allowOverbook, never advancing to PAID", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking({ finalPriceCents: 0 }));
+    mocks.checkCapacity.mockResolvedValue(HELD);
+
+    const res = await POST(makeRequest({ allowOverbook: true }), { params });
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toBe("WHOLE_LODGE_HOLD_BLOCKED");
+    expect(body.blockedNights).toEqual(["2026-07-15"]);
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+  });
+
   // #1418: charge captured, then reconciliation throws (e.g. transient DB
   // failure or a concurrent status change). The captured money must never go
   // silent: the transaction row is already durably recorded (webhook can
