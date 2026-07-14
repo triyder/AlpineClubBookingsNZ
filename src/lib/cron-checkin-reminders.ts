@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { sendCheckinReminderEmail, shouldSendEmail } from "./email";
-import { getNZSTTomorrow } from "./nzst-date";
+import { addDaysDateOnly, getTodayDateOnly } from "./date-only";
 import logger from "@/lib/logger";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { checkinNotBlockedByPendingReviewFilter } from "@/lib/booking-review";
@@ -13,7 +13,7 @@ import { CLUB_LODGE_NAME } from "@/config/club-identity";
  */
 export async function sendCheckinReminders(): Promise<{ sent: number; skipped: number }> {
   const now = new Date();
-  const tomorrowNZ = getNZSTTomorrow();
+  const tomorrowNZ = addDaysDateOnly(getTodayDateOnly(), 1);
   const dayAfterNZ = new Date(tomorrowNZ);
   dayAfterNZ.setDate(dayAfterNZ.getDate() + 1);
 

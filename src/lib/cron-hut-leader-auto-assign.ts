@@ -1,7 +1,7 @@
 import { prisma } from "./prisma";
 import { eachDayOfInterval, addDays } from "date-fns";
 import { calculateOverlapDays } from "./hut-leader-overlap";
-import { getNZSTToday } from "@/lib/nzst-date";
+import { getTodayDateOnly } from "@/lib/date-only";
 import { getDefaultLodgeId } from "./lodges";
 import { loadHutLeaderLookaheadDays } from "./lodge-settings";
 import { loadEffectiveModuleFlags } from "./module-settings";
@@ -23,7 +23,7 @@ export async function autoAssignHutLeaders(): Promise<{
   }
 
   const lookAheadDays = await loadHutLeaderLookaheadDays();
-  const today = getNZSTToday();
+  const today = getTodayDateOnly();
   const endDate = addDays(today, lookAheadDays);
   const days = eachDayOfInterval({ start: today, end: endDate });
 
