@@ -160,15 +160,35 @@ describe("#1819 final accessibility presentation contract", () => {
   });
 
   it("keeps payment and Xero statuses as semantic icon-plus-label chips", () => {
-    const payments = source("src/app/(admin)/admin/payments/page.tsx");
-    const xero = source("src/app/(admin)/admin/xero/_components/shared.tsx");
+    // The tone -> class map is now the single shared source of truth (#156).
+    // Assert the full semantic set lives there so dropping any pair — or
+    // regressing one off its muted-bg + text token pairing — fails the contract.
+    const chipTones = source("src/lib/chip-tones.ts");
+    expect(chipTones).toContain('neutral: "bg-muted text-foreground"');
+    expect(chipTones).toContain('info: "bg-info-muted text-info"');
+    expect(chipTones).toContain('success: "bg-success-muted text-success"');
+    expect(chipTones).toContain('warning: "bg-warning-muted text-warning"');
+    expect(chipTones).toContain('danger: "bg-danger-muted text-danger"');
 
-    for (const text of [payments, xero]) {
+    // The icon + label chip primitives draw their tone from that shared map and
+    // render an icon plus a text label — never colour alone. MiniChip backs the
+    // payments table's inline signals; ToneChip backs every non-domain Xero
+    // status. Both must keep the icon-plus-label shape and the shared tone map.
+    const miniChip = source("src/components/ui/mini-chip.tsx");
+    const xero = source("src/app/(admin)/admin/xero/_components/shared.tsx");
+    for (const text of [miniChip, xero]) {
       expect(text).toContain("inline-flex items-center gap-1");
       expect(text).toContain("<Icon");
       expect(text).toContain("{children}");
-      expect(text).toContain('danger: "bg-danger-muted text-danger"');
+      expect(text).toContain("CHIP_TONE_CLASSES[tone]");
     }
+
+    // The payment and Xero surfaces still USE those chips, so an endpoint status
+    // keeps its icon-plus-label chip rather than reverting to a colour-only badge.
+    const payments = source("src/app/(admin)/admin/payments/page.tsx");
+    expect(payments).toContain("<MiniChip");
+    expect(payments).toContain('kind="payment"');
+    expect(xero).toContain("<ToneChip");
   });
 
   it("routes actual touched destructive controls through the AA danger pair", () => {

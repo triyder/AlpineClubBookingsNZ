@@ -29,6 +29,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { bookingStatusLabel, humanizeStatus, subscriptionStatusLabel } from "@/lib/status-colors";
 import { financeAccessShortLabels, type LifecycleStatusConfig } from "@/lib/admin-member-badges";
+import { CHIP_TONE_CLASSES, type ChipTone } from "@/lib/chip-tones";
 
 /**
  * StatusChip — the single presentation surface for every domain status the admin
@@ -46,10 +47,12 @@ import { financeAccessShortLabels, type LifecycleStatusConfig } from "@/lib/admi
  * untouched so existing consumers and tests keep working.
  */
 
-/** The five semantic tones. `danger` is a hard/terminal negative; `warning` is an
- *  attention/in-limbo state; `info` is calm-informational; `success` is positive;
- *  `neutral` is inert/not-applicable. */
-export type StatusTone = "neutral" | "info" | "success" | "warning" | "danger";
+/** A resolved chip tone. The core five are semantic (`danger` = hard/terminal
+ *  negative, `warning` = attention/in-limbo, `info` = calm-informational,
+ *  `success` = positive, `neutral` = inert); the accent hues (orange/teal/…)
+ *  only distinguish sibling values within one column (e.g. payment states). The
+ *  tone -> class map is shared via `@/lib/chip-tones`. */
+export type StatusTone = ChipTone;
 
 /** The domain a status belongs to. Exported so consumers get autocomplete. */
 export type StatusChipKind =
@@ -86,13 +89,23 @@ const BOOKING_TONES: Record<BookingStatus, ToneEntry> = {
   WAITLIST_OFFERED: { tone: "info", Icon: Ticket },
 };
 
+// Every payment state gets a DISTINCT hue (#156): the five-tone collapse
+// previously hid three states behind shared tones (PROCESSING = info like other
+// informational chips, REFUNDED = neutral, PARTIALLY_REFUNDED = warning like
+// PENDING). PROCESSING/REFUNDED/PARTIALLY_REFUNDED now use accent hues so the
+// payments table reads each state at a glance. Icons still carry meaning.
+//
+// PARTIALLY_REFUNDED uses teal (185), not orange (55): orange sat ~20 deg from
+// PENDING = warning (75) and ~28 deg from FAILED = danger (27), lumping three
+// warm chips together. Teal drops it into the cool gap, clear of PROCESSING =
+// indigo (275) and REFUNDED = purple (315).
 const PAYMENT_TONES: Record<PaymentStatus, ToneEntry> = {
   PENDING: { tone: "warning", Icon: Clock },
-  PROCESSING: { tone: "info", Icon: Loader2 },
+  PROCESSING: { tone: "indigo", Icon: Loader2 },
   SUCCEEDED: { tone: "success", Icon: CheckCircle2 },
   FAILED: { tone: "danger", Icon: XCircle },
-  REFUNDED: { tone: "neutral", Icon: Undo2 },
-  PARTIALLY_REFUNDED: { tone: "warning", Icon: Undo2 },
+  REFUNDED: { tone: "purple", Icon: Undo2 },
+  PARTIALLY_REFUNDED: { tone: "teal", Icon: Undo2 },
 };
 
 const SUBSCRIPTION_TONES: Record<SubscriptionStatus, ToneEntry> = {
@@ -114,17 +127,6 @@ const FINANCE_ACCESS_TONES: Record<FinanceAccessLevel, ToneEntry> = {
   NONE: { tone: "neutral", Icon: MinusCircle },
   VIEWER: { tone: "info", Icon: Eye },
   MANAGER: { tone: "success", Icon: ShieldCheck },
-};
-
-/** Tone -> chip classes. Every pair dark-adapts and clears WCAG AA (verified in
- *  status-chip.test.tsx). Neutral uses `--foreground` on `--muted` (not
- *  `--muted-foreground`, which is only 4.34:1 on `--muted` in light mode). */
-const TONE_CLASSES: Record<StatusTone, string> = {
-  neutral: "bg-muted text-foreground",
-  info: "bg-info-muted text-info",
-  success: "bg-success-muted text-success",
-  warning: "bg-warning-muted text-warning",
-  danger: "bg-danger-muted text-danger",
 };
 
 type StatusChipCommon = Omit<
@@ -209,7 +211,7 @@ export function StatusChip({ kind, value, label, className, ...props }: StatusCh
       data-tone={tone}
       className={cn(
         "inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap",
-        TONE_CLASSES[tone],
+        CHIP_TONE_CLASSES[tone],
         className,
       )}
       {...props}

@@ -14,18 +14,36 @@ interface BedTypeMeta {
   // or bottom of a stacked bunk.
   StackIcon?: BedTypeIcon;
   label: string;
+  // Per-bed-type accent tint (#156) drawn from the shared `--hue-*` tokens, so
+  // the icon reads its type at a glance in both light and dark. Applied to the
+  // icon only; the label keeps its muted text colour.
+  tint: string;
 }
 
 function bedTypeMeta(bedType: string): BedTypeMeta {
   switch (bedType) {
     case "DOUBLE":
-      return { Icon: BedDouble, label: "Double bed" };
+      return { Icon: BedDouble, label: "Double bed", tint: "text-hue-purple" };
+    // Both bunk ends share ONE hue (#156): teal read at 20 deg from emerald on a
+    // 16px icon was effectively indistinguishable, and top vs bottom is already
+    // carried unambiguously by the ChevronUp/ChevronDown glyph. The shared tint
+    // just marks "this is a bunk"; the chevron says which end.
     case "BUNK_TOP":
-      return { Icon: BedSingle, StackIcon: ChevronUp, label: "Bunk (top)" };
+      return {
+        Icon: BedSingle,
+        StackIcon: ChevronUp,
+        label: "Bunk (top)",
+        tint: "text-hue-teal",
+      };
     case "BUNK_BOTTOM":
-      return { Icon: BedSingle, StackIcon: ChevronDown, label: "Bunk (bottom)" };
+      return {
+        Icon: BedSingle,
+        StackIcon: ChevronDown,
+        label: "Bunk (bottom)",
+        tint: "text-hue-teal",
+      };
     default:
-      return { Icon: BedSingle, label: "Single bed" };
+      return { Icon: BedSingle, label: "Single bed", tint: "text-info" };
   }
 }
 
@@ -48,7 +66,7 @@ export function BedTypeIndicator({
   labelOverride?: string;
   className?: string;
 }) {
-  const { Icon, StackIcon, label } = bedTypeMeta(bedType);
+  const { Icon, StackIcon, label, tint } = bedTypeMeta(bedType);
   const text = labelOverride ?? label;
 
   return (
@@ -56,7 +74,10 @@ export function BedTypeIndicator({
       className={cn("inline-flex items-center gap-1", className)}
       title={text}
     >
-      <span className="relative inline-flex items-center" aria-hidden="true">
+      <span
+        className={cn("relative inline-flex items-center", tint)}
+        aria-hidden="true"
+      >
         <Icon className="h-4 w-4 shrink-0" />
         {StackIcon ? <StackIcon className="h-3 w-3 shrink-0" /> : null}
       </span>

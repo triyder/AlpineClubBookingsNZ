@@ -27,6 +27,7 @@ import {
   LOGIN_STAGE_LABELS,
 } from "@/lib/member-login-stage"
 import { deriveUserType, USER_TYPE_LABELS } from "@/lib/access-roles"
+import { CHIP_TONE_CLASSES, type ChipTone } from "@/lib/chip-tones"
 import { memberName } from "@/lib/member-serialization"
 import type { SubscriptionStatus } from "@prisma/client"
 import type { Member } from "../_types"
@@ -57,24 +58,24 @@ const CHECKBOX_CLASS =
 // keeps one themed, dark-mode-correct surface regardless of state.
 const SURFACE_CLASS = "rounded-lg border border-border bg-card"
 
-/** A themed, non-domain chip for the Access + Xero columns. The StatusChip
- *  `kind` API only covers booking/payment/subscription/lifecycle/financeAccess,
- *  so these states (login-journey stage, Xero linkage) render as neutral/info
- *  chips built from the same semantic tokens rather than inventing a new kind. */
+/** A themed, non-domain chip for the Access, Family Group and Xero columns. The
+ *  StatusChip `kind` API only covers booking/payment/subscription/lifecycle/
+ *  financeAccess, so these signals (login-journey stage, family membership, Xero
+ *  linkage/groups) render here through the shared `@/lib/chip-tones` map — the
+ *  single source shared with StatusChip and MiniChip — rather than inventing a
+ *  new kind or a private tone family. */
 function InfoChip({
   tone = "neutral",
   className,
   children,
 }: {
-  tone?: "neutral" | "info"
+  tone?: ChipTone
   className?: string
   children: ReactNode
 }) {
-  const toneClass =
-    tone === "info" ? "bg-info-muted text-info" : "bg-muted text-foreground"
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap ${toneClass} ${className ?? ""}`}
+      className={`inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap ${CHIP_TONE_CLASSES[tone]} ${className ?? ""}`}
     >
       {children}
     </span>
@@ -250,9 +251,12 @@ export function MemberTable({
               </TableCell>
               <TableCell className="text-muted-foreground">{member.email}</TableCell>
               <TableCell>
-                <Badge variant={userType === "admin" ? "default" : "secondary"}>
+                {/* Admin access reads blue (info) to stand out from the neutral
+                    non-admin types, restoring the pre-theme-rework affordance
+                    (#156). */}
+                <InfoChip tone={userType === "admin" ? "info" : "neutral"}>
                   {accessLabel}
-                </Badge>
+                </InfoChip>
               </TableCell>
               <TableCell>
                 {/* Display-only combination; data stays separate (#1445). */}
@@ -275,14 +279,14 @@ export function MemberTable({
                           key={familyGroup.id}
                           href={`/admin/family-groups?edit=${familyGroup.id}`}
                         >
-                          <Badge variant="secondary" className="cursor-pointer">
+                          <InfoChip tone="indigo" className="cursor-pointer">
                             {familyGroup.name || "Unnamed Group"}
-                          </Badge>
+                          </InfoChip>
                         </Link>
                       ) : (
-                        <Badge key={familyGroup.id} variant="secondary">
+                        <InfoChip key={familyGroup.id} tone="indigo">
                           {familyGroup.name || "Unnamed Group"}
-                        </Badge>
+                        </InfoChip>
                       )
                     )}
                   </div>
@@ -324,9 +328,9 @@ export function MemberTable({
                   {member.xeroContactGroups.length > 0 && (
                     <div className="flex flex-wrap gap-1">
                       {member.xeroContactGroups.map((group) => (
-                        <Badge key={group.id} variant="secondary">
+                        <InfoChip key={group.id} tone="emerald">
                           {group.name}
-                        </Badge>
+                        </InfoChip>
                       ))}
                     </div>
                   )}
