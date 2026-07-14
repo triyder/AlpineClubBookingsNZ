@@ -1,6 +1,7 @@
 import { strToU8, strFromU8 } from "fflate";
 import { Prisma } from "@prisma/client";
 
+import { CLUB_MODULE_SETTINGS_COLUMN_SELECT } from "@/config/modules";
 import type { BundleEntry } from "../bundle";
 import { registerEntity } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
@@ -27,6 +28,7 @@ import {
 interface SingletonDelegate {
   findUnique(args: {
     where: { id: string };
+    select?: Record<string, boolean>;
   }): Promise<Record<string, unknown> | null>;
   upsert(args: {
     where: { id: string };
@@ -41,6 +43,13 @@ interface SingletonSpec {
   delegate: string;
   fields: string[];
   optInFields?: string[];
+  /**
+   * Explicit Prisma `select` for reads of this singleton. Only set where a
+   * shared select already exists (e.g. CLUB_MODULE_SETTINGS_COLUMN_SELECT) to
+   * keep a retired-but-not-yet-dropped column out of the generated SQL — see
+   * the doc comment on that constant. Other singletons keep a bare read.
+   */
+  select?: Record<string, boolean>;
 }
 
 export const SINGLETONS: SingletonSpec[] = [
@@ -54,6 +63,7 @@ export const SINGLETONS: SingletonSpec[] = [
       "hutLeaders", "communications", "skifieldConditions",
       "twoFactor", "analytics", "lobbyDisplay",
     ],
+    select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   },
   {
     entity: "booking-defaults",
@@ -222,6 +232,7 @@ export const clubSettingsExporter: CategoryExporter = {
     for (const spec of SINGLETONS) {
       const row = await delegateOf(ctx.db, spec.delegate).findUnique({
         where: { id: "default" },
+        select: spec.select,
       });
       if (!row) continue;
       const fields = exportFields(spec, ctx.includeDoorCodes);
@@ -249,6 +260,7 @@ async function planClubSettings(
     if (!incoming) continue;
     const current = await delegateOf(ctx.db, spec.delegate).findUnique({
       where: { id: "default" },
+      select: spec.select,
     });
     const currentHash = current
       ? hashRow(spec.fields, current)
@@ -286,7 +298,10 @@ async function applyClubSettings(
       if (f in incoming) data[f] = incoming[f];
     }
     const delegate = delegateOf(ctx.tx, spec.delegate);
-    const existing = await delegate.findUnique({ where: { id: "default" } });
+    const existing = await delegate.findUnique({
+      where: { id: "default" },
+      select: spec.select,
+    });
     if (!existing) {
       await delegate.upsert({
         where: { id: "default" },

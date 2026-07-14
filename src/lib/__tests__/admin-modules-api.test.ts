@@ -3,6 +3,7 @@ import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import {
+  CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   MODULE_KEYS,
   getEffectiveModuleFlags,
   type ModuleSettingsValues,
@@ -311,6 +312,13 @@ describe("Admin modules API", () => {
         ...nextSettings,
         updatedByMemberId: "admin-1",
       },
+    });
+    // The PUT handler's pre-write read must use the explicit column select
+    // (#153) so it stays blue/green-safe for a later DROP of a retired column,
+    // matching the invariant #150 established for the other reads.
+    expect(mocks.clubModuleSettingsFindUnique).toHaveBeenCalledWith({
+      where: { id: "default" },
+      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     });
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.auditLogCreate).toHaveBeenCalledWith(

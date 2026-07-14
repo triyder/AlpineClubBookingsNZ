@@ -13,6 +13,7 @@ import {
 } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import {
+  CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   MODULE_KEYS,
   type ModuleKey,
   type ModuleSettingsValues,
@@ -77,6 +78,7 @@ export async function PUT(request: Request) {
 
   const existing = await prisma.clubModuleSettings.findUnique({
     where: { id: CLUB_MODULE_SETTINGS_ID },
+    select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   });
   const before = normalizeClubModuleSettings(existing);
   const after = parsed.data.settings;
