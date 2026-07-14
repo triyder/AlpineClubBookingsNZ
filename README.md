@@ -49,7 +49,8 @@ recommended reading paths.
 - Admin-editable public website pages and footer sections with sanitised HTML
   content, embed/text tokens where supported, and a menu generated from page
   settings (see `CONFIGURATION.md`, "Website Page Content" and "Website Site
-  Content"); every admin rich-text editor includes a token help button listing
+  Content"). Authoritative public fee and policy blocks remain hidden until
+  explicitly enabled in Admin > Page Content; every admin rich-text editor includes a token help button listing
   the tokens it supports
 - Admin-managed site banners (urgent/warning/notify) shown above the site
   header for a set NZ date window, dismissible per browser
@@ -85,8 +86,10 @@ recommended reading paths.
    name, contact emails, public URL, beds, age tiers, and integer-cent rates.
    If `config/club.json` is absent, the app falls back to
    `config/club.example.json`.
-3. Complete `/admin/site-style` after first sign-in to set public colours,
-   fonts, and the database-stored logo. Replace the remaining images in
+3. Complete `/admin/site-style` after first sign-in to set the shared public,
+   member, and admin brand colours and fonts, plus the database-stored public
+   logo. Operational success, warning, information, and danger colours remain
+   curated rather than editable. Replace the remaining images in
    `public/branding/` with your own favicon, Open Graph image, and public
    website photos. Keep the `*.example.*` files as reusable placeholders for
    forks.
@@ -117,6 +120,18 @@ recommended reading paths.
    previewing affected future bookings, drafts, waitlist records, and
    subscription history;
    existing future bookings are not automatically repriced by this change.
+   Membership editors also maintain the distinct public description and must
+   explicitly enable public listing; migrated and new types start hidden.
+   Finance editors use **Admin > Membership & Entrance Fees** for effective-dated
+   amounts and explicit family billing members. See
+   `docs/AUTHORITATIVE_FEES.md`.
+   Treasurers then use **Admin > Subscriptions** to preview an annual billing
+   batch, resolve configuration/recipient exceptions, set invoice due days
+   (30 by default), and explicitly confirm immutable charges before authorised,
+   GST-inclusive Xero invoices are queued. Confirmation requires and freezes the
+   explicit `subscriptionIncome` account/item mapping. New-member approval queues the same
+   durable workflow when configuration is complete and never rolls approval
+   back when it is not.
 8. Use **Admin > Committee** to review seeded committee master roles and
    member-linked committee assignments. Assignments remain hidden/unpublished
    until an admin explicitly enables their presentation flags; public contact
@@ -234,6 +249,13 @@ npm run build
 Browser E2E tests for the Critical journeys run separately against the staging
 compose stack: `npm run test:e2e` (see `docs/E2E_PLAYWRIGHT.md`).
 
+The member and admin shells use the Restrained Alpine accessibility baseline:
+semantic light/dark status tokens, icon-or-text redundancy for colour-coded
+states, responsive overflow for data tables, focusable skip-link targets, a
+visible keyboard outline, and a global reduced-motion guard. Run
+`npm run review:staging:a11y` only with an explicit non-production
+`STAGING_APP_URL`; the command refuses to guess a target.
+
 `npm test` includes property-based tests (fast-check) for the pure money math —
 pricing, promo discounts, refund tiers, change fees, member credit, and the
 Xero booking-edit settlement classifier — in
@@ -323,6 +345,8 @@ forks or public CI. Configure your own service accounts and secrets.
   validation and first deployment
 - `docs/ARCHITECTURE.md` - system structure, data model, business logic,
   integrations, cron, and deployment shape
+- `docs/PUBLIC_PAGE_CONTENT_TOKENS.md` - content-editor workflow and safety
+  contract for authoritative public PageContent data blocks
 - `CONFIGURATION.md` - environment variables, module controls, site style,
   and `config/club.json` schema
 - `DEPLOYMENT.md` - reference Lightsail, Docker Compose, Caddy, blue/green, and

@@ -1090,7 +1090,7 @@ export function PublicBookingRequestsPanel({
                     canEdit ? (
                     <div className="space-y-3 rounded-md border border-slate-200 p-3">
                       {request.heldBookingId ? (
-                        <div className="space-y-2 rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+                        <div className="space-y-2 rounded-md border bg-muted p-3 text-sm text-muted-foreground">
                           <p>
                             Booking contact was set when slots were held. Release
                             the hold to change which contact owns this booking.

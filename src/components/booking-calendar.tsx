@@ -115,7 +115,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
 
     const season = seasons[dateStr];
 
-    let classes = "flex flex-col items-center justify-center h-12 w-10 rounded-md text-sm font-medium transition-colors ";
+    let classes = "relative flex h-12 w-10 flex-col items-center justify-center rounded-md text-sm font-medium transition-colors ";
 
     // Season top-border indicator
     if (season?.type === "WINTER") {
@@ -129,11 +129,11 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     // is never the only signal. The thresholds and branch order are byte-identical
     // to the previous green/amber/red/grey treatment — only the classes change.
     if (isPast) {
-      classes += "text-gray-300 cursor-not-allowed ";
+      classes += "text-muted-foreground cursor-not-allowed ";
     } else if (isRetroPast) {
       // Muted-but-clickable tint for a past date open to retroactive booking:
       // distinct from the availability heat and the full tint.
-      classes += "bg-slate-100 text-slate-500 italic hover:bg-slate-200 cursor-pointer ";
+      classes += "bg-muted text-muted-foreground italic hover:shadow-sm cursor-pointer ";
     } else if (available <= 0) {
       // Full night (0 beds) -> danger token. Hard-disabled for members;
       // muted-but-clickable when the admin over-capacity flag allows selecting it
@@ -142,11 +142,10 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
         ? "bg-danger-muted text-danger italic hover:brightness-95 cursor-pointer "
         : "bg-danger-muted text-danger cursor-not-allowed ";
     } else if (available <= 5) {
-      // Nearly full (1-5 beds) -> a stronger warning than "filling". No semantic
-      // orange token exists, so this uses the Tailwind orange tier, which
-      // dark-adapts via the .app-theme-scope colored-callout remap (mirrors the
-      // admin occupancy-calendar's orange step).
-      classes += "bg-orange-100 text-orange-800 hover:brightness-95 cursor-pointer ";
+      // Nearly full (1-5 beds) -> the information pair keeps this tier distinct
+      // from the warning "filling" tier while remaining an explicit AA-gated
+      // semantic endpoint in light and dark mode.
+      classes += "bg-info-muted text-info hover:brightness-95 cursor-pointer ";
     } else if (available <= 15) {
       // Filling (6-15 beds) -> warning token.
       classes += "bg-warning-muted text-warning hover:brightness-95 cursor-pointer ";
@@ -158,11 +157,11 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     // Selected range uses the brand-gold accent, deliberately distinct from the
     // availability heat so the two never read as the same signal.
     if (checkIn && date.getTime() === checkIn.getTime()) {
-      classes += "!bg-brand-gold !text-brand-charcoal !border-brand-gold ";
+      classes += "!border-4 !border-double !border-brand-gold !bg-brand-gold !text-brand-charcoal ";
     } else if (checkOut && date.getTime() === checkOut.getTime()) {
-      classes += "!bg-brand-gold !text-brand-charcoal !border-brand-gold ";
+      classes += "!border-4 !border-double !border-brand-gold !bg-brand-gold !text-brand-charcoal ";
     } else if (checkIn && checkOut && date > checkIn && date < checkOut) {
-      classes += "!bg-brand-gold/20 !text-foreground ";
+      classes += "!border-2 !border-dashed !border-brand-gold !bg-muted !text-foreground ";
     }
 
     return classes;
@@ -202,13 +201,13 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
         </Button>
       </div>
 
-      <div aria-live="polite" className="text-sm text-gray-600">
+      <div aria-live="polite" className="text-sm text-muted-foreground">
         {selecting === "checkIn" ? "Select check-in date" : "Select check-out date"}
       </div>
 
       <div className="grid grid-cols-7 justify-items-center gap-1 text-center">
         {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-          <div key={d} className="w-10 py-2 text-xs font-medium text-gray-500">
+          <div key={d} className="w-10 py-2 text-xs font-medium text-muted-foreground">
             {d}
           </div>
         ))}
@@ -223,6 +222,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
           const dateStr = formatLocalDateOnly(date);
           const occupied = availability[dateStr] ?? 0;
           const available = lodgeCapacity - occupied;
+          const season = seasons[dateStr];
           // A day before the earliest selectable day stays disabled; a past day
           // still inside the retroactive window is clickable but muted (#1695).
           const isPast = date < minSelectable;
@@ -255,6 +255,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
           const retroSuffix = isRetroPast
             ? ", past date — retroactive booking"
             : "";
+          const seasonSuffix = season?.name ? `, ${season.name} season` : "";
           const dayLabel =
             (isPast
               ? `${dateLabel}, unavailable`
@@ -262,6 +263,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
                 ? `${dateLabel}, full${allowFullDates ? " — selectable for over-capacity booking" : ""}`
                 : `${dateLabel}, ${available} of ${lodgeCapacity} beds free`) +
             retroSuffix +
+            seasonSuffix +
             selectionSuffix;
 
           return (
@@ -274,11 +276,27 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
               // submit, not a hard block.
               disabled={isPast || (available <= 0 && !allowPastDates && !allowFullDates)}
               aria-label={dayLabel}
-              aria-pressed={isCheckIn || isCheckOut}
+              aria-pressed={isCheckIn || isCheckOut || inRange}
             >
               <span aria-hidden="true" className="leading-none">{day}</span>
+              {season ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute right-1 top-0.5 text-[0.5rem] font-bold uppercase leading-none"
+                  title={`${season.name} season`}
+                >
+                  {season.type === "WINTER" ? "W" : "S"}
+                </span>
+              ) : null}
               {!isPast &&
-                (available <= 0 ? (
+                (isCheckIn || isCheckOut || inRange ? (
+                  <span
+                    aria-hidden="true"
+                    className="mt-0.5 text-[0.625rem] font-semibold uppercase leading-none tracking-wide"
+                  >
+                    {isCheckIn ? "In" : isCheckOut ? "Out" : "Stay"}
+                  </span>
+                ) : available <= 0 ? (
                   // "Full" states availability without relying on colour; the
                   // aria-label already announces "full" for screen readers.
                   <span
@@ -298,7 +316,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
       </div>
 
       {/* Availability legend — swatches mirror the token-driven heat above */}
-      <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
+      <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
         <span className="flex items-center gap-1">
           <span className="h-3 w-3 rounded bg-success-muted" /> Available (&gt;15 beds)
         </span>
@@ -306,7 +324,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
           <span className="h-3 w-3 rounded bg-warning-muted" /> Filling (6-15 beds)
         </span>
         <span className="flex items-center gap-1">
-          <span className="h-3 w-3 rounded bg-orange-100" /> Nearly full (1-5 beds)
+          <span className="h-3 w-3 rounded bg-info-muted" /> Nearly full (1-5 beds)
         </span>
         <span className="flex items-center gap-1">
           <span className="h-3 w-3 rounded bg-danger-muted" /> Full
@@ -315,7 +333,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
 
       {/* Season legend — only shown when season data is available */}
       {uniqueSeasons.length > 0 && (
-        <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
+        <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
           {uniqueSeasons.map((s) => (
             <span key={s.name} className="flex items-center gap-1">
               <span
@@ -323,6 +341,9 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
                   s.type === "WINTER" ? "border-blue-400" : "border-amber-400"
                 }`}
               />
+              <span aria-hidden className="font-semibold">
+                {s.type === "WINTER" ? "W" : "S"}
+              </span>
               {s.name}
             </span>
           ))}

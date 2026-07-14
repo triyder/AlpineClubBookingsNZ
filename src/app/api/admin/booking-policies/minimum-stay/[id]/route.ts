@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
@@ -62,9 +63,10 @@ export async function PUT(
       action: "minimum-stay-policy.update",
       memberId: session.user.id,
       targetId: id,
-      details: `Updated "${policy.name}"`,
+      details: JSON.stringify({ lodgeId: existing.lodgeId, before: existing, after: policy }),
     })
 
+    revalidatePublicPageContent()
     return NextResponse.json(policy)
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -105,9 +107,10 @@ export async function DELETE(
       action: "minimum-stay-policy.delete",
       memberId: session.user.id,
       targetId: id,
-      details: `Deactivated "${existing.name}"`,
+      details: JSON.stringify({ lodgeId: existing.lodgeId, before: existing, after: { ...existing, active: false } }),
     })
 
+    revalidatePublicPageContent()
     return NextResponse.json({ success: true })
   } catch {
     return NextResponse.json(

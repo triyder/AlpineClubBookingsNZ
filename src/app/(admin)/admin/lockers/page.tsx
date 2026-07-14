@@ -384,7 +384,7 @@ export default function LockersPage() {
                     </SelectItem>
                   ))}
                   {filteredMembers.length === 0 ? (
-                    <div className="px-2 pb-2 text-xs text-slate-500">
+                    <div className="px-2 pb-2 text-xs text-muted-foreground">
                       No members found.
                     </div>
                   ) : null}
@@ -418,7 +418,7 @@ export default function LockersPage() {
               ) : null}
             </div>
           </form>
-          {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
+          {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
         </CardContent>
       </Card>
 
@@ -534,7 +534,7 @@ export default function LockersPage() {
                           type="button"
                           onClick={() => void deleteLocker(locker)}
                           disabled={deletingLockerId === locker.id}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded border border-red-200 text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded border border-danger/30 text-danger transition-colors hover:bg-danger-muted disabled:cursor-not-allowed disabled:opacity-50"
                           aria-label={`Delete locker ${locker.name}`}
                           title="Delete locker"
                         >

@@ -64,28 +64,28 @@ const CALENDAR_TONE_CLASSES: Record<
   { cell: string; ringCell: string; badge: string }
 > = {
   red: {
-    cell: "border-danger/40 bg-danger-muted text-foreground hover:bg-danger-muted/70",
-    ringCell: "ring-1 ring-inset ring-danger/50 bg-card text-foreground hover:bg-danger-muted/40",
+    cell: "border-danger/40 bg-danger-muted text-foreground hover:shadow-sm",
+    ringCell: "ring-1 ring-inset ring-danger/50 bg-card text-foreground hover:shadow-sm",
     badge: "bg-danger-muted text-danger",
   },
   amber: {
-    cell: "border-warning/40 bg-warning-muted text-foreground hover:bg-warning-muted/70",
-    ringCell: "ring-1 ring-inset ring-warning/50 bg-card text-foreground hover:bg-warning-muted/40",
+    cell: "border-warning/40 bg-warning-muted text-foreground hover:shadow-sm",
+    ringCell: "ring-1 ring-inset ring-warning/50 bg-card text-foreground hover:shadow-sm",
     badge: "bg-warning-muted text-warning",
   },
   orange: {
-    cell: "border-info/40 bg-info-muted text-foreground hover:bg-info-muted/70",
-    ringCell: "ring-1 ring-inset ring-info/50 bg-card text-foreground hover:bg-info-muted/40",
+    cell: "border-info/40 bg-info-muted text-foreground hover:shadow-sm",
+    ringCell: "ring-1 ring-inset ring-info/50 bg-card text-foreground hover:shadow-sm",
     badge: "bg-info-muted text-info",
   },
   green: {
-    cell: "border-success/40 bg-success-muted text-foreground hover:bg-success-muted/70",
-    ringCell: "ring-1 ring-inset ring-success/50 bg-card text-foreground hover:bg-success-muted/40",
+    cell: "border-success/40 bg-success-muted text-foreground hover:shadow-sm",
+    ringCell: "ring-1 ring-inset ring-success/50 bg-card text-foreground hover:shadow-sm",
     badge: "bg-success-muted text-success",
   },
   violet: {
-    cell: "border-border bg-muted text-foreground hover:bg-muted/70",
-    ringCell: "ring-1 ring-inset ring-border bg-card text-foreground hover:bg-muted/60",
+    cell: "border-border bg-muted text-foreground hover:shadow-sm",
+    ringCell: "ring-1 ring-inset ring-border bg-card text-foreground hover:bg-muted",
     badge: "bg-muted text-foreground",
   },
 };
@@ -440,19 +440,31 @@ export function OccupancyCalendar({
               dateString > selectedStartDate &&
               dateString < selectedEndDate,
           );
+          const selectedSingleDate =
+            isSelectedStart &&
+            (mode === "single" || selectedStartDate === selectedEndDate);
+          const selectionLabel = selectedSingleDate
+            ? "Selected"
+            : isSelectedStart
+              ? "Start"
+              : isSelectedEnd
+                ? "End"
+                : isInRange
+                  ? "Stay"
+                  : "";
           const hasGuests = Boolean(night?.guestCount);
           const overlay = overlayByDate?.[dateString];
           const selectionClass =
             isSelectedStart || isSelectedEnd
-              ? "border-brand-gold bg-brand-gold text-brand-charcoal"
+              ? "border-4 border-double border-brand-gold bg-brand-gold text-brand-charcoal"
               : isInRange
-                ? "border-brand-gold/40 bg-brand-gold/25 text-foreground"
+                ? "border-2 border-dashed border-brand-gold bg-muted text-foreground"
                 : overlay
                   ? overlay.emphasis === "ring"
                     ? CALENDAR_TONE_CLASSES[overlay.tone].ringCell
                     : CALENDAR_TONE_CLASSES[overlay.tone].cell
                   : hasGuests
-                    ? "border-brand-gold/25 bg-brand-gold/10 text-foreground hover:bg-brand-gold/20"
+                    ? "border-brand-gold/40 bg-card text-card-foreground hover:bg-muted"
                     : "border-border bg-card text-foreground hover:bg-muted";
           const guestLabel = night?.guestCount
             ? `${night.guestCount} guest${night.guestCount === 1 ? "" : "s"}`
@@ -465,20 +477,28 @@ export function OccupancyCalendar({
               disabled={isPast}
               onClick={() => handleDayClick(dateString)}
               aria-pressed={isSelectedStart || isSelectedEnd || isInRange}
-              aria-label={`${formatDisplayDate(dateString)}, ${guestLabel}${isPast ? ", past date" : ""}${overlay ? `, ${overlay.label}` : ""}`}
+              aria-label={`${formatDisplayDate(dateString)}, ${guestLabel}${isPast ? ", past date" : ""}${overlay ? `, ${overlay.label}` : ""}${selectionLabel ? `, ${selectionLabel.toLowerCase()} selection` : ""}`}
               // Stable hooks for tests/tooling so overlay assertions target the
               // tone + emphasis rather than the token class strings, which the
               // "Restrained Alpine" restyle may re-tint.
               data-overlay-tone={overlay?.tone}
               data-overlay-emphasis={overlay ? (overlay.emphasis ?? "fill") : undefined}
-              className={`min-h-16 border-b border-r p-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground ${selectionClass}`}
+              className={`relative min-h-16 border-b border-r p-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground ${selectionClass}`}
             >
               <span className="block text-sm font-semibold leading-none">{day}</span>
+              {selectionLabel ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute right-1 top-1 rounded border border-current px-1 text-[9px] font-bold uppercase leading-tight"
+                >
+                  {selectionLabel}
+                </span>
+              ) : null}
               {hasGuests && (
                 <span className={`mt-2 inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${
                   isSelectedStart || isSelectedEnd
-                    ? "bg-brand-charcoal/15 text-brand-charcoal"
-                    : "bg-brand-gold/20 text-brand-charcoal dark:bg-brand-gold/15 dark:text-brand-gold"
+                    ? "bg-brand-charcoal text-brand-snow"
+                    : "border border-brand-gold bg-card text-card-foreground"
                 }`}>
                   <Users className="mr-1 h-3 w-3" />
                   {night?.guestCount}
@@ -499,7 +519,7 @@ export function OccupancyCalendar({
       <div className="space-y-3 px-3 py-3">
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded bg-brand-gold/25 ring-1 ring-brand-gold/40" />
+            <span className="h-3 w-3 rounded bg-card ring-1 ring-brand-gold" />
             Guests staying
           </span>
           <span className="inline-flex items-center gap-1">

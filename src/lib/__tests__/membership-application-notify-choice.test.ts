@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 // the nominators. Induction is enabled simply by making
 // prisma.clubModuleSettings.findUnique resolve (default flag = induction on);
 // the shared harness leaves that method absent, which disables induction.
-const { prismaMock, emailMock, xeroMock, xeroOutboxMock } = vi.hoisted(() => ({
+const { prismaMock, emailMock, xeroMock, xeroOutboxMock, subscriptionBillingMock } = vi.hoisted(() => ({
   prismaMock: {
     member: {
       findFirst: vi.fn(),
@@ -54,6 +54,12 @@ const { prismaMock, emailMock, xeroMock, xeroOutboxMock } = vi.hoisted(() => ({
       skipped: 0,
     }),
   },
+  subscriptionBillingMock: {
+    queueApprovedMembershipSubscriptionCharges: vi.fn().mockResolvedValue({
+      chargeIds: ["charge-1"],
+      exceptionCount: 0,
+    }),
+  },
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
@@ -70,6 +76,7 @@ vi.mock("@/lib/utils", () => ({
 vi.mock("@/lib/email", () => emailMock);
 vi.mock("@/lib/xero", () => xeroMock);
 vi.mock("@/lib/xero-operation-outbox", () => xeroOutboxMock);
+vi.mock("@/lib/membership-subscription-billing", () => subscriptionBillingMock);
 
 vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -215,6 +222,15 @@ function setupRejectFixture() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  subscriptionBillingMock.queueApprovedMembershipSubscriptionCharges.mockResolvedValue({
+    chargeIds: ["charge-1"],
+    exceptionCount: 0,
+  });
+  prismaMock.memberApplication.update.mockResolvedValue({} as never);
+  xeroOutboxMock.enqueueXeroEntranceFeeInvoiceOperation.mockResolvedValue({
+    queueOperationId: "queue_1",
+    message: "queued",
+  });
 });
 
 describe("approveMemberApplication notify choice (#1786)", () => {

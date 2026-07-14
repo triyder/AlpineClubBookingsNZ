@@ -21,6 +21,7 @@ import { copyStreetAddressToPostal } from "@/lib/member-address";
 import { checkNominatorEligibility } from "@/lib/nominator-eligibility";
 import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
+import { queueApprovedMembershipSubscriptionCharges } from "@/lib/membership-subscription-billing";
 import { MEMBER_LEVEL_ROLE_VALUES } from "@/lib/member-roles";
 import {
   findOrCreateXeroContact,
@@ -1471,6 +1472,28 @@ export async function approveMemberApplication(
   });
 
   const warnings = await syncApprovedMembersToXero(approved.createdMemberIds);
+
+  // Subscription billing is deliberately post-approval and non-blocking.
+  // Complete configuration creates immutable charges and durable Xero work;
+  // incomplete configuration creates visible billing exceptions instead of
+  // rolling back membership approval.
+  try {
+    const subscriptionBilling = await queueApprovedMembershipSubscriptionCharges({
+      memberIds: approved.createdMemberIds,
+      approvedByMemberId: adminMemberId,
+    });
+    if (subscriptionBilling.exceptionCount > 0) {
+      warnings.push(
+        `${subscriptionBilling.exceptionCount} membership subscription billing exception${subscriptionBilling.exceptionCount === 1 ? " requires" : "s require"} Finance review`,
+      );
+    }
+  } catch (err) {
+    logger.error(
+      { err, applicationId, memberIds: approved.createdMemberIds },
+      "Failed to queue membership subscription billing after approval",
+    );
+    warnings.push("Membership subscription billing could not be queued automatically");
+  }
 
   const entranceFeeDecision = entranceFeeInvoiceDecision ?? { action: "CREATE" as const };
   if (entranceFeeDecision.action === "CREATE") {

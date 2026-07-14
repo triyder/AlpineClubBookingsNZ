@@ -145,6 +145,7 @@ describe("xero operation outbox payload parsing", () => {
       "MEMBERSHIP_CANCELLATION_CREDIT_NOTE",
       "MEMBERSHIP_CANCELLATION_CONTACT",
       "GROUP_SETTLEMENT_INVOICE",
+      "MEMBERSHIP_SUBSCRIPTION_INVOICE",
     ]);
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
       XERO_OUTBOX_QUEUE_TYPES.length
@@ -168,6 +169,7 @@ describe("xero operation outbox payload parsing", () => {
       ["MEMBERSHIP_CANCELLATION_CREDIT_NOTE", "CREDIT_NOTE"],
       ["MEMBERSHIP_CANCELLATION_CONTACT", "CONTACT"],
       ["GROUP_SETTLEMENT_INVOICE", "INVOICE"],
+      ["MEMBERSHIP_SUBSCRIPTION_INVOICE", "INVOICE"],
     ]);
     for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
       expect(getQueuedOutboxExpectedOperation(queueType).entityType).toBe(

@@ -20,6 +20,7 @@ import {
   listEditablePageContent,
   sanitizePageContentHtml,
 } from "@/lib/page-content-html";
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 
 const createSchema = z
   .object({
@@ -174,6 +175,7 @@ export async function POST(request: NextRequest) {
     }),
   );
 
+  revalidatePublicPageContent();
   return NextResponse.json(
     {
       page: {
@@ -325,6 +327,7 @@ export async function PUT(request: NextRequest) {
     }),
   );
 
+  revalidatePublicPageContent();
   return NextResponse.json({
     page: {
       id: updated.id,
@@ -412,6 +415,7 @@ export async function PATCH(request: NextRequest) {
     }),
   );
 
+  revalidatePublicPageContent();
   return NextResponse.json({
     page: {
       id: updated.id,

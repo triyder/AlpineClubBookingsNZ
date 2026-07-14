@@ -34,6 +34,13 @@ vi.mock("@/lib/prisma", () => ({
     },
   },
 }));
+vi.mock("@/lib/public-page-content-tokens", () => ({
+  loadPublicMembershipTypes: vi.fn(async () => [{ name: "Public member" }]),
+  loadPublicEntranceFees: vi.fn(async () => [{ category: "Adult" }]),
+  loadPublicHutFees: vi.fn(async (slug?: string) => [{ slug: slug ?? "all" }]),
+  loadPublicBookingPolicy: vi.fn(async (slug?: string) => ({ lodge: slug ?? null })),
+  loadPublicCancellationPolicy: vi.fn(async (slug?: string) => ({ lodge: slug ?? null })),
+}));
 // sanitizePageContentHtml is pure but its module imports the prisma client.
 
 import { buildEmbeddedBody, resolveTextTokens } from "../page-content-embeds";
@@ -42,6 +49,23 @@ import { starterSiteContent } from "../../../prisma/starter-site-content";
 import logger from "@/lib/logger";
 
 describe("buildEmbeddedBody", () => {
+  it("maps every public data token, including lodge variants, through the shared registry", async () => {
+    const parts = await buildEmbeddedBody(
+      "<p>Start</p>{{membership-types}}{{entrance-fees}}{{hut-fees}}{{hut-fees:river-lodge}}{{booking-policy-summary}}{{booking-policy-summary:river-lodge}}{{cancellation-policy}}{{cancellation-policy:river-lodge}}<p>End</p>",
+    );
+    expect(parts.map((part) => part.type)).toEqual([
+      "html", "membership-types", "entrance-fees", "hut-fees", "hut-fees",
+      "booking-policy-summary", "booking-policy-summary", "cancellation-policy",
+      "cancellation-policy", "html",
+    ]);
+    expect(parts[4]).toEqual({ type: "hut-fees", lodges: [{ slug: "river-lodge" }] });
+  });
+
+  it("preserves mixed rich HTML and repeated tokens without falling back to contact form", async () => {
+    const parts = await buildEmbeddedBody("<h2>Fees</h2>{{entrance-fees}}<p>Again</p>{{entrance-fees}}");
+    expect(parts.map((part) => part.type)).toEqual(["html", "entrance-fees", "html", "entrance-fees"]);
+    expect(parts.some((part) => part.type === "contact-form")).toBe(false);
+  });
   it("preserves inline images when no gallery token is present", async () => {
     const parts = await buildEmbeddedBody(
       '<div class="col_display_body"><p><img src="/api/images/uploaded/Lodge_Winter.jpg" width="463" height="169" /><br></p><p>Our Ski Lodge is located on Mt Ruapehu on the Whakapapa ski field, just 5 minutes from the top overnight carpark.</p></div>',

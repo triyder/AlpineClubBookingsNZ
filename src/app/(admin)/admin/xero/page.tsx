@@ -78,7 +78,7 @@ export default function XeroPage() {
         Account mappings and initial setup live on the{" "}
         <Link
           href="/admin/xero/setup"
-          className="font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
+          className="font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
         >
           Xero Setup
         </Link>{" "}

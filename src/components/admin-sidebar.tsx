@@ -208,6 +208,7 @@ const navSections: NavSection[] = [
   {
     label: "Finance",
     items: [
+      { href: "/admin/fee-configuration", label: "Membership & Entrance Fees", icon: DollarSign },
       { href: "/admin/payments", label: "Payments", icon: CreditCard },
       {
         href: "/admin/internet-banking",

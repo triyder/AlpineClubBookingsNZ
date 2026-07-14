@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { APP_LOCALE } from "@/config/operational";
 
@@ -77,5 +77,31 @@ describe("BookingCalendar accessibility", () => {
       }),
     );
     expect(selected.getAttribute("aria-pressed")).toBe("true");
+    expect(selected.textContent).toContain("In");
+    expect(selected.className).toContain("!border-double");
+  });
+
+  it("shows text and border-style cues across a selected stay", async () => {
+    const checkIn = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const checkOut = new Date(now.getFullYear(), now.getMonth() + 1, 3);
+    render(
+      <BookingCalendar
+        onDateSelect={() => {}}
+        selectedCheckIn={checkIn}
+        selectedCheckOut={checkOut}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+
+    const buttons = await waitFor(() =>
+      screen.getAllByRole("button", { pressed: true }),
+    );
+    const start = buttons.find((button) => button.textContent?.includes("In"));
+    const middle = buttons.find((button) => button.textContent?.includes("Stay"));
+    const end = buttons.find((button) => button.textContent?.includes("Out"));
+
+    expect(start?.className).toContain("!border-double");
+    expect(middle?.className).toContain("!border-dashed");
+    expect(end?.className).toContain("!border-double");
   });
 });

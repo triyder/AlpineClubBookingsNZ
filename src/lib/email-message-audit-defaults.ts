@@ -1,5 +1,5 @@
-// Seeded from docs/EMAIL_MESSAGE_REGISTRY.md with editor-safe default subjects.
-// Keep template keys and wording aligned when the registry changes.
+// Authoritative editor-safe defaults for the admin editor and server-side
+// render path. Keep template keys and wording aligned when the registry changes.
 
 export const EMAIL_AUDIT_DEFAULTS = {
   "password-reset": {

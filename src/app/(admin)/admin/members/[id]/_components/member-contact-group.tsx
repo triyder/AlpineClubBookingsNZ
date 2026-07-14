@@ -99,13 +99,13 @@ export function MemberContactGroup({
             ref={errorRef}
             role="alert"
             tabIndex={-1}
-            className="scroll-mt-20 whitespace-pre-line rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700 focus:outline-none"
+            className="scroll-mt-20 whitespace-pre-line rounded border border-danger/20 bg-danger-muted p-2 text-sm text-danger focus:outline-none"
           >
             {error}
           </div>
         )}
         {(showTitle || showGender) && (
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {showTitle && (
               <div className="space-y-2">
                 <Label htmlFor="contact-title">Title</Label>
@@ -166,7 +166,7 @@ export function MemberContactGroup({
             )}
           </div>
         )}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor="contact-firstName">First Name *</Label>
             <Input
@@ -244,7 +244,7 @@ export function MemberContactGroup({
             />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor="contact-dateOfBirth">Date of Birth</Label>
             <Input

@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   seasonRateCreateMany: vi.fn(),
   transaction: vi.fn(),
   logAudit: vi.fn(),
+  revalidatePublicPageContent: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -28,6 +29,10 @@ vi.mock("@/lib/session-guards", () => ({
 
 vi.mock("@/lib/audit", () => ({
   logAudit: mocks.logAudit,
+}));
+
+vi.mock("@/lib/public-content-revalidation", () => ({
+  revalidatePublicPageContent: mocks.revalidatePublicPageContent,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -131,6 +136,7 @@ describe("admin season routes (multi-lodge phase 7)", () => {
         data: expect.objectContaining({ lodgeId: "lodge-2" }),
       }),
     );
+    expect(mocks.revalidatePublicPageContent).toHaveBeenCalledOnce();
   });
 
   it("rejects a season at an unknown or inactive lodge", async () => {
@@ -149,6 +155,7 @@ describe("admin season routes (multi-lodge phase 7)", () => {
 
     expect(res.status).toBe(400);
     expect(mocks.seasonCreate).not.toHaveBeenCalled();
+    expect(mocks.revalidatePublicPageContent).not.toHaveBeenCalled();
   });
 
   it("stamps the default lodge when none is requested", async () => {
@@ -235,5 +242,6 @@ describe("admin season routes (multi-lodge phase 7)", () => {
         }),
       }),
     );
+    expect(mocks.revalidatePublicPageContent).toHaveBeenCalledOnce();
   });
 });

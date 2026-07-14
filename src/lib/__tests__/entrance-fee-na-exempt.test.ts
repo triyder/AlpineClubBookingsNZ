@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    entranceFee: { findFirst: vi.fn().mockResolvedValue(null) },
     member: { findUnique: vi.fn() },
     familyGroupMember: { findMany: vi.fn().mockResolvedValue([]) },
     xeroItemCodeMapping: { findFirst: vi.fn() },

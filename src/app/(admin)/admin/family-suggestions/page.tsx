@@ -181,7 +181,7 @@ export default function FamilySuggestionsPage() {
       />
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-md p-3 text-red-800 text-sm">
+        <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">
           {error}
         </div>
       )}
@@ -228,8 +228,8 @@ export default function FamilySuggestionsPage() {
         ) return null
         if (created.has(suggestion.signature)) {
           return (
-            <Card key={suggestion.signature} className="border-green-200 bg-green-50">
-              <CardContent className="py-4 text-center text-green-800">
+            <Card key={suggestion.signature} className="border-success/20 bg-success-muted">
+              <CardContent className="py-4 text-center text-success">
                 Family group &ldquo;{editNames[suggestion.signature] ?? suggestion.suggestedName}&rdquo; created successfully.
               </CardContent>
             </Card>
@@ -307,12 +307,12 @@ export default function FamilySuggestionsPage() {
                       </TableCell>
                       <TableCell>
                         {m.canLogin
-                          ? <Badge className="bg-green-100 text-green-800 text-xs">Yes</Badge>
+                          ? <Badge className="bg-success-muted text-success text-xs">Yes</Badge>
                           : <Badge variant="secondary" className="text-xs">No</Badge>}
                       </TableCell>
                       <TableCell>
                         {m.xeroContactId
-                          ? <Badge className="bg-blue-100 text-blue-800 text-xs">Linked</Badge>
+                          ? <Badge className="bg-info-muted text-info text-xs">Linked</Badge>
                           : <span className="text-muted-foreground text-xs">-</span>}
                       </TableCell>
                     </TableRow>

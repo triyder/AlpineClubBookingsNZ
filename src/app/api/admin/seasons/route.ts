@@ -9,6 +9,7 @@ import {
   lodgeNullTolerantScope,
   resolveOptionalActiveLodgeId,
 } from "@/lib/lodges"
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -124,6 +125,8 @@ export async function POST(req: NextRequest) {
     targetId: season.id,
     details: `Created season: ${name}`,
   });
+
+  revalidatePublicPageContent()
 
   return NextResponse.json(season, { status: 201 })
 }

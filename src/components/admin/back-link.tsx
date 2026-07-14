@@ -13,7 +13,7 @@ export function BackLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
       href={href}
-      className="text-sm font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
+      className="text-sm font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
     >
       ← {label}
     </Link>

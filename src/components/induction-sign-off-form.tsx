@@ -145,7 +145,7 @@ export function InductionSignOffForm({
         </div>
       ))}
 
-      <div className="space-y-3 rounded-md border bg-muted/30 p-4">
+      <div className="space-y-3 rounded-md border bg-muted p-4">
         <Label htmlFor="signoff-comments" className="text-sm font-medium">
           Comments (optional)
         </Label>

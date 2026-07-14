@@ -46,6 +46,10 @@ const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
   "pre-arrival-reminder",
   "booking-request-verification",
   "booking-request-approved",
+  "booking-request-quote",
+  "school-attendee-confirmation",
+  "group-booking-join-verification",
+  "chore-roster",
 ]);
 
 // Failure-alert emails should also skip HTML retention so a broken admin

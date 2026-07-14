@@ -339,27 +339,27 @@
 
 @layer components {
   .app-brand-mark {
-    @apply inline-flex items-center justify-center rounded-full bg-brand-gold/20 text-brand-charcoal dark:bg-brand-gold/15 dark:text-brand-gold;
+    @apply inline-flex items-center justify-center rounded-full bg-brand-gold text-brand-charcoal;
   }
 
   .app-nav-link-active {
-    @apply bg-brand-gold/20 text-brand-charcoal dark:bg-brand-gold/15 dark:text-brand-gold;
+    @apply bg-brand-gold text-brand-charcoal;
   }
 
   .app-step-active {
-    @apply rounded-full bg-brand-gold/20 px-2 py-0.5 font-semibold text-brand-charcoal dark:bg-brand-gold/15 dark:text-brand-gold;
+    @apply rounded-full bg-brand-gold px-2 py-0.5 font-semibold text-brand-charcoal;
   }
 
   .app-button-brand {
-    @apply inline-flex items-center justify-center rounded-md bg-brand-gold px-4 py-2 text-sm font-medium text-brand-charcoal shadow-sm transition-colors hover:bg-brand-gold/90;
+    @apply inline-flex items-center justify-center rounded-md bg-brand-gold px-4 py-2 text-sm font-medium text-brand-charcoal shadow-sm transition-shadow hover:shadow-md;
   }
 
   .app-callout-brand {
-    @apply rounded-md border border-brand-gold/35 bg-brand-gold/10;
+    @apply rounded-md border border-brand-gold bg-card text-card-foreground;
   }
 
   .app-chip-brand {
-    @apply inline-flex items-center gap-1.5 rounded-md bg-brand-gold/15 px-3 py-1.5 text-sm font-medium text-brand-charcoal transition-colors hover:bg-brand-gold/25 dark:text-brand-gold;
+    @apply inline-flex items-center gap-1.5 rounded-md bg-brand-gold px-3 py-1.5 text-sm font-medium text-brand-charcoal transition-shadow hover:shadow-md;
   }
 
   /* Charcoal-on-snow keeps AA contrast under both shipped theme presets;
@@ -440,24 +440,141 @@
 }
 
 .app-theme-scope {
-  /* App shells (authenticated + admin) load --font-theme-inter /
-     --font-theme-league-spartan via clubThemeFontVariableClassName on the scope
-     wrapper, giving Inter body + League Spartan headings (#1801). Where those vars
-     are absent (public/finance/lodge scopes, and portalled dialogs mounted at
-     <body>), --font-sans falls back to the system stack, so their font rendering
-     is unchanged. Mirrors how .website-theme wires --font-sans / --font-heading. */
-  --font-sans: var(
-    --font-theme-inter,
-    ui-sans-serif,
-    system-ui,
-    sans-serif,
-    "Apple Color Emoji",
-    "Segoe UI Emoji"
+  /* The public utility, authenticated, and admin layouts inject the saved
+     app-safe ClubTheme stylesheet.
+     Existing brand fields deliberately supply both the public website and app:
+     gold is the app accent, and deep/ridge/mist/snow form the neutral ramp. The
+     semantic success/warning/info/danger tokens remain the curated values declared
+     on :root/.dark above and are intentionally not overridden here (#1808). */
+  --background: var(--brand-snow);
+  --foreground: var(--brand-deep);
+  --card: var(--brand-snow);
+  --card-foreground: var(--brand-deep);
+  --popover: var(--brand-snow);
+  --popover-foreground: var(--brand-deep);
+  --primary: var(--brand-gold);
+  --primary-foreground: var(--brand-charcoal);
+  --secondary: var(--brand-mist);
+  --secondary-foreground: var(--brand-deep);
+  --muted: var(--brand-mist);
+  --muted-foreground: var(--brand-deep);
+  --accent: var(--brand-mist);
+  --accent-foreground: var(--brand-deep);
+  --app-accent-text: var(--brand-deep);
+  /* These remaining mixes are non-text structural boundaries only; no text
+     foreground is paired with a mixed endpoint. */
+  --border: color-mix(in srgb, var(--brand-ridge) 30%, var(--brand-snow));
+  --input: color-mix(in srgb, var(--brand-ridge) 30%, var(--brand-snow));
+  --ring: var(--brand-deep);
+  --chart-1: var(--brand-gold);
+  --chart-2: var(--brand-safety);
+  --chart-3: var(--brand-ridge);
+  --chart-4: var(--brand-mist);
+  --chart-5: var(--brand-charcoal);
+  --sidebar: var(--brand-charcoal);
+  --sidebar-foreground: var(--brand-snow);
+  --sidebar-primary: var(--brand-gold);
+  --sidebar-primary-foreground: var(--brand-charcoal);
+  --sidebar-accent: var(--brand-deep);
+  --sidebar-accent-foreground: var(--brand-snow);
+  --sidebar-border: color-mix(
+    in srgb,
+    var(--brand-ridge) 35%,
+    var(--brand-charcoal)
   );
-  --font-heading: var(--font-theme-league-spartan, var(--font-sans));
+  --sidebar-ring: var(--brand-snow);
+  --font-sans: var(
+    --font-website-body,
+    var(
+      --font-theme-inter,
+      ui-sans-serif,
+      system-ui,
+      sans-serif,
+      "Apple Color Emoji",
+      "Segoe UI Emoji"
+    )
+  );
+  --font-heading: var(
+    --font-website-heading,
+    var(--font-theme-league-spartan, var(--font-sans))
+  );
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+}
+
+.dark .app-theme-scope {
+  --background: var(--brand-deep);
+  --foreground: var(--brand-snow);
+  --card: var(--brand-charcoal);
+  --card-foreground: var(--brand-snow);
+  --popover: var(--brand-charcoal);
+  --popover-foreground: var(--brand-snow);
+  --primary: var(--brand-gold);
+  --primary-foreground: var(--brand-charcoal);
+  --secondary: var(--brand-charcoal);
+  --secondary-foreground: var(--brand-snow);
+  --muted: var(--brand-charcoal);
+  --muted-foreground: var(--brand-snow);
+  --accent: var(--brand-charcoal);
+  --accent-foreground: var(--brand-snow);
+  --app-accent-text: var(--brand-snow);
+  --border: color-mix(in srgb, var(--brand-mist) 28%, var(--brand-deep));
+  --input: color-mix(in srgb, var(--brand-mist) 28%, var(--brand-deep));
+  --ring: var(--brand-snow);
+  --sidebar: var(--brand-charcoal);
+  --sidebar-foreground: var(--brand-snow);
+  --sidebar-primary: var(--brand-gold);
+  --sidebar-primary-foreground: var(--brand-charcoal);
+  --sidebar-accent: var(--brand-deep);
+  --sidebar-accent-foreground: var(--brand-snow);
+  --sidebar-border: color-mix(in srgb, var(--brand-mist) 25%, var(--brand-deep));
+  --sidebar-ring: var(--brand-snow);
+}
+
+/* Filled brand controls keep the editable accent with its gated charcoal
+   foreground. Light-mode text-primary and focus rings use the dedicated dark
+   accent role instead of placing a mid-luminance accent directly on snow. A
+   charcoal inset boundary keeps solid accent controls/occupancy fills distinct
+   from the light surface; dark mode can rely on the gated gold-on-deep pair. */
+.app-theme-scope
+  :is(
+    .text-primary,
+    .text-brand-gold,
+    [class~="hover:text-primary"]:hover,
+    .group:hover [class~="group-hover:text-primary"]
+  ):not(.website-theme *) {
+  color: var(--app-accent-text);
+}
+
+.app-theme-scope :is(.bg-primary, .bg-brand-gold):not(.website-theme *) {
+  outline: 1px solid var(--brand-charcoal);
+  outline-offset: -1px;
+}
+
+.dark
+  .app-theme-scope
+  :is(.bg-primary, .bg-brand-gold):not(.website-theme *) {
+  outline: none;
+}
+
+/* A native outline is independent of Tailwind's ring opacity and component
+   opacity, so filled Button/Checkbox variants retain a visible keyboard focus
+   boundary. The ring token is a gated page-foreground endpoint in each mode. */
+.app-theme-scope
+  :where(
+    a,
+    button,
+    input,
+    select,
+    textarea,
+    [role="button"],
+    [role="checkbox"],
+    [role="link"],
+    [tabindex]
+  ):focus-visible:not(.website-theme *) {
+  outline: 2px solid var(--ring) !important;
+  outline-offset: 2px !important;
 }
 
 /* App headings pick up --font-heading (League Spartan when loaded). Specificity is

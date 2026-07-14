@@ -445,8 +445,11 @@ describe("OccupancyCalendar", () => {
     expect(dayButton.getAttribute("aria-label")).toMatch(/, 1 guest$/);
     // No overlay data attributes when no overlay prop is supplied.
     expect(dayButton).not.toHaveAttribute("data-overlay-tone");
-    // Guest cells keep their accent-gold tint; no overlay tone token leaks in.
-    expect(dayButton.className).toContain("bg-brand-gold/10");
+    // Guest cells use a directly gated card pair with a brand border; no
+    // interpolated text-bearing tint or overlay tone token leaks in.
+    expect(dayButton.className).toContain("bg-card");
+    expect(dayButton.className).toContain("text-card-foreground");
+    expect(dayButton.className).not.toContain("bg-brand-gold/10");
     expect(dayButton.className).not.toContain("bg-info-muted");
   });
 });

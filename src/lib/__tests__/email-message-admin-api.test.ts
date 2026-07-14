@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   emailTemplateOverrideFindUnique: vi.fn(),
   emailTemplateOverrideUpsert: vi.fn(),
   emailTemplateOverrideFindMany: vi.fn(),
+  emailTemplateOverrideDeleteMany: vi.fn(),
   emailMessageSettingFindUnique: vi.fn(),
   emailMessageSettingUpsert: vi.fn(),
   notificationDeliveryPolicyFindUnique: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.emailTemplateOverrideFindUnique,
       upsert: mocks.emailTemplateOverrideUpsert,
       findMany: mocks.emailTemplateOverrideFindMany,
+      deleteMany: mocks.emailTemplateOverrideDeleteMany,
     },
     emailMessageSetting: {
       findUnique: mocks.emailMessageSettingFindUnique,
@@ -52,12 +54,16 @@ import {
   PUT as putEmailTemplate,
 } from "@/app/api/admin/email-templates/route";
 import { POST as previewEmailTemplate } from "@/app/api/admin/email-templates/preview/route";
+import { POST as resetEmailTemplate } from "@/app/api/admin/email-templates/reset/route";
 import { PUT as putEmailSettings } from "@/app/api/admin/email-settings/route";
 import {
   GET as getDeliveryPolicies,
   PUT as putDeliveryPolicy,
 } from "@/app/api/admin/notification-delivery-policies/route";
-import { getEmailTemplateDefinition } from "@/lib/email-message-registry";
+import {
+  EMAIL_TEMPLATE_DEFINITIONS,
+  getEmailTemplateDefinition,
+} from "@/lib/email-message-registry";
 
 function request(path: string, body: unknown) {
   return new NextRequest(`http://localhost${path}`, {
@@ -89,6 +95,7 @@ describe("admin email message APIs", () => {
       updatedByMemberId: "admin-1",
     });
     mocks.emailTemplateOverrideFindMany.mockResolvedValue([]);
+    mocks.emailTemplateOverrideDeleteMany.mockResolvedValue({ count: 1 });
     mocks.emailMessageSettingFindUnique.mockResolvedValue(null);
     mocks.emailMessageSettingUpsert.mockImplementation(({ update }) =>
       Promise.resolve({
@@ -184,6 +191,47 @@ describe("admin email message APIs", () => {
     expect(body.sensitiveSubjectTokens).toContain("doorCode");
     expect(mocks.emailTemplateOverrideUpsert).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {
+      templateName: "chore-roster",
+      subject: "Complete your chores: {{choreLink}}",
+      bodyText:
+        "Hi {{guestName}}, mark {{choreName}} complete: {{choreLink}}",
+      sensitiveToken: "choreLink",
+    },
+    {
+      templateName: "booking-request-quote",
+      subject: "Respond to your quote: {{respondUrl}}",
+      bodyText:
+        "Respond here: {{BASE_URL}}/booking-requests/respond/{{token}}",
+      sensitiveToken: "respondUrl",
+    },
+    {
+      templateName: "nomination-request",
+      subject: "Review this nomination: {{reviewUrl}}",
+      bodyText:
+        "Review {{applicantName}} here: {{BASE_URL}}/nominations/{{token}}",
+      sensitiveToken: "reviewUrl",
+    },
+  ])(
+    "rejects $templateName subjects containing $sensitiveToken",
+    async ({ templateName, subject, bodyText, sensitiveToken }) => {
+      const response = await putEmailTemplate(
+        request("/api/admin/email-templates", {
+          templateName,
+          subject,
+          bodyText,
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe("Invalid email template");
+      expect(body.sensitiveSubjectTokens).toContain(sensitiveToken);
+      expect(mocks.emailTemplateOverrideUpsert).not.toHaveBeenCalled();
+    },
+  );
 
   it("saves booking-confirmed overrides with the door code only in the body", async () => {
     const response = await putEmailTemplate(
@@ -322,6 +370,69 @@ describe("admin email message APIs", () => {
     expect(body.staleOverrides).toEqual([
       expect.objectContaining({ templateName: "retired-template" }),
     ]);
+  });
+
+  it("lists every registered template from the authoritative TypeScript registry", async () => {
+    const response = await getEmailTemplates();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(
+      body.templates.map((template: { key: string }) => template.key),
+    ).toEqual(EMAIL_TEMPLATE_DEFINITIONS.map((definition) => definition.key));
+  });
+
+  it("previews every registered template with its default content", async () => {
+    for (const definition of EMAIL_TEMPLATE_DEFINITIONS) {
+      const response = await previewEmailTemplate(
+        postRequest("/api/admin/email-templates/preview", {
+          templateName: definition.key,
+          subject: definition.defaultSubject,
+          bodyText: definition.defaultBody,
+        }),
+      );
+
+      expect(response.status, definition.key).toBe(200);
+      const body = await response.json();
+      expect(body.subject, definition.key).toBeTypeOf("string");
+      expect(body.html, definition.key).toBeTypeOf("string");
+    }
+  });
+
+  it("saves every registered template with its default content", async () => {
+    for (const definition of EMAIL_TEMPLATE_DEFINITIONS) {
+      const response = await putEmailTemplate(
+        request("/api/admin/email-templates", {
+          templateName: definition.key,
+          subject: definition.defaultSubject,
+          bodyText: definition.defaultBody,
+        }),
+      );
+
+      expect(response.status, definition.key).toBe(200);
+    }
+
+    expect(mocks.emailTemplateOverrideUpsert).toHaveBeenCalledTimes(
+      EMAIL_TEMPLATE_DEFINITIONS.length,
+    );
+  });
+
+  it("resets every registered template", async () => {
+    for (const definition of EMAIL_TEMPLATE_DEFINITIONS) {
+      const response = await resetEmailTemplate(
+        postRequest("/api/admin/email-templates/reset", {
+          templateName: definition.key,
+        }),
+      );
+
+      expect(response.status, definition.key).toBe(200);
+    }
+
+    expect(mocks.emailTemplateOverrideDeleteMany.mock.calls).toEqual(
+      EMAIL_TEMPLATE_DEFINITIONS.map((definition) => [
+        { where: { templateName: definition.key } },
+      ]),
+    );
   });
 
   it("renders membership cancellation refund policy defaults through preview", async () => {

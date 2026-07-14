@@ -70,18 +70,18 @@ export function MemberXeroLinkDialog({
             {searching ? "..." : "Search"}
           </Button>
         </div>
-        {error && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{error}</div>}
+        {error && <div className="rounded border border-danger/20 bg-danger-muted p-2 text-sm text-danger">{error}</div>}
         <div className="max-h-64 overflow-y-auto space-y-2">
           {results.length === 0 && !searching && query.length >= 2 && (
-            <p className="text-sm text-slate-500 text-center py-4">No contacts found</p>
+            <p className="py-4 text-center text-sm text-muted-foreground">No contacts found</p>
           )}
           {results.map((c) => (
-            <div key={c.contactId} className="flex items-center justify-between p-2 border rounded hover:bg-slate-50">
+            <div key={c.contactId} className="flex flex-col gap-2 rounded border p-2 hover:bg-muted sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium">{c.name}</p>
-                {c.email && <p className="text-xs text-slate-500">{c.email}</p>}
+                {c.email && <p className="break-all text-xs text-muted-foreground">{c.email}</p>}
                 {c.isLinked && (
-                  <p className="text-xs text-amber-600">Already linked to {c.linkedMemberName}</p>
+                  <p className="text-xs text-warning">Already linked to {c.linkedMemberName}</p>
                 )}
               </div>
               <Button

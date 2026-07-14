@@ -160,7 +160,7 @@ export function BookingRequestContactPicker({
 
       {/* Selected contact chip (map mode with a chosen contact). */}
       {isMap && choice.memberId ? (
-        <div className="flex items-center gap-3 rounded-md border border-primary/40 bg-primary/5 p-2">
+        <div className="flex items-center gap-3 rounded-md border border-primary/40 bg-card p-2">
           <div className="flex-1 text-sm">
             <p className="font-medium">Mapping to: {choice.label}</p>
           </div>

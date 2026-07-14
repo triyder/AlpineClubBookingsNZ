@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
@@ -25,6 +26,8 @@ const membershipTypeSelect = {
   key: true,
   name: true,
   description: true,
+  publicDescription: true,
+  publiclyListed: true,
   isActive: true,
   isBuiltIn: true,
   bookingBehavior: true,
@@ -48,7 +51,7 @@ const membershipTypeSelect = {
     },
     orderBy: [{ sortOrder: "asc" }, { groupName: "asc" }, { groupId: "asc" }],
   },
-  _count: { select: { assignments: true } },
+  _count: { select: { assignments: true, annualFees: true } },
 } satisfies Prisma.MembershipTypeSelect;
 
 const paramsSchema = z.object({
@@ -70,6 +73,8 @@ const patchSchema = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
     description: z.string().trim().max(1000).nullable().optional(),
+    publicDescription: z.string().trim().max(4000).nullable().optional(),
+    publiclyListed: z.boolean().optional(),
     bookingBehavior: z.enum(MEMBERSHIP_TYPE_BOOKING_BEHAVIORS).optional(),
     subscriptionBehavior: z
       .enum(MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS)
@@ -187,6 +192,12 @@ export async function PATCH(
   if (parsed.data.description !== undefined) {
     data.description = normalizeMembershipTypeText(parsed.data.description);
   }
+  if (parsed.data.publicDescription !== undefined) {
+    data.publicDescription = normalizeMembershipTypeText(parsed.data.publicDescription);
+  }
+  if (parsed.data.publiclyListed !== undefined) {
+    data.publiclyListed = parsed.data.publiclyListed;
+  }
   if (parsed.data.bookingBehavior !== undefined) {
     data.bookingBehavior = parsed.data.bookingBehavior;
   }
@@ -266,6 +277,7 @@ export async function PATCH(
 
     return membershipTypeWithRules;
   });
+  revalidatePath("/", "layout");
 
   return NextResponse.json({
     membershipType: serializeMembershipType(updated),
@@ -318,6 +330,13 @@ export async function DELETE(
     );
   }
 
+  if ((existing._count?.annualFees ?? 0) > 0) {
+    return NextResponse.json(
+      { error: "Membership types with fee history cannot be deleted. Archive the type instead." },
+      { status: 409 },
+    );
+  }
+
   await prisma.$transaction(async (tx) => {
     await tx.membershipType.delete({ where: { id: existing.id } });
     await tx.auditLog.create(
@@ -336,6 +355,7 @@ export async function DELETE(
       }),
     );
   });
+  revalidatePath("/", "layout");
 
   return NextResponse.json({ ok: true });
 }

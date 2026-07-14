@@ -1,12 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The live door code must never reach an email subject: EmailLog persists the
+// Live credentials must never reach an email subject: EmailLog persists the
 // subject for every template (including sensitive ones whose HTML is not
 // retained) and subjects travel in clear mail headers. These tests prove the
 // defence-in-depth render path holds even when a malicious or pre-validation
-// stored override puts {{doorCode}} (or the literal live code) in a subject.
+// stored override puts a sensitive placeholder or literal value in a subject.
 
 const LIVE_DOOR_CODE = "97531";
+const LIVE_CHORE_LINK = "https://bookings.example.org/chores/live-bearer-token";
+const LIVE_QUOTE_TOKEN = "live-quote-bearer-token";
+const LIVE_QUOTE_RESPONSE_URL =
+  `https://bookings.example.org/booking-requests/respond/${LIVE_QUOTE_TOKEN}`;
+const LIVE_NOMINATION_TOKEN = "live-nomination-bearer-token";
+const LIVE_NOMINATION_REVIEW_URL =
+  `https://bookings.example.org/nominations/${LIVE_NOMINATION_TOKEN}`;
 
 const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
   const mockTransporter = {
@@ -57,6 +64,9 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   sendBookingConfirmedEmail,
+  sendBookingRequestQuoteEmail,
+  sendChoreRosterEmail,
+  sendNominationRequestEmail,
   sendPreArrivalReminderEmail,
 } from "@/lib/email";
 
@@ -86,10 +96,11 @@ function allLoggedOutput(): string {
   ]);
 }
 
-describe("door code never reaches email subjects, EmailLog, or app logs", () => {
+describe("sensitive values never reach email subjects, EmailLog, or app logs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXTAUTH_URL", "https://bookings.example.org");
     mockPrisma.emailMessageSetting.findUnique.mockResolvedValue({
       id: "default",
     });
@@ -192,6 +203,91 @@ describe("door code never reaches email subjects, EmailLog, or app logs", () => 
     const logged = mockPrisma.emailLog.create.mock.calls[0][0].data;
     expect(logged.subject).not.toContain(LIVE_DOOR_CODE);
     expect(allLoggedOutput()).not.toContain(LIVE_DOOR_CODE);
+  });
+
+  it("neutralises a chore link in a legacy stored chore-roster subject", async () => {
+    mockStoredOverride(
+      "chore-roster",
+      `Complete your chores: {{choreLink}} ${LIVE_CHORE_LINK} - {{CLUB_LODGE_NAME}}`,
+    );
+
+    await sendChoreRosterEmail(
+      "member@example.com",
+      "Ada",
+      "2026-07-10",
+      [{ name: "Sweep the kitchen", description: null }],
+      LIVE_CHORE_LINK,
+    );
+
+    expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);
+    const sent = mockTransporter.sendMail.mock.calls[0][0];
+    expect(sent.subject).not.toContain(LIVE_CHORE_LINK);
+    expect(sent.subject).not.toMatch(/\{\{\s*choreLink\s*\}\}/);
+    expect(sent.html).toContain(LIVE_CHORE_LINK);
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledTimes(1);
+    const logged = mockPrisma.emailLog.create.mock.calls[0][0].data;
+    expect(logged.subject).not.toContain(LIVE_CHORE_LINK);
+    expect(logged.htmlBody).toBeNull();
+    expect(allLoggedOutput()).not.toContain(LIVE_CHORE_LINK);
+  });
+
+  it("neutralises a quote response URL in a legacy stored subject", async () => {
+    mockStoredOverride(
+      "booking-request-quote",
+      `Respond here: {{respondUrl}} ${LIVE_QUOTE_RESPONSE_URL}`,
+    );
+
+    await sendBookingRequestQuoteEmail({
+      email: "guest@example.com",
+      firstName: "Ada",
+      token: LIVE_QUOTE_TOKEN,
+      checkIn: new Date("2026-07-10T00:00:00.000Z"),
+      checkOut: new Date("2026-07-12T00:00:00.000Z"),
+      guestCount: 2,
+      requestType: "PUBLIC",
+      options: [{ label: "Standard", totalCents: 12300 }],
+      expiresAt: new Date("2026-07-09T00:00:00.000Z"),
+    });
+
+    expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);
+    const sent = mockTransporter.sendMail.mock.calls[0][0];
+    expect(sent.subject).not.toContain(LIVE_QUOTE_RESPONSE_URL);
+    expect(sent.subject).not.toMatch(/\{\{\s*respondUrl\s*\}\}/);
+    expect(sent.html).toContain(LIVE_QUOTE_RESPONSE_URL);
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledTimes(1);
+    const logged = mockPrisma.emailLog.create.mock.calls[0][0].data;
+    expect(logged.subject).not.toContain(LIVE_QUOTE_RESPONSE_URL);
+    expect(logged.htmlBody).toBeNull();
+    expect(allLoggedOutput()).not.toContain(LIVE_QUOTE_RESPONSE_URL);
+  });
+
+  it("neutralises a nomination review URL without blocking ordinary review URLs", async () => {
+    mockStoredOverride(
+      "nomination-request",
+      `Review the nomination: {{reviewUrl}} ${LIVE_NOMINATION_REVIEW_URL}`,
+    );
+
+    await sendNominationRequestEmail({
+      email: "nominator@example.com",
+      nominatorName: "Nora",
+      applicantName: "Ada",
+      token: LIVE_NOMINATION_TOKEN,
+      familyMemberCount: 0,
+      expiresAt: new Date("2026-07-19T00:00:00.000Z"),
+    });
+
+    expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);
+    const sent = mockTransporter.sendMail.mock.calls[0][0];
+    expect(sent.subject).not.toContain(LIVE_NOMINATION_REVIEW_URL);
+    expect(sent.subject).not.toMatch(/\{\{\s*reviewUrl\s*\}\}/);
+    expect(sent.html).toContain(LIVE_NOMINATION_REVIEW_URL);
+
+    const logged = mockPrisma.emailLog.create.mock.calls[0][0].data;
+    expect(logged.subject).not.toContain(LIVE_NOMINATION_REVIEW_URL);
+    expect(logged.htmlBody).toBeNull();
+    expect(allLoggedOutput()).not.toContain(LIVE_NOMINATION_REVIEW_URL);
   });
 
   it("keeps the default subject clean when no override exists", async () => {

@@ -221,6 +221,7 @@ export async function flushMemberSubscriptionHistory(memberId: string): Promise<
       select: {
         id: true,
         seasonYear: true,
+        chargeCoverage: { select: { id: true } },
       },
     });
 
@@ -232,12 +233,16 @@ export async function flushMemberSubscriptionHistory(memberId: string): Promise<
       };
     }
 
-    const subscriptionIds = subscriptions.map((subscription) => subscription.id);
+    // Durable charge coverage is financial history and must never be flushed
+    // by a contact resync/unlink. Only legacy/unbilled derived rows are reset.
+    const subscriptionIds = subscriptions
+      .filter((subscription) => !subscription.chargeCoverage)
+      .map((subscription) => subscription.id);
     const seasonYears = Array.from(
       new Set(subscriptions.map((subscription) => subscription.seasonYear))
     ).sort((left, right) => right - left);
 
-    const deactivatedLinks = await tx.xeroObjectLink.updateMany({
+    const deactivatedLinks = subscriptionIds.length > 0 ? await tx.xeroObjectLink.updateMany({
       where: {
         localModel: "MemberSubscription",
         localId: { in: subscriptionIds },
@@ -246,12 +251,12 @@ export async function flushMemberSubscriptionHistory(memberId: string): Promise<
       data: {
         active: false,
       },
-    });
-    const deletedSubscriptions = await tx.memberSubscription.deleteMany({
+    }) : { count: 0 };
+    const deletedSubscriptions = subscriptionIds.length > 0 ? await tx.memberSubscription.deleteMany({
       where: {
         id: { in: subscriptionIds },
       },
-    });
+    }) : { count: 0 };
 
     return {
       seasonYears,
@@ -378,11 +383,6 @@ export async function checkMembershipStatus(
     return { status: "NOT_REQUIRED" };
   }
 
-  if (!member.xeroContactId) {
-    return { status: "NOT_INVOICED" };
-  }
-
-  const { xero, tenantId } = await getAuthenticatedXeroClient();
   const existingSubscription = await prisma.memberSubscription.findUnique({
     where: {
       memberId_seasonYear: { memberId, seasonYear: year },
@@ -394,8 +394,29 @@ export async function checkMembershipStatus(
       xeroInvoiceNumber: true,
       xeroOnlineInvoiceUrl: true,
       paidAt: true,
+      chargeCoverage: {
+        select: {
+          charge: {
+            select: {
+              xeroInvoiceId: true,
+            },
+          },
+        },
+      },
     },
   });
+  const immutableChargeInvoiceId =
+    existingSubscription?.chargeCoverage?.charge.xeroInvoiceId ?? null;
+
+  // Family-billed subscriptions can be covered by an invoice issued to another
+  // member. In that case the covered member does not need their own Xero contact,
+  // and contact-scoped discovery would fail to find (and then clear) the durable
+  // invoice identity persisted by the subscription billing workflow.
+  if (!member.xeroContactId && !immutableChargeInvoiceId) {
+    return { status: "NOT_INVOICED" };
+  }
+
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
   const correlationKey = buildXeroIdempotencyKey(
     "member",
     memberId,
@@ -415,6 +436,7 @@ export async function checkMembershipStatus(
       memberId,
       seasonYear: year,
       xeroContactId: member.xeroContactId,
+      immutableChargeInvoiceId,
       changedInvoiceIds: options?.changedInvoiceIds
         ? Array.from(options.changedInvoiceIds)
         : [],
@@ -422,45 +444,67 @@ export async function checkMembershipStatus(
   });
 
   try {
-    // Fetch invoices for this contact, filtered to the season year to avoid pagination issues.
-    // Season year runs April to March, so filter invoices from season start to end.
-    const response = await callXeroApi(
-      () =>
-        xero.accountingApi.getInvoices(
-          tenantId,
-          undefined, // ifModifiedSince
-          buildMembershipInvoiceWhereClause(
-            year,
-            member.xeroContactId ?? undefined
-          ), // where
-          undefined, // order
-          undefined, // iDs
-          undefined, // invoiceNumbers
-          undefined, // contactIDs
-          undefined, // statuses
-          1, // page
-          false // includeArchived
-        ),
-      {
-        operation: "getInvoices",
-        resourceType: "INVOICE",
-        workflow: "checkMembershipStatus",
-        context: `checkMembershipStatus(${memberId})`,
-      }
-    );
+    // A charge snapshot owns an immutable invoice identity. Fetch that invoice
+    // directly, including for non-recipient family members. Legacy subscriptions
+    // without charge coverage retain contact-scoped discovery.
+    const response = immutableChargeInvoiceId
+      ? await callXeroApi(
+          () =>
+            xero.accountingApi.getInvoice(
+              tenantId,
+              immutableChargeInvoiceId
+            ),
+          {
+            operation: "getInvoice",
+            resourceType: "INVOICE",
+            workflow: "checkMembershipStatus",
+            context: `checkMembershipStatus(${memberId}, immutable charge invoice)`,
+          }
+        )
+      : await callXeroApi(
+          () =>
+            xero.accountingApi.getInvoices(
+              tenantId,
+              undefined, // ifModifiedSince
+              buildMembershipInvoiceWhereClause(
+                year,
+                member.xeroContactId ?? undefined
+              ), // where
+              undefined, // order
+              undefined, // iDs
+              undefined, // invoiceNumbers
+              undefined, // contactIDs
+              undefined, // statuses
+              1, // page
+              false // includeArchived
+            ),
+          {
+            operation: "getInvoices",
+            resourceType: "INVOICE",
+            workflow: "checkMembershipStatus",
+            context: `checkMembershipStatus(${memberId})`,
+          }
+        );
 
     const invoices = response.body.invoices ?? [];
 
     // Look for subscription invoices matching the season year. Detection
     // criteria (account code, item code, text fallback) are admin-configurable.
-    const subscriptionMapping =
-      await getResolvedAccountMapping("subscriptionIncome");
-    const lockoutSettings = await loadMembershipLockoutSettings();
-    const subscriptionInvoice = findSubscriptionInvoice(invoices, year, {
-      accountCode: subscriptionMapping.code ?? "203",
-      itemCode: subscriptionMapping.itemCode,
-      textFallbackEnabled: lockoutSettings.textFallbackEnabled,
-    });
+    let subscriptionInvoice: Invoice | undefined | null;
+    if (immutableChargeInvoiceId) {
+      subscriptionInvoice = invoices.find(
+        (invoice) => invoice.invoiceID === immutableChargeInvoiceId
+      );
+    } else {
+      const subscriptionMapping =
+        await getResolvedAccountMapping("subscriptionIncome");
+      const lockoutSettings = await loadMembershipLockoutSettings();
+      subscriptionInvoice = findSubscriptionInvoice(invoices, year, {
+        accountCode: subscriptionMapping.code ?? "203",
+        itemCode: subscriptionMapping.itemCode,
+        textFallbackEnabled: lockoutSettings.textFallbackEnabled,
+      });
+    }
 
     if (!subscriptionInvoice) {
       await prisma.memberSubscription.upsert({
@@ -762,6 +806,41 @@ export async function refreshAllMembershipStatuses(
         .filter((contactId): contactId is string => Boolean(contactId))
     )
   );
+  const changedInvoiceIds = Array.from(
+    new Set(
+      changedInvoices
+        .map((invoice) => invoice.invoiceID)
+        .filter((invoiceId): invoiceId is string => Boolean(invoiceId))
+    )
+  );
+  const changedChargeCoverage = changedInvoiceIds.length > 0
+    ? await prisma.membershipSubscriptionChargeCoverage.findMany({
+        where: {
+          charge: { xeroInvoiceId: { in: changedInvoiceIds } },
+          subscription: { member: { active: true, archivedAt: null } },
+        },
+        select: {
+          charge: { select: { xeroInvoiceId: true } },
+          subscription: {
+            select: {
+              member: {
+                select: {
+                  id: true,
+                  email: true,
+                  firstName: true,
+                  lastName: true,
+                  xeroContactId: true,
+                  updatedAt: true,
+                },
+              },
+            },
+          },
+        },
+      })
+    : [];
+  const changedCoveredMemberIds = Array.from(new Set(
+    changedChargeCoverage.map((coverage) => coverage.subscription.member.id)
+  ));
   const retryMemberIds = Array.from(new Set(cursorMetadata.retryMemberIds ?? []));
   const memberWhereClauses: Array<Record<string, unknown>> = [];
   if (changedContactIds.length > 0) {
@@ -769,6 +848,9 @@ export async function refreshAllMembershipStatuses(
   }
   if (retryMemberIds.length > 0) {
     memberWhereClauses.push({ id: { in: retryMemberIds } });
+  }
+  if (changedCoveredMemberIds.length > 0) {
+    memberWhereClauses.push({ id: { in: changedCoveredMemberIds } });
   }
 
   const incrementalAffectedMembers =
@@ -870,6 +952,7 @@ export async function refreshAllMembershipStatuses(
   );
 
   const changedInvoiceIdsByContact = new Map<string, Set<string>>();
+  const changedInvoiceIdsByCoveredMember = new Map<string, Set<string>>();
   for (const invoice of changedInvoices) {
     const contactId = invoice.contact?.contactID;
     const invoiceId = invoice.invoiceID;
@@ -881,6 +964,14 @@ export async function refreshAllMembershipStatuses(
       changedInvoiceIdsByContact.get(contactId) ?? new Set<string>();
     existingIds.add(invoiceId);
     changedInvoiceIdsByContact.set(contactId, existingIds);
+  }
+  for (const coverage of changedChargeCoverage) {
+    const invoiceId = coverage.charge.xeroInvoiceId;
+    if (!invoiceId) continue;
+    const memberId = coverage.subscription.member.id;
+    const existingIds = changedInvoiceIdsByCoveredMember.get(memberId) ?? new Set<string>();
+    existingIds.add(invoiceId);
+    changedInvoiceIdsByCoveredMember.set(memberId, existingIds);
   }
 
   let checked = 0;
@@ -902,9 +993,12 @@ export async function refreshAllMembershipStatuses(
         },
       });
       const result = await checkMembershipStatus(member.id, year, {
-        changedInvoiceIds: member.xeroContactId
-          ? changedInvoiceIdsByContact.get(member.xeroContactId)
-          : undefined,
+        changedInvoiceIds: new Set([
+          ...(member.xeroContactId
+            ? changedInvoiceIdsByContact.get(member.xeroContactId) ?? []
+            : []),
+          ...(changedInvoiceIdsByCoveredMember.get(member.id) ?? []),
+        ]),
       });
       checked++;
 
@@ -961,13 +1055,7 @@ export async function refreshAllMembershipStatuses(
     cursorFrom: cursor?.cursorDateTime?.toISOString() ?? null,
     cursorTo: syncStartedAt.toISOString(),
     changedInvoices: changedInvoices.length,
-    changedInvoiceIds: Array.from(
-      new Set(
-        changedInvoices
-          .map((invoice) => invoice.invoiceID)
-          .filter((invoiceId): invoiceId is string => Boolean(invoiceId))
-      )
-    ),
+    changedInvoiceIds,
     affectedMembers: affectedMembersList.length,
     checked,
     updated,

@@ -108,12 +108,12 @@ function getStatusBadge(
   status?: FamilyMemberStatus,
   groupPendingRequest?: PendingFamilyRequest
 ) {
-  if (!status) return { label: "Unknown", className: "bg-slate-100 text-slate-700" };
+  if (!status) return { label: "Unknown", className: "bg-muted text-foreground" };
   if (groupPendingRequest || status.pendingRequestStatus) {
-    return { label: "Pending admin", className: "bg-amber-100 text-amber-800 border-amber-200" };
+    return { label: "Pending admin", className: "border-warning/20 bg-warning-muted text-warning" };
   }
   if (status.canBeBooked) {
-    return { label: "Details confirmed", className: "bg-emerald-100 text-emerald-800 border-emerald-200" };
+    return { label: "Details confirmed", className: "border-success/20 bg-success-muted text-success" };
   }
   if (status.confirmationMode === "not_allowed") {
     const label =
@@ -122,12 +122,12 @@ function getStatusBadge(
         : status.role === "LODGE"
           ? "Lodge account"
           : "No confirmation needed";
-    return { label, className: "bg-slate-100 text-slate-700 border-slate-200" };
+    return { label, className: "border-border bg-muted text-foreground" };
   }
   if (status.canLogin && status.needsOwnLoginConfirmation) {
-    return { label: "Needs own confirmation", className: "bg-blue-100 text-blue-800 border-blue-200" };
+    return { label: "Needs own confirmation", className: "border-info/20 bg-info-muted text-info" };
   }
-  return { label: "Needs details", className: "bg-rose-100 text-rose-800 border-rose-200" };
+  return { label: "Needs details", className: "border-danger/20 bg-danger-muted text-danger" };
 }
 
 export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGroupSectionProps) {
@@ -489,7 +489,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   return (
     <div className="space-y-4">
       {error && (
-        <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+        <div className="rounded border border-danger/20 bg-danger-muted p-2 text-sm text-danger">
           {error}
         </div>
       )}
@@ -498,14 +498,14 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
         <div className="space-y-2">
           <p className="text-sm font-medium">Pending Invitations</p>
           {invitations.map((inv) => (
-            <div key={inv.id} className="flex items-center justify-between rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+            <div key={inv.id} className="flex flex-col gap-3 rounded-lg border border-info/20 bg-info-muted p-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium">
                   {inv.requester.firstName} {inv.requester.lastName} invited you to join{" "}
-                  <span className="text-indigo-700">{inv.familyGroup.name}</span>
+                  <span className="text-info">{inv.familyGroup.name}</span>
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <Button
                   size="sm"
                   disabled={respondingTo === inv.id}
@@ -536,14 +536,14 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
             return (
               <div key={group.id} className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4 text-indigo-600" />
+                  <Users className="h-4 w-4 text-info" />
                   <span className="font-medium">{group.name || "Family Group"}</span>
                 </div>
 
                 {groupPendingRequests.length > 0 && (
                   <div className="space-y-2">
                     {groupPendingRequests.map((request) => (
-                      <div key={request.id} className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                      <div key={request.id} className="rounded-md border border-warning/20 bg-warning-muted p-3 text-sm text-warning">
                         This family change is awaiting admin approval.
                         {request.type === "ADULT_REQUEST" && request.requestedFirstName && (
                           <span> Requested adult: {request.requestedFirstName} {request.requestedLastName}.</span>
@@ -577,7 +577,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                         );
 
                       return (
-                        <div key={member.id} className="rounded-lg border border-slate-200 p-3">
+                        <div key={member.id} className="rounded-lg border border-border p-3">
                           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                             <div className="space-y-1">
                               <div className="flex flex-wrap items-center gap-2">
@@ -590,19 +590,19 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                                 )}
                               </div>
                               {status && needsMemberDetails && (
-                                <p className="text-sm text-slate-600">
+                                <p className="text-sm text-muted-foreground">
                                   {status.canLogin
                                     ? `${member.firstName} has their own login and needs to sign in and confirm their details.`
                                     : `Complete ${member.firstName}'s details before booking them as a member. Because ${member.firstName} does not have their own login, any adult in this family group can do this.`}
                                 </p>
                               )}
                               {status?.confirmationMode !== "not_allowed" && status?.missingFields && status.missingFields.length > 0 && (
-                                <p className="text-xs text-slate-500">
+                                <p className="text-xs text-muted-foreground">
                                   Missing: {status.missingFields.join(", ")}
                                 </p>
                               )}
                               {status?.parentLinks && status.parentLinks.length > 0 && (
-                                <p className="text-xs text-slate-500">
+                                <p className="text-xs text-muted-foreground">
                                   Parents: {status.parentLinks.map((parent) => {
                                     const label = `${parent.firstName} ${parent.lastName}`.trim();
                                     return parent.id === status.notificationEmailFromId
@@ -642,8 +642,8 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                           </div>
 
                           {detailMemberId === member.id && (
-                            <form onSubmit={(e) => handleDelegatedDetails(e, member.id)} className="mt-3 space-y-3 rounded-md border bg-slate-50 p-3">
-                              <div className="grid grid-cols-2 gap-3">
+                            <form onSubmit={(e) => handleDelegatedDetails(e, member.id)} className="mt-3 space-y-3 rounded-md border bg-muted p-3">
+                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
                                   <Label htmlFor={`details-first-${member.id}`}>First Name</Label>
                                   <Input
@@ -673,7 +673,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                                   required
                                 />
                               </div>
-                              <div className="flex gap-2">
+                              <div className="flex flex-col gap-2 sm:flex-row">
                                 <Button type="submit" size="sm" disabled={submitting}>
                                   {submitting ? "Saving..." : "Save and Confirm"}
                                 </Button>
@@ -685,7 +685,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                           )}
 
                           {removalMemberId === member.id && (
-                            <form onSubmit={(e) => handleRemovalRequest(e, group.id, member.id)} className="mt-3 space-y-3 rounded-md border bg-slate-50 p-3">
+                            <form onSubmit={(e) => handleRemovalRequest(e, group.id, member.id)} className="mt-3 space-y-3 rounded-md border bg-muted p-3">
                               <div>
                                 <Label htmlFor={`removal-notes-${member.id}`}>Context for admin</Label>
                                 <Textarea
@@ -696,7 +696,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                                   placeholder="Why should this member be removed from this family group?"
                                 />
                               </div>
-                              <div className="flex gap-2">
+                              <div className="flex flex-col gap-2 sm:flex-row">
                                 <Button type="submit" size="sm" disabled={submitting}>
                                   {submitting ? "Submitting..." : "Submit Removal Request"}
                                 </Button>
@@ -769,7 +769,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                         They must already be a registered member. They will be able to accept or decline.
                       </p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-col gap-2 sm:flex-row">
                       <Button type="submit" size="sm" disabled={submitting}>
                         {submitting ? "Sending..." : "Send Invitation"}
                       </Button>
@@ -786,7 +786,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                       <UserPlus className="h-4 w-4" />
                       Request Same-email Adult
                     </p>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
                         <Label htmlFor="adult-first-name">First Name</Label>
                         <Input
@@ -825,7 +825,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                         maxLength={500}
                       />
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-col gap-2 sm:flex-row">
                       <Button type="submit" size="sm" disabled={submitting}>
                         {submitting ? "Submitting..." : "Submit Request"}
                       </Button>
@@ -845,7 +845,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                     <p className="text-xs text-muted-foreground">
                       An admin will review your request and either link an existing member record or create an eligible non-login dependant.
                     </p>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
                         <Label htmlFor="child-first-name">First Name</Label>
                         <Input
@@ -875,7 +875,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                         required
                       />
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-col gap-2 sm:flex-row">
                       <Button type="submit" size="sm" disabled={submitting}>
                         {submitting ? "Submitting..." : "Submit Request"}
                       </Button>
@@ -890,7 +890,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
           })}
         </div>
       ) : myPendingCreateRequest ? (
-        <div className="space-y-1 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="space-y-1 rounded-md border border-warning/20 bg-warning-muted p-3 text-sm text-warning">
           <p className="font-medium">Your family group request is awaiting admin review.</p>
           <p>Requested group: {myPendingCreateRequest.groupName || "Unnamed Group"}</p>
           {myPendingCreateRequest.partner && (
@@ -942,7 +942,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                   An admin will review and approve your request.
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <Button type="submit" size="sm" disabled={submitting}>
                   {submitting ? "Submitting..." : "Send Request"}
                 </Button>
@@ -1018,8 +1018,8 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
               <div className="space-y-2">
                 <p className="text-sm font-medium">Infants, children, and youth (optional)</p>
                 {createChildren.map((child, index) => (
-                  <div key={index} className="space-y-3 rounded-md border bg-slate-50 p-3">
-                    <div className="grid grid-cols-2 gap-3">
+                  <div key={index} className="space-y-3 rounded-md border bg-muted p-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
                         <Label htmlFor={`create-child-first-${index}`}>First Name</Label>
                         <Input
@@ -1066,7 +1066,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                   </Button>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <Button type="submit" size="sm" disabled={submitting}>
                   {submitting ? "Submitting..." : "Submit Request"}
                 </Button>

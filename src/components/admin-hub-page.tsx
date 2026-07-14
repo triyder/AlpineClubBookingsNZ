@@ -79,7 +79,7 @@ export function AdminHubPage({
               <Card className="h-full transition-colors hover:border-brand-gold/70">
                 <CardHeader>
                   <div className="flex items-center gap-2">
-                    <Icon className="h-5 w-5 shrink-0 text-brand-charcoal" />
+                    <Icon className="h-5 w-5 shrink-0 text-foreground" />
                     <CardTitle>{title}</CardTitle>
                   </div>
                   <CardDescription>{description}</CardDescription>

@@ -27,6 +27,8 @@ export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE =
   "MEMBERSHIP_CANCELLATION_CONTACT";
 export const XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE =
   "GROUP_SETTLEMENT_INVOICE";
+export const XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE =
+  "MEMBERSHIP_SUBSCRIPTION_INVOICE";
 
 /**
  * The complete set of outbox queue types the pending scan dispatches (#1272,
@@ -51,6 +53,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
+  XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
 ] as const;
 
 interface QueuedEntranceFeeOutboxPayload {
@@ -143,6 +146,11 @@ interface QueuedGroupSettlementInvoiceOutboxPayload {
   settlementId: string;
 }
 
+interface QueuedSubscriptionInvoiceOutboxPayload {
+  queueType: typeof XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE;
+  chargeId: string;
+}
+
 export type QueuedOutboxPayload =
   | QueuedEntranceFeeOutboxPayload
   | QueuedBookingInvoiceOutboxPayload
@@ -156,7 +164,8 @@ export type QueuedOutboxPayload =
   | QueuedAppliedCreditAllocationOutboxPayload
   | QueuedMembershipCancellationCreditNoteOutboxPayload
   | QueuedMembershipCancellationContactOutboxPayload
-  | QueuedGroupSettlementInvoiceOutboxPayload;
+  | QueuedGroupSettlementInvoiceOutboxPayload
+  | QueuedSubscriptionInvoiceOutboxPayload;
 
 export interface QueuedOutboxExpectedOperation {
   entityType: "INVOICE" | "CREDIT_NOTE" | "ALLOCATION" | "CONTACT";
@@ -169,6 +178,7 @@ export interface QueuedOutboxExpectedOperation {
     | "MemberSubscription"
     | "MembershipCancellationRequestParticipant"
     | "GroupBookingSettlement"
+    | "MembershipSubscriptionCharge"
     | "MemberCreditNoteAllocation"
   >;
 }
@@ -394,6 +404,12 @@ export function readQueuedOutboxPayload(
     };
   }
 
+  if (queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE) {
+    const chargeId = readString(payload.chargeId);
+    if (!chargeId) return null;
+    return { queueType, chargeId };
+  }
+
   if (queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE) {
     return null;
   }
@@ -494,6 +510,8 @@ export function getQueuedOutboxExpectedOperation(
           ? ["Booking", "BookingModification"]
           : queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE
             ? ["GroupBookingSettlement"]
+            : queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
+              ? ["MembershipSubscriptionCharge"]
             : ["Member"],
   };
 }

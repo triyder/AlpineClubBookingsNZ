@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
@@ -145,6 +146,7 @@ export async function PUT(
     details: `Updated season: ${existing.name}`,
   })
 
+  revalidatePublicPageContent()
   return NextResponse.json(season)
 }
 
@@ -171,5 +173,6 @@ export async function DELETE(
     details: `Deleted season: ${existing.name}`,
   })
 
+  revalidatePublicPageContent()
   return NextResponse.json({ success: true })
 }

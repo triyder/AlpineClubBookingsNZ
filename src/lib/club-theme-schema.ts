@@ -2,7 +2,7 @@ export const CLUB_THEME_ID = "default";
 export const MAX_LOGO_DATA_URL_BYTES = 900_000;
 
 export const CLUB_THEME_COLOUR_FIELDS = [
-  { key: "brandGold", label: "Gold" },
+  { key: "brandGold", label: "Primary accent" },
   { key: "brandCharcoal", label: "Charcoal" },
   { key: "brandDeep", label: "Deep" },
   { key: "brandRidge", label: "Ridge" },
@@ -220,8 +220,21 @@ export function buildClubThemeCss(
   value: Partial<Record<keyof ClubThemeValues, unknown>> | null | undefined,
 ): string {
   const theme = normaliseThemeValues(value);
-  const base = `:root,.website-theme{--brand-gold:${theme.brandGold};--brand-charcoal:${theme.brandCharcoal};--brand-deep:${theme.brandDeep};--brand-ridge:${theme.brandRidge};--brand-mist:${theme.brandMist};--brand-snow:${theme.brandSnow};--brand-safety:${theme.brandSafety};--font-website-heading:var(${fontCssVariable(theme.headingFontKey)});--font-website-body:var(${fontCssVariable(theme.bodyFontKey)});}`;
+  const base = `:root,.website-theme{${buildClubThemeDeclarations(theme)}}`;
   return theme.rawCss ? `${base}\n${theme.rawCss}` : base;
+}
+
+/** Brand/font variables for app shells. Deliberately excludes rawCss so an
+ * administrator's public-site CSS cannot override app or semantic tokens. */
+export function buildClubThemeAppCss(
+  value: Partial<Record<keyof ClubThemeValues, unknown>> | null | undefined,
+): string {
+  const theme = normaliseThemeValues(value);
+  return `.app-theme-scope{${buildClubThemeDeclarations(theme)}}`;
+}
+
+function buildClubThemeDeclarations(theme: ClubThemeValues): string {
+  return `--brand-gold:${theme.brandGold};--brand-charcoal:${theme.brandCharcoal};--brand-deep:${theme.brandDeep};--brand-ridge:${theme.brandRidge};--brand-mist:${theme.brandMist};--brand-snow:${theme.brandSnow};--brand-safety:${theme.brandSafety};--font-website-heading:var(${fontCssVariable(theme.headingFontKey)});--font-website-body:var(${fontCssVariable(theme.bodyFontKey)});`;
 }
 
 export type ContrastWarning = {
@@ -352,6 +365,30 @@ export function getContrastWarnings(
       label: "Button text on primary action",
       foreground: theme.brandCharcoal,
       background: theme.brandGold,
+    },
+    {
+      id: "app-accent-on-deep",
+      label: "App accent on dark app chrome",
+      foreground: theme.brandGold,
+      background: theme.brandDeep,
+    },
+    {
+      id: "app-accent-on-snow",
+      label: "App accent foreground on light app background",
+      foreground: theme.brandCharcoal,
+      background: theme.brandSnow,
+    },
+    {
+      id: "app-muted-on-snow",
+      label: "App muted text on light app background",
+      foreground: theme.brandDeep,
+      background: theme.brandSnow,
+    },
+    {
+      id: "app-secondary-on-mist",
+      label: "App text on secondary surface",
+      foreground: theme.brandDeep,
+      background: theme.brandMist,
     },
   ];
 

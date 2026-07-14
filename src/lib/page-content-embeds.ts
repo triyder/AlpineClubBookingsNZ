@@ -26,6 +26,18 @@ import {
   parameterisedTextTokenNames,
   plainTextTokenNames,
 } from "@/lib/token-catalogue";
+import {
+  loadPublicBookingPolicy,
+  loadPublicCancellationPolicy,
+  loadPublicEntranceFees,
+  loadPublicHutFees,
+  loadPublicMembershipTypes,
+  type PublicBookingPolicy,
+  type PublicCancellationPolicy,
+  type PublicEntranceFee,
+  type PublicHutFeeLodge,
+  type PublicMembershipType,
+} from "@/lib/public-page-content-tokens";
 
 export type PhotoGalleryImage = {
   src: string;
@@ -42,7 +54,12 @@ export type EmbeddedBodyPart =
   | { type: "skifield-conditions"; dataHash?: string }
   | { type: "skifield-whakapapa" }
   | { type: "photo-gallery"; images: PhotoGalleryImage[] }
-  | { type: "photo-slideshow"; images: PhotoGalleryImage[] };
+  | { type: "photo-slideshow"; images: PhotoGalleryImage[] }
+  | { type: "membership-types"; items: PublicMembershipType[] }
+  | { type: "entrance-fees"; items: PublicEntranceFee[] }
+  | { type: "hut-fees"; lodges: PublicHutFeeLodge[] }
+  | { type: "booking-policy-summary"; policy: PublicBookingPolicy | null }
+  | { type: "cancellation-policy"; policy: PublicCancellationPolicy | null };
 
 type ParsedEmbedToken = {
   token: string;
@@ -382,8 +399,23 @@ export async function buildEmbeddedBody(contentHtml: string) {
           hasInlineGalleryToken,
         ),
       });
-    } else {
+    } else if (parsed.token === "membership-types") {
+      parts.push({ type: "membership-types", items: await loadPublicMembershipTypes() });
+    } else if (parsed.token === "entrance-fees") {
+      parts.push({ type: "entrance-fees", items: await loadPublicEntranceFees() });
+    } else if (parsed.token === "hut-fees") {
+      parts.push({ type: "hut-fees", lodges: await loadPublicHutFees(parsed.parameter) });
+    } else if (parsed.token === "booking-policy-summary") {
+      parts.push({ type: "booking-policy-summary", policy: await loadPublicBookingPolicy(parsed.parameter) });
+    } else if (parsed.token === "cancellation-policy") {
+      parts.push({ type: "cancellation-policy", policy: await loadPublicCancellationPolicy(parsed.parameter) });
+    } else if (parsed.token === "contact-form") {
       parts.push({ type: "contact-form" });
+    } else {
+      // Catalogue and renderer should evolve together. If they drift, retain
+      // the already-sanitised literal instead of accidentally rendering a
+      // privileged or interactive component.
+      parts.push({ type: "html", value: match[0] });
     }
 
     lastIndex = startIndex + match[0].length;

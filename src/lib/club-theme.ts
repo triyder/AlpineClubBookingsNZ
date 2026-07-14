@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import {
   buildClubThemeCss,
+  buildClubThemeAppCss,
   CLUB_THEME_ID,
   DEFAULT_CLUB_THEME_VALUES,
   getContrastWarnings,
@@ -81,18 +82,8 @@ export async function getWebsiteThemeRenderState() {
   return {
     values,
     css: buildClubThemeCss(values),
+    appCss: buildClubThemeAppCss(values),
     logoDataUrl: values.logoDataUrl,
     isComplete: Boolean(theme?.completedAt),
   };
-}
-
-export async function isClubThemeComplete() {
-  const theme = await prisma.clubTheme
-    .findUnique({
-      where: { id: CLUB_THEME_ID },
-      select: { completedAt: true },
-    })
-    .catch(() => null);
-
-  return Boolean(theme?.completedAt);
 }

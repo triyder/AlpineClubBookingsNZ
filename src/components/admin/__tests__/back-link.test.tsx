@@ -18,7 +18,7 @@ describe("BackLink", () => {
     );
 
     expect(html).toContain(
-      "text-sm font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4",
+      "text-sm font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4",
     );
   });
 

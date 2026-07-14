@@ -9,7 +9,7 @@ import {
 } from "@/lib/email-message-settings";
 import {
   APPROVED_EMAIL_TEMPLATE_TOKEN_SET,
-  SENSITIVE_EMAIL_SUBJECT_TOKEN_SET,
+  getSensitiveEmailSubjectTokens,
   getEmailTemplateDefinition,
 } from "@/lib/email-message-registry";
 import { prisma } from "@/lib/prisma";
@@ -188,8 +188,9 @@ export function validateEmailTemplateContent({
 
   // Subjects are persisted in EmailLog and travel in clear mail headers, so
   // secret-bearing tokens are never allowed in a subject line.
+  const sensitiveSubjectTokenSet = getSensitiveEmailSubjectTokens(templateName);
   const sensitiveSubjectTokens = subjectTokens.filter((token) =>
-    SENSITIVE_EMAIL_SUBJECT_TOKEN_SET.has(token),
+    sensitiveSubjectTokenSet.has(token),
   );
   if (sensitiveSubjectTokens.length > 0) {
     issues.push({
@@ -255,18 +256,17 @@ export function renderTemplateString(
 // validation existed), the live value must never reach the subject, because
 // EmailLog persists subjects for every template and mail headers travel in
 // the clear.
-function buildSubjectSafeTemplateData(data: EmailTemplateData): EmailTemplateData {
+function buildSubjectSafeTemplateData(
+  data: EmailTemplateData,
+  templateName?: string,
+): EmailTemplateData {
+  const sensitiveSubjectTokenSet = getSensitiveEmailSubjectTokens(templateName);
   const safe: EmailTemplateData = {};
   for (const [key, value] of Object.entries(data)) {
-    if (!SENSITIVE_EMAIL_SUBJECT_TOKEN_SET.has(key)) safe[key] = value;
+    if (!sensitiveSubjectTokenSet.has(key)) safe[key] = value;
   }
   return safe;
 }
-
-const SENSITIVE_SUBJECT_TOKEN_PATTERN = new RegExp(
-  `\\{\\{\\s*(?:${Array.from(SENSITIVE_EMAIL_SUBJECT_TOKEN_SET).join("|")})\\s*\\}\\}`,
-  "g",
-);
 
 // Minimum length for the literal-value scrub below; shorter strings are too
 // likely to collide with legitimate subject text, and they can never be
@@ -277,11 +277,17 @@ const SENSITIVE_SUBJECT_VALUE_MIN_LENGTH = 3;
 export function neutraliseSensitiveSubjectContent(
   subject: string,
   data: EmailTemplateData,
+  templateName?: string,
 ): string {
-  let result = subject.replace(SENSITIVE_SUBJECT_TOKEN_PATTERN, "");
+  const sensitiveSubjectTokenSet = getSensitiveEmailSubjectTokens(templateName);
+  const sensitiveSubjectTokenPattern = new RegExp(
+    `\\{\\{\\s*(?:${Array.from(sensitiveSubjectTokenSet).join("|")})\\s*\\}\\}`,
+    "g",
+  );
+  let result = subject.replace(sensitiveSubjectTokenPattern, "");
   // Last-resort scrub: drop any live sensitive value that somehow reached the
   // subject string through a non-template path.
-  for (const token of SENSITIVE_EMAIL_SUBJECT_TOKEN_SET) {
+  for (const token of sensitiveSubjectTokenSet) {
     const value = data[token];
     if (typeof value !== "string") continue;
     const trimmed = value.trim();
@@ -350,7 +356,7 @@ export async function prepareEmailMessage({
     // substitute a door code or credential link into the subject line.
     nextSubject = renderTemplateString(
       override.subject.trim(),
-      buildSubjectSafeTemplateData(data),
+      buildSubjectSafeTemplateData(data, templateName),
     );
     overrideApplied = true;
   }
@@ -364,7 +370,7 @@ export async function prepareEmailMessage({
 
   return {
     subject: applyEmailMessageSettingsToSubject(
-      neutraliseSensitiveSubjectContent(nextSubject, data),
+      neutraliseSensitiveSubjectContent(nextSubject, data, templateName),
       settings,
     ),
     html: applyEmailMessageSettingsToHtml(nextHtml, settings),
@@ -374,10 +380,12 @@ export async function prepareEmailMessage({
 }
 
 export async function renderEmailTemplatePreview({
+  templateName,
   subject,
   bodyText,
   templateData,
 }: {
+  templateName: string;
   subject: string;
   bodyText: string;
   templateData?: EmailTemplateData;
@@ -388,8 +396,12 @@ export async function renderEmailTemplatePreview({
   // sends so the admin preview matches delivered mail.
   const renderedSubject = applyEmailMessageSettingsToSubject(
     neutraliseSensitiveSubjectContent(
-      renderTemplateString(subject, buildSubjectSafeTemplateData(data)),
+      renderTemplateString(
+        subject,
+        buildSubjectSafeTemplateData(data, templateName),
+      ),
       data,
+      templateName,
     ),
     settings,
   );

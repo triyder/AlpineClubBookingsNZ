@@ -63,6 +63,7 @@ export async function POST(request: NextRequest) {
   const definition = getEmailTemplateDefinition(parsed.data.templateName);
 
   const preview = await renderEmailTemplatePreview({
+    templateName: parsed.data.templateName,
     subject: parsed.data.subject,
     bodyText: parsed.data.bodyText,
     templateData: definition?.sampleData,
