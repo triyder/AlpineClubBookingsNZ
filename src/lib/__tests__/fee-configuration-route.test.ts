@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => {
   familyGroupMemberFindUnique: vi.fn(),
   itemMappingFindFirst: vi.fn(),
   accountMappingFindUnique: vi.fn(),
+  billingSettingsFindUnique: vi.fn(),
     executeRaw: vi.fn(),
   };
   const prisma = {
@@ -42,6 +43,7 @@ const mocks = vi.hoisted(() => {
   familyGroupMember: { findUnique: values.familyGroupMemberFindUnique },
   xeroItemCodeMapping: { findFirst: values.itemMappingFindFirst },
   xeroAccountMapping: { findUnique: values.accountMappingFindUnique },
+  membershipSubscriptionBillingSettings: { findUnique: values.billingSettingsFindUnique },
   $executeRaw: values.executeRaw,
   $transaction: vi.fn(),
   };
@@ -88,6 +90,8 @@ describe("fee configuration route", () => {
     mocks.familyGroupUpdate.mockResolvedValue({ id: "family-1" });
     mocks.itemMappingFindFirst.mockResolvedValue(null);
     mocks.accountMappingFindUnique.mockResolvedValue(null);
+    // No settings row -> behaviour-preserving default (family billing mode).
+    mocks.billingSettingsFindUnique.mockResolvedValue(null);
   });
 
   it("requires finance view for reads", async () => {
@@ -166,5 +170,50 @@ describe("fee configuration route", () => {
     mocks.familyGroupMemberFindUnique.mockResolvedValueOnce({ id: "membership-1", member: { active: true, archivedAt: null } });
     expect((await post({ action: "SET_FAMILY_BILLING_MEMBER", familyGroupId: "family-1", billingMemberId: "member-1" })).status).toBe(200);
     expect(mocks.familyGroupUpdate).toHaveBeenCalledWith({ where: { id: "family-1" }, data: { billingMembershipId: "membership-1" } });
+  });
+
+  it("reports the family billing mode and flags billing exceptions in family mode", async () => {
+    mocks.familyGroupFindMany.mockResolvedValue([
+      { id: "family-1", name: "Alpha", billingMembershipId: null, billingMembership: null, memberships: [] },
+    ]);
+    const body = await (await GET()).json();
+    expect(body.familyBillingMode).toBe("BILL_FAMILY_VIA_BILLING_MEMBER");
+    // A membered family with no recipient is an exception in family mode.
+    expect(body.familyGroups[0].billingException).toBe(true);
+  });
+
+  it("hides exceptions and reports individual mode when the club bills members individually", async () => {
+    mocks.billingSettingsFindUnique.mockResolvedValue({ familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY" });
+    mocks.familyGroupFindMany.mockResolvedValue([
+      { id: "family-1", name: "Alpha", billingMembershipId: null, billingMembership: null, memberships: [] },
+    ]);
+    const body = await (await GET()).json();
+    expect(body.familyBillingMode).toBe("BILL_MEMBERS_INDIVIDUALLY");
+    // Same recipient-less family raises no exception under individual billing.
+    expect(body.familyGroups[0].billingException).toBe(false);
+  });
+
+  it("allows a per-family schedule in family mode", async () => {
+    const response = await post({
+      action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", amountCents: 20000,
+      billingBasis: "PER_FAMILY", prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+    });
+    expect(response.status).toBe(200);
+    expect(mocks.membershipFeeCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ billingBasis: "PER_FAMILY" }) });
+  });
+
+  it("blocks a per-family schedule server-side when the club bills members individually", async () => {
+    mocks.billingSettingsFindUnique.mockResolvedValue({ familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY" });
+    const response = await post({
+      action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", amountCents: 20000,
+      billingBasis: "PER_FAMILY", prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+    });
+    expect(response.status).toBe(409);
+    expect(mocks.membershipFeeCreate).not.toHaveBeenCalled();
+    // Per-member schedules are still accepted under individual billing.
+    expect((await post({
+      action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", amountCents: 20000,
+      billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+    })).status).toBe(200);
   });
 });

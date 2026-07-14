@@ -8,6 +8,7 @@ import {
   MEMBERSHIP_FEE_BILLING_BASES,
   MEMBERSHIP_FEE_PRORATION_RULES,
   getEffectiveEntranceFee,
+  getFamilyBillingMode,
   lockFeeSchedule,
   scheduleOverlapWhere,
   serializeFeeSchedule,
@@ -59,7 +60,8 @@ const mutationSchema = z.discriminatedUnion("action", [
 ]);
 
 async function loadConfiguration(canEdit: boolean) {
-  const [membershipTypes, entranceFees, familyGroups, currentEntranceFees] = await Promise.all([
+  const [familyBillingMode, membershipTypes, entranceFees, familyGroups, currentEntranceFees] = await Promise.all([
+    getFamilyBillingMode(),
     prisma.membershipType.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       select: {
@@ -91,8 +93,13 @@ async function loadConfiguration(canEdit: boolean) {
       ...(await getEffectiveEntranceFee(category)),
     }))),
   ]);
+  // Family-billing exceptions only exist when the club bills families via a
+  // nominated billing member. When it bills members individually the whole
+  // family-billing surface is irrelevant, so no family is ever flagged.
+  const familyBillingActive = familyBillingMode === "BILL_FAMILY_VIA_BILLING_MEMBER";
   return {
     canEdit,
+    familyBillingMode,
     membershipTypes: membershipTypes.map((type) => ({
       ...type,
       annualFees: type.annualFees.map(serializeFeeSchedule),
@@ -102,10 +109,10 @@ async function loadConfiguration(canEdit: boolean) {
     familyGroups: familyGroups.map((group) => ({
       ...group,
       billingMemberId: group.billingMembership?.member.id ?? null,
-      billingException: group.billingMembership == null
+      billingException: familyBillingActive && (group.billingMembership == null
         || group.billingMembership.familyGroupId !== group.id
         || !group.billingMembership.member.active
-        || group.billingMembership.member.archivedAt != null,
+        || group.billingMembership.member.archivedAt != null),
       billingMembership: undefined,
       billingMembershipId: undefined,
       members: group.memberships.map(({ member }) => member),
@@ -139,6 +146,21 @@ export async function POST(request: Request) {
       const input = parsed.data;
       let targetId: string;
       if (input.action === "CREATE_MEMBERSHIP_FEE" || input.action === "UPDATE_MEMBERSHIP_FEE") {
+        // Server-side mode gate: per-family billing is only meaningful when the
+        // club bills families via a nominated billing member. The UI hides the
+        // option, but this guard makes the rule authoritative against direct API
+        // calls and cannot be bypassed.
+        // A concurrent FAMILY->INDIVIDUALLY flip between this mode read and the
+        // commit is backstopped by the billing engine's
+        // `PER_FAMILY_FEE_IN_INDIVIDUAL_MODE` preview exception (a stale
+        // PER_FAMILY schedule is never invoiced), so the guard need not serialise
+        // against the settings row.
+        if (input.billingBasis === "PER_FAMILY" && await getFamilyBillingMode(tx) === "BILL_MEMBERS_INDIVIDUALLY") {
+          throw new FeeScheduleValidationError(
+            "Per-family billing is disabled while this club bills members individually. Change the family billing mode on the subscription billing settings first.",
+            409,
+          );
+        }
         const dates = validateFeeScheduleInput(input);
         const existing = input.action === "UPDATE_MEMBERSHIP_FEE"
           ? await tx.membershipAnnualFee.findUnique({ where: { id: input.id } })

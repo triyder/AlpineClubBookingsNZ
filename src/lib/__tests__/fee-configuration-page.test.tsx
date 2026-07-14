@@ -13,6 +13,7 @@ let FeeConfigurationPage: typeof import("@/app/(admin)/admin/fee-configuration/p
 
 const editableData = {
   canEdit: true,
+  familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER",
   membershipTypes: [{
     id: "type-1", name: "Full", isActive: true,
     annualFees: [{ id: "fee-1", amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_MEMBER", prorationRule: "NONE" }],
@@ -29,6 +30,7 @@ const editableData = {
 // two active members so a billing member can be switched to the second one.
 const multiFamilyData = {
   canEdit: true,
+  familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER",
   membershipTypes: editableData.membershipTypes,
   entranceFees: editableData.entranceFees,
   currentEntranceFees: editableData.currentEntranceFees,
@@ -313,5 +315,36 @@ describe("fee configuration page", () => {
     expect(allPosts.filter((body) => body.familyGroupId === "family-3")).toHaveLength(1);
     // Retry only re-sent the still-unsaved families, in order.
     expect(allPosts.slice(2).map((body) => body.familyGroupId)).toEqual(["family-2", "family-3"]);
+  });
+
+  it("hides the family billing card and per-family basis when the club bills members individually", async () => {
+    const individualData = { ...editableData, familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY" };
+    vi.stubGlobal("fetch", vi.fn(async () => response(true, individualData)));
+    render(<FeeConfigurationPage />);
+    // Membership section still loads; family card is gone entirely.
+    await screen.findByRole("button", { name: "Edit membership fees" });
+    expect(screen.queryByRole("button", { name: "Edit family billing" })).toBeNull();
+    expect(screen.queryByText("Family billing members")).toBeNull();
+    expect(screen.queryByText("Billing exception")).toBeNull();
+    // Per-family is not offered in the membership billing basis Select.
+    fireEvent.click(screen.getByRole("button", { name: "Edit membership fees" }));
+    selectRadixOption("Billing basis", /Per member/);
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Billing basis" }), { key: "ArrowDown" });
+    expect(screen.queryByRole("option", { name: "Per family" })).toBeNull();
+    expect(screen.getByRole("option", { name: "No invoice" })).toBeTruthy();
+  });
+
+  it("warns about stale per-family schedules under individual billing", async () => {
+    const staleData = {
+      ...editableData,
+      familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY",
+      membershipTypes: [{
+        id: "type-1", name: "Full", isActive: true,
+        annualFees: [{ id: "fee-1", amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_FAMILY", prorationRule: "NONE" }],
+      }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => response(true, staleData)));
+    render(<FeeConfigurationPage />);
+    expect(await screen.findByText(/one or more schedules still use the per-family basis/i)).toBeTruthy();
   });
 });
