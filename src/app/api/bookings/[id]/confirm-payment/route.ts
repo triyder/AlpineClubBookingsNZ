@@ -226,9 +226,13 @@ export async function POST(
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Failed to confirm payment";
+    // #1888 — never echo an unexpected error's message to the client (it can
+    // carry Prisma constraint names or infrastructure detail); the raw error
+    // stays in the log only.
     logger.error({ err, bookingId }, "Failed to confirm primary booking payment");
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to confirm payment" },
+      { status: 500 }
+    );
   }
 }

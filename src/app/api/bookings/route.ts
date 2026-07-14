@@ -12,6 +12,7 @@ import { z } from "zod";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { ApiError } from "@/lib/api-error";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 import logger from "@/lib/logger";
@@ -576,12 +577,31 @@ export async function POST(request: NextRequest) {
           { status: 409 },
         );
       }
-      const message = err instanceof BookingPromoError
-        ? err.message
-        : err instanceof Error
-          ? err.message
-          : "Failed to create draft booking";
-      return NextResponse.json({ error: message }, { status: 400 });
+      if (err instanceof BookingPromoError) {
+        return NextResponse.json({ error: err.message }, { status: 400 });
+      }
+      if (err instanceof BookingLodgeError) {
+        return NextResponse.json({ error: err.message }, { status: 400 });
+      }
+      if (err instanceof LodgeBookingEligibilityError) {
+        return NextResponse.json(
+          { error: err.message },
+          { status: err.status },
+        );
+      }
+      if (err instanceof ApiError) {
+        return NextResponse.json(
+          { error: err.message },
+          { status: err.status },
+        );
+      }
+      // #1888 — unexpected (non-typed) errors must not leak their message to
+      // the client; the raw error stays in the log only.
+      logger.error({ err }, "Failed to create draft booking");
+      return NextResponse.json(
+        { error: "Failed to create draft booking" },
+        { status: 400 }
+      );
     }
   }
 
@@ -767,7 +787,30 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
-    const message = err instanceof Error ? err.message : "Failed to create booking";
-    return NextResponse.json({ error: message }, { status: 400 });
+    if (err instanceof BookingPromoError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof BookingLodgeError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof LodgeBookingEligibilityError) {
+      return NextResponse.json(
+        { error: err.message },
+        { status: err.status },
+      );
+    }
+    if (err instanceof ApiError) {
+      return NextResponse.json(
+        { error: err.message },
+        { status: err.status },
+      );
+    }
+    // #1888 — unexpected (non-typed) errors must not leak their message to
+    // the client; the raw error stays in the log only.
+    logger.error({ err }, "Failed to create booking");
+    return NextResponse.json(
+      { error: "Failed to create booking" },
+      { status: 400 }
+    );
   }
 }
