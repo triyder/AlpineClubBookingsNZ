@@ -116,8 +116,9 @@ unaffected:
   `e2e/setup/seed-second-lodge.ts` after the base seed to provision a second
   active lodge ("Second Lodge (E2E)") with its own rooms/beds and Winter/Summer
   seasons (mirroring lodge A's rates), bind the demo LODGE kiosk persona to it,
-  seed the roster/capacity/cross-lodge-offer fixtures, and enable the
-  `multiLodge` module. Without the flag none of this runs.
+  and seed the roster/capacity/cross-lodge-offer fixtures. Multi-lodge is a
+  core capability, not a module flag, so seeding the second lodge is the only
+  precondition — no module needs enabling.
 - **Project:** the `multi-lodge` Playwright project is only added to
   `playwright.config.ts` when `E2E_MULTI_LODGE=1`, and the default `chromium`
   project always ignores `e2e/multi-lodge/`, so the default suite's project and
@@ -132,7 +133,7 @@ E2E_MULTI_LODGE=1 npm run test:e2e:run -- --project=multi-lodge
 
 This project is a **coverage aid, not a substitute** for the manual two-lodge
 staging matrix in `docs/multi-lodge/test-plan.md`, which remains the hard gate
-before enabling `multiLodge` in production.
+before enabling multi-lodge in production.
 
 ## Environment
 

@@ -399,19 +399,11 @@ async function main() {
   });
   await stampCrossLodgeOffer(memberGuestOffer.id);
 
-  // 8. Enable the multiLodge module (mirrors e2e/setup/enable-e2e-modules.ts).
-  //    Kept out of that shared script so the single-lodge suite stays off it.
-  await prisma.clubModuleSettings.upsert({
-    where: { id: "default" },
-    update: { multiLodge: true },
-    create: { id: "default", multiLodge: true },
-  });
-
   console.log(
     `Second lodge seeded (E2E_MULTI_LODGE): "${SECOND_LODGE.name}" ` +
       `(${SECOND_LODGE_BED_COUNT} beds, ${lodgeASeasons.length} seasons), kiosk bound, ` +
       `cross-lodge offer ${CROSS_LODGE_OFFER_BOOKING_ID} @ ${offerPriceCents}c ` +
-      `(+ #1628 member-guest regression ${CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID}); multiLodge module enabled`,
+      `(+ #1628 member-guest regression ${CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID})`,
   );
 }
 
