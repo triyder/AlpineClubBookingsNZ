@@ -346,7 +346,10 @@ export default function RefundRequestsPage() {
       ) : null}
 
       {error && (
-        <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
+        <div
+          role="alert"
+          className="bg-destructive/10 text-destructive px-4 py-3 rounded-md"
+        >
           {error}
           <button onClick={() => setError("")} className="ml-2 underline">Dismiss</button>
         </div>
