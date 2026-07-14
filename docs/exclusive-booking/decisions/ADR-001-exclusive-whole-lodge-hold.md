@@ -1,8 +1,7 @@
 # ADR-001: Exclusive (whole-lodge) booking hold
 
-**Status:** Proposed (owner-approved shape, 2026-07-13). Not yet scheduled for
-implementation — may be built to back the lobby-display whole-lodge treatment,
-or delivered as separate work.
+**Status:** Accepted / Implemented (shape owner-approved 2026-07-13;
+implemented on `feature/lobby-display-v2` via #117–#122, merged 2026-07-14).
 
 **Risk:** Critical (booking capacity + availability). Requires high/xhigh-effort
 implementation, adversarial capacity tests, and owner review before merge.

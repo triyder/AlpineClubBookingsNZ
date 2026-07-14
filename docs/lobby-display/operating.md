@@ -78,11 +78,11 @@ controls. It edits **the lodge you are viewing**:
   that already shows individual names. Both flags default off. See
   [`phone-visibility.md`](phone-visibility.md).
 
-> **Single-lodge clubs:** the lodge configuration hub is multi-lodge-gated, so a
-> club running Lobby Display without multi-lodge currently has no UI for these
-> per-lodge values. This is a recorded follow-up (see design.md §8). The values
-> are per-lodge by construction and a single-lodge club is its own default
-> lodge.
+> **Single-lodge clubs:** the lodge configuration hub (`/admin/lodges/[id]`) is
+> unconditional — it is gated only on the `lobbyDisplay` module, not on
+> multi-lodge — so `LodgeDisplaySettingsCard` is reachable there for
+> single-lodge installs too. The values are per-lodge by construction and a
+> single-lodge club is its own default lodge.
 
 ---
 

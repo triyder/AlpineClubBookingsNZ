@@ -697,17 +697,15 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > keys/values → 400), and token resolution at serve time are unchanged. The old
 > `/admin/display/settings` path redirects to Devices
 > (`/admin/display/devices`), whose header carries a
-> muted pointer to the new per-lodge home (Admin → Lodges). *Known consequence
-> (owner decision):* the hub is `multiLodge`-gated (ADR-003, multi-lodge), so a
-> club running Lobby Display **without** multi-lodge no longer has a UI to edit
-> these per-lodge values — the old `/admin/display/settings` page (gated only by
-> `lobbyDisplay`) was their surface. Since the values are per-lodge by
-> construction and a single-lodge club *is* its default lodge, surfacing the same
-> `LodgeDisplaySettingsCard` on a non-`multiLodge` lodge surface (e.g. the
-> singular `/admin/lodge` page, or a minimally ungated lodge-config view) is a
-> recorded follow-up if a single-lodge lobby-display deployment needs it. The
-> relocation itself follows the issue/ADR direction (config lives in the lodge
-> configuration UI); the two dev lodges exercised here both run multi-lodge.
+> muted pointer to the new per-lodge home (Admin → Lodges). The hub itself
+> (`/admin/lodges/[id]`) is **unconditional** — it is gated only on the
+> `lobbyDisplay` module, the same gate the old `/admin/display/settings` page
+> used, not on `multiLodge` — so `LodgeDisplaySettingsCard` remains reachable
+> there for single-lodge clubs. Since the values are per-lodge by construction
+> and a single-lodge club *is* its default lodge, the relocation follows the
+> issue/ADR direction (config lives in the lodge configuration UI) without
+> losing single-lodge coverage; the two dev lodges exercised here both run
+> multi-lodge.
 
 > **Preview v2 (LTV-036, #82, ADR-003 §5).** The Templates page **Preview**
 > button opens a minimal sandbox host, `/admin/display/preview`, rather than
