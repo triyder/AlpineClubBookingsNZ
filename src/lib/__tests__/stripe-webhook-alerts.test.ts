@@ -36,6 +36,7 @@ const {
   mockProcessRefund,
   mockApplyGroupSettlementSucceeded,
   mockMarkGroupSettlementIntentFailed,
+  mockMarkGroupSettlementIntentRefunded,
   mockGroupBookingFindUnique,
 } = vi.hoisted(() => ({
   mockConstructWebhookEvent: vi.fn(),
@@ -99,6 +100,7 @@ const {
     settledBookingIds: [],
   }),
   mockMarkGroupSettlementIntentFailed: vi.fn().mockResolvedValue(undefined),
+  mockMarkGroupSettlementIntentRefunded: vi.fn().mockResolvedValue(undefined),
   mockGroupBookingFindUnique: vi.fn().mockResolvedValue(null),
 }));
 
@@ -112,6 +114,8 @@ vi.mock("@/lib/group-settlement", () => ({
     mockApplyGroupSettlementSucceeded(...args),
   markGroupSettlementIntentFailed: (...args: unknown[]) =>
     mockMarkGroupSettlementIntentFailed(...args),
+  markGroupSettlementIntentRefunded: (...args: unknown[]) =>
+    mockMarkGroupSettlementIntentRefunded(...args),
 }));
 vi.mock("@/lib/payment-reconciliation", () => ({
   markBookingPaymentSucceeded: (...args: unknown[]) =>
@@ -1074,6 +1078,50 @@ describe("Stripe webhook Xero alerting", () => {
     expect(mockApplyGroupSettlementSucceeded).not.toHaveBeenCalled();
     expect(mockProcessRefund).not.toHaveBeenCalled();
     expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  // #1883 (F6) — the auto-refund must also mark the settlement row, or the
+  // refunded intent (which stays "succeeded" in Stripe forever) can be
+  // re-admitted later and settle the children with money already handed back.
+  it("marks the settlement refunded after the auto-refund closes it out (#1883)", async () => {
+    mockConstructWebhookEvent.mockReturnValue(
+      groupSettlementSucceededEvent("evt_group_mark", "pi_group_mismatch"),
+    );
+    mockApplyGroupSettlementSucceeded.mockResolvedValue({
+      outcome: "amount_mismatch",
+      settledBookingIds: [],
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockProcessRefund).toHaveBeenCalledTimes(1);
+    expect(mockMarkGroupSettlementIntentRefunded).toHaveBeenCalledTimes(1);
+    expect(mockMarkGroupSettlementIntentRefunded).toHaveBeenCalledWith(
+      "pi_group_mismatch",
+    );
+    // The mark happens only once the money is actually back with the organiser.
+    expect(
+      mockMarkGroupSettlementIntentRefunded.mock.invocationCallOrder[0],
+    ).toBeGreaterThan(mockProcessRefund.mock.invocationCallOrder[0]);
+  });
+
+  it("does not mark the settlement refunded when the refund itself fails (#1883)", async () => {
+    mockConstructWebhookEvent.mockReturnValue(
+      groupSettlementSucceededEvent("evt_group_mark_fail", "pi_group_stale"),
+    );
+    mockApplyGroupSettlementSucceeded.mockResolvedValue({
+      outcome: "not_found",
+      settledBookingIds: [],
+    });
+    mockProcessRefund.mockRejectedValue(new Error("stripe unavailable"));
+
+    const response = await POST(makeRequest());
+
+    // No refund happened, so the settlement must stay untouched; the released
+    // claim lets Stripe redeliver and retry the refund + mark together.
+    expect(response.status).toBe(500);
+    expect(mockMarkGroupSettlementIntentRefunded).not.toHaveBeenCalled();
   });
 
   it("alerts, releases the claim, and returns 500 when the group settlement refund fails", async () => {

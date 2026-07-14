@@ -33,6 +33,7 @@ import {
 import {
   applyGroupSettlementSucceeded,
   markGroupSettlementIntentFailed,
+  markGroupSettlementIntentRefunded,
 } from "@/lib/group-settlement";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
@@ -917,6 +918,14 @@ async function refundSupersededGroupSettlementIntent(
     );
     throw refundErr;
   }
+
+  // #1883 — close the re-admit window: the refunded intent keeps status
+  // "succeeded" in Stripe forever, so mark the settlement row REFUNDED (a
+  // no-op when no settlement references this intent, i.e. "not_found").
+  // Marked ONLY after the refund succeeds; a failure here rethrows so the
+  // released event claim retries both (the deterministic refund idempotency
+  // key makes the redelivered refund a no-op).
+  await markGroupSettlementIntentRefunded(paymentIntent.id);
 
   logAudit({
     action: "group.settlement.superseded_intent_refunded",

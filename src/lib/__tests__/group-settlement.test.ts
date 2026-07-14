@@ -50,6 +50,7 @@ const txClient = {
   groupBookingSettlement: {
     findUnique: mocks.settlementFindUnique,
     update: mocks.settlementUpdate,
+    updateMany: mocks.settlementUpdateMany,
   },
 };
 
@@ -107,6 +108,7 @@ import {
   applyGroupSettlementSucceeded,
   applyGroupSettlementSucceededFromInvoice,
   markGroupSettlementIntentFailed,
+  markGroupSettlementIntentRefunded,
 } from "@/lib/group-settlement";
 import { GroupBookingError } from "@/lib/group-booking";
 
@@ -614,6 +616,193 @@ describe("createGroupSettlementIntent", () => {
     ]);
     expect(keys[0]).not.toBe(keys[1]);
   });
+
+  // #1883 (F6) — a refunded Stripe intent keeps status "succeeded" forever, so
+  // the reuse branch must never re-admit an intent whose settlement carries
+  // refund history: it would flip the children to PAID with money already
+  // handed back.
+  it("never reuses a refunded settlement's intent; mints a fresh one keyed by it (#1883)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.REFUNDED,
+          stripePaymentIntentId: "pi_refunded",
+          amountCents: 9000,
+        },
+      })
+    );
+    settleableChildren();
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    // The children total swung back to the refunded amount, but the refunded
+    // intent is never even fetched, let alone re-applied.
+    expect(mocks.getPaymentIntent).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("ready");
+    // A FRESH intent is minted, keyed by the refunded intent id so Stripe's
+    // 24h idempotency window cannot replay the refunded intent either.
+    expect(mocks.createPaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: `groupsettle_${GROUP_ID}_9000_pi_refunded`,
+      })
+    );
+    // No child was flipped to PAID and no per-child Payment was recorded.
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: BookingStatus.PAID }),
+      })
+    );
+  });
+
+  it("never reuses a partially refunded settlement's intent (#1883)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PARTIALLY_REFUNDED,
+          stripePaymentIntentId: "pi_partially_refunded",
+          amountCents: 9000,
+        },
+      })
+    );
+    settleableChildren();
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    expect(mocks.getPaymentIntent).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("ready");
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+  });
+
+  // #1883 — the reuse branch must surface the REAL apply outcome instead of a
+  // blanket "already_settled" that masks an unapplied (and auto-refunded) capture.
+  it("returns the real apply outcome when reconciling a succeeded intent fails (#1883)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_settle_1",
+          amountCents: 9000,
+        },
+      })
+    );
+    // Top-level children read: totals 9000, so the reuse branch engages.
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([
+        { id: "child-1", finalPriceCents: 4500, status: BookingStatus.CONFIRMED },
+        { id: "child-2", finalPriceCents: 4500, status: BookingStatus.CONFIRMED },
+      ])
+      // Inside apply's settle transaction the children have drifted (#1033).
+      .mockResolvedValueOnce([
+        { id: "child-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+        { id: "child-2", finalPriceCents: 12500, checkIn: new Date(), checkOut: new Date() },
+      ]);
+    mocks.getPaymentIntent.mockResolvedValue({
+      id: "pi_settle_1",
+      status: "succeeded",
+      amount: 9000,
+      client_secret: "cs_settle_1",
+    });
+    mocks.settlementFindUnique
+      // apply's lookup by intent id.
+      .mockResolvedValueOnce({
+        id: "s1",
+        status: PaymentStatus.PENDING,
+        amountCents: 9000,
+        stripeCustomerId: "cus_123",
+        groupBookingId: GROUP_ID,
+        groupBooking: {
+          organiserBookingId: ORG_BOOKING,
+          organiserMember: {
+            email: "org@example.com",
+            firstName: "Olive",
+            lastName: "Organiser",
+          },
+          organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+        },
+      })
+      // apply's in-lock status re-check.
+      .mockResolvedValueOnce({ status: PaymentStatus.PENDING });
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    // The capture did NOT settle anything; saying "already_settled" would mask it.
+    expect(result.outcome).toBe("amount_mismatch");
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("returns 'refunded' when a concurrent refund marked the settlement mid-flight (#1883)", async () => {
+    // The settlement still read PENDING when the group loaded, but the webhook
+    // safety net marked it REFUNDED before apply ran.
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_settle_1",
+          amountCents: 9000,
+        },
+      })
+    );
+    mocks.bookingFindMany.mockResolvedValueOnce([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.CONFIRMED },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.CONFIRMED },
+    ]);
+    mocks.getPaymentIntent.mockResolvedValue({
+      id: "pi_settle_1",
+      status: "succeeded",
+      amount: 9000,
+      client_secret: "cs_settle_1",
+    });
+    mocks.settlementFindUnique.mockResolvedValueOnce({
+      id: "s1",
+      status: PaymentStatus.REFUNDED,
+      amountCents: 9000,
+      stripeCustomerId: "cus_123",
+      groupBookingId: GROUP_ID,
+      groupBooking: {
+        organiserBookingId: ORG_BOOKING,
+        organiserMember: {
+          email: "org@example.com",
+          firstName: "Olive",
+          lastName: "Organiser",
+        },
+        organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+      },
+    });
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    expect(result.outcome).toBe("refunded");
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("markGroupSettlementIntentRefunded", () => {
+  it("marks the settlement REFUNDED under the settle advisory lock (#1883)", async () => {
+    await markGroupSettlementIntentRefunded("pi_settle_1");
+
+    // Same default-lodge advisory lock as the settle path, so the mark cannot
+    // interleave with an in-flight settle of the same settlement.
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(txClient, "lodge-1");
+    // Guarded updateMany: never clobbers SUCCEEDED (already applied — that
+    // conflict is alerted upstream) and is idempotent across redelivery.
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
+      where: {
+        stripePaymentIntentId: "pi_settle_1",
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
+      },
+      data: { status: PaymentStatus.REFUNDED },
+    });
+  });
 });
 
 describe("markGroupSettlementIntentFailed", () => {
@@ -659,6 +848,95 @@ describe("applyGroupSettlementSucceeded", () => {
     const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
     expect(result.outcome).toBe("already_settled");
     expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  // #1883 (F6) — refund history is immutable (mirrors #1765 for single
+  // bookings): a refunded settlement must never settle children off the same
+  // intent, because the refunded intent still reports "succeeded" in Stripe.
+  it("refuses an intent whose settlement was refunded (#1883)", async () => {
+    mocks.settlementFindUnique.mockResolvedValue({
+      id: "s1",
+      status: PaymentStatus.REFUNDED,
+      amountCents: 9000,
+      stripeCustomerId: "cus_123",
+      groupBookingId: GROUP_ID,
+      groupBooking: {
+        organiserBookingId: ORG_BOOKING,
+        organiserMember: {
+          email: "org@example.com",
+          firstName: "Olive",
+          lastName: "Organiser",
+        },
+        organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+      },
+    });
+
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+
+    expect(result.outcome).toBe("refunded");
+    expect(result.settledBookingIds).toEqual([]);
+    // Nothing settles: no per-child Payment, no PAID flip, no receipt.
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.settlementUpdate).not.toHaveBeenCalled();
+    expect(mocks.sendSettlementReceipt).not.toHaveBeenCalled();
+  });
+
+  it("refuses an intent whose settlement was partially refunded (#1883)", async () => {
+    mocks.settlementFindUnique.mockResolvedValue({
+      id: "s1",
+      status: PaymentStatus.PARTIALLY_REFUNDED,
+      amountCents: 9000,
+      stripeCustomerId: "cus_123",
+      groupBookingId: GROUP_ID,
+      groupBooking: {
+        organiserBookingId: ORG_BOOKING,
+        organiserMember: {
+          email: "org@example.com",
+          firstName: "Olive",
+          lastName: "Organiser",
+        },
+        organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+      },
+    });
+
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+
+    expect(result.outcome).toBe("refunded");
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+  });
+
+  it("bails inside the lock when a refund landed after the initial status read (#1883)", async () => {
+    // The fast-path read still saw PENDING; the refund marker (which takes the
+    // same advisory lock) committed REFUNDED before the settle transaction ran.
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce({
+        id: "s1",
+        status: PaymentStatus.PENDING,
+        amountCents: 9000,
+        stripeCustomerId: "cus_123",
+        groupBookingId: GROUP_ID,
+        groupBooking: {
+          organiserBookingId: ORG_BOOKING,
+          organiserMember: {
+            email: "org@example.com",
+            firstName: "Olive",
+            lastName: "Organiser",
+          },
+          organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+        },
+      })
+      .mockResolvedValueOnce({ status: PaymentStatus.REFUNDED });
+
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+
+    expect(result.outcome).toBe("refunded");
+    expect(result.settledBookingIds).toEqual([]);
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.settlementUpdate).not.toHaveBeenCalled();
+    expect(mocks.sendSettlementReceipt).not.toHaveBeenCalled();
   });
 
   it("refuses to apply when the paid amount does not match the recorded total", async () => {
