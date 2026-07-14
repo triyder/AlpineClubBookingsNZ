@@ -46,6 +46,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      security-events: write # upload Semgrep SARIF to GitHub code scanning
     env:
       SEMGREP_IMAGE: semgrep/semgrep:1.161.0
     steps:
@@ -78,6 +79,16 @@ jobs:
           name: semgrep-sarif-${{ github.run_id }}
           path: ${{ runner.temp }}/semgrep-output/semgrep-results.sarif
           if-no-files-found: ignore
+
+      # Surface findings as GitHub code scanning alerts (Security tab) without
+      # any Semgrep Cloud dependency. Runs even when the scan step failed the
+      # gate on findings so the alerts still publish.
+      - name: Upload Semgrep SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ runner.temp }}/semgrep-output/semgrep-results.sarif
+          category: semgrep
 
   gitleaks-full-repo:
     runs-on: ubuntu-latest
