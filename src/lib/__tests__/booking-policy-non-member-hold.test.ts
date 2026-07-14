@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   periodCreate: vi.fn(),
   periodUpdate: vi.fn(),
   periodDelete: vi.fn(),
+  revalidatePublicPageContent: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({
@@ -23,6 +24,11 @@ vi.mock("@/lib/session-guards", () => ({
 
 vi.mock("@/lib/audit", () => ({
   logAudit: (...args: unknown[]) => h.logAudit(...args),
+}));
+
+vi.mock("@/lib/public-content-revalidation", () => ({
+  revalidatePublicPageContent: (...args: unknown[]) =>
+    h.revalidatePublicPageContent(...args),
 }));
 
 const tx = {
@@ -143,6 +149,19 @@ describe("non-member hold policy admin API", () => {
         nonMemberHoldDays: 365,
       },
     });
+    expect(h.revalidatePublicPageContent).toHaveBeenCalledOnce();
+  });
+
+  it("does not invalidate public content when the default policy update is rejected", async () => {
+    const res = await putDefaultPolicy(
+      request("https://example.test/api/admin/booking-policies/cancellation", {
+        rules: [],
+      })
+    );
+
+    expect(res.status).toBe(400);
+    expect(h.transaction).not.toHaveBeenCalled();
+    expect(h.revalidatePublicPageContent).not.toHaveBeenCalled();
   });
 
   it("creates a date-specific period with an independent enabled flag", async () => {

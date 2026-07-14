@@ -27,6 +27,7 @@ import {
   shouldShowMemberOnboarding,
 } from "@/lib/member-onboarding";
 import { getCurrentSiteBanners } from "@/lib/site-banners";
+import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import {
   buildTwoFactorGatePath,
   isTwoFactorSessionBlocked,
@@ -140,12 +141,13 @@ export default async function AuthenticatedLayout({
   const showOnboardingWizard =
     shouldShowMemberOnboarding(member) &&
     !isOnboardingGateExemptPath(requestedPath);
-  const [effectiveModules, lodgeCapacity, siteBanners] = await Promise.all([
+  const [effectiveModules, lodgeCapacity, siteBanners, theme] = await Promise.all([
     loadEffectiveModuleFlags(),
     // Default lodge: this layout's capacity feeds club identity copy
     // (per-lodge figures come from lodge-scoped surfaces).
     getDefaultLodgeCapacity(),
     getCurrentSiteBanners(),
+    getWebsiteThemeRenderState(),
   ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const nonce = requestHeaders.get(CSP_NONCE_HEADER) ?? undefined;
@@ -155,6 +157,10 @@ export default async function AuthenticatedLayout({
       <div
         className={`${clubThemeFontVariableClassName} app-theme-scope min-h-screen flex flex-col bg-background text-foreground`}
       >
+        <style
+          dangerouslySetInnerHTML={{ __html: theme.appCss }}
+          data-site-style="club-theme"
+        />
         <a
           className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:ring-2 focus:ring-ring"
           href="#main-content"
@@ -165,6 +171,7 @@ export default async function AuthenticatedLayout({
         <NavBar user={user} features={effectiveModules} />
         <main
           id="main-content"
+          tabIndex={-1}
           className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8"
         >
           {children}

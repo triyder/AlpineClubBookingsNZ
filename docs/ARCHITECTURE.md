@@ -5,6 +5,12 @@ operations. It is built around Next.js App Router route handlers,
 Prisma/PostgreSQL, Stripe, Xero, AWS SES, cron jobs, and Docker Compose
 deployment.
 
+PageContent embeds use one server-only registry and renderer across home,
+code-backed, catch-all, and database-backed 404 routes. Authoritative fee and
+policy loaders return narrow display view models only. Default-false persisted
+visibility gates and exact active-lodge lookup prevent accidental publication,
+cross-lodge fallback, and leakage of provider or internal configuration fields.
+
 ## Runtime Shape
 
 ```text
@@ -540,7 +546,16 @@ tier.
 Seasonal membership types are policy records, not access roles. `MembershipType`
 stores the stable identifier, display text, active/archive state, sort order,
 booking behavior, subscription behavior, allowed age tiers, and optional Xero
-contact-group rules for built-in and admin-defined types. The admin settings
+contact-group rules for built-in and admin-defined types. It also stores a
+distinct `publicDescription` and opt-in `publiclyListed` flag; all existing and
+new types start hidden. `MembershipAnnualFee` and `EntranceFee` are inclusive
+effective-date schedules with integer-cent amounts and application plus
+database overlap guards. Annual rows independently record billing basis and
+proration policy per type. `FamilyGroup.billingMembershipId` is an explicit
+finance-owned recipient validated against active group members; membered groups
+without one are visible billing exceptions. Provider item/account codes remain
+Xero mappings. During the one-release bridge, entrance amount reads are
+schedule-first and use mapping amounts only as fallback. The admin settings
 page presents types as an ordered policy list; create/edit opens a dedicated
 editor for identity, behavior, allowed tiers, and Xero rule configuration, while
 seasonal assignment roll-forward sits in its own preview/run section. The
@@ -575,7 +590,34 @@ displays and booking lockout also resolve the seasonal type: `NOT_REQUIRED` is
 an effective status layered over the raw `MemberSubscription`/Xero history,
 which remains stored and visible for audit. Seasonal type changes do not
 automatically reprice existing future bookings. Committee assignments remain
-separate public/contact metadata. `CommitteeRole` stores reusable master positions
+separate public/contact metadata.
+
+Membership subscription creation is snapshot-first. The planner in
+`membership-subscription-billing.ts` reads effective fee schedules and seasonal
+assignments, groups `PER_FAMILY` coverage only under an explicit active
+same-family recipient, calculates integer-cent inclusive-month proration, and
+resolves the explicitly configured `subscriptionIncome` account/item identifiers,
+and returns a digest-bound preview. Explicit annual confirmation (or the
+post-approval new-member hook) writes `MembershipSubscriptionCharge`, immutable
+coverage joins, and visible `MembershipBillingException` rows under one
+season-scoped advisory transaction lock. Provider calls happen later through a
+`MEMBERSHIP_SUBSCRIPTION_INVOICE` Xero outbox operation.
+
+`xero-subscription-invoices.ts` queries by the charge's immutable reference,
+adopts only an exact AUTHORISED contact/account/item/amount/due-interval/ACCREC match, or creates
+one AUTHORISED GST-inclusive invoice with the snapshotted `subscriptionIncome`
+mapping. Draft/submitted/paid matches remain conflicts. It
+persists invoice identity to the charge and every covered subscription before
+calling Xero email. A retry therefore emails the persisted invoice rather than
+creating another. Provider mismatches become local `CONFLICT` state and are
+never corrected by an automatic Xero update.
+Incremental reconciliation maps changed invoice IDs through charge coverage so
+a paid shared-family invoice refreshes every active covered subscription, not
+only the invoice contact. Dispatch uses the recipient member's current Xero
+contact delivery details while retaining the immutable name/email snapshot for
+audit.
+
+`CommitteeRole` stores reusable master positions
 and their role email aliases, and `CommitteeAssignment` links members to those
 positions with blurb, sort order, published, show-phone, contactable, and active
 flags. The public committee API reads only active, published assignments with
@@ -715,6 +757,16 @@ and complaint suppression. Email templates should avoid embedding secrets and
 should use effective recipient logic for dependents where required. Editable
 templates and admin/system delivery policies are registered in the email
 message registry and surfaced in Admin Setup and Admin Notifications.
+Rendered HTML is not retained in `EmailLog` (or emitted to development HTML
+logs) for bearer-token, one-time-code, lodge-access, and other sensitive
+templates. This includes every registry template whose required data contains a
+`token`, plus the optional tokenized `chore-roster` link; SMTP still receives
+the complete rendered message. Keep `SENSITIVE_EMAIL_LOG_TEMPLATES` aligned
+whenever a template starts carrying a credential or action token.
+Editable subjects reject secret-bearing tokens (including nomination, quote
+response, and optional chore links), and the render path strips bearer-link
+aliases from legacy stored overrides before SMTP, `EmailLog`, or application
+logging receives the subject.
 If an admin/system alert cannot be delivered to any opted-in admin recipient
 because every send is suppressed or fails, the app records a critical
 communication audit event and surfaces it in Admin Email Deliverability.

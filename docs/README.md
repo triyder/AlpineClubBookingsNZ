@@ -16,6 +16,8 @@ AlpineClubBookingsNZ.
 
 - `ARCHITECTURE.md` explains the runtime shape, module boundaries, data model,
   integrations, cron jobs, and deployment approach.
+- `PUBLIC_PAGE_CONTENT_TOKENS.md` is the content-editor and operator guide for
+  publishing authoritative membership, fee, booking, and cancellation blocks.
 - `DOMAIN_INVARIANTS.md`, `STATE_MACHINES.md`,
   `END_TO_END_TEST_MATRIX.md`, and `UX_FLOW_MAP.md` capture the first-pass
   domain and review map used by Codex issue work.
@@ -36,8 +38,9 @@ AlpineClubBookingsNZ.
 - `MAINTENANCE.md` records the public validation and release checklist.
 - `E2E_PLAYWRIGHT.md` covers the Playwright browser E2E suite that drives the
   Critical journeys against the staging compose stack.
-- `EMAIL_MESSAGE_REGISTRY.md` records the current outbound email templates,
-  approved tokens, and subject/body safety rules.
+- The TypeScript registry in `../src/lib/email-message-registry.ts` is the
+  authoritative catalogue of admin-editable outbound email templates, approved
+  tokens, and subject/body safety rules.
 - `xero/ARCHITECTURE.md` maps the operational Xero subsystem: module map,
   reconciliation-ledger data model, and sequence diagrams for the outbound,
   inbound, and repair flows.
@@ -55,6 +58,8 @@ AlpineClubBookingsNZ.
   for safe cutover.
 - `CANCELLATIONS.md` documents membership cancellation refund, credit-note,
   and GST policy.
+- `AUTHORITATIVE_FEES.md` documents membership/entrance fee schedules, public
+  listing review, family billing exceptions, and the compatibility window.
 - `AUDIT_RETENTION_ARCHIVE_RUNBOOK.md` covers audit-log retention and optional
   archival.
 - `TOKEN_HASHING.md` documents the current hash-at-rest token design.

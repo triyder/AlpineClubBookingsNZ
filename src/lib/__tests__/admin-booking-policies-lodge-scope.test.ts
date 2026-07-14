@@ -16,9 +16,12 @@ const mocks = vi.hoisted(() => ({
   minimumStayCreate: vi.fn(),
   bookingPeriodFindMany: vi.fn(),
   bookingPeriodCreate: vi.fn(),
+  bookingPeriodFindUnique: vi.fn(),
+  bookingPeriodUpdate: vi.fn(),
   lodgeFindUnique: vi.fn(),
   logAudit: vi.fn(),
   transaction: vi.fn(),
+  revalidatePublicPageContent: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -33,6 +36,9 @@ vi.mock("@/lib/session-guards", () => ({
 
 vi.mock("@/lib/audit", () => ({
   logAudit: mocks.logAudit,
+}));
+vi.mock("@/lib/public-content-revalidation", () => ({
+  revalidatePublicPageContent: mocks.revalidatePublicPageContent,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -50,7 +56,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     bookingPeriod: {
       findMany: mocks.bookingPeriodFindMany,
+      findUnique: mocks.bookingPeriodFindUnique,
       create: mocks.bookingPeriodCreate,
+      update: mocks.bookingPeriodUpdate,
     },
     lodge: {
       findUnique: mocks.lodgeFindUnique,
@@ -62,6 +70,7 @@ vi.mock("@/lib/prisma", () => ({
 import { GET as CANCELLATION_GET, PUT as CANCELLATION_PUT } from "@/app/api/admin/booking-policies/cancellation/route";
 import { GET as MIN_STAY_GET, POST as MIN_STAY_POST } from "@/app/api/admin/booking-policies/minimum-stay/route";
 import { GET as PERIODS_GET, POST as PERIODS_POST } from "@/app/api/admin/booking-policies/periods/route";
+import { PUT as PERIOD_PUT } from "@/app/api/admin/booking-policies/periods/[id]/route";
 
 const adminSession = {
   user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
@@ -345,5 +354,49 @@ describe("booking period partitions", () => {
       }),
     );
     expect(rejected.status).toBe(400);
+  });
+
+  it("POST rejects duplicate cancellation thresholds without side effects", async () => {
+    const res = await PERIODS_POST(
+      request("http://localhost/api/admin/booking-policies/periods", "POST", {
+        name: "Dirty policy",
+        startDate: "2026-07-01",
+        endDate: "2026-07-20",
+        nonMemberHoldDays: 14,
+        cancellationRules: [RULE, { ...RULE, refundPercentage: 10 }],
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual(expect.objectContaining({
+      error: "Validation failed",
+      details: expect.arrayContaining([expect.objectContaining({
+        path: ["cancellationRules"],
+        message: "Cancellation rule day thresholds must be unique",
+      })]),
+    }));
+    expect(mocks.bookingPeriodCreate).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+    expect(mocks.revalidatePublicPageContent).not.toHaveBeenCalled();
+  });
+
+  it("PUT rejects duplicate cancellation thresholds without side effects", async () => {
+    const res = await PERIOD_PUT(
+      request("http://localhost/api/admin/booking-policies/periods/bp-1", "PUT", {
+        cancellationRules: [RULE, { ...RULE, refundPercentage: 10 }],
+      }),
+      { params: Promise.resolve({ id: "bp-1" }) },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual(expect.objectContaining({
+      error: "Validation failed",
+      details: expect.arrayContaining([expect.objectContaining({
+        path: ["cancellationRules"],
+        message: "Cancellation rule day thresholds must be unique",
+      })]),
+    }));
+    expect(mocks.bookingPeriodFindUnique).not.toHaveBeenCalled();
+    expect(mocks.bookingPeriodUpdate).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+    expect(mocks.revalidatePublicPageContent).not.toHaveBeenCalled();
   });
 });

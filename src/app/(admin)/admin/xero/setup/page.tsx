@@ -71,7 +71,7 @@ export default function XeroSetupPage() {
         Day-to-day syncing, operations, and usage live on the{" "}
         <Link
           href="/admin/xero"
-          className="font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
+          className="font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
         >
           Xero Sync
         </Link>{" "}

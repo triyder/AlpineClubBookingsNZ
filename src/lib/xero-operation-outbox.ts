@@ -38,6 +38,7 @@ import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-alloc
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
+import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
 import {
   getQueuedOutboxExpectedOperation,
   readQueuedOutboxPayload,
@@ -56,6 +57,7 @@ import {
   XERO_OUTBOX_QUEUE_TYPES,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
+  XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   type QueuedOutboxExpectedOperation,
   type QueuedOutboxPayload,
 } from "@/lib/xero-operation-outbox-payload";
@@ -1995,6 +1997,14 @@ export async function processQueuedXeroOutboxOperations(options?: {
           syncOperationId: queuedOperation.id,
         });
       } else if (
+        payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
+      ) {
+        await createXeroMembershipSubscriptionInvoice({
+          chargeId: payload.chargeId,
+          createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+          syncOperationId: queuedOperation.id,
+        });
+      } else if (
         payload?.queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE &&
         queuedOperation.localId
       ) {
@@ -2097,6 +2107,22 @@ export async function processQueuedXeroOutboxOperations(options?: {
 
       result.succeeded += 1;
     } catch (error) {
+      if (payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE) {
+        const currentCharge = await prisma.membershipSubscriptionCharge.findUnique({
+          where: { id: payload.chargeId },
+          select: { xeroInvoiceId: true },
+        }).catch(() => null);
+        await prisma.membershipSubscriptionCharge.update({
+          where: { id: payload.chargeId },
+          data: {
+            status: currentCharge?.xeroInvoiceId ? "EMAIL_FAILED" : "QUEUED",
+            lastErrorCode: currentCharge?.xeroInvoiceId ? "EMAIL_FAILED" : "XERO_FAILED",
+            lastErrorMessage: error instanceof Error ? error.message : String(error),
+          },
+        }).catch((chargeError) => {
+          logger.error({ err: chargeError, chargeId: payload.chargeId }, "Failed to expose subscription charge outbox error");
+        });
+      }
       // F4 (#1354): fail the operation for EVERY queue type, not just the two
       // membership-cancellation types and payload-shape errors. An operation
       // erroring BEFORE its handler overwrote requestPayload (token refresh,

@@ -1332,7 +1332,7 @@ export function PromoCodesPageClient({
                         </Badge>
                       ))}
                     </div>
-                    <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+                    <div className="space-y-2 rounded-md border bg-muted p-3">
                       <span className="block text-sm font-medium">
                         How the code applies to a booking
                       </span>

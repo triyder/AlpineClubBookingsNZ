@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { buildBookingLoginPath } from "@/lib/auth-redirect";
 import { getSanitizedPageContentByPath } from "@/lib/page-content-html";
+import { buildEmbeddedBody } from "@/lib/page-content-embeds";
+import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
 
 function pageSlugFromPath(path: string) {
   return path.replace(/^\//, "") || "home";
@@ -11,7 +13,7 @@ export default async function NotFound() {
 
   if (page) {
     const headerHtml = { __html: page.headerText };
-    const bodyHtml = { __html: page.contentHtml };
+    const embeddedBody = await buildEmbeddedBody(page.contentHtml);
     const pageSlug = pageSlugFromPath(page.path);
 
     return (
@@ -41,11 +43,10 @@ export default async function NotFound() {
           data-page-slug={pageSlug}
         >
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-            {page.contentHtml ? (
-              <div
-                className="text-base leading-7 text-brand-deep/85 [&_a]:text-brand-charcoal [&_a]:underline [&_h1]:font-heading [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:font-heading [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:font-heading [&_h3]:text-xl [&_h3]:font-semibold [&_li]:ml-6 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-4"
-                dangerouslySetInnerHTML={bodyHtml}
-              />
+            {embeddedBody.length > 0 ? (
+              <div className="text-base leading-7 text-brand-deep/85 [&_a]:text-brand-charcoal [&_a]:underline [&_h1]:font-heading [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:font-heading [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:font-heading [&_h3]:text-xl [&_h3]:font-semibold [&_li]:ml-6 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-4">
+                <EmbeddedPageContentParts parts={embeddedBody} pageSlug={pageSlug} keyPrefix="not-found" />
+              </div>
             ) : null}
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link

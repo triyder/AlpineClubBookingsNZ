@@ -1,13 +1,16 @@
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import {
+  hasDuplicateCancellationThresholds,
   normalizeCancellationRules,
   normalizeStoredCancellationRules,
 } from "@/lib/cancellation-rules";
+import { logAudit } from "@/lib/audit";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -33,6 +36,14 @@ const createSchema = z.object({
   // club-wide (null lodgeId). Any rows for a lodge REPLACE the club-wide
   // set at runtime for that lodge.
   lodgeId: z.string().min(1).optional(),
+}).superRefine((data, ctx) => {
+  if (hasDuplicateCancellationThresholds(data.cancellationRules)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["cancellationRules"],
+      message: "Cancellation rule day thresholds must be unique",
+    });
+  }
 });
 
 export async function GET(request: NextRequest) {
@@ -99,6 +110,9 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    logAudit({ action: "booking-period.create", memberId: guard.session.user.id, targetId: period.id, details: JSON.stringify({ lodgeId: period.lodgeId, after: period }) });
+
+    revalidatePublicPageContent();
     return NextResponse.json(period, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {

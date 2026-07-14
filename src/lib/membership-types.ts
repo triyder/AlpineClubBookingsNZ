@@ -239,6 +239,8 @@ type MembershipTypeWithAssignmentCount = {
   key: string;
   name: string;
   description: string | null;
+  publicDescription: string | null;
+  publiclyListed: boolean;
   isActive: boolean;
   isBuiltIn: boolean;
   bookingBehavior: MembershipTypeBookingBehavior;
@@ -258,6 +260,7 @@ type MembershipTypeWithAssignmentCount = {
   }>;
   _count?: {
     assignments: number;
+    annualFees?: number;
   };
 };
 
@@ -314,6 +317,8 @@ export function serializeMembershipType(type: MembershipTypeWithAssignmentCount)
     key: type.key,
     name: type.name,
     description: type.description,
+    publicDescription: type.publicDescription,
+    publiclyListed: type.publiclyListed,
     isActive: type.isActive,
     isBuiltIn: type.isBuiltIn,
     bookingBehavior: type.bookingBehavior,

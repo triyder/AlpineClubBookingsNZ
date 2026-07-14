@@ -91,13 +91,51 @@ describe("RoomTable active drag lane rendering", () => {
 
     expect(inactiveCell).not.toHaveAttribute("data-active-drag-lane");
     expect(activeCell).toHaveAttribute("data-active-drag-lane", "true");
-    expect(activeCell).toHaveClass("bg-accent/40");
+    expect(activeCell).toHaveClass("bg-accent");
     expect(activeCell).toHaveClass(...columnWidthClasses);
 
     const fixedCells = Array.from(container.querySelectorAll("th, td")).filter(
       (cell) => columnWidthClasses.every((className) => cell.classList.contains(className)),
     );
     expect(fixedCells).toHaveLength(nights.length * 2 + 2);
+  });
+
+  it("marks a focused booking cell with text, an icon, and a dashed border", () => {
+    const allocation: DashboardAllocation = {
+      id: "allocation-1",
+      bookingId: "booking-focused",
+      bookingGuestId: "guest-1",
+      guestName: "Focused Guest",
+      guestAgeTier: "ADULT",
+      roomId: "room-1",
+      roomName: "Example Room",
+      bedId: "bed-1",
+      bedName: "Bed One",
+      stayDate: "2026-07-01",
+      source: "MANUAL",
+      approvedAt: null,
+      approvedByName: null,
+      bookingStatus: "CONFIRMED",
+      holdsCapacity: true,
+      isSecondOccupant: false,
+    };
+    const { container } = render(
+      <RoomTable
+        room={buildRoom()}
+        nights={["2026-07-01"]}
+        allocationByBedAndDate={new Map([["bed-1:2026-07-01", [allocation]]])}
+        bedOptions={[]}
+        onReassignBed={vi.fn()}
+        onRemove={vi.fn()}
+        pendingAllocationIds={new Set()}
+        highlightedBookingId="booking-focused"
+      />,
+    );
+    const cell = container.querySelector('td[data-stay-date="2026-07-01"]');
+    const label = screen.getByText("Focused");
+
+    expect(cell).toHaveClass("border-dashed");
+    expect(label.parentElement?.querySelector("svg")).toBeTruthy();
   });
 });
 

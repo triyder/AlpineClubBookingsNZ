@@ -194,31 +194,31 @@ export function MemberPartnerLinkCard({
     return (
       <div
         key={link.id}
-        className="flex flex-col gap-3 rounded-md border border-slate-200 p-3 sm:flex-row sm:items-center sm:justify-between"
+        className="flex flex-col gap-3 rounded-md border border-border p-3 sm:flex-row sm:items-center sm:justify-between"
       >
-        <div>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="font-medium text-slate-900">
+            <p className="font-medium text-foreground">
               {link.partner.firstName} {link.partner.lastName}
             </p>
             {confirmed ? (
-              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">
+              <Badge className="border-success/20 bg-success-muted text-success">
                 Confirmed
               </Badge>
             ) : (
-              <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">
+              <Badge variant="secondary" className="border-warning/20 bg-warning-muted text-warning">
                 Pending consent
               </Badge>
             )}
             {link.assignedByAdmin && <Badge variant="secondary">Admin assigned</Badge>}
             {!link.partner.canLogin && (
-              <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">
+              <Badge variant="secondary" className="border-info/20 bg-info-muted text-info">
                 Non-Login
               </Badge>
             )}
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -248,10 +248,10 @@ export function MemberPartnerLinkCard({
 
   return (
     <Card className={className}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+      <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle className="text-base font-medium">Partner</CardTitle>
         {memberIsArchived ? (
-          <Badge variant="secondary" className="bg-slate-200 text-slate-800 border-slate-300">
+          <Badge variant="secondary" className="border-border bg-muted text-foreground">
             Archived
           </Badge>
         ) : !state?.confirmed && isAdultMember ? (
@@ -264,7 +264,7 @@ export function MemberPartnerLinkCard({
       <CardContent>
         <div className="space-y-3">
           {(error || searchError) && (
-            <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+            <div className="rounded border border-danger/20 bg-danger-muted p-2 text-sm text-danger">
               {error || searchError}
             </div>
           )}
@@ -273,7 +273,7 @@ export function MemberPartnerLinkCard({
           {pending.map((link) => renderLinkRow(link, false))}
 
           {state && !state.confirmed && pending.length === 0 && (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-muted-foreground">
               {isAdultMember
                 ? "No partner recorded."
                 : "Partner relationships are for adult members only."}
@@ -281,7 +281,7 @@ export function MemberPartnerLinkCard({
           )}
 
           {assignOpen && !memberIsArchived && (
-            <div className="space-y-2 rounded-md border bg-slate-50 p-3">
+            <div className="space-y-2 rounded-md border bg-muted p-3">
               <Label htmlFor="partner-link-search">Partner search</Label>
               <Input
                 id="partner-link-search"
@@ -292,22 +292,23 @@ export function MemberPartnerLinkCard({
                 }}
                 placeholder="Search by name or email"
               />
-              {searching && <p className="text-xs text-slate-500">Searching…</p>}
+              {searching && <p className="text-xs text-muted-foreground">Searching…</p>}
               {search.trim().length >= 2 && searchResults.length > 0 ? (
                 <div className="space-y-1">
                   {searchResults.map((candidate) => (
                     <div
                       key={candidate.id}
-                      className="flex items-center justify-between rounded border bg-white p-2"
+                      className="flex flex-col gap-2 rounded border bg-card p-2 text-card-foreground sm:flex-row sm:items-center sm:justify-between"
                     >
-                      <div>
+                      <div className="min-w-0">
                         <p className="text-sm font-medium">
                           {candidate.firstName} {candidate.lastName}
                         </p>
-                        <p className="text-xs text-slate-500">{candidate.email}</p>
+                        <p className="break-all text-xs text-muted-foreground">{candidate.email}</p>
                       </div>
                       <Button
                         size="sm"
+                        className="w-full sm:w-auto"
                         disabled={saving}
                         onClick={() =>
                           openNotifyChoice({
@@ -322,9 +323,9 @@ export function MemberPartnerLinkCard({
                   ))}
                 </div>
               ) : search.trim().length >= 2 && !searching ? (
-                <p className="text-sm text-slate-500">No eligible adult members found.</p>
+                <p className="text-sm text-muted-foreground">No eligible adult members found.</p>
               ) : (
-                <p className="text-sm text-slate-500">
+                <p className="text-sm text-muted-foreground">
                   Start typing at least 2 characters to search. Assigning records the
                   partnership immediately, without a consent round-trip.
                 </p>

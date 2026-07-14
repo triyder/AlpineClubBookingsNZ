@@ -145,6 +145,37 @@ enum MembershipTypeSubscriptionBehavior {
   NOT_REQUIRED
 }
 
+enum MembershipFeeBillingBasis {
+  PER_MEMBER
+  PER_FAMILY
+  NO_INVOICE
+}
+
+enum MembershipFeeProrationRule {
+  NONE
+  REMAINING_MONTHS_INCLUSIVE
+}
+
+enum MembershipSubscriptionChargeSource {
+  ANNUAL_BATCH
+  NEW_MEMBER_APPROVAL
+}
+
+enum MembershipSubscriptionChargeStatus {
+  NOT_REQUIRED
+  QUEUED
+  PROCESSING
+  INVOICE_CREATED
+  EMAIL_FAILED
+  EMAILED
+  CONFLICT
+}
+
+enum MembershipBillingExceptionStatus {
+  OPEN
+  RESOLVED
+}
+
 enum MembershipAssignmentSource {
   ADMIN
   /// retired (2026-07 audit, #1525 S4): never written in code (`source` always defaults to ADMIN); kept because Postgres enum-value removal requires a type rebuild.
@@ -495,6 +526,9 @@ model Member {
   twoFactorRecoveryCodes                     TwoFactorRecoveryCode[]
   twoFactorSessionChallenges                 TwoFactorSessionChallenge[]
   subscriptions                              MemberSubscription[]
+  membershipChargesReceived                  MembershipSubscriptionCharge[]          @relation("MembershipChargeRecipient")
+  membershipChargesConfirmed                 MembershipSubscriptionCharge[]          @relation("MembershipChargeConfirmer")
+  membershipBillingExceptions                MembershipBillingException[]            @relation("MembershipBillingExceptionMember")
   seasonalMembershipAssignments              SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentMember")
   seasonalMembershipAssignmentsAssigned      SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentAssignedBy")
   accessRoles                                MemberAccessRole[]                         @relation("MemberAccessRoleMember")
@@ -806,11 +840,115 @@ model MemberSubscription {
 
   // Relations
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  chargeCoverage MembershipSubscriptionChargeCoverage?
 
   @@unique([memberId, seasonYear])
   @@index([memberId])
   @@index([seasonYear])
   @@index([seasonYear, status])
+}
+
+// Immutable financial snapshot for one membership subscription invoice decision.
+// Only operational delivery fields (status/Xero/email metadata) may change after
+// creation; fee, coverage, recipient and proration columns never do.
+model MembershipSubscriptionCharge {
+  id                    String                             @id @default(cuid())
+  idempotencyKey        String                             @unique
+  seasonYear            Int
+  source                MembershipSubscriptionChargeSource
+  status                MembershipSubscriptionChargeStatus @default(QUEUED)
+  membershipAnnualFeeId String?
+  membershipTypeId      String
+  membershipTypeKey     String
+  membershipTypeName    String
+  billingBasis          MembershipFeeBillingBasis
+  prorationRule         MembershipFeeProrationRule
+  annualAmountCents     Int
+  chargedAmountCents    Int
+  coveredMonths         Int
+  decisionDate          DateTime                           @db.Date
+  coverageStart         DateTime                           @db.Date
+  coverageEnd           DateTime                           @db.Date
+  familyGroupId         String?
+  recipientMemberId     String
+  recipientName         String
+  recipientEmail        String
+  dueDays               Int
+  xeroAccountCode       String?
+  xeroItemCode          String?
+  invoiceReference      String                             @unique
+  xeroInvoiceId         String?                            @unique
+  xeroInvoiceNumber     String?
+  xeroInvoiceUrl        String?
+  xeroInvoiceAdopted    Boolean                            @default(false)
+  invoicePersistedAt    DateTime?
+  emailAttemptCount     Int                                @default(0)
+  emailLastAttemptAt    DateTime?
+  emailSentAt           DateTime?
+  lastErrorCode         String?
+  lastErrorMessage      String?
+  confirmedByMemberId   String?
+  confirmedAt           DateTime?
+  createdAt             DateTime                           @default(now())
+  updatedAt             DateTime                           @updatedAt
+
+  recipient   Member   @relation("MembershipChargeRecipient", fields: [recipientMemberId], references: [id], onDelete: Restrict)
+  confirmedBy Member?  @relation("MembershipChargeConfirmer", fields: [confirmedByMemberId], references: [id], onDelete: SetNull)
+  coverage    MembershipSubscriptionChargeCoverage[]
+
+  @@index([seasonYear, status, createdAt])
+  @@index([recipientMemberId, seasonYear])
+  @@index([familyGroupId, seasonYear])
+  @@unique([seasonYear, membershipTypeId, familyGroupId], map: "MembershipCharge_family_type_year_key")
+}
+
+model MembershipSubscriptionChargeCoverage {
+  id             String   @id @default(cuid())
+  chargeId       String
+  subscriptionId String   @unique
+  memberId       String
+  memberName     String
+  createdAt      DateTime @default(now())
+
+  charge       MembershipSubscriptionCharge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+  subscription MemberSubscription            @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+
+  @@unique([chargeId, subscriptionId], map: "MembershipChargeCoverage_charge_subscription_key")
+  @@index([chargeId])
+  @@index([memberId, createdAt])
+}
+
+model MembershipBillingException {
+  id             String                           @id @default(cuid())
+  fingerprint    String                           @unique
+  seasonYear     Int
+  source         MembershipSubscriptionChargeSource
+  status         MembershipBillingExceptionStatus @default(OPEN)
+  code           String
+  message        String
+  memberId       String?
+  familyGroupId  String?
+  membershipTypeId String?
+  context        Json?
+  firstSeenAt    DateTime                         @default(now())
+  lastSeenAt     DateTime                         @default(now())
+  resolvedAt     DateTime?
+  createdAt      DateTime                         @default(now())
+  updatedAt      DateTime                         @updatedAt
+
+  member Member? @relation("MembershipBillingExceptionMember", fields: [memberId], references: [id], onDelete: SetNull)
+
+  @@index([status, seasonYear, lastSeenAt])
+  @@index([memberId, status])
+  @@index([familyGroupId, status])
+}
+
+model MembershipSubscriptionBillingSettings {
+  id                String   @id @default("default")
+  invoiceDueDays    Int      @default(30)
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------
@@ -824,6 +962,8 @@ model MembershipType {
   key                  String                             @unique
   name                 String
   description          String?                            @db.Text
+  publicDescription    String?                            @db.Text
+  publiclyListed       Boolean                            @default(false)
   isActive             Boolean                            @default(true)
   isBuiltIn            Boolean                            @default(false)
   bookingBehavior      MembershipTypeBookingBehavior      @default(MEMBER_RATE)
@@ -835,9 +975,40 @@ model MembershipType {
   assignments           SeasonalMembershipAssignment[]
   allowedAgeTiers       MembershipTypeAgeTier[]
   xeroContactGroupRules XeroContactGroupRule[]
+  annualFees            MembershipAnnualFee[]
 
   @@index([isActive, sortOrder])
   @@index([sortOrder])
+}
+
+model MembershipAnnualFee {
+  id               String                       @id @default(cuid())
+  membershipTypeId String
+  amountCents      Int
+  billingBasis     MembershipFeeBillingBasis
+  prorationRule    MembershipFeeProrationRule   @default(NONE)
+  effectiveFrom    DateTime                     @db.Date
+  effectiveTo      DateTime?                    @db.Date
+  createdAt        DateTime                     @default(now())
+  updatedAt        DateTime                     @updatedAt
+
+  membershipType MembershipType @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
+
+  @@unique([membershipTypeId, effectiveFrom])
+  @@index([membershipTypeId, effectiveFrom, effectiveTo], map: "MembershipAnnualFee_effective_lookup_idx")
+}
+
+model EntranceFee {
+  id            String              @id @default(cuid())
+  category      EntranceFeeCategory
+  amountCents   Int
+  effectiveFrom DateTime            @db.Date
+  effectiveTo   DateTime?           @db.Date
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@unique([category, effectiveFrom])
+  @@index([category, effectiveFrom, effectiveTo])
 }
 
 model MembershipTypeAgeTier {
@@ -3281,6 +3452,8 @@ model FamilyGroup {
   memberships   FamilyGroupMember[]
   joinRequests  FamilyGroupJoinRequest[]
   partnerInviteTokens PartnerInviteToken[]
+  billingMembershipId String?            @unique
+  billingMembership   FamilyGroupMember? @relation("FamilyBillingMembership", fields: [billingMembershipId], references: [id], onDelete: SetNull)
 }
 
 model FamilyGroupMember {
@@ -3292,6 +3465,7 @@ model FamilyGroupMember {
 
   familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
   member      Member      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  billedFamilyGroup FamilyGroup? @relation("FamilyBillingMembership")
 
   @@unique([familyGroupId, memberId])
   @@index([memberId])
@@ -3660,6 +3834,21 @@ model GroupDiscountSetting {
   enabled      Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+// Public PageContent data blocks are opt-in. Inserting a token is not enough:
+// an administrator must also enable its family here before any authoritative
+// fee or policy data is rendered publicly.
+model PublicContentSettings {
+  id                   String   @id @default("default")
+  membershipTypes      Boolean  @default(false)
+  entranceFees         Boolean  @default(false)
+  hutFees              Boolean  @default(false)
+  bookingPolicySummary Boolean  @default(false)
+  cancellationPolicy   Boolean  @default(false)
+  updatedByMemberId    String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------

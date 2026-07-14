@@ -446,16 +446,16 @@ export default function HutLeadersPage() {
         <div
           role="alert"
           aria-live="assertive"
-          className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          className="rounded-md border border-danger/20 bg-danger-muted px-4 py-3 text-sm text-danger"
         >
           {error.message}
         </div>
       )}
 
       {unassignedDates.length > 0 && (
-        <Card className="border-amber-200 bg-amber-50">
+        <Card className="border-warning/20 bg-warning-muted">
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base text-amber-800">
+            <CardTitle className="flex items-center gap-2 text-base text-warning">
               <CalendarDays className="h-5 w-5" />
               Upcoming Dates Without {hutLeaderLabel} ({unassignedDates.length})
             </CardTitle>
@@ -465,11 +465,11 @@ export default function HutLeadersPage() {
               {unassignedDates.map((d) => (
                 <div
                   key={d.date}
-                  className="flex items-center justify-between rounded-lg border border-amber-200 bg-white px-3 py-2"
+                  className="flex items-center justify-between rounded-lg border border-warning/20 bg-card px-3 py-2 text-card-foreground"
                 >
                   <div>
-                    <p className="text-sm font-medium text-slate-800">{d.date}</p>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-sm font-medium text-foreground">{d.date}</p>
+                    <p className="text-xs text-muted-foreground">
                       {d.bookingCount} booking{d.bookingCount !== 1 ? "s" : ""},{" "}
                       {d.guestCount} guest{d.guestCount !== 1 ? "s" : ""}
                     </p>
@@ -518,16 +518,16 @@ export default function HutLeadersPage() {
       />
 
       {pinMessage && (
-        <Card className="border-blue-200 bg-blue-50">
+        <Card className="border-info/20 bg-info-muted">
           <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-medium text-blue-900">
+              <p className="text-sm font-medium text-info">
                 New kiosk PIN for {pinMessage.memberName}
               </p>
-              <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.25em] text-blue-950">
+              <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.25em] text-foreground">
                 {pinMessage.pin}
               </p>
-              <p className="mt-1 text-xs text-blue-800">
+              <p className="mt-1 text-xs text-info">
                 This PIN is shown once.{" "}
                 {pinMessage.emailSent
                   ? `It has also been emailed to the ${hutLeaderLabel.toLowerCase()}.`
@@ -581,11 +581,11 @@ export default function HutLeadersPage() {
                   <TableCell>{a.endDate}</TableCell>
                   <TableCell>
                     {isActive ? (
-                      <Badge className="border-green-200 bg-green-100 text-green-800">Active</Badge>
+                      <Badge className="border-success/20 bg-success-muted text-success">Active</Badge>
                     ) : isPast ? (
                       <Badge variant="secondary">Past</Badge>
                     ) : (
-                      <Badge className="border-blue-200 bg-blue-100 text-blue-800">Upcoming</Badge>
+                      <Badge className="border-info/20 bg-info-muted text-info">Upcoming</Badge>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
@@ -605,7 +605,7 @@ export default function HutLeadersPage() {
                         variant="ghost"
                         size="sm"
                         onClick={() => handleDelete(a.id)}
-                        className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                        className="text-danger hover:bg-danger-muted hover:text-danger"
                         title="Delete assignment"
                       >
                         <Trash2 className="h-4 w-4" />

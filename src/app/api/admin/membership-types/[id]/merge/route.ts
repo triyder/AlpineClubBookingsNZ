@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import type { AgeTier, Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
@@ -16,6 +17,8 @@ const membershipTypeSelect = {
   key: true,
   name: true,
   description: true,
+  publicDescription: true,
+  publiclyListed: true,
   isActive: true,
   isBuiltIn: true,
   bookingBehavior: true,
@@ -39,7 +42,7 @@ const membershipTypeSelect = {
     },
     orderBy: [{ sortOrder: "asc" }, { groupName: "asc" }, { groupId: "asc" }],
   },
-  _count: { select: { assignments: true } },
+  _count: { select: { assignments: true, annualFees: true } },
 } satisfies Prisma.MembershipTypeSelect;
 
 const paramsSchema = z.object({
@@ -123,6 +126,13 @@ export async function POST(
   if (source.isBuiltIn) {
     return NextResponse.json(
       { error: "Built-in membership types cannot be merged or deleted" },
+      { status: 409 },
+    );
+  }
+
+  if ((source._count?.annualFees ?? 0) > 0) {
+    return NextResponse.json(
+      { error: "Membership types with fee history cannot be merged. Archive the source type instead." },
       { status: 409 },
     );
   }
@@ -268,6 +278,7 @@ export async function POST(
     return reassigned.count;
   });
 
+  revalidatePath("/", "layout");
   return NextResponse.json({
     ok: true,
     reassignedCount,

@@ -23,7 +23,7 @@ const alertVariants = cva(
         info: "border-info/20 bg-info-muted text-info",
         success: "border-success/20 bg-success-muted text-success",
         warning: "border-warning/20 bg-warning-muted text-warning",
-        error: "border-destructive/20 bg-destructive/10 text-destructive",
+        error: "border-danger/20 bg-danger-muted text-danger",
       },
     },
     defaultVariants: {

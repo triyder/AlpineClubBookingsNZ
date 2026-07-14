@@ -15,6 +15,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import { BookingStatus } from "@prisma/client";
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -198,6 +199,8 @@ export async function PATCH(
 
     return lodge;
   });
+
+  revalidatePublicPageContent();
 
   return NextResponse.json({ lodge: serializeLodge(updated) });
 }

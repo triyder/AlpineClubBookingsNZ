@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -24,6 +25,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { OccupancyMeter } from "@/components/ui/occupancy-meter";
 import {
   Select,
   SelectContent,
@@ -107,6 +109,7 @@ function previewStyle(values: ClubThemeValues): CSSProperties {
 }
 
 export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
+  const router = useRouter();
   const [values, setValues] = useState<ClubThemeValues>({
     brandGold: initialTheme.brandGold,
     brandCharcoal: initialTheme.brandCharcoal,
@@ -227,6 +230,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
       setSavedMessage(
         completeSetup ? "Site style is complete." : "Site style saved.",
       );
+      router.refresh();
       return true;
     } catch (saveError) {
       setError(
@@ -297,8 +301,8 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
             <CardTitle>Style Setup Wizard</CardTitle>
             <CardDescription>
               {completedAt
-                ? "The public website is using this style."
-                : "The public website stays on the setup holding page until this is finished."}
+                ? "The public website, member area, and admin area are using this style."
+                : "The member and admin areas use this style immediately; the public website stays on the setup holding page until setup is finished."}
             </CardDescription>
           </div>
           <Badge variant={completedAt ? "success" : "warning"}>
@@ -318,7 +322,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                 onClick={() => setStep(item.id)}
                 className={`flex min-h-11 items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
                   active
-                    ? "border-brand-gold bg-brand-gold/20 text-brand-charcoal"
+                    ? "border-brand-gold bg-brand-gold text-brand-charcoal"
                     : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 }`}
               >
@@ -332,47 +336,66 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
           <section className="space-y-5">
             <div className="flex items-center gap-2">
-              <ActiveStepIcon className="h-5 w-5 text-brand-charcoal" />
-              <h2 className="text-lg font-semibold text-slate-900">
+              <ActiveStepIcon className="h-5 w-5 text-foreground" />
+              <h2 className="text-lg font-semibold text-foreground">
                 {activeStep.label}
               </h2>
             </div>
 
             {step === "colours" && (
-              <div className="grid gap-4 sm:grid-cols-2">
-                {CLUB_THEME_COLOUR_FIELDS.map((field) => (
-                  <div key={field.key} className="space-y-2">
-                    <Label htmlFor={field.key}>{field.label}</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        id={field.key}
-                        type="color"
-                        value={
-                          values[field.key].startsWith("#")
-                            ? values[field.key]
-                            : DEFAULT_CLUB_THEME_VALUES[field.key]
-                        }
-                        onChange={(event) =>
-                          updateColour(field.key, event.target.value)
-                        }
-                        className="h-10 w-14 shrink-0 p-1"
-                        aria-label={`${field.label} swatch`}
-                      />
-                      <Input
-                        value={values[field.key]}
-                        onChange={(event) =>
-                          updateColour(field.key, event.target.value)
-                        }
-                        aria-label={`${field.label} value`}
-                      />
+              <div className="space-y-5">
+                <div className="rounded-md border bg-muted p-4 text-sm text-muted-foreground">
+                  <p className="font-medium text-foreground">Editable brand layer</p>
+                  <p className="mt-1">
+                    These colours set the identity, neutral warmth, primary actions,
+                    navigation, and occupancy meter across the public website,
+                    member area, and admin area. The primary accent is glacial teal
+                    by default and may be club gold or another accessible brand colour.
+                  </p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {CLUB_THEME_COLOUR_FIELDS.map((field) => (
+                    <div key={field.key} className="space-y-2">
+                      <Label htmlFor={field.key}>{field.label}</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id={field.key}
+                          type="color"
+                          value={
+                            values[field.key].startsWith("#")
+                              ? values[field.key]
+                              : DEFAULT_CLUB_THEME_VALUES[field.key]
+                          }
+                          onChange={(event) =>
+                            updateColour(field.key, event.target.value)
+                          }
+                          className="h-10 w-14 shrink-0 p-1"
+                          aria-label={`${field.label} swatch`}
+                        />
+                        <Input
+                          value={values[field.key]}
+                          onChange={(event) =>
+                            updateColour(field.key, event.target.value)
+                          }
+                          aria-label={`${field.label} value`}
+                        />
+                      </div>
+                      {fieldErrors[field.key]?.[0] && (
+                        <p className="text-sm text-red-700">
+                          {fieldErrors[field.key]?.[0]}
+                        </p>
+                      )}
                     </div>
-                    {fieldErrors[field.key]?.[0] && (
-                      <p className="text-sm text-red-700">
-                        {fieldErrors[field.key]?.[0]}
-                      </p>
-                    )}
-                  </div>
-                ))}
+                  ))}
+                </div>
+                <div className="rounded-md border p-4 text-sm text-muted-foreground">
+                  <p className="font-medium text-foreground">Fixed semantic layer</p>
+                  <p className="mt-1">
+                    Success, warning, information, danger/error, and waitlist states
+                    use curated light/dark colour pairs. They are not brand pickers,
+                    so operational meaning and contrast stay consistent.
+                  </p>
+                </div>
               </div>
             )}
 
@@ -423,10 +446,12 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
 
             {step === "raw-css" && (
               <div className="space-y-3">
-                <p className="text-sm text-slate-600">
+                <p className="text-sm text-muted-foreground">
                   Add custom CSS rules that will be appended to the generated
-                  theme stylesheet on every public page. Use sparingly — prefer
-                  colour and font settings above where possible.
+                  theme stylesheet on the public website only. Member and admin
+                  areas receive the validated brand variables above, never raw
+                  CSS. Use sparingly — prefer colour and font settings where
+                  possible.
                 </p>
                 <textarea
                   value={values.rawCss}
@@ -498,17 +523,17 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
               <div className="space-y-4">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="rounded-md border p-4">
-                    <p className="text-sm font-medium text-slate-900">Fonts</p>
-                    <p className="mt-2 text-sm text-slate-600">
+                    <p className="text-sm font-medium text-foreground">Fonts</p>
+                    <p className="mt-2 text-sm text-muted-foreground">
                       Heading: {fontLabel(values.headingFontKey)}
                     </p>
-                    <p className="text-sm text-slate-600">
+                    <p className="text-sm text-muted-foreground">
                       Body: {fontLabel(values.bodyFontKey)}
                     </p>
                   </div>
                   <div className="rounded-md border p-4">
-                    <p className="text-sm font-medium text-slate-900">Logo</p>
-                    <p className="mt-2 text-sm text-slate-600">
+                    <p className="text-sm font-medium text-foreground">Logo</p>
+                    <p className="mt-2 text-sm text-muted-foreground">
                       {values.logoDataUrl
                         ? "Custom logo stored"
                         : "Club name fallback"}
@@ -516,7 +541,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs font-medium text-slate-700">
+                  <p className="text-xs font-medium text-foreground">
                     Generated CSS
                   </p>
                   <pre className="max-h-40 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">
@@ -525,7 +550,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                 </div>
                 {values.rawCss && (
                   <div className="space-y-1">
-                    <p className="text-xs font-medium text-slate-700">
+                    <p className="text-xs font-medium text-foreground">
                       Raw CSS
                     </p>
                     <pre className="max-h-40 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">
@@ -573,6 +598,34 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                   Primary action
                 </button>
               </div>
+            </div>
+
+            <div
+              className="app-theme-scope space-y-4 overflow-hidden rounded-md border bg-background p-5 text-foreground"
+              style={previewStyle(values)}
+            >
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Member + admin app preview
+                </p>
+                <h3 className="mt-1 text-2xl font-bold">Upcoming lodge stay</h3>
+              </div>
+              <OccupancyMeter filled={18} capacity={30} label="Occupancy" />
+              <button
+                type="button"
+                className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
+              >
+                Primary action
+              </button>
+              <div className="flex flex-wrap gap-2 text-xs font-medium">
+                <span className="rounded-md bg-success-muted px-2 py-1 text-success">Success</span>
+                <span className="rounded-md bg-warning-muted px-2 py-1 text-warning">Warning</span>
+                <span className="rounded-md bg-info-muted px-2 py-1 text-info">Information</span>
+                <span className="rounded-md bg-danger-muted px-2 py-1 text-danger">Danger</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Brand colours and fonts update this app preview. Status colours stay fixed.
+              </p>
             </div>
 
             {blockingContrastWarnings.length > 0 && (

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
@@ -17,6 +18,8 @@ const membershipTypeSelect = {
   key: true,
   name: true,
   description: true,
+  publicDescription: true,
+  publiclyListed: true,
   isActive: true,
   isBuiltIn: true,
   bookingBehavior: true,
@@ -130,6 +133,7 @@ export async function POST(request: Request) {
     select: membershipTypeSelect,
   });
 
+  revalidatePath("/", "layout");
   return NextResponse.json({
     membershipTypes: updated.map(serializeMembershipType),
   });

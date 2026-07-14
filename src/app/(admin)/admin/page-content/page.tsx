@@ -1,5 +1,6 @@
 import { BackLink } from "@/components/admin/back-link";
 import { PageContentPanel } from "@/components/admin/page-content-panel";
+import { PublicContentSettingsPanel } from "@/components/admin/public-content-settings-panel";
 import {
   Card,
   CardContent,
@@ -31,6 +32,13 @@ export default function PageContentAdminPage() {
         <CardContent>
           <PageContentPanel />
         </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Public fee and policy blocks</CardTitle>
+          <CardDescription>Explicitly enable the authoritative data families that Page Content tokens may publish.</CardDescription>
+        </CardHeader>
+        <CardContent><PublicContentSettingsPanel /></CardContent>
       </Card>
     </div>
   );

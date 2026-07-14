@@ -699,11 +699,15 @@ export const APPROVED_EMAIL_TEMPLATE_TOKEN_SET = new Set<string>(
 // sensitive ones whose HTML bodies are deliberately not retained) and travel
 // in clear mail headers, so secret values are restricted to message bodies.
 const SENSITIVE_EMAIL_SUBJECT_TOKENS = [
+  "choreLink",
+  "claimUrl",
+  "confirmUrl",
   "confirmationUrl",
   "doorCode",
   "payUrl",
   "pin",
   "resetUrl",
+  "respondUrl",
   "token",
   "verifyUrl",
 ] as const;
@@ -711,6 +715,26 @@ const SENSITIVE_EMAIL_SUBJECT_TOKENS = [
 export const SENSITIVE_EMAIL_SUBJECT_TOKEN_SET = new Set<string>(
   SENSITIVE_EMAIL_SUBJECT_TOKENS,
 );
+
+const TEMPLATE_SENSITIVE_EMAIL_SUBJECT_TOKENS: Partial<
+  Record<EmailAuditTemplateName, readonly string[]>
+> = {
+  // Most reviewUrl values are authenticated admin/profile navigation. This
+  // one is the nomination's public bearer link, so scope the restriction to
+  // its template instead of disabling harmless review URLs globally.
+  "nomination-request": ["reviewUrl"],
+};
+
+export function getSensitiveEmailSubjectTokens(
+  templateName?: string,
+): ReadonlySet<string> {
+  return new Set([
+    ...SENSITIVE_EMAIL_SUBJECT_TOKEN_SET,
+    ...(TEMPLATE_SENSITIVE_EMAIL_SUBJECT_TOKENS[
+      templateName as EmailAuditTemplateName
+    ] ?? []),
+  ]);
+}
 
 export function getEmailTemplateDefinition(templateName: string) {
   return EMAIL_TEMPLATE_DEFINITIONS.find(

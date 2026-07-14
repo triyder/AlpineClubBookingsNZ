@@ -134,6 +134,43 @@ describe("N-10: EmailLog tracking", () => {
     (process.env as Record<string, string>).NODE_ENV = origEnv;
   });
 
+  it.each([
+    "booking-request-quote",
+    "school-attendee-confirmation",
+    "group-booking-join-verification",
+    "chore-roster",
+  ])(
+    "redacts %s HTML at rest without changing SMTP delivery",
+    async (templateName) => {
+      const origEnv = process.env.NODE_ENV;
+      (process.env as Record<string, string>).NODE_ENV = "production";
+      const html = `<a href="https://example.org/action/live-secret">Act</a>`;
+
+      try {
+        const { sendEmail } = await import("../email");
+
+        await sendEmail({
+          to: "test@example.com",
+          subject: "Complete your action",
+          html,
+          templateName,
+        });
+
+        expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            templateName,
+            htmlBody: null,
+          }),
+        });
+        expect(mockTransporter.sendMail).toHaveBeenCalledWith(
+          expect.objectContaining({ html }),
+        );
+      } finally {
+        (process.env as Record<string, string>).NODE_ENV = origEnv;
+      }
+    },
+  );
+
   it("uses a redacted EmailLog recipient without changing SMTP delivery", async () => {
     const origEnv = process.env.NODE_ENV;
     (process.env as Record<string, string>).NODE_ENV = "production";

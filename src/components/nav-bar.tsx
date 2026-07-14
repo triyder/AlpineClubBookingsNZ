@@ -99,12 +99,12 @@ export function NavBar({ user, features }: NavBarProps) {
   };
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-background/95 shadow-sm backdrop-blur print:hidden">
+    <header className="sticky top-0 z-50 w-full border-b bg-background shadow-sm print:hidden">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Branding */}
         <Link
           href={getAuthenticatedBrandHref()}
-          className="flex items-center gap-2 font-bold text-foreground transition-opacity hover:opacity-80"
+          className="flex items-center gap-2 font-bold text-foreground transition-shadow hover:drop-shadow-sm"
         >
           <span className="app-brand-mark h-9 w-9">
             <Mountain className="h-5 w-5" />

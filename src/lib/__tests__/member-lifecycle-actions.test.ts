@@ -383,12 +383,13 @@ describe("member delete lifecycle actions", () => {
           { xeroInvoiceNumber: { not: null } },
           { xeroOnlineInvoiceUrl: { not: null } },
           { paidAt: { not: null } },
+          { chargeCoverage: { isNot: null } },
         ],
       },
     });
   });
 
-  it("reports subscription blockers when invoice or payment history exists", async () => {
+  it("reports subscription blockers when invoice, payment, or immutable charge coverage history exists", async () => {
     mockPrisma.memberSubscription.count.mockResolvedValue(1);
 
     const eligibility = await getMemberDeleteEligibility({
@@ -406,6 +407,11 @@ describe("member delete lifecycle actions", () => {
         }),
       ]),
     );
+    expect(mockPrisma.memberSubscription.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        OR: expect.arrayContaining([{ chargeCoverage: { isNot: null } }]),
+      }),
+    });
   });
 
   it("creates a delete request only when the member is eligible", async () => {

@@ -34,9 +34,10 @@ use `(namespace, subject)`; single-argument keys hash a descriptive string.
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | Per-email applicant dedup at submit time. |
 | **Roster generation** | `hashtext("roster:<date>")` | inline (`admin-roster-service.ts`) | Roster generation for one calendar date (keyed on the date only, not per lodge). |
 | **Config-transfer import** | `hashtext("config-transfer-import")` | `acquireConfigImportLock(tx)` (`config-transfer/apply.ts`) | Single-flights configuration-bundle apply so two admins cannot import concurrently. |
+| **Membership subscription billing** | `hashtext("membership-subscription-billing:<seasonYear>")` | `confirmSubscriptionBillingPreview` (`membership-subscription-billing.ts`) | Serialises annual/approval charge snapshot creation for one membership year; the unique subscription-coverage row is the final replay/concurrency guard. |
 
 The first three are the **booking / capacity / credit cluster** — they interact,
-and are where the current tensions live. Families 4–7 are independent
+and are where the current tensions live. Families 4–8 are independent
 single-domain locks; they take distinct keys and do not contend with the cluster
 or each other, so this doc does not detail them further beyond the table.
 

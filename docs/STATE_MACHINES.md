@@ -567,6 +567,43 @@ rewrite subscription/payment/Xero history, or call provider systems. The saved
 assignment is enforced the next time a booking is quoted, created, confirmed
 from draft, joined, or repriced by an allowed modification path.
 
+## Fee Configuration Lifecycle
+
+```text
+migration -> public membership types hidden
+legacy entrance amount -> authoritative row at migration-date boundary
+membership editor -> public copy/listing review -> audited save -> cache invalidation
+finance editor -> validate cents/dates -> lock schedule key -> reject overlap | audited save
+family recipient removed -> billing member cleared -> visible billing exception
+```
+
+This lifecycle creates no invoice and calls no provider. During the one-release
+bridge, a category with no current entrance schedule reads its deprecated
+granular/flat mapping amount; a current schedule always wins.
+
+## Membership Subscription Charge Lifecycle
+
+```text
+annual preview (read-only) -> explicit unchanged-token confirmation -> QUEUED
+new-member approval -> configured plan -> QUEUED
+new-member approval -> incomplete plan -> OPEN billing exception (approval stays APPROVED)
+QUEUED -> outbox claim -> invoice create OR exact existing-invoice adoption
+invoice identity persisted locally -> INVOICE_CREATED -> Xero email -> EMAILED
+INVOICE_CREATED -> email fails -> EMAIL_FAILED -> retry -> same invoice -> EMAILED
+provider reference exists but snapshot differs -> CONFLICT (no provider rewrite)
+provider reference exists but is not AUTHORISED -> CONFLICT (never emailed)
+late member joins already-billed family -> FAMILY_ALREADY_BILLED exception (old coverage unchanged; no second invoice)
+NO_INVOICE -> NOT_REQUIRED (zero-cent durable snapshot; no provider work)
+```
+
+To verify: preview digest changes with fee/recipient/due-day inputs; only finance
+edit can confirm/retry/configure; explicit account/item mapping is frozen;
+concurrent/replayed confirmation creates one
+coverage row; fee/family changes do not mutate history; invoice identity commits
+before email; email retry never calls create for a persisted invoice; exact
+existing invoices are adopted; amount/contact/account mismatch becomes visible
+`CONFLICT`; automatic post-approval failures never roll back approval.
+
 ## Committee Assignment Lifecycle
 
 ```text

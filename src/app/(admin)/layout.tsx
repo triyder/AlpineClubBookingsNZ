@@ -22,7 +22,7 @@ import {
   hasFinanceViewerAccess,
 } from "@/lib/admin-permissions";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
-import { isClubThemeComplete } from "@/lib/club-theme";
+import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import {
   MEMBER_ONBOARDING_GATE_SELECT,
@@ -115,10 +115,10 @@ export default async function AdminLayout({
     level: "edit",
   });
   const showOnboardingWizard = shouldShowMemberOnboarding(member);
-  const [effectiveModules, siteStyleComplete, lodgeCapacity] =
+  const [effectiveModules, theme, lodgeCapacity] =
     await Promise.all([
       loadEffectiveModuleFlags(),
-      isClubThemeComplete(),
+      getWebsiteThemeRenderState(),
       getDefaultLodgeCapacity(),
     ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
@@ -129,6 +129,10 @@ export default async function AdminLayout({
       <div
         className={`${clubThemeFontVariableClassName} app-theme-scope min-h-screen flex flex-col bg-background text-foreground`}
       >
+        <style
+          dangerouslySetInnerHTML={{ __html: theme.appCss }}
+          data-site-style="club-theme"
+        />
         <a
           className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:ring-2 focus:ring-ring"
           href="#main-content"
@@ -136,22 +140,23 @@ export default async function AdminLayout({
           Skip to main content
         </a>
         <NavBar user={user} features={effectiveModules} />
-        <div className="flex flex-1">
+        <div className="flex flex-1 flex-col md:flex-row">
           <AdminSidebar
             features={effectiveModules}
             permissionMatrix={permissionMatrix}
             isFullAdmin={actorIsFullAdmin}
             hutLeaderLabel={liveClubIdentity.hutLeaderLabel}
           />
-          <div className="flex flex-1 flex-col md:overflow-hidden">
+          <div className="flex min-w-0 flex-1 flex-col md:overflow-hidden">
             <main
               id="main-content"
+              tabIndex={-1}
               className="flex-1 overflow-y-auto p-6 pb-24 print:overflow-visible print:p-0 md:p-8 md:pb-28"
             >
               <div className="mb-4 flex justify-end print:hidden">
                 <ContextualHelpButton scope="admin" />
               </div>
-              {!siteStyleComplete && canManageContent && (
+              {!theme.isComplete && canManageContent && (
                 <div className="mb-6 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 print:hidden">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="font-medium">
@@ -159,7 +164,7 @@ export default async function AdminLayout({
                     </p>
                     <Link
                       href="/admin/site-style"
-                      className="rounded-md bg-brand-gold px-3 py-2 text-sm font-semibold text-brand-charcoal shadow-sm transition-colors hover:bg-brand-gold/90"
+                      className="rounded-md bg-brand-gold px-3 py-2 text-sm font-semibold text-brand-charcoal shadow-sm transition-shadow hover:shadow-md"
                     >
                       Open Site Style
                     </Link>

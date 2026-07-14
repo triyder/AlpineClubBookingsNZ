@@ -35,6 +35,7 @@ describe("OccupancyMeter", () => {
     expect(fill?.className).toContain("bg-brand-safety");
     expect(fill?.className).not.toContain("bg-brand-gold");
     expect(fill?.getAttribute("style")).toContain("width: 100%");
+    expect(container.querySelector(".text-danger")?.textContent).toContain("Full");
   });
 
   it("over-book: aria + fill clamp to capacity, raw count still shown, full", () => {

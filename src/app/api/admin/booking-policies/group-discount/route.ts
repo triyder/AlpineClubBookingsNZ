@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -57,5 +58,6 @@ export async function PUT(req: NextRequest) {
     details: `Group discount: minSize=${parsed.data.minGroupSize}, summerOnly=${parsed.data.summerOnly}, enabled=${parsed.data.enabled}`,
   });
 
+  revalidatePublicPageContent();
   return NextResponse.json(result);
 }

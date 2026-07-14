@@ -1654,12 +1654,15 @@ describe("review finding source/schema contracts", () => {
     expect(foregroundRemap).toContain(".text-stone-950");
   });
 
-  it("gives the promo review-step callout a dark-mode text colour (F28)", () => {
+  it("keeps promo review-step text on directly gated semantic/solid pairs (F28)", () => {
     const reviewStep = readRepoFile(
       "src/app/(authenticated)/book/_components/review-step.tsx",
     );
-    expect(reviewStep).toContain("text-brand-charcoal dark:text-brand-gold");
-    expect(reviewStep).toContain("text-brand-charcoal/75 dark:text-brand-gold/75");
+    expect(reviewStep).toContain('className="mb-2 text-sm font-medium text-foreground"');
+    expect(reviewStep).toContain(
+      'className="font-sans font-normal text-brand-charcoal"',
+    );
+    expect(reviewStep).not.toContain("dark:text-brand-gold");
   });
 
   it("hard-reloads the waitlist confirm success path so the CTA can't stick on Confirming (F28)", () => {

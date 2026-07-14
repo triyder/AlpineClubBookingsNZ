@@ -50,6 +50,7 @@ import {
   Clock,
   type LucideIcon,
 } from "lucide-react";
+import { SubscriptionBillingPanel } from "./_components/subscription-billing-panel";
 
 function getSeasonYear(date: Date): number {
   return date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
@@ -360,6 +361,8 @@ export default function SubscriptionsPage() {
           </>
         }
       />
+
+      <SubscriptionBillingPanel seasonYear={seasonYear} />
 
       <AdminFilterBar
         idPrefix="subscriptions-filters"

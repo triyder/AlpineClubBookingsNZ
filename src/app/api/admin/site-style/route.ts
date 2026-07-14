@@ -56,6 +56,8 @@ export async function PUT(request: NextRequest) {
   try {
     const theme = await saveClubTheme(parsed.data);
     revalidatePath("/(website)", "layout");
+    revalidatePath("/(authenticated)", "layout");
+    revalidatePath("/(admin)", "layout");
 
     logAudit({
       action: "site_style.updated",

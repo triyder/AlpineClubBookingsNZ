@@ -50,6 +50,11 @@ describe("token catalogue contents", () => {
       "skifield-whakapapa",
       "photo-gallery",
       "photo-slideshow",
+      "membership-types",
+      "entrance-fees",
+      "hut-fees",
+      "booking-policy-summary",
+      "cancellation-policy",
     ]);
   });
 

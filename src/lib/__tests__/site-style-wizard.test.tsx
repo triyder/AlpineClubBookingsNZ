@@ -9,6 +9,11 @@ import {
 } from "@/lib/club-theme-schema";
 
 const fetchMock = vi.fn();
+const refreshMock = vi.fn();
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: refreshMock }),
+}));
 
 function responseTheme(values: ClubThemeValues, completedAt: string | null) {
   return {
@@ -88,5 +93,49 @@ describe("site style wizard", () => {
     );
     expect(lastCallBody.completeSetup).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(refreshMock).toHaveBeenCalledTimes(5);
   }, 15_000);
+
+  it("explains and previews the editable brand and fixed semantic layers", () => {
+    render(
+      <SiteStyleWizard
+        initialTheme={{
+          ...DEFAULT_CLUB_THEME_VALUES,
+          completedAt: "2026-07-12T00:00:00.000Z",
+          contrastWarnings: [],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Editable brand layer")).toBeTruthy();
+    expect(screen.getByText("Fixed semantic layer")).toBeTruthy();
+    expect(screen.getByText("Member + admin app preview")).toBeTruthy();
+    expect(screen.getByText("Success")).toBeTruthy();
+    expect(screen.getByText("Danger")).toBeTruthy();
+    expect(screen.getByRole("progressbar").getAttribute("aria-label")).toBe(
+      "Occupancy: 18 of 30 bunks filled",
+    );
+  });
+
+  it("blocks saving when secondary app text would disappear into brand mist", async () => {
+    render(
+      <SiteStyleWizard
+        initialTheme={{
+          ...DEFAULT_CLUB_THEME_VALUES,
+          completedAt: null,
+          contrastWarnings: [],
+        }}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Mist value"), {
+      target: { value: DEFAULT_CLUB_THEME_VALUES.brandDeep },
+    });
+
+    await screen.findByText(/App text on secondary surface:/);
+    expect(
+      (screen.getByRole("button", { name: "Save and next" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
 });

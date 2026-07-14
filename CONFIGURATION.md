@@ -68,21 +68,43 @@ Keep all money values in integer cents.
 
 ## Branding Assets
 
-Public website colours, fonts, and the logo are managed by administrators at
-`/admin/site-style`. Fresh deployments show a neutral setup holding page until
-an admin finishes that wizard. The logo is stored in the database as a validated
+Shared public-website, member-area, and admin-area brand colours and fonts are
+managed by administrators at `/admin/site-style`. The existing primary accent
+and neutral-ramp fields theme all three surfaces; the app does not maintain a
+second accent setting. The occupancy meter follows the primary accent. Semantic
+success, warning, information, danger/error, and waitlist colours stay curated,
+contrast-locked light/dark pairs and are not editable brand fields. Fresh
+deployments show a neutral public-site holding page until an admin finishes that
+wizard. The logo is public-site only and is stored in the database as a validated
 image data URL; there is no runtime upload directory to preserve.
 
 Saved palettes must meet the **WCAG AA 4.5:1** minimum text-contrast ratio on
-the three key public-site pairs — body text on the page background, header text
-on the navigation bar, and button text on the primary-action colour. The wizard
+the key public/app pairs — body and muted text on the page background, app text
+on the secondary/mist surface, header text on the navigation bar, button text on
+the primary-action colour, the app
+accent on dark app chrome, and the contrast-safe dark accent-text role on the
+light app background. App text-bearing surfaces use only the directly gated
+snow/mist/deep/charcoal endpoints rather than interpolated colour mixes. The
+editable primary accent remains visible as filled controls, decorative borders,
+and the occupancy meter; it is not used directly for app text or focus rings.
+App controls keep those text/background endpoints opaque on hover and selected
+states; shadows or direct semantic endpoints provide interaction feedback rather
+than `/NN` transparency utilities that could cross between accepted endpoints.
+Bed-allocation booking colours are likewise confined to decorative strips and
+rings; their text-bearing cards and Held badges use the gated card/secondary
+pairs.
+App keyboard focus uses deep on light surfaces and snow in dark mode, with a
+two-pixel offset outline that remains visible on opacity-reduced controls. The wizard
 disables its Save/Finish buttons and the `/admin/site-style` API rejects the
 request (`400`) while any pair falls short, so an admin cannot ship an unreadable
 theme. Both accepted colour formats are measured — hex directly, and `oklch()`
 values via an oklch→linear-sRGB conversion — so pasting a low-contrast oklch
-colour into the value field is blocked the same as a hex one. The shipped default
-gold is `#8fa87c` (4.8:1 against the default charcoal button text); the earlier
-`#7a8f6a` was 3.55:1 and would now block first-run setup.
+colour into the value field is blocked the same as a hex one. The current render
+fallback uses glacial teal `#57b3ab`; the fresh-seed colour choice remains
+unresolved and separately tracked in issue #1832. Site Style raw CSS is appended
+to the public website stylesheet only. Authenticated/admin shells receive only
+generated, validated brand/font variables, so raw CSS cannot override their
+curated semantic status tokens.
 
 Transactional and admin **emails** derive their brand palette from the same club
 theme, so a colour change in `/admin/site-style` also restyles the emails
@@ -146,7 +168,12 @@ menu.
   `{{member-application-form}}`, `{{join-apply-form}}`, `{{contact-form}}`,
   `{{skifield-whakapapa}}`, `{{skifield-conditions:dataHash}}`,
   `{{photo-gallery}}`, `{{photo-gallery:path}}`, `{{photo-slideshow}}`, and
-  `{{photo-slideshow:path}}`. Legal and help-copy pages can also use text
+  `{{photo-slideshow:path}}`. Authoritative embeds are `{{membership-types}}`,
+  `{{entrance-fees}}`, `{{hut-fees}}`, `{{booking-policy-summary}}`, and
+  `{{cancellation-policy}}`; the last three accept `:lodge-slug`. They default
+  hidden until enabled in Admin > Page Content, and membership types also need
+  their individual public-listing flag. Unknown/inactive lodge slugs render no
+  data rather than another lodge's fallback. Legal and help-copy pages can also use text
   tokens `{{club-name}}`, `{{currency}}`, `{{lodge-capacity}}`,
   `{{lodge-capacity:lodge-slug}}` (a named lodge's capacity; unknown slug falls
   back to the default lodge), `{{hut-leader}}`, and `{{hut-leader-lower}}`, which
@@ -629,6 +656,32 @@ Booking and subscription enforcement is season-aware:
 automatically reprice existing future bookings, rewrite
 subscription/Xero/payment history, or call external providers.
 
+### Membership subscription billing
+
+Finance editors operate annual subscription billing from `/admin/subscriptions`.
+The preview resolves the selected membership year's effective annual fee,
+explicit family recipient, billing basis, and proration rule without writing or
+calling Xero. The preview also requires an explicitly configured
+`subscriptionIncome` account mapping and freezes its account/item identifiers;
+the legacy account-code fallback is not sufficient for a billing run. `NONE`
+charges the full GST-inclusive integer-cent annual amount;
+`REMAINING_MONTHS_INCLUSIVE` charges annual cents multiplied by the decision
+month through membership-year end, divided by 12 and rounded to cents. The
+decision month is included.
+
+An operator must explicitly confirm the unchanged preview token before durable
+charge snapshots and Xero outbox rows are created. Invoice due days are persisted
+in `MembershipSubscriptionBillingSettings` and default to 30. Missing seasonal
+type, fee schedule, family, or active same-family billing recipient becomes a
+visible exception and never produces an invoice. `NO_INVOICE` produces a
+zero-cent, not-required snapshot rather than being confused with missing setup.
+If a member joins a family after that family/membership-type/year was billed, the existing
+charge remains immutable and a `FAMILY_ALREADY_BILLED` exception replaces a
+second family invoice.
+New-member approval runs the same planner after the membership transaction;
+failure or incomplete configuration is a warning/exception and cannot undo the
+approval.
+
 ## Member Import And Addresses
 
 Admin member CSV import treats a member identity as the normalized email plus
@@ -777,6 +830,15 @@ invalid app, email, or recovery-code attempts lock the two-factor challenge for
 | `XERO_HTTP_TIMEOUT_MS`                     | Optional OAuth-layer HTTP timeout (identity discovery and token requests) in ms; default 10000, overriding xero-node's 3500ms. |
 
 ## Finance dashboard
+
+### Membership and entrance fee authority
+
+Annual membership and entrance amounts are database configuration, not
+environment variables or provider metadata. Membership editors own public
+descriptions/listing under `/admin/membership-types`; Finance editors own
+effective-dated amounts and family billing members under
+`/admin/fee-configuration`. Hut fees remain lodge season/rate configuration.
+See `docs/AUTHORITATIVE_FEES.md` for operator and compatibility rules.
 
 The finance dashboard reads its revenue, cost, and balance figures from the
 single operational Xero connection configured above. There are no separate

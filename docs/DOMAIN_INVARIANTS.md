@@ -3,13 +3,47 @@
 These are non-negotiable business and technical rules for AlpineClubBookingsNZ.
 Future reviews and issues should cite this file when proposing changes.
 
+## Public authoritative content
+
+- Fee/policy PageContent blocks are explicitly enabled and server-rendered; a
+  token alone publishes nothing.
+- Public fees use current effective-dated schedules. Entrance fees never use
+  legacy Xero mapping fallbacks.
+- Named lodge tokens resolve exactly one active lodge or no data, never the
+  default lodge. Public view models exclude ids, provider codes, and secrets.
+
 ## Money
 
 - Store and calculate money as integer cents.
+- Annual membership and entrance fee authorities store non-negative integer
+  cents in inclusive, non-overlapping effective-date ranges. `NO_INVOICE`
+  annual rows are zero cents. Fee changes affect future resolution only.
 - Do not introduce floating point money arithmetic.
 - Refunds, credits, discounts, Stripe amounts, Xero invoice amounts, and
   membership fees must reconcile back to cent-based ledger records.
 - Admin adjustments need audit, approval, and a visible business reason.
+- A confirmed `MembershipSubscriptionCharge` is an immutable snapshot: fee and
+  membership type, billing basis, annual/charged cents, proration, dates/months,
+  covered subscriptions, family, recipient name/email, due days, frozen
+  `subscriptionIncome` account/item identifiers, and reference never change.
+  Only delivery/status/Xero metadata may advance.
+- Every `MemberSubscription` can be covered by at most one charge. A
+  season-scoped advisory lock plus the unique coverage constraint makes annual
+  confirmation, approval replay, and concurrent operators idempotent.
+- `PER_MEMBER` bills that member. `PER_FAMILY` requires one explicit active,
+  unarchived recipient in the exact family. `NO_INVOICE` is an explicit
+  zero-cent outcome, not missing configuration.
+- One family/membership-type/membership-year tuple can have at most one durable
+  charge. A later family member produces a visible exception; neither coverage
+  mutation nor a second invoice is allowed.
+- Membership approval remains authoritative when billing setup is incomplete:
+  billing records a visible post-approval exception/warning and never rolls the
+  member transaction back.
+- Xero invoice identity is persisted before Xero email. Email retries reuse it.
+  Existing invoices are adopted only on an exact `AUTHORISED` snapshot match;
+  conflicts are visible and never trigger a silent provider rewrite. Xero
+  delivery resolves the snapshotted recipient member's current contact/email;
+  frozen name/email remain audit evidence rather than a stale delivery target.
 
 ## Booking Dates And Capacity
 
@@ -1418,6 +1452,10 @@ A `FamilyGroup` with zero `FamilyGroupMember` rows is inert: it never affects
 booking eligibility, pricing, or any member-visible UI, because family
 visibility and eligibility everywhere derive from `familyGroupMemberships`
 (`getMemberFamily`, `resolveMemberFamily`), never from bare `FamilyGroup` rows.
+Family billing never infers a recipient from group role, login holder, or email
+inheritance. The explicit billing member must be an active, unarchived member
+of that family; missing or removed recipients are visible exceptions and those
+families are omitted from invoice generation.
 Memberless groups are created intentionally ahead of approval — the member
 "create group from scratch" flow (#1681) files a memberless group with a
 `PENDING` `GROUP_CREATE` request, and the legacy request-join flow leaves a

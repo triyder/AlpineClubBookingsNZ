@@ -53,6 +53,8 @@ interface MembershipType {
   key: string;
   name: string;
   description: string | null;
+  publicDescription: string | null;
+  publiclyListed: boolean;
   isActive: boolean;
   isBuiltIn: boolean;
   bookingBehavior: BookingBehavior;
@@ -104,6 +106,8 @@ interface RollForwardResponse {
 interface DraftMembershipType {
   name: string;
   description: string;
+  publicDescription: string;
+  publiclyListed: boolean;
   isActive: boolean;
   bookingBehavior: BookingBehavior;
   subscriptionBehavior: SubscriptionBehavior;
@@ -196,6 +200,8 @@ function createEmptyDraft(ageTiers: readonly AgeTier[]): DraftMembershipType {
   return {
     name: "",
     description: "",
+    publicDescription: "",
+    publiclyListed: false,
     isActive: true,
     bookingBehavior: "MEMBER_RATE",
     subscriptionBehavior: "REQUIRED",
@@ -224,6 +230,8 @@ function draftFromType(type: MembershipType): DraftMembershipType {
   return {
     name: type.name,
     description: type.description ?? "",
+    publicDescription: type.publicDescription ?? "",
+    publiclyListed: type.publiclyListed,
     isActive: type.isActive,
     bookingBehavior: type.bookingBehavior,
     subscriptionBehavior: type.subscriptionBehavior,
@@ -248,6 +256,7 @@ function comparableDraft(
     ...draft,
     name: draft.name.trim(),
     description: draft.description.trim(),
+    publicDescription: draft.publicDescription.trim(),
     allowedAgeTiers: sortAgeTiers(availableAgeTiers).filter((ageTier) =>
       draft.allowedAgeTiers.includes(ageTier),
     ),
@@ -277,6 +286,8 @@ function isNewDirty(draft: DraftMembershipType) {
   return (
     draft.name.trim().length > 0 ||
     draft.description.trim().length > 0 ||
+    draft.publicDescription.trim().length > 0 ||
+    draft.publiclyListed ||
     draft.xeroContactGroupRules.length > 0
   );
 }
@@ -303,6 +314,8 @@ function draftPayload(
   return {
     name: draft.name,
     description: draft.description,
+    publicDescription: draft.publicDescription,
+    publiclyListed: draft.publiclyListed,
     isActive: draft.isActive,
     bookingBehavior: draft.bookingBehavior,
     subscriptionBehavior: draft.subscriptionBehavior,
@@ -552,6 +565,35 @@ function MembershipTypeEditorDialog({
                     onDraftChange({ description: event.target.value })
                   }
                   maxLength={1000}
+                  rows={4}
+                />
+              </div>
+              <div className="space-y-2 rounded-md border border-slate-200 p-4">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="membership-type-editor-publicly-listed"
+                    checked={draft.publiclyListed}
+                    onCheckedChange={(checked) =>
+                      onDraftChange({ publiclyListed: checked === true })
+                    }
+                  />
+                  <Label htmlFor="membership-type-editor-publicly-listed">
+                    List this membership type publicly
+                  </Label>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Existing and newly created types stay hidden until this is explicitly enabled.
+                </p>
+                <Label htmlFor="membership-type-editor-public-description">
+                  Public description
+                </Label>
+                <Textarea
+                  id="membership-type-editor-public-description"
+                  value={draft.publicDescription}
+                  onChange={(event) =>
+                    onDraftChange({ publicDescription: event.target.value })
+                  }
+                  maxLength={4000}
                   rows={4}
                 />
               </div>

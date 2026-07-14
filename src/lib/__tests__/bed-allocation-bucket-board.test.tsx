@@ -50,7 +50,11 @@ function buildGroup(): BucketGuestGroup {
   };
 }
 
-function renderBucket(booking: DashboardBookingSummary, canEdit = true) {
+function renderBucket(
+  booking: DashboardBookingSummary,
+  canEdit = true,
+  highlightedBookingId = "",
+) {
   return render(
     <BucketBoard
       bookings={[booking]}
@@ -60,7 +64,7 @@ function renderBucket(booking: DashboardBookingSummary, canEdit = true) {
       onSelectBed={vi.fn()}
       onAllocate={vi.fn()}
       pendingGuestIds={new Set()}
-      highlightedBookingId=""
+      highlightedBookingId={highlightedBookingId}
       canEdit={canEdit}
     />
   );
@@ -113,7 +117,8 @@ describe("BucketBoard requested-room badge (#706)", () => {
     );
 
     expect(titledCards[0].className).toContain(accent.ringClassName);
-    expect(titledCards[0].className).toContain(accent.tintClassName);
+    expect(titledCards[0].className).toContain("bg-card");
+    expect(titledCards[0].className).toContain("text-card-foreground");
     expect(titledCards[1].className).toContain(accent.ringClassName);
     expect(accentStrips).toHaveLength(2);
     expect(
@@ -126,5 +131,17 @@ describe("BucketBoard requested-room badge (#706)", () => {
     for (const className of AGE_TIER_COLORS.ADULT.split(" ")) {
       expect(badge.className).toContain(className);
     }
+  });
+
+  it("marks a focused booking with text, an icon, and a dashed border", () => {
+    const booking = buildBooking();
+    const { container } = renderBucket(booking, true, booking.id);
+    const focusedLabels = screen.getAllByText("Focused");
+    const bookingCard = screen.getAllByTitle(`Booking ${booking.id}`)[0];
+
+    expect(focusedLabels).toHaveLength(2);
+    expect(focusedLabels.every((label) => label.parentElement?.querySelector("svg"))).toBe(true);
+    expect(bookingCard).toHaveClass("border-dashed");
+    expect(container.querySelectorAll(".border-dashed").length).toBeGreaterThanOrEqual(2);
   });
 });

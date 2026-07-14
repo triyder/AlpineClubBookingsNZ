@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   headers: vi.fn(),
   getWebsiteThemeRenderState: vi.fn(),
-  isClubThemeComplete: vi.fn(),
   memberFindUnique: vi.fn(),
   loadEffectiveModuleFlags: vi.fn(),
   redirect: vi.fn(),
@@ -28,7 +27,6 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/club-theme", () => ({
   getWebsiteThemeRenderState: mocks.getWebsiteThemeRenderState,
-  isClubThemeComplete: mocks.isClubThemeComplete,
 }));
 
 vi.mock("@/lib/club-theme-fonts", () => ({
@@ -109,11 +107,11 @@ describe("site style route-group gating", () => {
     mocks.headers.mockResolvedValue(new Headers());
     mocks.getWebsiteThemeRenderState.mockResolvedValue({
       css: ":root{}",
+      appCss: ".app-theme-scope{}",
       logoDataUrl: null,
       isComplete: false,
       values: {},
     });
-    mocks.isClubThemeComplete.mockResolvedValue(false);
     mocks.memberFindUnique.mockResolvedValue({
       active: true,
       forcePasswordChange: false,
@@ -135,6 +133,7 @@ describe("site style route-group gating", () => {
   it("renders website children after setup is complete", async () => {
     mocks.getWebsiteThemeRenderState.mockResolvedValue({
       css: ":root{}",
+      appCss: ".app-theme-scope{}",
       logoDataUrl: null,
       isComplete: true,
       values: {},
@@ -147,11 +146,24 @@ describe("site style route-group gating", () => {
   });
 
   it("does not block the admin route group when setup is incomplete", async () => {
+    mocks.getWebsiteThemeRenderState.mockResolvedValue({
+      css: ":root{--success:red}",
+      appCss: ".app-theme-scope{--brand-gold:#123456}",
+      logoDataUrl: null,
+      isComplete: false,
+      values: {},
+    });
     render(await AdminLayout({ children: <p>Admin child</p> }));
 
     expect(screen.getByText("Admin child")).toBeTruthy();
     expect(
       screen.getByText("Complete your site style before opening the public website."),
     ).toBeTruthy();
+    const style = document.querySelector(
+      'style[data-site-style="club-theme"]',
+    );
+    expect(style?.textContent).toContain("--brand-gold:#123456");
+    expect(style?.textContent).not.toContain("--success:red");
+    expect(mocks.getWebsiteThemeRenderState).toHaveBeenCalled();
   });
 });

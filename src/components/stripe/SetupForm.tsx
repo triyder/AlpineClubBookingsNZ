@@ -86,7 +86,7 @@ export default function SetupForm({
       <button
         type="submit"
         disabled={!stripe || isProcessing}
-        className="w-full rounded-md bg-brand-gold px-6 py-2.5 text-sm font-semibold text-brand-charcoal shadow-sm hover:bg-brand-gold/90 disabled:cursor-not-allowed disabled:opacity-50"
+        className="w-full rounded-md bg-brand-gold px-6 py-2.5 text-sm font-semibold text-brand-charcoal shadow-sm hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isProcessing ? "Saving card..." : "Save Card & Confirm Booking"}
       </button>

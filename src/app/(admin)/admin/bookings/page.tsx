@@ -260,6 +260,7 @@ export default async function AdminBookingsPage({
           <AdminDataTable
             stickyFirstColumn
             aria-label="Bookings"
+            className="min-w-[56rem]"
             toolbar={
               <p>
                 Showing {bookings.length} of {total} bookings found

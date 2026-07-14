@@ -3,6 +3,7 @@ import {
   CLUB_THEME_COLOUR_FIELDS,
   DEFAULT_CLUB_THEME_VALUES,
   TOKOROA_CLUB_THEME_VALUES,
+  buildClubThemeAppCss,
   buildClubThemeCss,
   contrastRatio,
   getBlockingContrastWarnings,
@@ -37,6 +38,8 @@ describe("club theme validation", () => {
     expect(css).toContain(
       `--brand-gold:${DEFAULT_CLUB_THEME_VALUES.brandGold}`,
     );
+    expect(css).toContain(":root,.website-theme{");
+    expect(css).not.toContain(".app-theme-scope");
     expect(css).toContain("--font-website-body:var(--font-theme-inter)");
     expect(css).not.toContain("example.test");
     expect(css).not.toContain("NOT_A_FONT");
@@ -87,6 +90,106 @@ describe("getBlockingContrastWarnings", () => {
         (warning) => warning.ratio !== null && warning.ratio < 4.5,
       ),
     ).toBe(true);
+  });
+
+  it("pins every editable brand contrast pair, including the dark app accent", () => {
+    const failing = {
+      ...DEFAULT_CLUB_THEME_VALUES,
+      brandGold: "#333333",
+      brandCharcoal: "#303030",
+      brandDeep: "#343434",
+      brandMist: "#353535",
+      brandSnow: "#353535",
+    };
+
+    expect(getContrastWarnings(failing).map((warning) => warning.id)).toEqual([
+      "body-on-snow",
+      "header-on-charcoal",
+      "button-on-gold",
+      "app-accent-on-deep",
+      "app-accent-on-snow",
+      "app-muted-on-snow",
+      "app-secondary-on-mist",
+    ]);
+  });
+
+  it("blocks an app accent that is unreadable on dark app chrome", () => {
+    const blocking = getBlockingContrastWarnings({
+      ...DEFAULT_CLUB_THEME_VALUES,
+      brandGold: "#30343b",
+      brandDeep: "#33373e",
+    });
+
+    expect(blocking).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "app-accent-on-deep" }),
+      ]),
+    );
+  });
+
+  it("blocks the contrast-safe light app accent and muted roles when their neutrals drift", () => {
+    const blocking = getBlockingContrastWarnings({
+      ...DEFAULT_CLUB_THEME_VALUES,
+      brandCharcoal: "#f4f4f4",
+      brandDeep: "#f3f3f3",
+      brandSnow: "#f5f5f5",
+    });
+
+    expect(blocking).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "app-accent-on-snow" }),
+        expect.objectContaining({ id: "app-muted-on-snow" }),
+      ]),
+    );
+  });
+
+  it("blocks secondary app text when brand mist collapses onto brand deep", () => {
+    const blocking = getBlockingContrastWarnings({
+      ...DEFAULT_CLUB_THEME_VALUES,
+      brandMist: DEFAULT_CLUB_THEME_VALUES.brandDeep,
+    });
+
+    expect(blocking).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "app-secondary-on-mist" }),
+      ]),
+    );
+  });
+
+  it("keeps both shipped render palettes inside every contrast gate", () => {
+    expect(getBlockingContrastWarnings(DEFAULT_CLUB_THEME_VALUES)).toEqual([]);
+    expect(getBlockingContrastWarnings(TOKOROA_CLUB_THEME_VALUES)).toEqual([]);
+  });
+
+  it("shows why independently safe endpoints must not be interpolated for app text surfaces", () => {
+    // Deep sits between black snow and white mist. Both configured endpoint
+    // pairs clear AA, while their sRGB midpoint collapses almost onto deep.
+    // Direct token endpoints are therefore part of the rendering contract.
+    const endpointCrossingPalette = {
+      ...DEFAULT_CLUB_THEME_VALUES,
+      brandDeep: "#767676",
+      brandSnow: "#000000",
+      brandMist: "#ffffff",
+      brandCharcoal: "#ffffff",
+      brandGold: "#000000",
+    };
+
+    expect(getBlockingContrastWarnings(endpointCrossingPalette)).toEqual([]);
+    expect(contrastRatio("#767676", "#808080") ?? 21).toBeLessThan(4.5);
+  });
+
+  it("builds app brand CSS without raw or semantic overrides", () => {
+    const appCss = buildClubThemeAppCss({
+      ...DEFAULT_CLUB_THEME_VALUES,
+      rawCss:
+        ".app-theme-scope{--success:red;--warning:red;--info:red;--danger:red}",
+    });
+
+    expect(appCss).toContain(".app-theme-scope{");
+    expect(appCss).toContain(
+      `--brand-gold:${DEFAULT_CLUB_THEME_VALUES.brandGold}`,
+    );
+    expect(appCss).not.toMatch(/--(?:success|warning|info|danger)/);
   });
 
   it("measures oklch() colours and blocks a low-contrast oklch pair", () => {

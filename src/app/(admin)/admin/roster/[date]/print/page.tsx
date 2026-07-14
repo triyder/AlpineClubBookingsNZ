@@ -115,7 +115,7 @@ export default function PrintRosterPage() {
                 ? `/admin/roster?lodgeId=${encodeURIComponent(lodgeId)}`
                 : "/admin/roster"
             }
-            className="font-medium text-brand-charcoal hover:underline"
+            className="font-medium text-foreground hover:underline"
           >
             Back to Roster
           </Link>

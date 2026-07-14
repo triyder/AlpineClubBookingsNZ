@@ -139,9 +139,8 @@ describe("GuestChip bed select", () => {
     expect(card.className).toContain(
       getBookingAccent("booking-colour-1").ringClassName,
     );
-    expect(card.className).toContain(
-      getBookingAccent("booking-colour-1").tintClassName,
-    );
+    expect(card.className).toContain("bg-card");
+    expect(card.className).toContain("text-card-foreground");
     expect(accentStrip.className).toContain(
       getBookingAccent("booking-colour-1").stripClassName,
     );
@@ -152,5 +151,25 @@ describe("GuestChip bed select", () => {
     }
     expect(screen.queryByText(/CHILD · Example Member/)).not.toBeInTheDocument();
     expect(screen.getByText("Example Member")).toBeInTheDocument();
+  });
+
+  it("adds a non-colour focused cue", () => {
+    const { container } = render(
+      <GuestChip
+        group={group}
+        bedOptions={beds}
+        bedOptionGroups={bedOptionGroups}
+        selectedBedId=""
+        onSelectBed={vi.fn()}
+        onAllocate={vi.fn()}
+        pending={false}
+        highlighted
+      />,
+    );
+    const card = container.firstElementChild as HTMLElement;
+    const label = screen.getByText("Focused");
+
+    expect(card).toHaveClass("border-dashed");
+    expect(label.parentElement?.querySelector("svg")).toBeTruthy();
   });
 });

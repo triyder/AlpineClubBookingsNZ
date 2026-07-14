@@ -5,6 +5,7 @@ import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import { logAudit } from "@/lib/audit";
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import {
   AGE_TIER_DEFAULTS,
   invalidateAgeTierCache,
@@ -303,5 +304,6 @@ export async function PUT(request: NextRequest) {
     },
   });
 
+  revalidatePublicPageContent();
   return NextResponse.json({ settings: normalizeAgeTierSettings(updated) });
 }

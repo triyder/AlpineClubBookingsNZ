@@ -60,7 +60,7 @@ export function MemberCreditCard({
 
   return (
     <Card id="account-credit" className={className}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+      <CardHeader className="flex flex-col gap-2 space-y-0 pb-2 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle className="text-base font-medium">Account Credit</CardTitle>
         <div className="flex items-center gap-3">
           <span

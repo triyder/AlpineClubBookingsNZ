@@ -14,6 +14,7 @@ import {
 } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 
 const createSchema = z
   .object({
@@ -86,6 +87,8 @@ export async function POST(request: Request) {
 
     return lodge;
   });
+
+  revalidatePublicPageContent();
 
   return NextResponse.json(
     { lodge: serializeLodge(created) },

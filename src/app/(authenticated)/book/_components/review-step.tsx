@@ -17,7 +17,7 @@ import {
 import { type LodgeOption } from "@/components/lodge-select";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
-import { CreditCard, Landmark } from "lucide-react";
+import { CheckCircle2, CreditCard, Landmark } from "lucide-react";
 import type {
   AvailablePromoCode,
   BookingPaymentMethod,
@@ -180,13 +180,13 @@ export function ReviewStep({
         <CardContent className="space-y-4">
           {lodges.length > 1 && selectedLodge ? (
             <div className="text-sm">
-              <span className="text-gray-500">Lodge:</span>{" "}
+              <span className="text-muted-foreground">Lodge:</span>{" "}
               <span className="font-medium">{selectedLodge.name}</span>
             </div>
           ) : null}
-          <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
             <div>
-              <span className="text-gray-500">Check-in:</span>{" "}
+              <span className="text-muted-foreground">Check-in:</span>{" "}
               <span className="font-medium">
                 {checkIn!.toLocaleDateString("en-NZ", {
                   weekday: "short", day: "numeric", month: "short", year: "numeric",
@@ -194,7 +194,7 @@ export function ReviewStep({
               </span>
             </div>
             <div>
-              <span className="text-gray-500">Check-out:</span>{" "}
+              <span className="text-muted-foreground">Check-out:</span>{" "}
               <span className="font-medium">
                 {checkOut!.toLocaleDateString("en-NZ", {
                   weekday: "short", day: "numeric", month: "short", year: "numeric",
@@ -202,11 +202,11 @@ export function ReviewStep({
               </span>
             </div>
             <div>
-              <span className="text-gray-500">Nights:</span>{" "}
+              <span className="text-muted-foreground">Nights:</span>{" "}
               <span className="font-medium">{nights}</span>
             </div>
             <div>
-              <span className="text-gray-500">Guests:</span>{" "}
+              <span className="text-muted-foreground">Guests:</span>{" "}
               <span className="font-medium">{guests.length}</span>
             </div>
           </div>
@@ -219,16 +219,16 @@ export function ReviewStep({
               const guestNights = priceQuote.guests[i]?.nights ?? 0;
 
               return (
-                <div key={i} className="flex justify-between gap-3 text-sm py-1">
+                <div key={i} className="flex flex-col gap-1 py-1 text-sm sm:flex-row sm:justify-between sm:gap-3">
                   <span>
                     {g.firstName} {g.lastName} ({g.ageTier}, {g.isMember ? "Member" : "Non-member"})
                     {perGuestDatesEnabled && stayStart && stayEnd && (
-                      <span className="block text-xs text-gray-500">
+                      <span className="block text-xs text-muted-foreground">
                         Date In {stayStart} - Date Out {stayEnd} ({guestNights} night{guestNights === 1 ? "" : "s"})
                       </span>
                     )}
                   </span>
-                  <span className="font-medium">
+                  <span className="shrink-0 font-medium tabular-nums">
                     {formatCents(priceQuote.guests[i]?.priceCents || 0)}
                   </span>
                 </div>
@@ -242,7 +242,7 @@ export function ReviewStep({
                 <span>Subtotal</span>
                 <span>{formatCents(priceQuote.totalPriceCents)}</span>
               </div>
-              <div className={`flex justify-between text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-orange-700" : "text-green-600"}`}>
+              <div className={`flex justify-between gap-3 text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-warning" : "text-success"}`}>
                 <span>
                   {appliedPromo.workPartyEvent
                     ? `Working bee discount (${appliedPromo.workPartyEvent.name})`
@@ -251,7 +251,7 @@ export function ReviewStep({
                 <span>{formatSignedCents(appliedPromo.promoAdjustmentCents)}</span>
               </div>
               {appliedCreditCents > 0 && (
-                <div className="flex justify-between text-sm text-green-600">
+                <div className="flex justify-between gap-3 text-sm text-success">
                   <span>Account credit</span>
                   <span>-{formatCents(appliedCreditCents)}</span>
                 </div>
@@ -269,7 +269,7 @@ export function ReviewStep({
                     <span>Subtotal</span>
                     <span>{formatCents(priceQuote.totalPriceCents)}</span>
                   </div>
-                  <div className="flex justify-between text-sm text-green-600">
+                  <div className="flex justify-between gap-3 text-sm text-success">
                     <span>Account credit</span>
                     <span>-{formatCents(appliedCreditCents)}</span>
                   </div>
@@ -283,7 +283,7 @@ export function ReviewStep({
           )}
 
           {groupTrip && groupBookingsEnabled && (
-            <div className="rounded-md border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">
+            <div className="rounded-md border border-info/20 bg-info-muted p-4 text-sm text-info">
               <span className="font-medium">Group trip</span> —{" "}
               {groupPaymentMode === "EACH_PAYS_OWN"
                 ? "each person pays their own beds."
@@ -293,21 +293,21 @@ export function ReviewStep({
           )}
 
           {availableCreditCents > 0 && (
-            <div className="rounded-md bg-green-50 border border-green-200 p-4 mt-2">
-              <p className="text-sm text-green-800 mb-2">
+            <div className="mt-2 rounded-md border border-success/20 bg-success-muted p-4">
+              <p className="mb-2 text-sm text-success">
                 You have <strong>{formatCents(availableCreditCents)}</strong> in account credit
               </p>
-              <label className="flex items-center gap-2 text-sm text-green-800 cursor-pointer">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-success">
                 <input
                   type="checkbox"
                   checked={useCredit}
                   onChange={(e) => setUseCredit(e.target.checked)}
-                  className="rounded border-green-300"
+                  className="rounded border-success/40"
                 />
                 Apply credit to this booking
               </label>
               {useCredit && remainingToPay === 0 && (
-                <p className="mt-2 text-sm font-medium text-green-700">
+                <p className="mt-2 text-sm font-medium text-success">
                   Credit covers entire booking — no card payment needed
                 </p>
               )}
@@ -315,49 +315,63 @@ export function ReviewStep({
           )}
 
           {showPaymentMethodChoice && (
-            <div className="space-y-3 rounded-md border border-slate-200 p-4">
-              <p className="text-sm font-medium text-slate-900">Payment method</p>
+            <div className="space-y-3 rounded-md border border-border p-4">
+              <p className="text-sm font-medium text-foreground">Payment method</p>
               <div className="grid gap-2 sm:grid-cols-2">
                 <button
                   type="button"
                   onClick={() => setPaymentMethod("stripe")}
+                  aria-pressed={paymentMethod === "stripe"}
                   className={`flex min-h-20 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                     paymentMethod === "stripe"
-                      ? "border-blue-500 bg-blue-50 text-blue-950"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                      ? "border-info bg-info-muted text-info"
+                      : "border-border bg-card text-card-foreground hover:border-foreground"
                   }`}
                 >
                   <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>
                     <span className="block font-medium">Card</span>
-                    <span className="block text-xs opacity-80">
+                    <span className="block text-xs">
                       {cardPaymentDescription}
                     </span>
+                    {paymentMethod === "stripe" ? (
+                      <span className="mt-1 inline-flex items-center gap-1 text-xs font-semibold">
+                        <CheckCircle2 aria-hidden className="h-3.5 w-3.5" />
+                        Selected
+                      </span>
+                    ) : null}
                   </span>
                 </button>
                 {internetBankingEnabled ? (
                   <button
                     type="button"
                     onClick={() => setPaymentMethod("internet_banking")}
+                    aria-pressed={paymentMethod === "internet_banking"}
                     className={`flex min-h-20 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                       paymentMethod === "internet_banking"
-                        ? "border-blue-500 bg-blue-50 text-blue-950"
-                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                        ? "border-info bg-info-muted text-info"
+                        : "border-border bg-card text-card-foreground hover:border-foreground"
                     }`}
                   >
                     <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>
                       <span className="block font-medium">Internet Banking</span>
-                      <span className="block text-xs opacity-80">
+                      <span className="block text-xs">
                         {internetBankingPaymentDescription}
                         {internetBankingHoldSummary ? (
                           <span className="mt-1 block">{internetBankingHoldSummary}</span>
                         ) : null}
                       </span>
+                      {paymentMethod === "internet_banking" ? (
+                        <span className="mt-1 inline-flex items-center gap-1 text-xs font-semibold">
+                          <CheckCircle2 aria-hidden className="h-3.5 w-3.5" />
+                          Selected
+                        </span>
+                      ) : null}
                     </span>
                   </button>
                 ) : internetBankingUnavailableReason ? (
-                  <div className="flex min-h-20 items-start gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-left text-sm text-slate-500">
+                  <div className="flex min-h-20 items-start gap-3 rounded-md border border-border bg-muted p-3 text-left text-sm text-muted-foreground">
                     <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>
                       <span className="block font-medium">Internet Banking</span>
@@ -383,11 +397,11 @@ export function ReviewStep({
             />
           </div>
           {requiresAdminReviewLocal && (
-            <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-4">
-              <Label htmlFor="review-justification" className="text-amber-900">
+            <div className="space-y-2 rounded-md border border-warning/20 bg-warning-muted p-4">
+              <Label htmlFor="review-justification" className="text-warning">
                 Reason for booking without an adult guest (required)
               </Label>
-              <p className="text-sm text-amber-900">
+              <p className="text-sm text-warning">
                 This booking includes minors but no adult. Please explain why so an
                 admin can review. The booking will be held until an admin approves it,
                 and payment cannot be taken until then.
@@ -504,14 +518,14 @@ export function ReviewStep({
                     })()
                   )}
                   {workPartyError && (
-                    <p className="text-sm text-red-600">{workPartyError}</p>
+                    <p className="text-sm text-danger">{workPartyError}</p>
                   )}
                 </div>
               )}
             </div>
           )}
           {workPartyClearedNotice && (
-            <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+            <div className="rounded-md border border-warning/20 bg-warning-muted p-3 text-sm text-warning">
               &ldquo;{workPartyClearedNotice}&rdquo; no longer overlaps your
               selected dates, so the working bee discount has been
               cleared.
@@ -519,7 +533,7 @@ export function ReviewStep({
           )}
           {availablePromoCodes.length > 0 && !appliedPromo && !attendingWorkParty && (
             <div className="app-callout-brand p-4">
-              <p className="mb-2 text-sm font-medium text-brand-charcoal dark:text-brand-gold">
+              <p className="mb-2 text-sm font-medium text-foreground">
                 You have promo codes available:
               </p>
               <div className="flex flex-wrap gap-2">
@@ -532,7 +546,7 @@ export function ReviewStep({
                   >
                     {pc.code}
                     {pc.description && (
-                      <span className="font-sans font-normal text-brand-charcoal/75 dark:text-brand-gold/75">
+                      <span className="font-sans font-normal text-brand-charcoal">
                         — {pc.description}
                       </span>
                     )}
@@ -559,7 +573,7 @@ export function ReviewStep({
 
       {provisionalHoldWillBeCreated && (
         <div className="space-y-3">
-          <div className="rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
+          <div className="rounded-md border border-warning/20 bg-warning-muted p-4 text-sm text-warning">
             <strong>Note:</strong> This booking includes non-member guests.
             {guests.some((g) => g.isMember)
               ? " By default your own place is booked and paid for now to hold it, while your non-member guests are held provisionally as a linked booking \u2014 no beds are reserved for them until they are confirmed and paid for closer to check-in. Members have priority if the lodge fills up."
@@ -586,19 +600,25 @@ export function ReviewStep({
         </div>
       )}
 
-      <div className="flex justify-between">
+      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
         <Button variant="outline" onClick={() => setStep("guests")}>
           Back
         </Button>
-        <div className="flex gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row">
           <Button
             variant="outline"
             onClick={handleSaveAsDraft}
             disabled={savingDraft || submitting}
+            className="w-full sm:w-auto"
           >
             {savingDraft ? "Saving draft..." : "Save as Draft"}
           </Button>
-          <Button onClick={handleSubmit} disabled={submitting || savingDraft} size="lg">
+          <Button
+            onClick={handleSubmit}
+            disabled={submitting || savingDraft}
+            size="lg"
+            className="w-full sm:w-auto"
+          >
             {submitting
               ? "Creating booking..."
               : requiresAdminReviewLocal

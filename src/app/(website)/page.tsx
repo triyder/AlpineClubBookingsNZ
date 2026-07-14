@@ -1,12 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
-import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
-import { CommitteeMembersGrid } from "@/components/website/committee-members-grid";
-import { PhotoGalleryToken } from "@/components/website/photo-gallery-token";
-import { SkifieldConditionsWidget } from "@/components/website/skifield-conditions-widget";
-import { SkifieldWhakapapaWidget } from "@/components/website/skifield-whakapapa-widget";
-import { clubIdentity, CLUB_NAME } from "@/config/club-identity";
+import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
+import { CLUB_NAME } from "@/config/club-identity";
 import {
   getSanitizedPageContentByPath,
   pageContentHtmlToPlainText,
@@ -68,77 +63,7 @@ export default async function HomePage() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           {embeddedBody.length > 0 ? (
             <div className="space-y-10 text-base leading-7 text-brand-deep/85 [&_a]:text-brand-charcoal [&_a]:underline [&_h1]:font-heading [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:font-heading [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:font-heading [&_h3]:text-xl [&_h3]:font-semibold [&_li]:ml-6 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-4">
-              {embeddedBody.map((part, index) => {
-                if (part.type === "committee") {
-                  return <CommitteeMembersGrid key={`committee-${index}`} />;
-                }
-
-                if (part.type === "member-application-form") {
-                  return (
-                    <JoinApplyPageClient
-                      key={`member-application-form-${index}`}
-                      club={clubIdentity}
-                      showHero={false}
-                    />
-                  );
-                }
-
-                if (part.type === "contact-form") {
-                  return (
-                    <ContactPageClient
-                      key={`contact-form-${index}`}
-                      club={clubIdentity}
-                      showHero={false}
-                    />
-                  );
-                }
-
-                if (part.type === "skifield-conditions") {
-                  return (
-                    <SkifieldConditionsWidget
-                      key={`skifield-conditions-${index}`}
-                      dataHash={part.dataHash}
-                    />
-                  );
-                }
-
-                if (part.type === "skifield-whakapapa") {
-                  return (
-                    <SkifieldWhakapapaWidget
-                      key={`skifield-whakapapa-${index}`}
-                    />
-                  );
-                }
-
-                if (part.type === "photo-gallery") {
-                  return (
-                    <PhotoGalleryToken
-                      key={`photo-gallery-${index}`}
-                      galleryId={`photo-gallery-home-${index}`}
-                      variant="gallery"
-                      images={part.images}
-                    />
-                  );
-                }
-
-                if (part.type === "photo-slideshow") {
-                  return (
-                    <PhotoGalleryToken
-                      key={`photo-slideshow-${index}`}
-                      galleryId={`photo-slideshow-home-${index}`}
-                      variant="slideshow"
-                      images={part.images}
-                    />
-                  );
-                }
-
-                return (
-                  <div
-                    key={`html-${index}`}
-                    dangerouslySetInnerHTML={{ __html: part.value }}
-                  />
-                );
-              })}
+              <EmbeddedPageContentParts parts={embeddedBody} pageSlug={pageSlug} />
             </div>
           ) : (
             <div

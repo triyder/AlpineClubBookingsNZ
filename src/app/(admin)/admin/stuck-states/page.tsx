@@ -69,10 +69,10 @@ function severityBadgeVariant(severity: StuckStateSeverity) {
 }
 
 function severityRing(severity: StuckStateSeverity | null) {
-  if (severity === "critical") return "border-red-300 bg-red-50";
-  if (severity === "warning") return "border-amber-300 bg-amber-50";
-  if (severity === "info") return "border-slate-200 bg-slate-50";
-  return "border-slate-200 bg-white";
+  if (severity === "critical") return "border-danger/30 bg-danger-muted";
+  if (severity === "warning") return "border-warning/30 bg-warning-muted";
+  if (severity === "info") return "border-info/30 bg-info-muted";
+  return "border-border bg-card";
 }
 
 function SummaryCard({
@@ -85,10 +85,10 @@ function SummaryCard({
   tone: "critical" | "warning" | "info" | "neutral";
 }) {
   const toneClasses = {
-    critical: "border-red-300 bg-red-50 text-red-950",
-    warning: "border-amber-300 bg-amber-50 text-amber-950",
-    info: "border-slate-200 bg-slate-50 text-slate-900",
-    neutral: "border-slate-200 bg-white text-slate-900",
+    critical: "border-danger/30 bg-danger-muted text-danger",
+    warning: "border-warning/30 bg-warning-muted text-warning",
+    info: "border-info/30 bg-info-muted text-info",
+    neutral: "border-border bg-card text-card-foreground",
   };
 
   return (
@@ -187,19 +187,19 @@ export default async function AdminStuckStatesPage() {
             >
               <CardContent className="flex items-center justify-between gap-4 pt-5">
                 <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white/80 text-slate-700">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-card text-foreground">
                     <Icon className="h-5 w-5" />
                   </span>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-950">
+                    <p className="truncate text-sm font-semibold text-foreground">
                       {domain.label}
                     </p>
-                    <p className="text-xs text-slate-600">
+                    <p className="text-xs text-muted-foreground">
                       {domain.itemCount} signal{domain.itemCount === 1 ? "" : "s"}
                     </p>
                   </div>
                 </div>
-                <div className="text-right text-2xl font-bold text-slate-950">
+                <div className="text-right text-2xl font-bold text-foreground">
                   {domain.count}
                 </div>
               </CardContent>
@@ -211,14 +211,14 @@ export default async function AdminStuckStatesPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
           <CardTitle className="flex items-center gap-2 text-lg">
-            <ShieldAlert className="h-5 w-5 text-slate-600" />
+            <ShieldAlert className="h-5 w-5 text-muted-foreground" />
             Operator Queue
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           {dashboard.items.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">
-              <ShieldAlert className="h-10 w-10 text-green-600" />
+              <ShieldAlert className="h-10 w-10 text-success" />
               <p className="text-sm font-medium text-muted-foreground">
                 No stuck states found.
               </p>
