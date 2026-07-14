@@ -13,7 +13,11 @@ import {
   type XeroState,
 } from "@/lib/admin-operational-state";
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
-import { bookingStatusLifecycleRank } from "@/lib/booking-status";
+import {
+  bookingStatusLifecycleRank,
+  capacityHoldingBookingFilter,
+} from "@/lib/booking-status";
+import { bookingsOverlap, sameLodgeNullTolerant } from "@/lib/capacity";
 import {
   buildBookingDeletedWhere,
   parseBookingDeletedVisibility,
@@ -126,7 +130,54 @@ interface AdminBookingOperationalState {
 
 export type AdminBookingRow = BookingCandidate & {
   operational: AdminBookingOperationalState;
+  // This booking overlaps another booking's exclusive whole-lodge hold
+  // (ADR-001 decision 1, issue #119). Admin-only signal; flagged so staff see
+  // the clash from the ordinary booking's side. A held booking itself is never
+  // flagged (it is not overlapping anything — it IS the hold).
+  overlapsExclusiveHold: boolean;
 };
+
+/**
+ * Flag every page row that overlaps another booking's exclusive whole-lodge
+ * hold (issue #119). One extra query per page: the capacity-holding held
+ * bookings whose nights intersect the page's date span, matched to each row
+ * in-memory (same-lodge, half-open overlap). Reuses the capacity engine's
+ * overlap + hold-population logic rather than reimplementing it. Admin-only:
+ * this list is never rendered to members (decision 6).
+ */
+async function annotateExclusiveHoldOverlaps(
+  rows: AdminBookingRow[]
+): Promise<void> {
+  if (rows.length === 0) return;
+  let minCheckIn = rows[0].checkIn;
+  let maxCheckOut = rows[0].checkOut;
+  for (const row of rows) {
+    if (row.checkIn < minCheckIn) minCheckIn = row.checkIn;
+    if (row.checkOut > maxCheckOut) maxCheckOut = row.checkOut;
+  }
+
+  const holds = await prisma.booking.findMany({
+    where: {
+      wholeLodgeHold: true,
+      deletedAt: null,
+      checkIn: { lt: maxCheckOut },
+      checkOut: { gt: minCheckIn },
+      // Only a capacity-holding hold blocks admissions; nest under AND so the
+      // filter's top-level OR composes with the scalar/date clauses.
+      AND: [capacityHoldingBookingFilter()],
+    },
+    select: { id: true, checkIn: true, checkOut: true, lodgeId: true },
+  });
+
+  for (const row of rows) {
+    row.overlapsExclusiveHold = holds.some(
+      (held) =>
+        held.id !== row.id &&
+        sameLodgeNullTolerant(held.lodgeId, row.lodgeId) &&
+        bookingsOverlap(held, row)
+    );
+  }
+}
 
 export interface AdminBookingsResult {
   bookings: AdminBookingRow[];
@@ -520,6 +571,21 @@ function deriveBedState(
     };
   }
 
+  // An exclusive whole-lodge hold (ADR-001, #120) implicitly occupies every
+  // bed — it needs NO per-bed allocation, so it must never register as an
+  // "unallocated" bed-state gap / stuck state. Report it complete.
+  if (booking.wholeLodgeHold) {
+    return {
+      bedState: "complete",
+      expectedGuestNights: 0,
+      allocatedGuestNights: 0,
+      unapprovedBedAllocations: booking.bedAllocations.filter(
+        (allocation) => !allocation.approvedAt
+      ).length,
+      bedWarningCount: 0,
+    };
+  }
+
   const expectedGuestNightKeys = new Set(
     booking.guests.flatMap((guest) => guestNightKeys(guest))
   );
@@ -750,12 +816,16 @@ export async function listAdminBookings(
             invoiceLinkedPaymentIds,
             { bedAllocationEnabled }
           ),
+          overlapsExclusiveHold: false,
         },
       ])
     );
 
+    const bookings = pageIds.flatMap((id) => rowsById.get(id) ?? []);
+    await annotateExclusiveHoldOverlaps(bookings);
+
     return {
-      bookings: pageIds.flatMap((id) => rowsById.get(id) ?? []),
+      bookings,
       total,
       page,
       totalPages,
@@ -777,6 +847,7 @@ export async function listAdminBookings(
         invoiceLinkedPaymentIds,
         { bedAllocationEnabled }
       ),
+      overlapsExclusiveHold: false,
     }))
     .filter((booking) => {
       if (!matchesPaymentSourceFilter(booking.operational.paymentSource, query.paymentSource)) {
@@ -807,6 +878,7 @@ export async function listAdminBookings(
     filtered,
     query.page
   );
+  await annotateExclusiveHoldOverlaps(pageItems);
 
   return {
     bookings: pageItems,

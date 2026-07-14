@@ -186,6 +186,146 @@ function isNightWholeLodgeHeld(
 }
 
 /**
+ * Two bookings overlap on at least one night when their [checkIn, checkOut)
+ * half-open spans intersect. A booking departing on day D and one arriving that
+ * night do NOT overlap (back-to-back handovers) — the same half-open rule the
+ * hold-night span uses. Pure; admin conflict surfacing (issue #119) shares it.
+ */
+export function bookingsOverlap(
+  a: { checkIn: Date; checkOut: Date },
+  b: { checkIn: Date; checkOut: Date }
+): boolean {
+  return (
+    a.checkIn.getTime() < b.checkOut.getTime() &&
+    a.checkOut.getTime() > b.checkIn.getTime()
+  );
+}
+
+/**
+ * Lodge equality tolerant of the expand-release null lodgeId (a null on either
+ * side matches, mirroring lodgeNullTolerantScope). Used by admin conflict
+ * surfacing (issue #119) when matching a hold to an overlapping booking
+ * in-memory.
+ */
+export function sameLodgeNullTolerant(
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  return a == null || b == null || a === b;
+}
+
+export interface HoldConflictBooking {
+  id: string;
+  memberName: string;
+  /** YYYY-MM-DD (date-only lodge nights). */
+  checkIn: string;
+  checkOut: string;
+  guestCount: number;
+  status: string;
+}
+
+/**
+ * Admin conflict surfacing (ADR-001 decision 1, issue #119): the existing
+ * capacity-holding bookings that overlap [checkIn, checkOut) at `lodgeId`,
+ * excluding `excludeBookingId` (the booking receiving the hold). Reuses the
+ * capacity-holding population filter (`capacityHoldingBookingFilter`) and the
+ * same overlap window as the capacity engine, rather than inventing a new one.
+ *
+ * Read-only and purely INFORMATIONAL: setting/approving a hold never refuses,
+ * blocks, or displaces (decision 1) — this only makes the clash obvious to the
+ * booking officer, who resolves it manually. It is called ONLY from admin paths;
+ * members are never told a lodge is exclusively held (decision 6).
+ */
+export async function findOverlappingCapacityHoldingBookings(
+  db: Pick<TransactionClient, "booking">,
+  input: {
+    lodgeId: string;
+    checkIn: Date;
+    checkOut: Date;
+    excludeBookingId?: string;
+  }
+): Promise<HoldConflictBooking[]> {
+  const start = normalizeDateOnlyForTimeZone(input.checkIn);
+  const end = normalizeDateOnlyForTimeZone(input.checkOut);
+  const rows = await db.booking.findMany({
+    where: {
+      checkIn: { lt: end },
+      checkOut: { gt: start },
+      deletedAt: null,
+      // Capacity-holding population (issue #1254) spread at top level; the
+      // exact per-lodge scope + date/exclusion clauses compose under it.
+      ...capacityHoldingBookingFilter(),
+      lodgeId: input.lodgeId,
+      ...(input.excludeBookingId ? { id: { not: input.excludeBookingId } } : {}),
+    },
+    select: {
+      id: true,
+      checkIn: true,
+      checkOut: true,
+      status: true,
+      member: { select: { firstName: true, lastName: true, email: true } },
+      _count: { select: { guests: true } },
+    },
+    orderBy: [{ checkIn: "asc" }, { id: "asc" }],
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    memberName:
+      [row.member?.firstName, row.member?.lastName].filter(Boolean).join(" ") ||
+      row.member?.email ||
+      "Unknown member",
+    checkIn: formatDateOnly(row.checkIn),
+    checkOut: formatDateOnly(row.checkOut),
+    guestCount: row._count.guests,
+    status: row.status,
+  }));
+}
+
+/**
+ * Admin capacity-reporting companion to `getLodgeCapacityStatus`
+ * (src/lib/lodge-capacity.ts, issue #119): which nights in [checkIn, checkOut)
+ * at `lodgeId` are whole-lodge-held by a capacity-holding booking (ADR-001).
+ * Lives here — not in lodge-capacity.ts — so it reuses the capacity engine's
+ * own hold-night span logic (`buildWholeLodgeHoldIndex` / `isNightWholeLodgeHeld`)
+ * rather than duplicating it; getLodgeCapacityStatus takes no date range, so a
+ * companion is the additive, backward-compatible way to report held nights.
+ *
+ * Admin-only reporting: members never see held nights (decision 6 — to them a
+ * held night is an ordinary full lodge).
+ */
+export async function getLodgeHeldNights(
+  lodgeId: string,
+  checkIn: Date,
+  checkOut: Date,
+  tx?: TransactionClient
+): Promise<string[]> {
+  const db = tx ?? prisma;
+  const start = normalizeDateOnlyForTimeZone(checkIn);
+  const end = normalizeDateOnlyForTimeZone(checkOut);
+  const nights = eachDateOnlyInRange(start, end);
+  if (nights.length === 0) return [];
+
+  const overlappingBookings = await db.booking.findMany({
+    where: {
+      checkIn: { lt: end },
+      checkOut: { gt: start },
+      wholeLodgeHold: true,
+      // Only a capacity-holding hold blocks (a cancelled/expired hold does not),
+      // matching the capacity engine's overlap population exactly.
+      ...capacityHoldingBookingFilter(),
+      lodgeId,
+    },
+    select: { checkIn: true, checkOut: true, wholeLodgeHold: true },
+  });
+
+  const holdIndex = buildWholeLodgeHoldIndex(overlappingBookings);
+  return nights
+    .filter((night) => isNightWholeLodgeHeld(night, holdIndex))
+    .map(formatDateOnly);
+}
+
+/**
  * Check if there's enough capacity for a given number of guests across all nights.
  */
 export async function checkCapacity(

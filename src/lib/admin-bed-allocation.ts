@@ -36,6 +36,7 @@ import {
   isCapacityHoldingBookingStatus,
 } from "@/lib/booking-status";
 import { mayShareDoubleBed } from "@/lib/double-bed-sharing";
+import { bookingsOverlap, sameLodgeNullTolerant } from "@/lib/capacity";
 import { prisma } from "@/lib/prisma";
 
 const BED_ALLOCATION_SETTINGS_ID = "default";
@@ -120,6 +121,14 @@ interface DashboardBooking {
   requestedRoom: DashboardRequestedRoom | null;
   // Split-booking group link (#738): set on the provisional non-member child.
   parentBookingId: string | null;
+  // Exclusive whole-lodge hold on THIS booking (ADR-001, #120): its guests are
+  // short-circuited out of per-bed allocation and shown as an exclusive-hold
+  // banner instead. Admin-only signal.
+  wholeLodgeHold: boolean;
+  // This (non-held) booking overlaps another booking's exclusive whole-lodge
+  // hold (ADR-001 decision 1, #119): flagged so staff see the clash from the
+  // ordinary booking's side. Always false for a held booking itself.
+  overlapsExclusiveHold: boolean;
 }
 
 interface DashboardGuest {
@@ -168,6 +177,19 @@ interface DashboardRequestedRoom {
   active: boolean;
 }
 
+// A booking with an exclusive whole-lodge hold (ADR-001, issue #120). It needs
+// NO per-bed allocation — it implicitly occupies every bed — so it is shown as
+// a distinct board banner rather than in the awaiting-allocation bucket.
+export interface DashboardExclusiveHold {
+  bookingId: string;
+  memberName: string;
+  checkIn: string;
+  checkOut: string;
+  guestCount: number;
+  // The held nights that fall within the board's current date range.
+  nights: string[];
+}
+
 export interface BedAllocationDashboardPayload {
   settings: BedAllocationSettingsPayload;
   range: {
@@ -178,6 +200,10 @@ export interface BedAllocationDashboardPayload {
   bookings: DashboardBooking[];
   allocations: DashboardAllocation[];
   unallocatedGuestNights: DashboardGuestNight[];
+  // Exclusive whole-lodge holds overlapping the range (ADR-001, #120). Their
+  // guests are deliberately ABSENT from unallocatedGuestNights / the planner —
+  // a held lodge needs no per-bed placement — and are represented here instead.
+  exclusiveHolds: DashboardExclusiveHold[];
   suggestedAllocations: BedAllocationCandidate[];
   suggestedUnallocatedGuestNights: UnallocatedGuestNight[];
   warnings: AdminBedAllocationWarning[];
@@ -1166,6 +1192,10 @@ async function loadBookingRecords(
       heldForBookingRequest: { select: { type: true } },
       // Admin capacity hold (#1764): held PAYMENT_PENDING shows as Held too.
       adminCapacityHoldAt: true,
+      // Exclusive whole-lodge hold (ADR-001, issues #119/#120): a held booking
+      // implicitly occupies the whole lodge, so it is short-circuited out of
+      // per-bed allocation, and overlapping bookings are flagged.
+      wholeLodgeHold: true,
       requestedRoom: {
         select: {
           id: true,
@@ -1283,8 +1313,18 @@ function serializeRooms(rooms: Awaited<ReturnType<typeof listBedAllocationRooms>
   }));
 }
 
+// The overlapping exclusive-hold spans, precomputed once per dashboard build so
+// each booking's overlap flag (issue #119) is a cheap in-memory check.
+interface HeldSpan {
+  id: string;
+  checkIn: Date;
+  checkOut: Date;
+  lodgeId: string | null;
+}
+
 function serializeBookings(
   bookings: DashboardBookingRecord[],
+  heldSpans: HeldSpan[],
 ): DashboardBooking[] {
   return bookings.map((booking) => ({
     id: booking.id,
@@ -1308,6 +1348,17 @@ function serializeBookings(
     })),
     requestedRoom: booking.requestedRoom,
     parentBookingId: booking.parentBookingId,
+    wholeLodgeHold: Boolean(booking.wholeLodgeHold),
+    // A held booking never flags itself; an ordinary booking flags when it
+    // overlaps ANY held booking's nights at the same lodge (issue #119).
+    overlapsExclusiveHold:
+      !booking.wholeLodgeHold &&
+      heldSpans.some(
+        (held) =>
+          held.id !== booking.id &&
+          sameLodgeNullTolerant(held.lodgeId, booking.lodgeId) &&
+          bookingsOverlap(held, booking),
+      ),
   }));
 }
 
@@ -1592,6 +1643,23 @@ export async function getBedAllocationDashboard(input: {
     loadAllocationRecords(input.range, db, input.lodgeId),
   ]);
   const serializedAllocations = serializeAllocations(allocationRecords);
+
+  // Exclusive whole-lodge holds (ADR-001, issues #119/#120). A held booking
+  // implicitly occupies every bed, so it is short-circuited OUT of per-bed
+  // allocation: its guest-nights are excluded from the awaiting-allocation set
+  // and never fed to the planner (so it can never appear as an allocation gap /
+  // stuck state). It is represented distinctly on the board instead, and its
+  // span flags overlapping ordinary bookings (#119).
+  const heldSpans: HeldSpan[] = bookings
+    .filter((booking) => booking.wholeLodgeHold)
+    .map((booking) => ({
+      id: booking.id,
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      lodgeId: booking.lodgeId,
+    }));
+  const heldBookingIds = new Set(heldSpans.map((held) => held.id));
+
   const allGuestNights = buildGuestNightRows(bookings, input.range);
   const allocatedGuestNights = new Set(
     serializedAllocations.map((allocation) =>
@@ -1600,10 +1668,34 @@ export async function getBedAllocationDashboard(input: {
   );
   const unallocatedGuestNights = allGuestNights.filter(
     (guestNight) =>
+      // A held booking needs no per-bed placement (#120): keep its guests out
+      // of the awaiting-allocation bucket AND out of the planner entirely.
+      !heldBookingIds.has(guestNight.bookingId) &&
       !allocatedGuestNights.has(
         guestNightKey(guestNight.bookingGuestId, guestNight.stayDate),
       ),
   );
+
+  // Board representation for each hold (#120): the group + the held nights that
+  // fall inside the current range, so staff understand the lodge is taken.
+  const exclusiveHolds: DashboardExclusiveHold[] = bookings
+    .filter((booking) => booking.wholeLodgeHold)
+    .map((booking) => {
+      const clamped = clampGuestToRange(
+        { stayStart: booking.checkIn, stayEnd: booking.checkOut },
+        input.range,
+      );
+      return {
+        bookingId: booking.id,
+        memberName: memberName(booking.member),
+        checkIn: formatDateOnly(booking.checkIn),
+        checkOut: formatDateOnly(booking.checkOut),
+        guestCount: booking.guests.length,
+        nights: eachDateOnlyInRange(clamped.stayStart, clamped.stayEnd).map(
+          formatDateOnly,
+        ),
+      };
+    });
   const plannerRooms = buildPlannerRooms(rooms);
   const plannerBookings = candidateGuestBookings(bookings, unallocatedGuestNights);
   const plan = settings.autoAllocationEnabled
@@ -1652,9 +1744,10 @@ export async function getBedAllocationDashboard(input: {
       toDate: input.range.toDate,
     },
     rooms: serializeRooms(rooms),
-    bookings: serializeBookings(bookings),
+    bookings: serializeBookings(bookings, heldSpans),
     allocations: serializedAllocations,
     unallocatedGuestNights,
+    exclusiveHolds,
     suggestedAllocations: plan.allocations,
     suggestedUnallocatedGuestNights: plan.unallocatedGuestNights,
     warnings: buildBedAllocationWarnings({ allocations: serializedAllocations }),

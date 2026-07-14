@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
+import { findOverlappingCapacityHoldingBookings } from "@/lib/capacity";
 import logger from "@/lib/logger";
 import { z } from "zod";
 
@@ -51,6 +52,7 @@ export async function POST(
         select: {
           id: true,
           memberId: true,
+          lodgeId: true,
           status: true,
           deletedAt: true,
           checkIn: true,
@@ -96,6 +98,22 @@ export async function POST(
         select: { wholeLodgeHold: true, wholeLodgeHoldAt: true },
       });
 
+      // ADR-001 decision 1 conflict surfacing (issue #119): when SETTING the
+      // hold, list the existing capacity-holding bookings that overlap its
+      // nights so the officer sees the clash. Read-only and informational —
+      // the set already succeeded above; nothing is refused or displaced. Never
+      // runs the capacity engine (decision 1). On clear there is nothing to
+      // surface. lodgeId is NOT NULL for real bookings; guard defensively.
+      const conflicts =
+        hold && booking.lodgeId
+          ? await findOverlappingCapacityHoldingBookings(tx, {
+              lodgeId: booking.lodgeId,
+              checkIn: booking.checkIn,
+              checkOut: booking.checkOut,
+              excludeBookingId: booking.id,
+            })
+          : [];
+
       await createAuditLog(
         {
           action: hold
@@ -122,7 +140,13 @@ export async function POST(
             checkIn: booking.checkIn.toISOString(),
             checkOut: booking.checkOut.toISOString(),
             ...(hold
-              ? {}
+              ? {
+                  // Conflict surfacing (issue #119): record how many existing
+                  // overlapping capacity-holding bookings the officer must
+                  // resolve, plus their ids for the audit trail.
+                  overlappingConflictCount: conflicts.length,
+                  overlappingConflictBookingIds: conflicts.map((c) => c.id),
+                }
               : {
                   previouslyHeldAt: booking.wholeLodgeHoldAt?.toISOString() ?? null,
                   previouslyHeldByMemberId: booking.wholeLodgeHoldByMemberId,
@@ -139,6 +163,7 @@ export async function POST(
         success: true as const,
         wholeLodgeHold: updated.wholeLodgeHold,
         wholeLodgeHoldAt: updated.wholeLodgeHoldAt,
+        conflicts,
       };
     });
 
@@ -153,6 +178,9 @@ export async function POST(
       success: true,
       wholeLodgeHold: result.wholeLodgeHold,
       wholeLodgeHoldAt: result.wholeLodgeHoldAt,
+      // Overlapping capacity-holding bookings the officer should resolve
+      // (issue #119); empty on clear or when the held nights are clear.
+      conflicts: result.conflicts,
     });
   } catch (err) {
     logger.error({ err, bookingId }, "Failed to update exclusive whole-lodge hold");

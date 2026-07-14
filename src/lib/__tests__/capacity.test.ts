@@ -30,9 +30,13 @@ vi.mock("@/lib/prisma", () => ({
 
 import {
   acquireLodgeCapacityLock,
+  bookingsOverlap,
   checkCapacity,
   checkCapacityForGuestRanges,
+  findOverlappingCapacityHoldingBookings,
+  getLodgeHeldNights,
   getMonthAvailability,
+  sameLodgeNullTolerant,
 } from "@/lib/capacity";
 import {
   overCapacityNights,
@@ -874,5 +878,135 @@ describe("wholeLodgeBlockedNights + WholeLodgeHoldBlockedError (issue #118)", ()
     expect(err.status).toBe(409);
     expect(err.code).toBe("WHOLE_LODGE_HOLD_BLOCKED");
     expect(err.blockedNights).toEqual(["2026-09-02", "2026-09-03"]);
+  });
+});
+
+// Admin conflict-surfacing helpers (issue #119). Shared by the exclusive-hold
+// route, the school approval, the booking detail page, and the admin bookings
+// list — reusing the capacity engine's overlap window / hold population.
+describe("bookingsOverlap + sameLodgeNullTolerant (issue #119)", () => {
+  it("uses the half-open span: a back-to-back handover does NOT overlap", () => {
+    const a = {
+      checkIn: parseDateOnly("2026-08-08"),
+      checkOut: parseDateOnly("2026-08-10"),
+    };
+    const backToBack = {
+      checkIn: parseDateOnly("2026-08-10"),
+      checkOut: parseDateOnly("2026-08-12"),
+    };
+    const overlapping = {
+      checkIn: parseDateOnly("2026-08-09"),
+      checkOut: parseDateOnly("2026-08-11"),
+    };
+    expect(bookingsOverlap(a, backToBack)).toBe(false);
+    expect(bookingsOverlap(a, overlapping)).toBe(true);
+  });
+
+  it("tolerates a null lodgeId on either side (expand-release)", () => {
+    expect(sameLodgeNullTolerant(null, "lodge-a")).toBe(true);
+    expect(sameLodgeNullTolerant("lodge-a", undefined)).toBe(true);
+    expect(sameLodgeNullTolerant("lodge-a", "lodge-a")).toBe(true);
+    expect(sameLodgeNullTolerant("lodge-a", "lodge-b")).toBe(false);
+  });
+});
+
+describe("findOverlappingCapacityHoldingBookings (issue #119)", () => {
+  const db = { booking: { findMany: mocks.bookingFindMany } } as never;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the overlapping capacity-holding bookings, excluding the held booking", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        id: "booking-2",
+        checkIn: parseDateOnly("2026-08-10"),
+        checkOut: parseDateOnly("2026-08-12"),
+        status: "CONFIRMED",
+        member: { firstName: "Jane", lastName: "Doe", email: "j@x.nz" },
+        _count: { guests: 3 },
+      },
+    ]);
+
+    const result = await findOverlappingCapacityHoldingBookings(db, {
+      lodgeId: "lodge-a",
+      checkIn: parseDateOnly("2026-08-10"),
+      checkOut: parseDateOnly("2026-08-12"),
+      excludeBookingId: "held-1",
+    });
+
+    expect(result).toEqual([
+      {
+        id: "booking-2",
+        memberName: "Jane Doe",
+        checkIn: "2026-08-10",
+        checkOut: "2026-08-12",
+        guestCount: 3,
+        status: "CONFIRMED",
+      },
+    ]);
+    const where = mocks.bookingFindMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({
+      lodgeId: "lodge-a",
+      id: { not: "held-1" },
+      deletedAt: null,
+    });
+    // Reuses the capacity-holding population filter, not a bespoke status list.
+    expect(where.OR).toEqual(capacityHoldingBookingFilter().OR);
+  });
+
+  it("returns [] when nothing overlaps", async () => {
+    mocks.bookingFindMany.mockResolvedValue([]);
+    expect(
+      await findOverlappingCapacityHoldingBookings(db, {
+        lodgeId: "lodge-a",
+        checkIn: parseDateOnly("2026-08-10"),
+        checkOut: parseDateOnly("2026-08-12"),
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("getLodgeHeldNights — admin companion to getLodgeCapacityStatus (issue #119)", () => {
+  const db = { booking: { findMany: mocks.bookingFindMany } } as never;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("reports the whole-lodge-held nights within the range (half-open span)", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        checkIn: parseDateOnly("2026-08-10"),
+        checkOut: parseDateOnly("2026-08-12"),
+        wholeLodgeHold: true,
+      },
+    ]);
+
+    const nights = await getLodgeHeldNights(
+      "lodge-a",
+      parseDateOnly("2026-08-09"),
+      parseDateOnly("2026-08-13"),
+      db,
+    );
+
+    // Held 08-10 and 08-11; the checkout day 08-12 is outside [checkIn, checkOut).
+    expect(nights).toEqual(["2026-08-10", "2026-08-11"]);
+    const where = mocks.bookingFindMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ lodgeId: "lodge-a", wholeLodgeHold: true });
+    expect(where.OR).toEqual(capacityHoldingBookingFilter().OR);
+  });
+
+  it("returns [] when no hold overlaps the range", async () => {
+    mocks.bookingFindMany.mockResolvedValue([]);
+    expect(
+      await getLodgeHeldNights(
+        "lodge-a",
+        parseDateOnly("2026-08-09"),
+        parseDateOnly("2026-08-13"),
+        db,
+      ),
+    ).toEqual([]);
   });
 });

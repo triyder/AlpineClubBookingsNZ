@@ -48,6 +48,8 @@ vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/capacity", () => ({
   acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   checkCapacityForGuestRanges: vi.fn(),
+  // Read-only conflict surfacing (issue #119); defaults to no conflicts.
+  findOverlappingCapacityHoldingBookings: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@/lib/lodge-capacity", () => ({
@@ -96,7 +98,10 @@ import {
   sendAdminSchoolManualInvoiceEmail,
   sendAdminOwnerSubstitutionAlert,
 } from "@/lib/email";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  checkCapacityForGuestRanges,
+  findOverlappingCapacityHoldingBookings,
+} from "@/lib/capacity";
 import { logAudit } from "@/lib/audit";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
@@ -558,6 +563,44 @@ describe("approveSchoolBookingRequest", () => {
       entityType: "Booking",
       entityId: "booking-1",
     });
+  });
+
+  it("surfaces overlapping conflicts when a hold is set at approval, without refusing (issue #119)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ exclusivityRequested: true }) as never,
+    );
+    const conflicts = [
+      {
+        id: "booking-2",
+        memberName: "Jane Doe",
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        guestCount: 2,
+        status: "CONFIRMED",
+      },
+    ];
+    vi.mocked(findOverlappingCapacityHoldingBookings).mockResolvedValueOnce(
+      conflicts,
+    );
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toMatchObject({
+      type: "approved",
+      exclusiveHoldConflicts: conflicts,
+    });
+    // Excludes the just-approved booking; still succeeded (decision 1).
+    expect(findOverlappingCapacityHoldingBookings).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ excludeBookingId: "booking-1" }),
+    );
+    const setAudit = mockedLogAudit.mock.calls
+      .map((call) => call[0])
+      .find((entry) => entry.action === "booking.exclusiveHold.set");
+    expect(setAudit?.metadata).toMatchObject({ overlappingConflictCount: 1 });
   });
 
   it("leaves the booking non-exclusive when the request did not ask for exclusivity", async () => {

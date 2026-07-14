@@ -337,6 +337,11 @@ export default async function AdminBookingsPage({
                         {booking.deletedAt ? (
                           <MiniChip tone="danger" icon={Trash2}>Deleted</MiniChip>
                         ) : null}
+                        {booking.overlapsExclusiveHold ? (
+                          <MiniChip tone="warning" icon={CalendarX2}>
+                            Overlaps exclusive hold
+                          </MiniChip>
+                        ) : null}
                       </div>
                       {booking.requiresAdminReview && booking.adminReviewReason ? (
                         <p className="mt-1 text-xs text-warning">{booking.adminReviewReason}</p>

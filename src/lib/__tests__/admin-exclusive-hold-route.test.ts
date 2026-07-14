@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
     requireAdmin: vi.fn(),
     acquireLodgeCapacityLock: vi.fn(),
     checkCapacityForGuestRanges: vi.fn(),
+    findOverlappingCapacityHoldingBookings: vi.fn(),
     loggerError: vi.fn(),
   };
 });
@@ -42,6 +43,9 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/capacity", () => ({
   checkCapacityForGuestRanges: mocks.checkCapacityForGuestRanges,
   acquireLodgeCapacityLock: mocks.acquireLodgeCapacityLock,
+  // Read-only conflict surfacing (issue #119) — NOT the capacity engine.
+  findOverlappingCapacityHoldingBookings:
+    mocks.findOverlappingCapacityHoldingBookings,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -105,6 +109,7 @@ beforeEach(() => {
     wholeLodgeHoldAt: new Date("2026-07-14T00:00:00.000Z"),
   });
   mocks.tx.auditLog.create.mockResolvedValue({});
+  mocks.findOverlappingCapacityHoldingBookings.mockResolvedValue([]);
 });
 
 describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
@@ -145,6 +150,56 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
     expect(mocks.checkCapacityForGuestRanges).not.toHaveBeenCalled();
     expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalled();
     expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces overlapping conflicts on set without refusing (issue #119): still 200, conflicts returned", async () => {
+    const conflicts = [
+      {
+        id: "booking-2",
+        memberName: "Jane Doe",
+        checkIn: "2026-09-01",
+        checkOut: "2026-09-02",
+        guestCount: 3,
+        status: "CONFIRMED",
+      },
+    ];
+    mocks.findOverlappingCapacityHoldingBookings.mockResolvedValue(conflicts);
+
+    const response = await POST(holdRequest({ hold: true }), routeParams());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.conflicts).toEqual(conflicts);
+    // Called with the held booking's own id excluded, at its lodge/nights.
+    expect(mocks.findOverlappingCapacityHoldingBookings).toHaveBeenCalledWith(
+      mocks.tx,
+      expect.objectContaining({
+        lodgeId: "lodge-1",
+        excludeBookingId: "booking-1",
+      }),
+    );
+    // Decision 1: the set still succeeded even with conflicts present.
+    expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+    const audit = mocks.tx.auditLog.create.mock.calls[0][0].data;
+    expect(audit.metadata).toMatchObject({ overlappingConflictCount: 1 });
+  });
+
+  it("does not query conflicts when clearing the hold (nothing to surface)", async () => {
+    mocks.tx.booking.findUnique.mockResolvedValue(
+      booking({ wholeLodgeHold: true }),
+    );
+    mocks.tx.booking.update.mockResolvedValue({
+      wholeLodgeHold: false,
+      wholeLodgeHoldAt: null,
+    });
+
+    const response = await POST(holdRequest({ hold: false }), routeParams());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.conflicts).toEqual([]);
+    expect(mocks.findOverlappingCapacityHoldingBookings).not.toHaveBeenCalled();
   });
 
   it("clears the hold (200), nulls the who/when fields, and audits the clear", async () => {

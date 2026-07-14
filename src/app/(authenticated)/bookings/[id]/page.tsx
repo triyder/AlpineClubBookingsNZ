@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { findOverlappingCapacityHoldingBookings } from "@/lib/capacity";
 import { notFound, redirect } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -722,6 +723,20 @@ export default async function BookingDetailPage({
     ? await getBookingProviderMismatches(booking.id)
     : [];
 
+  // Admin conflict surfacing (ADR-001 decision 1, issue #119): when this
+  // booking exclusively holds the whole lodge, list the existing
+  // capacity-holding bookings overlapping its nights so the officer can resolve
+  // the clash. Admin-only — never computed or shown for members (decision 6).
+  const exclusiveHoldConflicts =
+    canSeeAdminTools && booking.wholeLodgeHold && booking.lodgeId
+      ? await findOverlappingCapacityHoldingBookings(prisma, {
+          lodgeId: booking.lodgeId,
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          excludeBookingId: booking.id,
+        })
+      : [];
+
   // Surface the applicable cancellation refund schedule to the member up front
   // (#1371 F28): the exact per-booking amount already shows inside the cancel
   // flow, but the full tier schedule previously lived only in the admin policy
@@ -808,6 +823,7 @@ export default async function BookingDetailPage({
             heldByName: booking.wholeLodgeHoldBy
               ? `${booking.wholeLodgeHoldBy.firstName} ${booking.wholeLodgeHoldBy.lastName}`
               : null,
+            conflicts: exclusiveHoldConflicts,
           }}
         />
       )}

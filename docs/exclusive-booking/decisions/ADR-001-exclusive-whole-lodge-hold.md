@@ -139,15 +139,50 @@ concept (not display-only); the display reads it.
 ## Implementation surface (for the epic)
 
 1. Schema + migration: `Booking.wholeLodgeHold` (+ audit),
-   `BookingRequest.exclusivityRequested`; ledger row.
+   `BookingRequest.exclusivityRequested`; ledger row. ✅ #117
 2. Capacity engine: hard-block new admissions on held nights; settable over
-   conflicts; not override-bypassable.
+   conflicts; not override-bypassable. ✅ #118
 3. Conflict surfacing: admin warnings both directions; capacity-status
-   reporting.
-4. Bed-allocation short-circuit for holds.
+   reporting. ✅ #119
+4. Bed-allocation short-circuit for holds. ✅ #120
 5. Request path (requester asks) + admin toggle (set on any booking) — API + UI.
-6. Display: `wholeLodge` from the flag; heuristic → fallback.
+   ✅ #121
+6. Display: `wholeLodge` from the flag; heuristic → fallback. ✅ #122
 7. Tests (capacity crown-jewel coverage), docs, full gate.
+
+### Conflict surfacing — as built (#119, admin-only)
+
+Both directions, and nothing member/public-facing (decision 6):
+
+- **Setting/approving a hold.** `findOverlappingCapacityHoldingBookings`
+  (`src/lib/capacity.ts`) reuses the capacity engine's overlap window +
+  `capacityHoldingBookingFilter` to list the existing capacity-holding bookings
+  overlapping the hold's nights. The admin exclusive-hold route
+  (`.../exclusive-hold/route.ts`) and the school approval
+  (`approveSchoolBookingRequest`) both return these `conflicts` and record the
+  count/ids in the audit row. The set/approval still SUCCEEDS (decision 1).
+- **The ordinary booking's side.** The member/admin booking detail page
+  computes the same conflicts server-side (admin-gated) and the Admin-tools
+  exclusive-hold control lists them; the admin bookings list and the
+  bed-allocation board badge any ordinary booking that overlaps a hold
+  (`overlapsExclusiveHold`). Uses the pure `bookingsOverlap` /
+  `sameLodgeNullTolerant` helpers.
+- **Capacity-status reporting.** `getLodgeHeldNights(lodgeId, checkIn, checkOut)`
+  (`src/lib/capacity.ts`) is the admin companion to `getLodgeCapacityStatus`
+  (which takes no date range): it reports which nights in a range are
+  whole-lodge-held, reusing the engine's hold-night span logic.
+
+### Bed-allocation short-circuit — as built (#120, admin-only)
+
+A held booking implicitly occupies the whole lodge, so it needs no per-bed
+allocation. In `getBedAllocationDashboard` (`src/lib/admin-bed-allocation.ts`)
+a held booking's guest-nights are excluded from `unallocatedGuestNights` and
+never fed to the planner (so a hold can never register as an allocation gap /
+stuck state), and it is represented distinctly via the additive
+`exclusiveHolds` payload field (rendered as an "Exclusive whole-lodge hold — no
+per-bed allocation needed" board banner). The admin bookings list's per-booking
+bed-state also reports a held booking as `complete`. No `BedAllocation` rows are
+generated or demanded for held bookings.
 
 ## Post-implementation decisions (owner, 2026-07-14)
 

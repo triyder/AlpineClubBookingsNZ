@@ -91,9 +91,10 @@ describe("listAdminBookings pagination (#1738)", () => {
     // Only the 101st booking spills onto page 2.
     expect(result.bookings.map((b) => b.id)).toEqual([`b${ADMIN_BOOKINGS_PAGE_SIZE}`]);
 
-    // The heavy relation load is restricted to just the page's id.
+    // The heavy relation load is restricted to just the page's id. A third
+    // findMany is the exclusive-hold overlap query for the page (#119).
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(calls[1][0]?.where).toEqual({ id: { in: [`b${ADMIN_BOOKINGS_PAGE_SIZE}`] } });
   });
 
@@ -125,8 +126,9 @@ describe("listAdminBookings pagination (#1738)", () => {
       })
     );
 
-    // Single scan (no fast-path projection pass).
-    expect(vi.mocked(prisma.booking.findMany).mock.calls).toHaveLength(1);
+    // Single scan (no fast-path projection pass) + the exclusive-hold overlap
+    // query for the page (#119).
+    expect(vi.mocked(prisma.booking.findMany).mock.calls).toHaveLength(2);
     expect(result.page).toBe(2);
     expect(result.totalPages).toBe(2);
     expect(result.total).toBe(TOTAL);

@@ -85,13 +85,16 @@ describe("listAdminBookings fast path (#1146)", () => {
     expect(result.total).toBe(3);
 
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;
-    expect(calls).toHaveLength(2);
+    // Projection pass + page load + exclusive-hold overlap query (#119).
+    expect(calls).toHaveLength(3);
     // First pass: projection only, no relation includes.
     expect(calls[0][0]).not.toHaveProperty("include");
     expect(calls[0][0]).toHaveProperty("select");
     // Second pass: heavy include restricted to the page ids.
     expect(calls[1][0]).toHaveProperty("include");
     expect(calls[1][0]?.where).toEqual({ id: { in: ["b1", "b3", "b2"] } });
+    // Third pass: the exclusive-hold overlap query for the page.
+    expect(calls[2][0]?.where).toMatchObject({ wholeLodgeHold: true });
   });
 
   it("orders every sort key identically on the fast and full comparators", async () => {
@@ -205,17 +208,18 @@ describe("listAdminBookings fast path (#1146)", () => {
     const fastResult = await listAdminBookings(
       adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc" })
     );
-    // Fast path: projection pass + page load = two findMany calls.
-    expect(vi.mocked(prisma.booking.findMany).mock.calls).toHaveLength(2);
+    // Fast path: projection pass + page load + exclusive-hold overlap query
+    // (issue #119) = three findMany calls.
+    expect(vi.mocked(prisma.booking.findMany).mock.calls).toHaveLength(3);
 
     vi.mocked(prisma.booking.findMany).mockClear();
     vi.mocked(prisma.booking.findMany).mockResolvedValue(makeFixtures() as never);
     const fullResult = await listAdminBookings(
       adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc", bedState: "complete" })
     );
-    // Full path: single scan with heavy relation include.
+    // Full path: single heavy scan + the exclusive-hold overlap query (#119).
     const fullCalls = vi.mocked(prisma.booking.findMany).mock.calls;
-    expect(fullCalls).toHaveLength(1);
+    expect(fullCalls).toHaveLength(2);
     expect(fullCalls[0][0]).toHaveProperty("include");
 
     const fastOrder = fastResult.bookings.map((b) => b.id);

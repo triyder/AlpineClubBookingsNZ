@@ -56,7 +56,12 @@ import {
   type OwnerSubstitution,
 } from "@/lib/booking-request-shared";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
-import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  acquireLodgeCapacityLock,
+  checkCapacityForGuestRanges,
+  findOverlappingCapacityHoldingBookings,
+  type HoldConflictBooking,
+} from "@/lib/capacity";
 import {
   sendAdminSchoolManualInvoiceEmail,
   sendBookingRequestVerificationEmail,
@@ -402,6 +407,14 @@ type ApproveSchoolBookingRequestOutcome =
       priceCents: number;
       invoiceMode: "xero" | "manual";
       teacherCount: number;
+      /**
+       * Existing capacity-holding bookings that overlap the approved booking's
+       * nights when an exclusive whole-lodge hold was set at approval
+       * (exclusivityRequested; issue #119). Informational — decision 1 never
+       * refuses or displaces; the officer resolves them. Empty when no hold was
+       * set or the nights are clear.
+       */
+      exclusiveHoldConflicts: HoldConflictBooking[];
     }
   | { type: "capacityExceeded"; fullNights: string[] };
 
@@ -907,6 +920,9 @@ export async function approveSchoolBookingRequest(input: {
   // !alreadyConverted so the money-critical Xero invoice (or manual-invoice
   // email) is NOT raised a second time and no teacher PIN is re-sent (#1232).
   let invoiceMode: "xero" | "manual" = "manual";
+  // Conflict surfacing for the school entry point (issue #119): populated below
+  // when a hold was set at approval. Informational only (decision 1).
+  let exclusiveHoldConflicts: HoldConflictBooking[] = [];
   if (!conversion.alreadyConverted) {
     // Teacher PIN emails (after commit; failures are logged, not fatal).
     for (const assignment of conversion.teacherAssignments) {
@@ -1005,6 +1021,29 @@ export async function approveSchoolBookingRequest(input: {
     // one audit vocabulary. Only fires when the request asked for exclusivity
     // and the conversion actually ran (not on the idempotent replay path).
     if (request.exclusivityRequested) {
+      // Conflict surfacing (ADR-001 decision 1, issue #119): read-only list of
+      // existing capacity-holding bookings overlapping the held nights, so the
+      // officer sees the clash. Runs post-commit (outside the advisory lock),
+      // never refuses/displaces. Best-effort — a failure here must not undo the
+      // already-committed approval.
+      const bookingLodgeId = request.lodgeId ?? (await getDefaultLodgeId(prisma));
+      try {
+        exclusiveHoldConflicts = await findOverlappingCapacityHoldingBookings(
+          prisma,
+          {
+            lodgeId: bookingLodgeId,
+            checkIn: request.checkIn,
+            checkOut: request.checkOut,
+            excludeBookingId: conversion.bookingId,
+          },
+        );
+      } catch (err) {
+        logger.error(
+          { err, bookingId: conversion.bookingId },
+          "Failed to compute exclusive-hold conflicts for approved school request",
+        );
+      }
+
       logAudit({
         action: "booking.exclusiveHold.set",
         memberId: input.adminMemberId,
@@ -1022,6 +1061,9 @@ export async function approveSchoolBookingRequest(input: {
           requestId: request.id,
           source: "school_request_approval",
           setByMemberId: input.adminMemberId,
+          // Overlapping bookings the officer must resolve (issue #119).
+          overlappingConflictCount: exclusiveHoldConflicts.length,
+          overlappingConflictBookingIds: exclusiveHoldConflicts.map((c) => c.id),
         },
       });
     }
@@ -1107,5 +1149,6 @@ export async function approveSchoolBookingRequest(input: {
     priceCents: totalPriceCents,
     invoiceMode,
     teacherCount: conversion.teacherAssignments.length,
+    exclusiveHoldConflicts,
   };
 }

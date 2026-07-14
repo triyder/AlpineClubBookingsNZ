@@ -6,6 +6,16 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/confirm-dialog";
 
+/** Admin-only summary of a booking that overlaps this hold (issue #119). */
+export interface ExclusiveHoldConflict {
+  id: string;
+  memberName: string;
+  checkIn: string;
+  checkOut: string;
+  guestCount: number;
+  status: string;
+}
+
 interface AdminExclusiveHoldControlsProps {
   bookingId: string;
   /** Whether the exclusive whole-lodge hold is currently set (#121). */
@@ -14,6 +24,12 @@ interface AdminExclusiveHoldControlsProps {
   wholeLodgeHoldAt: string | null;
   /** Name of the admin who set the hold, when known. */
   heldByName: string | null;
+  /**
+   * Existing capacity-holding bookings that overlap this hold's nights
+   * (ADR-001 decision 1, issue #119). Admin-only; surfaced so the officer can
+   * resolve the clash manually. Server-computed for the current hold state.
+   */
+  conflicts?: ExclusiveHoldConflict[];
 }
 
 /**
@@ -28,6 +44,7 @@ export function AdminExclusiveHoldControls({
   wholeLodgeHold,
   wholeLodgeHoldAt,
   heldByName,
+  conflicts = [],
 }: AdminExclusiveHoldControlsProps) {
   const router = useRouter();
   const { confirm, confirmDialog } = useConfirm();
@@ -47,11 +64,24 @@ export function AdminExclusiveHoldControls({
         },
       );
       if (res.ok) {
-        toast.success(
-          hold
-            ? "Exclusive whole-lodge hold set."
-            : "Exclusive whole-lodge hold cleared.",
-        );
+        const data = (await res.json().catch(() => ({}))) as {
+          conflicts?: ExclusiveHoldConflict[];
+        };
+        // Conflict surfacing (issue #119): the set succeeded (decision 1); warn
+        // if existing bookings overlap so the officer resolves them manually.
+        if (hold && data.conflicts && data.conflicts.length > 0) {
+          toast.warning(
+            `Exclusive hold set. ${data.conflicts.length} existing booking${
+              data.conflicts.length === 1 ? "" : "s"
+            } overlap these nights — resolve manually.`,
+          );
+        } else {
+          toast.success(
+            hold
+              ? "Exclusive whole-lodge hold set."
+              : "Exclusive whole-lodge hold cleared.",
+          );
+        }
         router.refresh();
         return;
       }
@@ -110,6 +140,30 @@ export function AdminExclusiveHoldControls({
               : ""}
             . New admissions are blocked on these nights.
           </p>
+        </div>
+      )}
+      {wholeLodgeHold && conflicts.length > 0 && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <p className="font-medium">
+            {conflicts.length} overlapping booking
+            {conflicts.length === 1 ? "" : "s"} to resolve
+          </p>
+          <p>
+            These existing bookings overlap the held nights. The hold does not
+            change or cancel them — resolve each one manually.
+          </p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            {conflicts.map((conflict) => (
+              <li key={conflict.id}>
+                <a href={`/bookings/${conflict.id}`} className="underline">
+                  {conflict.memberName}
+                </a>{" "}
+                · {conflict.checkIn} → {conflict.checkOut} ·{" "}
+                {conflict.guestCount} guest
+                {conflict.guestCount === 1 ? "" : "s"} · {conflict.status}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {error && (

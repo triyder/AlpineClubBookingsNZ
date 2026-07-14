@@ -279,6 +279,32 @@ hold does not retroactively block it; the booking officer resolves the conflict.
 Setting a hold (#121) has no empty-lodge precondition — conflicts are allowed,
 surfaced, and resolved manually (ADR-001 decision 1).
 
+**Conflict surfacing (#119, admin-only).** Because conflicts are resolved by
+hand, they must be obvious to the officer — in both directions, and never to
+members/public (decision 6):
+
+- `findOverlappingCapacityHoldingBookings(db, { lodgeId, checkIn, checkOut,
+  excludeBookingId })` (`capacity.ts`) reuses the overlap window +
+  `capacityHoldingBookingFilter` to list the existing capacity-holding bookings
+  overlapping a hold. The admin exclusive-hold route and the school approval
+  return these `conflicts` (and audit the count/ids); the booking detail page's
+  Admin-tools control lists them. Setting/approving still succeeds.
+- The admin bookings list and the bed-allocation board badge any ordinary
+  booking that overlaps a hold (`overlapsExclusiveHold`), via the pure
+  `bookingsOverlap` / `sameLodgeNullTolerant` helpers.
+- `getLodgeHeldNights(lodgeId, checkIn, checkOut)` (`capacity.ts`) is the admin
+  companion to `getLodgeCapacityStatus` (which takes no date range) for
+  reporting which nights in a range are whole-lodge-held.
+
+**Bed-allocation short-circuit (#120, admin-only).** A held booking implicitly
+occupies the whole lodge, so it needs no per-bed allocation. The bed-allocation
+dashboard excludes a held booking's guest-nights from the awaiting-allocation
+set and from the planner (so a hold never reads as an allocation gap / stuck
+state), and surfaces it via the `exclusiveHolds` payload as a distinct board
+banner instead. The admin bookings list reports a held booking's bed-state as
+`complete`. No `BedAllocation` rows are generated or demanded for a held
+booking.
+
 ### Persisted capacity override (#1771)
 
 Every over-capacity admission above **persists** the decision on the booking:

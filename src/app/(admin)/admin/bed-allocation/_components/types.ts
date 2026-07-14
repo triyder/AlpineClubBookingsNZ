@@ -79,6 +79,23 @@ export interface DashboardBookingSummary {
   // Split-booking group link (#738). Set on the provisional non-member child;
   // null on the member booking and on un-split bookings.
   parentBookingId: string | null;
+  // Exclusive whole-lodge hold on THIS booking (ADR-001, #120): shown as a
+  // board banner, never in the awaiting-allocation bucket.
+  wholeLodgeHold: boolean;
+  // This ordinary booking overlaps another booking's exclusive hold (#119):
+  // badge it so staff see the clash.
+  overlapsExclusiveHold: boolean;
+}
+
+// An exclusive whole-lodge hold overlapping the board range (ADR-001, #120):
+// no per-bed allocation is needed — it implicitly occupies every bed.
+export interface DashboardExclusiveHold {
+  bookingId: string;
+  memberName: string;
+  checkIn: string;
+  checkOut: string;
+  guestCount: number;
+  nights: string[];
 }
 
 interface DashboardWarning {
@@ -103,6 +120,9 @@ export interface DashboardPayload {
   bookings: DashboardBookingSummary[];
   allocations: DashboardAllocation[];
   unallocatedGuestNights: DashboardGuestNight[];
+  // Exclusive whole-lodge holds overlapping the range (#120): their guests are
+  // absent from unallocatedGuestNights — shown as a banner instead.
+  exclusiveHolds: DashboardExclusiveHold[];
   suggestedAllocations: Array<{
     bookingId: string;
     bookingGuestId: string;

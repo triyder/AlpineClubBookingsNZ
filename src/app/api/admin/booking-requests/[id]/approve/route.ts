@@ -100,6 +100,10 @@ export async function POST(
         priceCents: result.priceCents,
         invoiceMode: result.invoiceMode,
         teacherCount: result.teacherCount,
+        // Overlapping capacity-holding bookings when an exclusive whole-lodge
+        // hold was set at approval (issue #119); the officer resolves them
+        // manually (decision 1). Empty when no hold was set or nights are clear.
+        exclusiveHoldConflicts: result.exclusiveHoldConflicts,
       });
     }
 

@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdminCapacityHoldControls } from "@/components/admin/admin-capacity-hold-controls";
-import { AdminExclusiveHoldControls } from "@/components/admin/admin-exclusive-hold-controls";
+import {
+  AdminExclusiveHoldControls,
+  type ExclusiveHoldConflict,
+} from "@/components/admin/admin-exclusive-hold-controls";
 import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
 import { CopyBookingButton } from "@/components/admin/copy-booking-button";
 import type { BookingProviderMismatch } from "@/lib/booking-provider-mismatches";
@@ -59,6 +62,8 @@ export function AdminBookingToolsCard({
     wholeLodgeHold: boolean;
     wholeLodgeHoldAt: string | null;
     heldByName: string | null;
+    /** Overlapping bookings to resolve when the hold is set (issue #119). */
+    conflicts?: ExclusiveHoldConflict[];
   };
 }) {
   const returnTo = `/bookings/${bookingId}`;
@@ -112,6 +117,7 @@ export function AdminBookingToolsCard({
               wholeLodgeHold={exclusiveHold.wholeLodgeHold}
               wholeLodgeHoldAt={exclusiveHold.wholeLodgeHoldAt}
               heldByName={exclusiveHold.heldByName}
+              conflicts={exclusiveHold.conflicts}
             />
           )}
           {!isDeleted && (
