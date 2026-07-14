@@ -274,6 +274,14 @@ Future reviews and issues should cite this file when proposing changes.
   carry a NULL member id and sit outside the constraint.
 - Draft, pending, waitlist, payment-recovery, and review states must have
   expiry, retry, admin visibility, or repair paths.
+- **Exclusive whole-lodge hold (ADR-001, #118):** a night overlapped by a
+  capacity-holding booking with `Booking.wholeLodgeHold = true` admits no
+  further capacity from any admission path — the night's `availableBeds` is
+  hard-blocked at 0, never negative, so it cannot be bypassed by the admin
+  over-capacity override (#1668). To non-admins the held lodge presents
+  exactly as an ordinary full lodge (decision 6); only admin surfaces are told
+  a hold is in effect. Full scenario table in `docs/CAPACITY_MODEL.md`,
+  "Exclusive whole-lodge hold — a non-bypassable block".
 
 ## Payment And Settlement
 

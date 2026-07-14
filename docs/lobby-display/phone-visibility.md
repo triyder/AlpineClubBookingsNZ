@@ -69,8 +69,8 @@ a regression test in
 [`phase8-hut-leader-kiosk.test.ts`](../../src/lib/__tests__/phase8-hut-leader-kiosk.test.ts)
 ("serves an adult member phone to staff without requiring opt-in").
 
-## Known follow-up
+## Config transfer
 
-`Lodge.showGuestPhonesOnScreens` is not yet part of the config-transfer
-lodge-config category, so it does not export/import between environments. The
-omission is fail-safe (a freshly imported lodge defaults to off).
+`Lodge.showGuestPhonesOnScreens` is part of the config-transfer lodge-config
+category (#137), so it exports/imports with the rest of the lodge descriptor
+between environments, alongside the other per-lodge display settings.
