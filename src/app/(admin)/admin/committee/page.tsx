@@ -1,19 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ArrowDown,
-  ArrowUp,
-  Eye,
-  EyeOff,
-  GripVertical,
-  Pencil,
-  Plus,
-  Save,
-  Trash2,
-  Users,
-  X,
-} from "lucide-react";
+import { Eye, EyeOff, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
@@ -30,20 +18,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
-
-interface LegacyCommitteeMember {
-  id: string;
-  role: string;
-  name: string;
-  phone: string;
-  email: string | null;
-  contactKey: string | null;
-  description: string;
-  sortOrder: number;
-  active: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
 
 interface CommitteeRole {
   id: string;
@@ -76,17 +50,6 @@ interface CommitteeAssignment {
     active: boolean;
   };
 }
-
-const emptyLegacyForm = {
-  role: "",
-  name: "",
-  phone: "",
-  email: "",
-  contactKey: "",
-  description: "",
-  sortOrder: 0,
-  active: true,
-};
 
 const emptyRoleForm = {
   name: "",
@@ -140,9 +103,6 @@ function VisibilityBadge({ visible }: { visible: boolean }) {
 }
 
 export default function CommitteePage() {
-  const [legacyMembers, setLegacyMembers] = useState<LegacyCommitteeMember[]>(
-    [],
-  );
   const [roles, setRoles] = useState<CommitteeRole[]>([]);
   const [assignments, setAssignments] = useState<CommitteeAssignment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -151,10 +111,6 @@ export default function CommitteePage() {
   const pageRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const { scrollToError, scrollToTop } = useScrollToFeedback();
-
-  const [showLegacyForm, setShowLegacyForm] = useState(false);
-  const [editingLegacyId, setEditingLegacyId] = useState<string | null>(null);
-  const [legacyForm, setLegacyForm] = useState(emptyLegacyForm);
 
   const [showRoleForm, setShowRoleForm] = useState(false);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
@@ -169,25 +125,18 @@ export default function CommitteePage() {
     setLoading(true);
     setError("");
     try {
-      const [legacyRes, rolesRes, assignmentsRes] = await Promise.all([
-        fetch("/api/admin/committee", { credentials: "same-origin" }),
+      const [rolesRes, assignmentsRes] = await Promise.all([
         fetch("/api/admin/committee/roles", { credentials: "same-origin" }),
         fetch("/api/admin/committee/assignments?includeInactive=1", {
           credentials: "same-origin",
         }),
       ]);
 
-      const [legacyBody, rolesBody, assignmentsBody] = await Promise.all([
-        readJson(legacyRes),
+      const [rolesBody, assignmentsBody] = await Promise.all([
         readJson(rolesRes),
         readJson(assignmentsRes),
       ]);
 
-      if (!legacyRes.ok) {
-        throw new Error(
-          responseErrorMessage(legacyBody, "Failed to load committee members"),
-        );
-      }
       if (!rolesRes.ok) {
         throw new Error(
           responseErrorMessage(rolesBody, "Failed to load committee roles"),
@@ -202,7 +151,6 @@ export default function CommitteePage() {
         );
       }
 
-      setLegacyMembers(legacyBody?.members ?? []);
       setRoles(rolesBody?.roles ?? []);
       setAssignments(assignmentsBody?.assignments ?? []);
     } catch (loadError) {
@@ -223,39 +171,6 @@ export default function CommitteePage() {
   useEffect(() => {
     if (error) scrollToError(errorRef);
   }, [error, scrollToError]);
-
-  function openAddLegacyForm() {
-    setEditingLegacyId(null);
-    const maxOrder = legacyMembers.reduce(
-      (max, member) => Math.max(max, member.sortOrder),
-      -1,
-    );
-    setLegacyForm({ ...emptyLegacyForm, sortOrder: maxOrder + 1 });
-    setShowLegacyForm(true);
-    setError("");
-  }
-
-  function openEditLegacyForm(member: LegacyCommitteeMember) {
-    setEditingLegacyId(member.id);
-    setLegacyForm({
-      role: member.role,
-      name: member.name,
-      phone: member.phone,
-      email: member.email ?? "",
-      contactKey: member.contactKey ?? "",
-      description: member.description,
-      sortOrder: member.sortOrder,
-      active: member.active,
-    });
-    setShowLegacyForm(true);
-    setError("");
-  }
-
-  function closeLegacyForm() {
-    setShowLegacyForm(false);
-    setEditingLegacyId(null);
-    setLegacyForm(emptyLegacyForm);
-  }
 
   function openAddRoleForm() {
     setEditingRoleId(null);
@@ -303,50 +218,6 @@ export default function CommitteePage() {
   function closeAssignmentForm() {
     setEditingAssignmentId(null);
     setAssignmentForm(emptyAssignmentForm);
-  }
-
-  async function handleLegacySubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setSaving(true);
-
-    const payload = {
-      role: legacyForm.role,
-      name: legacyForm.name,
-      phone: legacyForm.phone,
-      email: legacyForm.email || null,
-      contactKey: legacyForm.contactKey || null,
-      description: legacyForm.description,
-      sortOrder: legacyForm.sortOrder,
-      active: legacyForm.active,
-    };
-
-    try {
-      const url = editingLegacyId
-        ? `/api/admin/committee/${editingLegacyId}`
-        : "/api/admin/committee";
-      const response = await fetch(url, {
-        method: editingLegacyId ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify(payload),
-      });
-      const body = await readJson(response);
-      if (!response.ok) {
-        throw new Error(responseErrorMessage(body, "Failed to save member"));
-      }
-      closeLegacyForm();
-      await fetchCommitteeData();
-      scrollToTop(pageRef);
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "Failed to save member",
-      );
-    } finally {
-      setSaving(false);
-    }
   }
 
   async function handleRoleSubmit(e: React.FormEvent) {
@@ -431,55 +302,6 @@ export default function CommitteePage() {
     }
   }
 
-  async function handleDeleteLegacy(id: string, name: string) {
-    if (!confirm(`Delete committee member "${name}"?`)) return;
-    const response = await fetch(`/api/admin/committee/${id}`, {
-      method: "DELETE",
-      credentials: "same-origin",
-    });
-    if (response.ok) {
-      await fetchCommitteeData();
-    }
-  }
-
-  async function handleToggleLegacyActive(member: LegacyCommitteeMember) {
-    await fetch(`/api/admin/committee/${member.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({ active: !member.active }),
-    });
-    await fetchCommitteeData();
-  }
-
-  async function handleReorderLegacy(
-    id: string,
-    direction: "up" | "down",
-  ) {
-    const index = legacyMembers.findIndex((member) => member.id === id);
-    if (index < 0) return;
-    const swapIndex = direction === "up" ? index - 1 : index + 1;
-    if (swapIndex < 0 || swapIndex >= legacyMembers.length) return;
-
-    const current = legacyMembers[index];
-    const swap = legacyMembers[swapIndex];
-    await Promise.all([
-      fetch(`/api/admin/committee/${current.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ sortOrder: swap.sortOrder }),
-      }),
-      fetch(`/api/admin/committee/${swap.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ sortOrder: current.sortOrder }),
-      }),
-    ]);
-    await fetchCommitteeData();
-  }
-
   async function handleDeactivateAssignment(assignment: CommitteeAssignment) {
     if (!confirm(`Remove ${assignment.member.displayName} from ${assignment.committeeRole.name}?`)) {
       return;
@@ -507,7 +329,7 @@ export default function CommitteePage() {
     <div ref={pageRef} className="space-y-6">
       <AdminPageHeader
         title="Committee"
-        description="Manage public committee records, master roles, and member-linked assignment metadata."
+        description="Manage master roles and member-linked assignment metadata."
         actions={
           <>
             <Badge variant="secondary">{roles.length} master roles</Badge>
@@ -903,284 +725,6 @@ export default function CommitteePage() {
               </div>
             </form>
           ) : null}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle className="text-lg">Legacy Public Committee</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">
-              These historical records are retained for migration reference.
-              Public committee cards and contact recipients now come from
-              member-linked assignments.
-            </p>
-          </div>
-          <Button onClick={openAddLegacyForm}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Public Entry
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {showLegacyForm ? (
-            <form
-              onSubmit={handleLegacySubmit}
-              className="rounded-md border border-border bg-card p-4 text-card-foreground"
-            >
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="font-medium text-foreground">
-                  {editingLegacyId
-                    ? "Edit Public Committee Entry"
-                    : "Add Public Committee Entry"}
-                </h2>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={closeLegacyForm}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <Label htmlFor="legacyRole">Role / Position *</Label>
-                  <Input
-                    id="legacyRole"
-                    value={legacyForm.role}
-                    onChange={(event) =>
-                      setLegacyForm({ ...legacyForm, role: event.target.value })
-                    }
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="legacyName">Name *</Label>
-                  <Input
-                    id="legacyName"
-                    value={legacyForm.name}
-                    onChange={(event) =>
-                      setLegacyForm({ ...legacyForm, name: event.target.value })
-                    }
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="legacyPhone">Phone *</Label>
-                  <Input
-                    id="legacyPhone"
-                    value={legacyForm.phone}
-                    onChange={(event) =>
-                      setLegacyForm({
-                        ...legacyForm,
-                        phone: event.target.value,
-                      })
-                    }
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="legacyEmail">Email</Label>
-                  <Input
-                    id="legacyEmail"
-                    type="email"
-                    value={legacyForm.email}
-                    onChange={(event) =>
-                      setLegacyForm({
-                        ...legacyForm,
-                        email: event.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="legacyContactKey">Contact Key</Label>
-                  <Input
-                    id="legacyContactKey"
-                    value={legacyForm.contactKey}
-                    onChange={(event) =>
-                      setLegacyForm({
-                        ...legacyForm,
-                        contactKey: event.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="legacySortOrder">Display Order</Label>
-                  <Input
-                    id="legacySortOrder"
-                    type="number"
-                    min={0}
-                    value={legacyForm.sortOrder}
-                    onChange={(event) =>
-                      setLegacyForm({
-                        ...legacyForm,
-                        sortOrder: parseInt(event.target.value, 10) || 0,
-                      })
-                    }
-                  />
-                </div>
-              </div>
-              <div className="mt-4">
-                <Label htmlFor="legacyDescription">Description *</Label>
-                <Textarea
-                  id="legacyDescription"
-                  rows={3}
-                  value={legacyForm.description}
-                  onChange={(event) =>
-                    setLegacyForm({
-                      ...legacyForm,
-                      description: event.target.value,
-                    })
-                  }
-                  required
-                  maxLength={500}
-                />
-              </div>
-              <label className="mt-4 flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={legacyForm.active}
-                  onChange={(event) =>
-                    setLegacyForm({
-                      ...legacyForm,
-                      active: event.target.checked,
-                    })
-                  }
-                  className="h-4 w-4 rounded border-border"
-                />
-                Active on public committee page
-              </label>
-              <div className="mt-4 flex gap-2">
-                <Button type="submit" disabled={saving}>
-                  <Save className="mr-2 h-4 w-4" />
-                  Save Public Entry
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={closeLegacyForm}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          ) : null}
-
-          {loading ? (
-            <div className="p-6 text-center text-sm text-muted-foreground">
-              Loading...
-            </div>
-          ) : legacyMembers.length === 0 ? (
-            <div className="p-6 text-center text-muted-foreground">
-              <Users className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
-              <p>No public committee entries yet.</p>
-            </div>
-          ) : (
-            <AdminDataTable>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">#</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {legacyMembers.map((member, index) => (
-                  <TableRow
-                    key={member.id}
-                    className={member.active ? "" : "opacity-60"}
-                  >
-                    <TableCell>
-                      <div className="flex flex-col gap-0.5">
-                        <button
-                          onClick={() =>
-                            handleReorderLegacy(member.id, "up")
-                          }
-                          disabled={index === 0}
-                          className="text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
-                          title="Move up"
-                        >
-                          <ArrowUp className="h-3 w-3" />
-                        </button>
-                        <GripVertical className="mx-auto h-3 w-3 text-muted-foreground" />
-                        <button
-                          onClick={() =>
-                            handleReorderLegacy(member.id, "down")
-                          }
-                          disabled={index === legacyMembers.length - 1}
-                          className="text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
-                          title="Move down"
-                        >
-                          <ArrowDown className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="font-medium text-primary">
-                        {member.role}
-                      </span>
-                      {member.contactKey ? (
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          key: {member.contactKey}
-                        </p>
-                      ) : null}
-                    </TableCell>
-                    <TableCell>
-                      <div className="font-medium">{member.name}</div>
-                      {member.email ? (
-                        <div className="text-xs text-muted-foreground">
-                          {member.email}
-                        </div>
-                      ) : null}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {member.phone}
-                    </TableCell>
-                    <TableCell>
-                      <button onClick={() => handleToggleLegacyActive(member)}>
-                        {member.active ? (
-                          <Badge className="cursor-pointer border-success/20 bg-success-muted text-success">
-                            Active
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary" className="cursor-pointer">
-                            Inactive
-                          </Badge>
-                        )}
-                      </button>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEditLegacyForm(member)}
-                          className="text-muted-foreground hover:text-foreground"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() =>
-                            handleDeleteLegacy(member.id, member.name)
-                          }
-                          className="text-danger hover:bg-danger-muted hover:text-danger"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </AdminDataTable>
-          )}
         </CardContent>
       </Card>
     </div>

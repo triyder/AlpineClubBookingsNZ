@@ -37,10 +37,8 @@ vi.mock("@/lib/logger", () => ({
 import {
   buildSeedAdminMemberData,
   buildSeedChoreTemplates,
-  buildSeedCommitteePlaceholders,
   buildSeedCommitteeRoles,
   buildSeedLodgeMemberData,
-  SEED_PLACEHOLDER_PHONE,
   shouldSkipTokoroaThemeSeed,
 } from "../../../prisma/seed-data";
 import {
@@ -149,40 +147,6 @@ describe("buildSeedLodgeMemberData", () => {
 });
 
 // ── Generic placeholder content ──────────────────────────────────────────────
-
-describe("buildSeedCommitteePlaceholders", () => {
-  const placeholders = buildSeedCommitteePlaceholders({
-    domainEmail: (localPart) => `${localPart}@example.org`,
-    contactEmail: "bookings@example.org",
-  });
-
-  it("contains only clearly generic names and the placeholder phone", () => {
-    for (const entry of placeholders) {
-      expect(entry.name).toBe(`Example ${entry.role}`);
-      expect(entry.phone).toBe(SEED_PLACEHOLDER_PHONE);
-    }
-  });
-
-  it("derives emails from club config rather than hardcoding them", () => {
-    for (const entry of placeholders) {
-      if (entry.email !== null) {
-        expect(entry.email.endsWith("@example.org")).toBe(true);
-      }
-    }
-  });
-
-  it("keeps the booking officer wired to the club contact email", () => {
-    const bookings = placeholders.find((entry) => entry.contactKey === "bookings");
-    expect(bookings?.email).toBe("bookings@example.org");
-  });
-
-  it("uses stable ids and sequential sort order for create-if-missing seeding", () => {
-    placeholders.forEach((entry, index) => {
-      expect(entry.id).toBe(`seed-committee-${entry.contactKey}`);
-      expect(entry.sortOrder).toBe(index);
-    });
-  });
-});
 
 describe("buildSeedCommitteeRoles", () => {
   const roles = buildSeedCommitteeRoles();

@@ -633,12 +633,13 @@ committee-contact marker in EmailLog rows instead of persisting the recipient
 address. Phone numbers come from the linked member profile and display only when
 the assignment's show-phone flag is enabled.
 
-The legacy `CommitteeMember` table remains editable for historical/public
-migration reference, but it no longer powers `/api/committee` or committee
-recipient routing. Seed and migration steps create master roles and hidden
-member-linked assignments where a legacy committee email exactly matches a
-member email, but they do not delete or blank existing legacy rows. Assignment
-changes and master role changes are audited with before/after metadata.
+The legacy standalone `CommitteeMember` table has been removed. It was a
+migration aid for clubs moving onto the role/assignment model and never powered
+`/api/committee` or committee recipient routing once assignments existed. Seed
+steps now create master roles only; the historical migrations that seeded roles
+and hidden assignments from legacy rows remain in place for installs that ran
+them. Assignment changes and master role changes are audited with before/after
+metadata.
 
 Booking and subscription enforcement is season-aware:
 

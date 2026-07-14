@@ -3906,22 +3906,8 @@ model RefundRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Committee Members (public-facing committee page, admin-managed)
+// Committee (member-linked roles and assignments)
 // ---------------------------------------------------------------------------
-
-model CommitteeMember {
-  id          String   @id @default(cuid())
-  role        String // Position title (e.g. "President")
-  name        String // Display name
-  phone       String // Contact phone number
-  email       String? // Optional email address
-  contactKey  String?  @unique // Maps to /contact?recipient=key
-  description String // Role description
-  sortOrder   Int      @default(0) // Display order on public page
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
 
 model CommitteeRole {
   id           String   @id @default(cuid())
