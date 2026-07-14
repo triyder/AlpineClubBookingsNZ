@@ -652,6 +652,7 @@ async function getBookingModificationRetryData(bookingModificationId: string) {
       bookingId: true,
       priceDiffCents: true,
       changeFeeCents: true,
+      createdAt: true,
     },
   });
 
@@ -837,21 +838,51 @@ export async function retryXeroSyncOperation(
       // when the payload was overwritten by a prior execution.
       const queuedPayload = readQueuedOutboxPayload(operation.requestPayload);
       const modification = await getBookingModificationRetryData(operation.localId!);
-      const amounts =
+      const queuedSupplementaryPayload =
         queuedPayload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE
           ? queuedPayload
-          : modification;
-      if (amounts.priceDiffCents + amounts.changeFeeCents <= 0) {
+          : null;
+      const amounts = queuedSupplementaryPayload ?? modification;
+      const netAmountCents = amounts.priceDiffCents + amounts.changeFeeCents;
+      if (netAmountCents <= 0) {
         throw new XeroOperationRetryError(
           "Booking modification no longer has a billable Xero delta; a reduction settles via a modification credit note."
         );
       }
+      // F7 (#1882): thread recordPayment like the outbox dispatch
+      // (`payload.recordPayment ?? true`) — dropping it let the worker's
+      // recordPayment=true default book a Xero Payment from the Stripe
+      // clearing account for an uncaptured (e.g. Internet-Banking)
+      // supplementary invoice. When a prior execution overwrote the payload
+      // with the raw Xero request shape (the flag is gone), derive it from
+      // capture evidence: record only when a SUCCEEDED ADDITIONAL Stripe
+      // transaction on this booking matches the modification net and
+      // postdates the modification (the additional intent is minted with the
+      // edit, so an earlier same-amount capture belongs to another edit).
+      // Never record cash without evidence — a skipped payment stays
+      // recoverable via the PARTIAL invoice-repair path.
+      const recordPayment = queuedSupplementaryPayload
+        ? queuedSupplementaryPayload.recordPayment ?? true
+        : Boolean(
+            await prisma.paymentTransaction.findFirst({
+              where: {
+                payment: { bookingId: modification.bookingId },
+                kind: "ADDITIONAL",
+                source: "STRIPE",
+                status: "SUCCEEDED",
+                amountCents: netAmountCents,
+                createdAt: { gte: modification.createdAt },
+              },
+              select: { id: true },
+            })
+          );
       await xero.createXeroSupplementaryInvoice({
         bookingId: modification.bookingId,
         priceDiffCents: amounts.priceDiffCents,
         changeFeeCents: amounts.changeFeeCents,
         bookingModificationId: operation.localId!,
         createdByMemberId,
+        recordPayment,
         repairExistingLink: true,
       });
       return { message: "Retried Xero supplementary invoice creation." };
