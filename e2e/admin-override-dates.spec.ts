@@ -24,8 +24,10 @@ import { stayWindow } from "./helpers/stay-dates";
 // date ranges the normal edit window locks.
 test.describe.configure({ mode: "serial" });
 
-// stayWindow itself skips the reserved September fixture Mondays (#1703), so
-// index 5 is always clear of the seeded-FULL/offer/IB windows on any run date.
+// stayWindow itself skips the reserved September fixture Mondays (#1703) AND
+// any Monday whose nights fall in a seeded-season gap (the October 2026 gap
+// between Winter 2026 and Summer 2026-27), so index 5 is always clear of the
+// seeded-FULL/offer/IB windows AND in-season on any run date.
 const window = stayWindow(5);
 
 let memberContext: BrowserContext;

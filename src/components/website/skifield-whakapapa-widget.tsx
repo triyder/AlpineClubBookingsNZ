@@ -9,6 +9,46 @@ import {
 
 type ApiResponse = WhakapapaCurlData & { error?: string; stale?: boolean };
 
+function StatusCell({ status }: { status: string }) {
+  const normalized = status.trim().toLowerCase();
+
+  if (normalized === "open") {
+    return (
+      <span className="flex w-full justify-center rounded-full px-2 py-1 text-xs font-medium text-emerald-800 bg-emerald-100">
+        {status}
+      </span>
+    );
+  }
+
+  if (normalized === "closed") {
+    return (
+      <span className="flex w-full justify-center rounded-full px-2 py-1 text-xs font-medium text-red-800 bg-red-100">
+        {status}
+      </span>
+    );
+  }
+
+  if (normalized === "coming soon") {
+    return (
+      <span className="flex w-full justify-center rounded-full px-2 py-1 text-xs font-medium text-slate-700 bg-slate-100">
+        {status}
+      </span>
+    );
+  }
+
+  if (normalized === "limited availability") {
+    return (
+      <span className="flex w-full justify-center rounded-full px-2 py-1 text-xs font-medium text-amber-800 bg-amber-100">
+        {status}
+      </span>
+    );
+  }
+
+  return (
+    <span className="block w-full text-center">{status || "Unknown"}</span>
+  );
+}
+
 function FacilityGroup({
   id,
   title,
@@ -23,38 +63,30 @@ function FacilityGroup({
   return (
     <article
       id={id}
-      className="rounded-md border border-slate-200 bg-slate-50 p-4"
+      className="rounded-md border border-slate-200 bg-slate-50 p-2"
     >
       <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-      <div className="mt-3 overflow-x-auto">
-        <table className="min-w-full text-left text-xs text-slate-700">
-          <thead className="text-slate-500">
-            <tr>
-              <th className="pb-2 pr-4 font-medium">Name</th>
-              <th className="pb-2 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.length > 0 ? (
-              items.map((item) => (
-                <tr
-                  key={`${item.name}-${item.status}`}
-                  className="border-t border-slate-200"
-                >
-                  <td className="py-2 pr-4">{item.name || "Unknown"}</td>
-                  <td className="py-2">{item.status || "Unknown"}</td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td className="py-2 pr-4 text-slate-500" colSpan={2}>
-                  {emptyLabel}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      {items.length > 0 ? (
+        <div
+          className={`mt-2 flex flex-wrap gap-2 ${title.replace(/\s+/g, "-").toLowerCase()}-status-container`}
+        >
+          {items.map((item) => (
+            <div
+              key={`${item.name}-${item.status}`}
+              className={`flex flex-col gap-1 rounded-md border border-slate-200 bg-white p-2 ${title.replace(/\s+/g, "-").toLowerCase()}-status-item`}
+            >
+              <span
+                className={`text-xs font-medium text-slate-800 ${title.replace(/\s+/g, "-").toLowerCase()}-status-description`}
+              >
+                {item.name || "Unknown"}
+              </span>
+              <StatusCell status={item.status} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-slate-500">{emptyLabel}</p>
+      )}
     </article>
   );
 }
@@ -155,11 +187,11 @@ export function SkifieldWhakapapaWidget() {
   return (
     <section
       id="conditions"
-      className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-6"
+      className="rounded-lg border border-slate-200 bg-white p-2 shadow-sm sm:p-4"
     >
-      <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-slate-900">
+          <h2 className="text-lg font-semibold text-slate-900">
             Whakapapa Conditions
           </h2>
           <p className="text-xs text-slate-500">Updated: {formattedUpdated}</p>
@@ -172,51 +204,66 @@ export function SkifieldWhakapapaWidget() {
       </div>
 
       {error ? (
-        <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           {error}
         </p>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {data.visibility.roadStatus ? (
-          <article
-            id="whakapapa-road-status"
-            className="rounded-md border border-slate-200 bg-slate-50 p-4"
-          >
-            <h3 className="text-sm font-semibold text-slate-900">
-              Road Status
-            </h3>
-            <p className="mt-2 text-sm text-slate-700">
-              {data.roadStatus.name || "Unknown road"}
-            </p>
-            <p className="mt-2">
-              <span
-                className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${roadStatusTone}`}
-              >
-                {data.roadStatus.status || "Status unavailable"}
-              </span>
-            </p>
-            {data.roadStatus.wheelRequirements ||
-            data.roadStatus.roadContent ? (
-              <dl className="mt-3 space-y-2 text-xs text-slate-600">
-                {data.roadStatus.wheelRequirements ? (
-                  <div>
-                    <dt className="font-medium text-slate-700">
-                      Wheel requirements
-                    </dt>
-                    <dd>{data.roadStatus.wheelRequirements}</dd>
+      <div className="grid gap-3">
+        <div className="grid gap-3 md:grid-cols-2">
+          {data.visibility.roadStatus ? (
+            <article
+              id="whakapapa-road-status"
+              className="rounded-md border border-slate-200 bg-slate-50 p-2"
+            >
+              <h3 className="text-sm font-semibold text-slate-900">
+                Road Status
+              </h3>
+              <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-start">
+                <div className="sm:flex-1">
+                  <div className="text-xs text-slate-700">
+                    <span>{data.roadStatus.name || "Unknown road"}&nbsp;</span>
+                    <span
+                      className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${roadStatusTone}`}
+                    >
+                      {data.roadStatus.status || "Status unavailable"}
+                    </span>
                   </div>
+                </div>
+                {data.roadStatus.wheelRequirements ||
+                data.roadStatus.roadContent ? (
+                  <dl className="space-y-2 text-xs text-slate-600 sm:flex-1">
+                    {data.roadStatus.wheelRequirements ? (
+                      <div>
+                        <dt className="font-medium text-slate-700">
+                          Wheel requirements
+                        </dt>
+                        <dd>{data.roadStatus.wheelRequirements}</dd>
+                      </div>
+                    ) : null}
+                    {data.roadStatus.roadContent ? (
+                      <div>
+                        <dt className="font-medium text-slate-700">
+                          Road content
+                        </dt>
+                        <dd>{data.roadStatus.roadContent}</dd>
+                      </div>
+                    ) : null}
+                  </dl>
                 ) : null}
-                {data.roadStatus.roadContent ? (
-                  <div>
-                    <dt className="font-medium text-slate-700">Road content</dt>
-                    <dd>{data.roadStatus.roadContent}</dd>
-                  </div>
-                ) : null}
-              </dl>
-            ) : null}
-          </article>
-        ) : null}
+              </div>
+            </article>
+          ) : null}
+
+          {data.visibility.foodAndDrink ? (
+            <FacilityGroup
+              id="whakapapa-food-and-drink"
+              title="Food & Drink"
+              items={data.foodAndDrink}
+              emptyLabel="No food & drink data available."
+            />
+          ) : null}
+        </div>
 
         {data.visibility.lifts ? (
           <FacilityGroup
@@ -235,26 +282,17 @@ export function SkifieldWhakapapaWidget() {
             emptyLabel="No facility data available."
           />
         ) : null}
-
-        {data.visibility.foodAndDrink ? (
-          <FacilityGroup
-            id="whakapapa-food-and-drink"
-            title="Food & Drink"
-            items={data.foodAndDrink}
-            emptyLabel="No food & drink data available."
-          />
-        ) : null}
       </div>
 
       {data.visibility.conditions ? (
         <article
           id="whakapapa-mountain-conditions"
-          className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4"
+          className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-2"
         >
           <h3 className="text-sm font-semibold text-slate-900">
             Mountain Conditions
           </h3>
-          <div className="mt-3 overflow-x-auto">
+          <div className="mt-2 overflow-x-auto">
             <table className="min-w-full text-left text-xs text-slate-700">
               <thead className="text-slate-500">
                 <tr>

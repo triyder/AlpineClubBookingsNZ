@@ -3,6 +3,7 @@ import {
   League_Spartan,
   Lora,
   Nunito_Sans,
+  Oswald,
   Source_Serif_4,
 } from "next/font/google";
 
@@ -36,10 +37,17 @@ const nunitoSans = Nunito_Sans({
   variable: "--font-theme-nunito-sans",
 });
 
+const oswald = Oswald({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-theme-oswald",
+});
+
 export const clubThemeFontVariableClassName = [
   inter.variable,
   leagueSpartan.variable,
   lora.variable,
   sourceSerif.variable,
   nunitoSans.variable,
+  oswald.variable,
 ].join(" ");

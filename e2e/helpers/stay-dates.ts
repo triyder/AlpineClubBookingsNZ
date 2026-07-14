@@ -25,6 +25,25 @@ const RESERVED_WINDOW_CHECKINS = new Set<string>([
   WAITLIST_OFFER_WINDOW.checkIn,
 ]);
 
+// Seeded booking seasons (prisma/seed.ts): Winter 2026 and Summer 2026-27, with
+// a deliberate October 2026 gap between them. A window whose nights fall in that
+// gap (or after the last seeded season) has no season rate, so /api/bookings/quote
+// prices it out-of-season and the wizard refuses to advance to review — the
+// exact failure that appeared once the three reserved September skips pushed the
+// highest index past 09-30 into early October (#1703 follow-up). Windows must
+// therefore land entirely inside one season, on any run date. ISO YYYY-MM-DD
+// sorts lexicographically, so plain string comparison is a correct date compare.
+const SEEDED_SEASONS: ReadonlyArray<{ start: string; end: string }> = [
+  { start: "2026-06-01", end: "2026-09-30" }, // Winter 2026
+  { start: "2026-11-01", end: "2027-03-31" }, // Summer 2026-27
+];
+
+function isWindowInSeededSeason(nights: string[]): boolean {
+  return SEEDED_SEASONS.some((season) =>
+    nights.every((night) => night >= season.start && night <= season.end),
+  );
+}
+
 export type StayWindow = {
   checkIn: string; // YYYY-MM-DD (NZ date-only lodge night)
   checkOut: string;
@@ -44,31 +63,45 @@ function addDays(date: Date, days: number): Date {
   return next;
 }
 
-// Window n = the (n+1)th non-reserved Monday at least FIRST_WINDOW_OFFSET_DAYS
-// from today, staying Mon+Tue nights (checkout Wednesday). Each spec uses its
-// own index so bookings never collide on a member-night.
+// Window n = the (n+1)th usable Monday at least FIRST_WINDOW_OFFSET_DAYS from
+// today, staying Mon+Tue nights (checkout Wednesday). A Monday is usable when it
+// is neither a reserved fixture check-in nor in a seeded-season gap. Each spec
+// uses its own index so bookings never collide on a member-night.
 export function stayWindow(index: number): StayWindow {
   const earliest = addDays(new Date(), FIRST_WINDOW_OFFSET_DAYS);
   const daysUntilMonday = (8 - earliest.getDay()) % 7; // getDay(): Monday === 1
   let monday = addDays(earliest, daysUntilMonday);
   let remaining = index;
-  // Walk Mondays, skipping the reserved fixture check-ins, until the index-th
-  // free one. Bounded: only 3 Mondays are reserved, so this always terminates
-  // within index + 3 steps.
-  for (;;) {
-    if (!RESERVED_WINDOW_CHECKINS.has(toDateOnly(monday))) {
-      if (remaining === 0) break;
+  // Walk Mondays, skipping reserved fixture check-ins and any window that would
+  // fall outside a seeded season (e.g. the October 2026 gap), until the index-th
+  // usable one. Bounded by MAX_MONDAYS so a run date past the last seeded season
+  // fails loudly (reseed required) instead of looping forever.
+  const MAX_MONDAYS = 200;
+  for (let step = 0; step < MAX_MONDAYS; step += 1) {
+    const nights = [toDateOnly(monday), toDateOnly(addDays(monday, 1))];
+    const usable =
+      !RESERVED_WINDOW_CHECKINS.has(toDateOnly(monday)) &&
+      isWindowInSeededSeason(nights);
+    if (usable) {
+      if (remaining === 0) {
+        const tuesday = addDays(monday, 1);
+        const wednesday = addDays(monday, 2);
+        return {
+          checkIn: toDateOnly(monday),
+          checkOut: toDateOnly(wednesday),
+          nights,
+        };
+      }
       remaining -= 1;
     }
     monday = addDays(monday, 7);
   }
-  const tuesday = addDays(monday, 1);
-  const wednesday = addDays(monday, 2);
-  return {
-    checkIn: toDateOnly(monday),
-    checkOut: toDateOnly(wednesday),
-    nights: [toDateOnly(monday), toDateOnly(tuesday)],
-  };
+  throw new Error(
+    `stayWindow(${index}) found no in-season Monday within ${MAX_MONDAYS} weeks ` +
+      `of ${toDateOnly(addDays(new Date(), FIRST_WINDOW_OFFSET_DAYS))}. The seeded ` +
+      `seasons (see prisma/seed.ts and SEEDED_SEASONS) no longer cover the test ` +
+      `horizon for this run date — reseed the booking seasons. See docs/E2E_PLAYWRIGHT.md.`,
+  );
 }
 
 // aria-label date fragment used by the booking calendar day buttons, e.g.

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { WebsiteLogo } from "@/components/website-logo";
+import { WebsiteNavLinks } from "@/components/website-nav-links";
 import {
   WebsiteMobileMenu,
   type WebsiteNavLink,
@@ -50,17 +51,7 @@ export async function WebsiteHeader({
         </Link>
 
         {/* Desktop nav links */}
-        <nav aria-label="Website" className="hidden lg:flex items-center gap-1">
-          {navLinks.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="rounded-md px-3 py-2 text-sm font-medium text-brand-snow/80 transition-colors hover:bg-brand-snow/10 hover:text-brand-snow"
-            >
-              {link.label}
-            </Link>
-          ))}
-        </nav>
+        <WebsiteNavLinks navLinks={navLinks} />
 
         {/* Desktop CTA */}
         <div className="hidden lg:flex items-center gap-3">
