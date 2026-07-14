@@ -744,7 +744,7 @@ export function RoomsBedsManager({
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 rounded-md border bg-white p-6 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 rounded-md border bg-card p-6 text-sm text-muted-foreground">
           <LoaderCircle className="h-4 w-4 animate-spin" />
           Loading rooms and beds
         </div>
@@ -752,7 +752,7 @@ export function RoomsBedsManager({
 
       {payload?.capacity.bedAllocationEnabled &&
       payload.capacity.activeBedCount === 0 ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <div className="rounded-md border border-warning/30 bg-warning-muted p-4 text-sm text-warning">
           <div className="mb-1 flex items-center gap-2 font-medium">
             <AlertTriangle className="h-4 w-4" />
             Capacity fallback active
@@ -763,7 +763,7 @@ export function RoomsBedsManager({
       ) : null}
 
       {payload?.capacity.source === "capped_beds" ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <div className="rounded-md border border-warning/30 bg-warning-muted p-4 text-sm text-warning">
           <div className="mb-1 flex items-center gap-2 font-medium">
             <AlertTriangle className="h-4 w-4" />
             Sleeping capacity capped below the installed beds
@@ -1038,7 +1038,7 @@ export function RoomsBedsManager({
                       </div>
 
                       {deleteErrors[room.id] ? (
-                        <p role="alert" className="mt-2 text-sm text-red-600">
+                        <p role="alert" className="mt-2 text-sm text-danger">
                           {deleteErrors[room.id]}
                         </p>
                       ) : null}
@@ -1135,7 +1135,7 @@ export function RoomsBedsManager({
                               )}
                             />
                             {!bedDraft.bunkGroup.trim() ? (
-                              <span className="text-xs text-amber-600">
+                              <span className="text-xs text-warning">
                                 {BUNK_UNPAIRED_HINT}
                               </span>
                             ) : null}
@@ -1143,7 +1143,7 @@ export function RoomsBedsManager({
                         ) : null}
 
                         {bedFormErrors[room.id] ? (
-                          <p role="alert" className="text-sm text-red-600">
+                          <p role="alert" className="text-sm text-danger">
                             {bedFormErrors[room.id]}
                           </p>
                         ) : null}
@@ -1240,14 +1240,14 @@ export function RoomsBedsManager({
                                           />
                                         </div>
                                         {bedIsBunk && !bedPaired ? (
-                                          <span className="text-xs text-amber-600">
+                                          <span className="text-xs text-warning">
                                             {BUNK_UNPAIRED_HINT}
                                           </span>
                                         ) : null}
                                         {bedEditErrors[bed.id] ? (
                                           <p
                                             role="alert"
-                                            className="text-sm text-red-600"
+                                            className="text-sm text-danger"
                                           >
                                             {bedEditErrors[bed.id]}
                                           </p>

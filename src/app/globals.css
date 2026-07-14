@@ -54,6 +54,21 @@
   --color-danger: var(--danger);
   --color-danger-foreground: var(--danger-foreground);
   --color-danger-muted: var(--danger-muted);
+  /* Per-value accent hues (#156). These are NOT semantic status colours; they
+     exist only to keep sibling values in one admin column (settlement kinds,
+     payment states, member badges, bed types) visually distinct. Each is a
+     fg/bg PAIR: `--hue-*` is the accent text colour, `--hue-*-muted` the tinted
+     background, mirroring the four semantic pairs above. */
+  --color-hue-orange: var(--hue-orange);
+  --color-hue-orange-muted: var(--hue-orange-muted);
+  --color-hue-teal: var(--hue-teal);
+  --color-hue-teal-muted: var(--hue-teal-muted);
+  --color-hue-indigo: var(--hue-indigo);
+  --color-hue-indigo-muted: var(--hue-indigo-muted);
+  --color-hue-purple: var(--hue-purple);
+  --color-hue-purple-muted: var(--hue-purple-muted);
+  --color-hue-emerald: var(--hue-emerald);
+  --color-hue-emerald-muted: var(--hue-emerald-muted);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -143,6 +158,21 @@
   --danger: #991b1b;
   --danger-foreground: #ffffff;
   --danger-muted: #fee2e2;
+  /* Per-value accent hue pairs (#156). Light values are the Tailwind -800 text /
+     -100 tint pairings (the same convention the semantic pairs use), so each
+     accent text on its muted tint clears WCAG AA (measured 6.38-8.06:1). These
+     are additive tokens for distinguishing sibling column values; they do not
+     alter the default palette or the semantic status tokens above. */
+  --hue-orange: #9a3412;
+  --hue-orange-muted: #ffedd5;
+  --hue-teal: #115e59;
+  --hue-teal-muted: #ccfbf1;
+  --hue-indigo: #3730a3;
+  --hue-indigo-muted: #e0e7ff;
+  --hue-purple: #6b21a8;
+  --hue-purple-muted: #f3e8ff;
+  --hue-emerald: #065f46;
+  --hue-emerald-muted: #d1fae5;
 }
 
 .dark {
@@ -212,6 +242,22 @@
   --danger: oklch(0.84 0.11 27);
   --danger-foreground: oklch(0.2 0 0);
   --danger-muted: oklch(0.33 0.05 27);
+  /* Per-value accent hue pairs (#156) — dark re-tint follows the same structure
+     as the semantic pairs and the colored-callout remap: accent text
+     oklch(0.84 0.11 h) on muted bg oklch(0.33 0.05 h). Lightness is held equal
+     to the semantic pairs, so contrast is the documented >= 5.8:1 regardless of
+     hue. Hues match the callout ramp (orange 55, emerald 165, teal 185, indigo
+     275, purple 315). */
+  --hue-orange: oklch(0.84 0.11 55);
+  --hue-orange-muted: oklch(0.33 0.05 55);
+  --hue-teal: oklch(0.84 0.11 185);
+  --hue-teal-muted: oklch(0.33 0.05 185);
+  --hue-indigo: oklch(0.84 0.11 275);
+  --hue-indigo-muted: oklch(0.33 0.05 275);
+  --hue-purple: oklch(0.84 0.11 315);
+  --hue-purple-muted: oklch(0.33 0.05 315);
+  --hue-emerald: oklch(0.84 0.11 165);
+  --hue-emerald-muted: oklch(0.33 0.05 165);
 }
 
 .website-theme {

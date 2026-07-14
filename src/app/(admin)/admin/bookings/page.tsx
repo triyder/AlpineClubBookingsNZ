@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
-import { cn, formatCents } from "@/lib/utils";
+import { formatCents } from "@/lib/utils";
 import { BookingFilters } from "@/components/admin/booking-filters";
 import { BookingsPagination } from "@/components/admin/bookings-pagination";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
@@ -15,6 +15,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { StatusChip } from "@/components/ui/status-chip";
+import { MiniChip } from "@/components/ui/mini-chip";
+import { type ChipTone } from "@/lib/chip-tones";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   adminBookingsQuerySchema,
@@ -60,41 +62,10 @@ function nightsBetween(checkIn: Date, checkOut: Date) {
   );
 }
 
-// Small semantic chip (icon + text) sharing StatusChip's five-tone visual
-// language for the non-status signals the redesigned table keeps inline
-// (payment source, review, deleted). Meaning is carried by icon + label, never
-// colour alone.
-type ChipTone = "neutral" | "info" | "success" | "warning" | "danger";
-
-const CHIP_TONE_CLASSES: Record<ChipTone, string> = {
-  neutral: "bg-muted text-foreground",
-  info: "bg-info-muted text-info",
-  success: "bg-success-muted text-success",
-  warning: "bg-warning-muted text-warning",
-  danger: "bg-danger-muted text-danger",
-};
-
-function MiniChip({
-  tone,
-  icon: Icon,
-  children,
-}: {
-  tone: ChipTone;
-  icon: LucideIcon;
-  children: ReactNode;
-}) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-transparent px-2 py-0.5 text-xs font-medium",
-        CHIP_TONE_CLASSES[tone],
-      )}
-    >
-      <Icon aria-hidden="true" className="size-3.5 shrink-0" />
-      <span>{children}</span>
-    </span>
-  );
-}
+// The inline non-status signals (payment source, review, deleted) render through
+// the shared `MiniChip`, which draws its tone -> class map from
+// `@/lib/chip-tones` — the single source shared with StatusChip and the other
+// admin tables. Meaning is carried by icon + label, never colour alone.
 
 function paymentChip(source: AdminBookingRow["operational"]["paymentSource"]): {
   tone: ChipTone;
@@ -105,7 +76,7 @@ function paymentChip(source: AdminBookingRow["operational"]["paymentSource"]): {
     case "STRIPE":
       return { tone: "info", icon: CreditCard, label: "Stripe" };
     case "INTERNET_BANKING":
-      return { tone: "info", icon: Landmark, label: "Internet Banking" };
+      return { tone: "teal", icon: Landmark, label: "Internet Banking" };
     case "NONE":
     default:
       return { tone: "neutral", icon: MinusCircle, label: "No payment" };

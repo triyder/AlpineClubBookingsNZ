@@ -27,11 +27,14 @@ const CASES: Case[] = [
   { kind: "booking", value: "WAITLIST_OFFERED", label: "Waitlist Offered", tone: "info" },
   // payment
   { kind: "payment", value: "PENDING", label: "Pending", tone: "warning" },
-  { kind: "payment", value: "PROCESSING", label: "Processing", tone: "info" },
+  // PROCESSING / REFUNDED / PARTIALLY_REFUNDED get distinct accent hues (#156)
+  // so the payments table shows each state instead of collapsing them onto
+  // info/neutral/warning.
+  { kind: "payment", value: "PROCESSING", label: "Processing", tone: "indigo" },
   { kind: "payment", value: "SUCCEEDED", label: "Succeeded", tone: "success" },
   { kind: "payment", value: "FAILED", label: "Failed", tone: "danger" },
-  { kind: "payment", value: "REFUNDED", label: "Refunded", tone: "neutral" },
-  { kind: "payment", value: "PARTIALLY_REFUNDED", label: "Partially refunded", tone: "warning" },
+  { kind: "payment", value: "REFUNDED", label: "Refunded", tone: "purple" },
+  { kind: "payment", value: "PARTIALLY_REFUNDED", label: "Partially refunded", tone: "teal" },
   // subscription
   { kind: "subscription", value: "NOT_INVOICED", label: "Not Invoiced", tone: "neutral" },
   { kind: "subscription", value: "NOT_REQUIRED", label: "Not Required", tone: "neutral" },
@@ -128,12 +131,25 @@ describe("StatusChip tone tokens clear WCAG AA (matches globals.css)", () => {
     ["success", "#166534", "#dcfce7"],
     ["warning", "#854d0e", "#fef9c3"],
     ["neutral", "oklch(0.145 0 0)", "oklch(0.97 0 0)"],
+    // Per-value accent hues (#156): -800 text on -100 tint (mirrors globals.css).
+    ["orange", "#9a3412", "#ffedd5"],
+    ["teal", "#115e59", "#ccfbf1"],
+    ["indigo", "#3730a3", "#e0e7ff"],
+    ["purple", "#6b21a8", "#f3e8ff"],
+    ["emerald", "#065f46", "#d1fae5"],
   ];
   const darkPairs: Array<[string, string, string]> = [
     // hue 250 kept byte-identical to the sibling Alert lane (#1802).
     ["info", "oklch(0.84 0.11 250)", "oklch(0.33 0.05 250)"],
     ["danger", "oklch(0.84 0.11 27)", "oklch(0.33 0.05 27)"],
     ["neutral", "oklch(0.985 0 0)", "oklch(0.32 0 0)"],
+    // Accent hues (#156): same lightness structure as the semantic pairs, so
+    // contrast is hue-independent and clears AA at every hue.
+    ["orange", "oklch(0.84 0.11 55)", "oklch(0.33 0.05 55)"],
+    ["teal", "oklch(0.84 0.11 185)", "oklch(0.33 0.05 185)"],
+    ["indigo", "oklch(0.84 0.11 275)", "oklch(0.33 0.05 275)"],
+    ["purple", "oklch(0.84 0.11 315)", "oklch(0.33 0.05 315)"],
+    ["emerald", "oklch(0.84 0.11 165)", "oklch(0.33 0.05 165)"],
   ];
 
   it.each(lightPairs)("light %s text-on-muted >= 4.5:1", (_tone, fg, bg) => {
