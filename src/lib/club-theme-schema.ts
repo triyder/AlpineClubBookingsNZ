@@ -20,6 +20,7 @@ export const CLUB_THEME_FONT_KEYS = [
   "LORA",
   "SOURCE_SERIF_4",
   "NUNITO_SANS",
+  "OSWALD",
 ] as const;
 
 export type ClubThemeFontKey = (typeof CLUB_THEME_FONT_KEYS)[number];
@@ -59,6 +60,12 @@ export const CLUB_THEME_FONT_OPTIONS: Array<{
     label: "Nunito Sans",
     role: "Flexible",
     cssVariable: "--font-theme-nunito-sans",
+  },
+  {
+    key: "OSWALD",
+    label: "Oswald",
+    role: "Heading",
+    cssVariable: "--font-theme-oswald",
   },
 ];
 
@@ -286,7 +293,11 @@ function oklchLuminance(colour: string): number | null {
     : Number.parseFloat(lightnessToken);
   const C = Number.parseFloat(match[2]);
   const hueDegrees = Number.parseFloat(match[3]);
-  if (!Number.isFinite(L) || !Number.isFinite(C) || !Number.isFinite(hueDegrees)) {
+  if (
+    !Number.isFinite(L) ||
+    !Number.isFinite(C) ||
+    !Number.isFinite(hueDegrees)
+  ) {
     return null;
   }
 

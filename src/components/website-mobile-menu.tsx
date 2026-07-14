@@ -32,6 +32,9 @@ export function WebsiteMobileMenu({
   const pathname = usePathname();
   const detailsRef = useRef<HTMLDetailsElement>(null);
 
+  const isActiveLink = (href: string) =>
+    href === "/" ? pathname === "/" : pathname === href;
+
   const closeMenu = useCallback(() => {
     if (detailsRef.current) {
       detailsRef.current.open = false;
@@ -65,6 +68,7 @@ export function WebsiteMobileMenu({
               key={link.href}
               href={link.href}
               onClick={closeMenu}
+              aria-current={isActiveLink(link.href) ? "page" : undefined}
               className="rounded-md px-3 py-2.5 text-sm font-medium text-brand-snow/85 transition-colors hover:bg-brand-snow/10 hover:text-brand-snow"
             >
               {link.label}
