@@ -369,9 +369,18 @@ export function JoinApplyPageClient({
                       value={form.applicantFirstName}
                       onChange={updateField("applicantFirstName")}
                       autoComplete="given-name"
+                      aria-invalid={!!fieldErrors.applicantFirstName}
+                      aria-describedby={
+                        fieldErrors.applicantFirstName
+                          ? "applicantFirstName-error"
+                          : undefined
+                      }
                     />
                     {fieldErrors.applicantFirstName && (
-                      <p className="text-xs text-destructive">
+                      <p
+                        id="applicantFirstName-error"
+                        className="text-xs text-destructive"
+                      >
                         {fieldErrors.applicantFirstName}
                       </p>
                     )}
@@ -384,9 +393,18 @@ export function JoinApplyPageClient({
                       value={form.applicantLastName}
                       onChange={updateField("applicantLastName")}
                       autoComplete="family-name"
+                      aria-invalid={!!fieldErrors.applicantLastName}
+                      aria-describedby={
+                        fieldErrors.applicantLastName
+                          ? "applicantLastName-error"
+                          : undefined
+                      }
                     />
                     {fieldErrors.applicantLastName && (
-                      <p className="text-xs text-destructive">
+                      <p
+                        id="applicantLastName-error"
+                        className="text-xs text-destructive"
+                      >
                         {fieldErrors.applicantLastName}
                       </p>
                     )}
@@ -401,9 +419,18 @@ export function JoinApplyPageClient({
                     value={form.applicantEmail}
                     onChange={updateField("applicantEmail")}
                     autoComplete="email"
+                    aria-invalid={!!fieldErrors.applicantEmail}
+                    aria-describedby={
+                      fieldErrors.applicantEmail
+                        ? "applicantEmail-error"
+                        : undefined
+                    }
                   />
                   {fieldErrors.applicantEmail && (
-                    <p className="text-xs text-destructive">
+                    <p
+                      id="applicantEmail-error"
+                      className="text-xs text-destructive"
+                    >
                       {fieldErrors.applicantEmail}
                     </p>
                   )}
@@ -418,9 +445,18 @@ export function JoinApplyPageClient({
                       value={form.applicantDateOfBirth}
                       onChange={updateField("applicantDateOfBirth")}
                       autoComplete="bday"
+                      aria-invalid={!!fieldErrors.applicantDateOfBirth}
+                      aria-describedby={
+                        fieldErrors.applicantDateOfBirth
+                          ? "applicantDateOfBirth-error"
+                          : undefined
+                      }
                     />
                     {fieldErrors.applicantDateOfBirth && (
-                      <p className="text-xs text-destructive">
+                      <p
+                        id="applicantDateOfBirth-error"
+                        className="text-xs text-destructive"
+                      >
                         {fieldErrors.applicantDateOfBirth}
                       </p>
                     )}
@@ -526,11 +562,26 @@ export function JoinApplyPageClient({
                                     event.target.value,
                                   )
                                 }
+                                aria-invalid={
+                                  !!fieldErrors[
+                                    `familyMembers.${index}.firstName`
+                                  ]
+                                }
+                                aria-describedby={
+                                  fieldErrors[
+                                    `familyMembers.${index}.firstName`
+                                  ]
+                                    ? `family-first-name-${index}-error`
+                                    : undefined
+                                }
                               />
                               {fieldErrors[
                                 `familyMembers.${index}.firstName`
                               ] && (
-                                <p className="text-xs text-destructive">
+                                <p
+                                  id={`family-first-name-${index}-error`}
+                                  className="text-xs text-destructive"
+                                >
                                   {
                                     fieldErrors[
                                       `familyMembers.${index}.firstName`
@@ -554,11 +605,26 @@ export function JoinApplyPageClient({
                                     event.target.value,
                                   )
                                 }
+                                aria-invalid={
+                                  !!fieldErrors[
+                                    `familyMembers.${index}.lastName`
+                                  ]
+                                }
+                                aria-describedby={
+                                  fieldErrors[
+                                    `familyMembers.${index}.lastName`
+                                  ]
+                                    ? `family-last-name-${index}-error`
+                                    : undefined
+                                }
                               />
                               {fieldErrors[
                                 `familyMembers.${index}.lastName`
                               ] && (
-                                <p className="text-xs text-destructive">
+                                <p
+                                  id={`family-last-name-${index}-error`}
+                                  className="text-xs text-destructive"
+                                >
                                   {
                                     fieldErrors[
                                       `familyMembers.${index}.lastName`
@@ -584,11 +650,26 @@ export function JoinApplyPageClient({
                                   event.target.value,
                                 )
                               }
+                              aria-invalid={
+                                !!fieldErrors[
+                                  `familyMembers.${index}.dateOfBirth`
+                                ]
+                              }
+                              aria-describedby={
+                                fieldErrors[
+                                  `familyMembers.${index}.dateOfBirth`
+                                ]
+                                  ? `family-dob-${index}-error`
+                                  : undefined
+                              }
                             />
                             {fieldErrors[
                               `familyMembers.${index}.dateOfBirth`
                             ] && (
-                              <p className="text-xs text-destructive">
+                              <p
+                                id={`family-dob-${index}-error`}
+                                className="text-xs text-destructive"
+                              >
                                 {
                                   fieldErrors[
                                     `familyMembers.${index}.dateOfBirth`
@@ -624,9 +705,18 @@ export function JoinApplyPageClient({
                       type="email"
                       value={form.nominator1Email}
                       onChange={updateField("nominator1Email")}
+                      aria-invalid={!!fieldErrors.nominator1Email}
+                      aria-describedby={
+                        fieldErrors.nominator1Email
+                          ? "nominator1Email-error"
+                          : undefined
+                      }
                     />
                     {fieldErrors.nominator1Email && (
-                      <p className="text-xs text-destructive">
+                      <p
+                        id="nominator1Email-error"
+                        className="text-xs text-destructive"
+                      >
                         {fieldErrors.nominator1Email}
                       </p>
                     )}
@@ -641,9 +731,18 @@ export function JoinApplyPageClient({
                       type="email"
                       value={form.nominator2Email}
                       onChange={updateField("nominator2Email")}
+                      aria-invalid={!!fieldErrors.nominator2Email}
+                      aria-describedby={
+                        fieldErrors.nominator2Email
+                          ? "nominator2Email-error"
+                          : undefined
+                      }
                     />
                     {fieldErrors.nominator2Email && (
-                      <p className="text-xs text-destructive">
+                      <p
+                        id="nominator2Email-error"
+                        className="text-xs text-destructive"
+                      >
                         {fieldErrors.nominator2Email}
                       </p>
                     )}
@@ -653,7 +752,10 @@ export function JoinApplyPageClient({
 
               <CardFooter className="flex flex-col gap-4">
                 {error && (
-                  <div className="w-full rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                  <div
+                    role="alert"
+                    className="w-full rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+                  >
                     {error}
                   </div>
                 )}
