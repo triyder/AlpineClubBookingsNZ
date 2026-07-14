@@ -29,11 +29,17 @@
     // invoked by the framework, not imported by app code (#1178 kept onRequestError).
     "src/instrumentation.node.ts"
   ],
+  // The k6 load harness (#1884) is operator-invoked tooling that runs under the
+  // k6 binary, not Node/Next — its scripts import k6-runtime modules (k6/http,
+  // k6/execution, ...) that are not npm packages, so knip cannot analyze them.
+  // Dead-code coverage for load/ comes from `node --check` + eslint instead.
+  "ignore": ["load/**"],
   "ignoreBinaries": [
     // Runtime shell-outs; these binaries live on the host/container, not node_modules.
     "psql", // src/lib/backup.ts + scripts/audit-access-role-membership-cleanup.ts
     "pg_dump", // src/lib/backup.ts logical backups
-    "gunzip" // src/lib/backup.ts restore path
+    "gunzip", // src/lib/backup.ts restore path
+    "k6" // load/ harness, run via the `load:*` scripts (#1884); host binary, not a dep
   ],
   "ignoreIssues": {
     // shadcn/ui vendored primitives keep the full Radix-parity export/type surface
