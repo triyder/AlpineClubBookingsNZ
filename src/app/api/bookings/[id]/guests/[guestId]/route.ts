@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ApiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
@@ -303,8 +304,17 @@ export async function DELETE(
     if (err instanceof BookingGuestRemovalError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    const message =
-      err instanceof Error ? err.message : "Failed to remove guest";
-    return NextResponse.json({ error: message }, { status: 400 });
+    // Shared-lib domain errors (e.g. the #1032 quote-priced edit block from
+    // assertBookingNotQuotePriced) carry intentional user-facing messages.
+    if (err instanceof ApiError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    // #1888 — unexpected (non-typed) errors must not leak their message to
+    // the client; the raw error stays in the log only.
+    logger.error({ err }, "Failed to remove guest from booking");
+    return NextResponse.json(
+      { error: "Failed to remove guest" },
+      { status: 400 }
+    );
   }
 }

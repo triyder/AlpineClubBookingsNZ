@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
   lodgeNullTolerantScope,
@@ -300,7 +301,12 @@ export async function POST(req: NextRequest) {
         { status: err.status },
       );
     }
-    const message = err instanceof Error ? err.message : "Failed to calculate price";
-    return NextResponse.json({ error: message }, { status: 400 });
+    // #1888 — unexpected (non-typed) errors must not leak their message to
+    // the client; the raw error stays in the log only.
+    logger.error({ err }, "Promo code validation failed");
+    return NextResponse.json(
+      { error: "Failed to calculate price" },
+      { status: 400 }
+    );
   }
 }

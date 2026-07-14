@@ -198,8 +198,12 @@ export async function PUT(
         { status: 500 },
       );
     }
-    const message =
-      err instanceof Error ? err.message : "Failed to modify booking dates";
-    return NextResponse.json({ error: message }, { status: 400 });
+    // #1888 — unexpected (non-typed) errors must not leak their message to
+    // the client; the raw error stays in the log only.
+    logger.error({ err, bookingId }, "Booking date modification failed");
+    return NextResponse.json(
+      { error: "Failed to modify booking dates" },
+      { status: 400 }
+    );
   }
 }
