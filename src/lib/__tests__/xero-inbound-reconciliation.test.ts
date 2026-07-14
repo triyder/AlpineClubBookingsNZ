@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   txExecuteRaw: vi.fn(),
   subscriptionFindMany: vi.fn(),
   groupSettlementFindFirst: vi.fn(),
+  groupSettlementFindUnique: vi.fn(),
   applyGroupSettlementFromInvoice: vi.fn(),
   syncContactsFromXero: vi.fn(),
   refreshAllMembershipStatuses: vi.fn(),
@@ -113,6 +114,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     groupBookingSettlement: {
       findFirst: mocks.groupSettlementFindFirst,
+      findUnique: mocks.groupSettlementFindUnique,
     },
     $transaction: mocks.transaction,
   },
@@ -2996,6 +2998,181 @@ describe("processStoredXeroInboundEvents", () => {
     expect(mocks.applyGroupSettlementFromInvoice).toHaveBeenCalledWith(
       "inv_settle_1"
     );
+  });
+
+  it("fails the inbound event when applying a paid group settlement throws, so it is retried (#1887)", async () => {
+    // A transient apply failure (DB contention, lock timeout, capacity-lock
+    // conflict) must not complete the event as PROCESSED: the settlement
+    // would sit PENDING forever — never retried — while the organiser's
+    // money is in the bank, and the group-settlement expiry path could later
+    // cancel the whole group's child bookings despite payment. Same durable
+    // deferral as #1435: the event FAILS into the inbound retry machinery,
+    // which re-fetches the invoice fresh on every backoff sweep.
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_settle_retry",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_settle_retry",
+        correlationKey: "corr_settle_retry",
+        payload: { resourceId: "inv_settle_retry" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_settle_retry" });
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.groupSettlementFindFirst.mockResolvedValue({
+      id: "settle_retry",
+      status: "PENDING",
+    });
+    mocks.applyGroupSettlementFromInvoice.mockRejectedValue(
+      new Error("lock timeout applying group settlement")
+    );
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_settle_retry",
+              invoiceNumber: "INV-SETTLE-RETRY",
+              date: "2026-07-01",
+              status: "PAID",
+              fullyPaidOnDate: "2026-07-02",
+              contact: { contactID: "contact_1" },
+              amountPaid: 246.9,
+              payments: [
+                {
+                  paymentID: "xpay_settle_retry",
+                  amount: 246.9,
+                  invoiceNumber: "INV-SETTLE-RETRY",
+                  status: "AUTHORISED",
+                },
+              ],
+              lineItems: [{ accountCode: "200" }],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 0,
+      failed: 1,
+      skipped: 0,
+    });
+
+    expect(mocks.applyGroupSettlementFromInvoice).toHaveBeenCalledWith(
+      "inv_settle_retry"
+    );
+    expect(mocks.inboundUpdate).toHaveBeenCalledWith({
+      where: { id: "evt_settle_retry" },
+      data: expect.objectContaining({
+        status: "FAILED",
+        errorMessage: expect.stringContaining("lock timeout"),
+      }),
+    });
+    // Nothing was settled and no child booking flipped PAID on this pass.
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+  });
+
+  it("keeps a mismatched group settlement terminal: alerts admins without failing the event (#1033)", async () => {
+    // amount_mismatch is an expected business outcome (a child booking
+    // changed while the combined invoice sat open), not a transient fault:
+    // the event completes PROCESSED — no FAILED retry loop — and operators
+    // are alerted to reconcile manually.
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_settle_mismatch",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_settle_mismatch",
+        correlationKey: "corr_settle_mismatch",
+        payload: { resourceId: "inv_settle_mismatch" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_settle_mismatch" });
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.groupSettlementFindFirst.mockResolvedValue({
+      id: "settle_mismatch",
+      status: "PENDING",
+    });
+    mocks.applyGroupSettlementFromInvoice.mockResolvedValue({
+      outcome: "amount_mismatch",
+      settledBookingIds: [],
+    });
+    mocks.groupSettlementFindUnique.mockResolvedValue({
+      amountCents: 24690,
+      groupBooking: {
+        organiserMember: { firstName: "Olive", lastName: "Organiser" },
+        organiserBooking: {
+          checkIn: new Date("2026-08-01T00:00:00.000Z"),
+          checkOut: new Date("2026-08-03T00:00:00.000Z"),
+        },
+      },
+    });
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_settle_mismatch",
+              invoiceNumber: "INV-SETTLE-MISMATCH",
+              date: "2026-07-01",
+              status: "PAID",
+              fullyPaidOnDate: "2026-07-02",
+              contact: { contactID: "contact_1" },
+              amountPaid: 246.9,
+              payments: [
+                {
+                  paymentID: "xpay_settle_mismatch",
+                  amount: 246.9,
+                  invoiceNumber: "INV-SETTLE-MISMATCH",
+                  status: "AUTHORISED",
+                },
+              ],
+              lineItems: [{ accountCode: "200" }],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memberName: "Olive Organiser",
+        amountCents: 24690,
+        errorMessage: expect.stringContaining("no longer matches"),
+        paymentIntentId: "inv_settle_mismatch",
+      })
+    );
+    // The settlement stays PENDING for manual reconciliation: no child
+    // booking flipped PAID.
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
   });
 
   it("does not settle a group when its combined invoice was cleared by credit allocation (#1435)", async () => {

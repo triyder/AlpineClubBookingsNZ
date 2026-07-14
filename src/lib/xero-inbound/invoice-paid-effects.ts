@@ -1204,10 +1204,20 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice) {
       );
     }
   } catch (err) {
+    // #1887: same durable-deferral rule as the indeterminate-cash arms above
+    // (#1435) — a failed apply (DB contention, lock timeout, capacity-lock
+    // conflict) must not let the inbound event complete as PROCESSED, or the
+    // settlement sits PENDING forever while the organiser's money is in the
+    // bank and the group-settlement expiry path can later cancel the whole
+    // group's child bookings despite payment. Rethrow so the event lands
+    // FAILED and the backoff sweep re-fetches the invoice and retries.
+    // (amount_mismatch above is the one intentionally-terminal outcome: it
+    // returns a value, alerts the operators, and never reaches this catch.)
     logger.error(
       { err, invoiceId, settlementId: settlement.id },
       "Failed to settle group booking from paid Xero invoice"
     );
+    throw err;
   }
 
   return result;
