@@ -262,6 +262,8 @@ describe("retryXeroSyncOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findUniqueMember.mockResolvedValue(null);
+    // No SUCCEEDED ADDITIONAL capture exists unless a test says so (#1882).
+    mocks.findFirstPaymentTransaction.mockResolvedValue(null);
     mocks.shouldRepairXeroContactNameOrder.mockResolvedValue(false);
     mocks.buildXeroContactUpdatePayload.mockImplementation((member) => ({
       firstName: member.firstName,
@@ -680,6 +682,9 @@ describe("retryXeroSyncOperation", () => {
       changeFeeCents: 500,
       bookingModificationId: "mod_123",
       createdByMemberId: "admin_1",
+      // No queued payload and no SUCCEEDED ADDITIONAL capture in this
+      // scenario, so the retry must not record cash (#1882).
+      recordPayment: false,
       repairExistingLink: true,
     });
   });
@@ -901,6 +906,9 @@ describe("retryXeroSyncOperation", () => {
       changeFeeCents: 1000,
       bookingModificationId: "mod_mixed",
       createdByMemberId: "admin_1",
+      // No queued payload and no SUCCEEDED ADDITIONAL capture in this
+      // scenario, so the retry must not record cash (#1882).
+      recordPayment: false,
       repairExistingLink: true,
     });
   });
