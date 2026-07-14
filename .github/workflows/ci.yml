@@ -244,6 +244,16 @@ jobs:
           CLUB_THEME_MIGRATION_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
         run: npx vitest run src/lib/__tests__/club-theme-default-reseed-migration.test.ts
 
+      # F28 (#1888): wire the real-DB BookingGuest stay-range trigger suite so it
+      # is no longer a silent no-op. It self-provisions a throwaway schema and
+      # applies only the two trigger migrations, so it needs any reachable
+      # Postgres. This step MUST stay wired — the suite describe.skip's itself
+      # when the env var is absent, which is exactly how it went unrun before.
+      - name: Test guarded BookingGuest stay-range triggers against PostgreSQL
+        env:
+          BOOKING_GUEST_RANGE_TRIGGER_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: npx vitest run src/lib/__tests__/booking-guest-range-triggers.test.ts
+
       # Fails (exit 2) if the committed migrations do not reproduce
       # schema.prisma — the parity gate enforced at deploy time. See issue #760.
       - name: Check migrations reproduce schema.prisma
