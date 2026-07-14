@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Route coverage for the admin exclusive whole-lodge hold (issue #121, ADR-001):
 // POST /api/admin/bookings/[id]/exclusive-hold. Mirrors the admin-capacity-hold
-// route harness (its closest sibling admin capacity action), but the exclusive
-// hold has NO empty-lodge precondition and runs NO capacity engine (decision 1):
-// setting it is allowed regardless of existing overlapping bookings.
+// route harness (its closest sibling admin capacity action). The exclusive hold
+// has NO empty-lodge precondition and runs NO bed-arithmetic capacity engine
+// (decision 1): setting it is allowed regardless of existing overlapping
+// bookings. But per ADR-001's Security/safety section the flag write and the
+// conflict read are lock-serialised under the per-lodge capacity lock
+// (issue #154) so a hold set cannot race a concurrent admission.
 const mocks = vi.hoisted(() => {
   const tx = {
     booking: {
@@ -38,8 +41,10 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-// The route must NOT touch the capacity engine. These mocks exist only to fail
-// loudly (via the assertions below) if a capacity call were ever introduced.
+// The route takes the per-lodge capacity lock (ADR-001 Security/safety, issue
+// #154) but runs no bed-arithmetic capacity engine: checkCapacityForGuestRanges
+// is mocked only to fail loudly (via the assertions below) if the route were
+// ever to consult it.
 vi.mock("@/lib/capacity", () => ({
   checkCapacityForGuestRanges: mocks.checkCapacityForGuestRanges,
   acquireLodgeCapacityLock: mocks.acquireLodgeCapacityLock,
@@ -141,15 +146,59 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
     });
   });
 
-  it("sets the hold even when other bookings overlap: no capacity engine call, no 409 (decision 1)", async () => {
+  it("sets the hold even when other bookings overlap: lock taken, no capacity engine, no 409 (decision 1 + #154)", async () => {
     const response = await POST(holdRequest({ hold: true }), routeParams());
 
     expect(response.status).toBe(200);
-    // The whole point of decision 1: setting is allowed over conflicts. The
-    // route must never consult the capacity engine.
+    // The whole point of decision 1: setting is allowed over conflicts, never
+    // refused. The route runs no bed-arithmetic capacity engine...
     expect(mocks.checkCapacityForGuestRanges).not.toHaveBeenCalled();
-    expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalled();
+    // ...but ADR-001's Security/safety section (issue #154) requires the flag
+    // write to be lock-serialised: the per-lodge capacity lock IS acquired, in
+    // the same transaction, for the booking's lodge. Taking the lock serialises
+    // against a concurrent admission; it does NOT refuse the set.
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(
+      mocks.tx,
+      "lodge-1",
+    );
     expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("lock-serialises the hold set: lock acquired BEFORE the conflict read, on the same tx client as the read and write (issue #154)", async () => {
+    // Race-shaped regression coverage the epic promised (ADR-001 Security/
+    // safety): a hold set and a concurrent admission must resolve
+    // deterministically under the per-lodge capacity lock. We cannot exercise a
+    // second connection in a mocked route, so we prove serialisation at the mock
+    // level — the lock is acquired first, and the conflict read + flag write run
+    // on the SAME transaction client the lock was taken on (so any admission
+    // contending for that lodge blocks until this transaction commits).
+    const conflicts = [{ id: "booking-2", status: "CONFIRMED" }];
+    mocks.findOverlappingCapacityHoldingBookings.mockResolvedValue(conflicts);
+
+    const response = await POST(holdRequest({ hold: true }), routeParams());
+    expect(response.status).toBe(200);
+
+    // Same tx client threaded through lock, conflict read, and flag write.
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(
+      mocks.tx,
+      "lodge-1",
+    );
+    expect(mocks.findOverlappingCapacityHoldingBookings).toHaveBeenCalledWith(
+      mocks.tx,
+      expect.objectContaining({ lodgeId: "lodge-1", excludeBookingId: "booking-1" }),
+    );
+    expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+
+    // Ordering: the lock is acquired strictly before the conflict read (and
+    // therefore before the flag write). invocationCallOrder is a monotonic
+    // global counter across all mocks, so this proves the lock came first.
+    const lockOrder =
+      mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0];
+    const conflictReadOrder =
+      mocks.findOverlappingCapacityHoldingBookings.mock.invocationCallOrder[0];
+    const writeOrder = mocks.tx.booking.update.mock.invocationCallOrder[0];
+    expect(lockOrder).toBeLessThan(conflictReadOrder);
+    expect(lockOrder).toBeLessThan(writeOrder);
   });
 
   it("surfaces overlapping conflicts on set without refusing (issue #119): still 200, conflicts returned", async () => {
