@@ -841,6 +841,14 @@ effective-dated amounts and family billing members under
 `/admin/fee-configuration`. Hut fees remain lodge season/rate configuration.
 See `docs/AUTHORITATIVE_FEES.md` for operator and compatibility rules.
 
+Each of the three `/admin/fee-configuration` sections (annual membership fees,
+entrance fees, family billing members) loads read-only. Use the section's Edit
+button to expose its form and per-row controls; changes are staged locally and
+only written when you commit that section (Add/Update fee, or Save billing
+members). Leaving a section without committing (Close section on the fee
+sections, Cancel on family billing) discards staged changes without an API
+call, and finance view-only users see the saved values with no Edit buttons.
+
 The finance dashboard reads its revenue, cost, and balance figures from the
 single operational Xero connection configured above. There are no separate
 finance Xero credentials. The finance report sync requires these granular Xero
