@@ -1,4 +1,5 @@
 import {
+  CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   DEFAULT_MODULE_SETTINGS,
   MODULE_KEYS,
   getEffectiveModuleFlags,
@@ -23,6 +24,7 @@ interface ClubModuleSettingsClient {
   clubModuleSettings?: {
     findUnique: (args: {
       where: { id: string };
+      select?: Record<string, boolean>;
     }) => Promise<Parameters<typeof normalizeClubModuleSettings>[0]>;
   };
 }
@@ -49,6 +51,7 @@ export async function loadAdminModuleSettings(
   try {
     const record = await db.clubModuleSettings.findUnique({
       where: { id: CLUB_MODULE_SETTINGS_ID },
+      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     });
 
     return normalizeClubModuleSettings(record);

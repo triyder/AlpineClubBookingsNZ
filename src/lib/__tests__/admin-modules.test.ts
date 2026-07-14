@@ -5,7 +5,10 @@ import {
   loadAdminModuleSettings,
   normalizeAdminModuleSettings,
 } from "@/lib/admin-modules";
-import { DEFAULT_MODULE_SETTINGS } from "@/config/modules";
+import {
+  CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+  DEFAULT_MODULE_SETTINGS,
+} from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 
 const allCapabilitiesOn = Object.fromEntries(
@@ -69,8 +72,12 @@ describe("Admin Modules effective state", () => {
       bedAllocation: true,
       internetBankingPayments: true,
     });
+    // The read uses an explicit column select (derived from MODULE_KEYS) so the
+    // generated SQL never names a retired column like the former multiLodge flag,
+    // keeping a future DROP (#139) blue/green-safe from this release on.
     expect(findUnique).toHaveBeenCalledWith({
       where: { id: "default" },
+      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     });
   });
 
