@@ -85,7 +85,9 @@ export async function fetchWhakapapaCurlData(): Promise<WhakapapaCurlData> {
 
   const roadStatus: WhakapapaRoadStatus = {
     name: normalizeText(
-      document.querySelector("div.areaTitle_3oPk4X")?.textContent,
+      document
+        .querySelector("div.areaTitle_3oPk4X")
+        ?.textContent?.split(":")[0],
     ),
     status: normalizeText(
       document.querySelector("span.open_3oPk4X, span.closed_3oPk4X")

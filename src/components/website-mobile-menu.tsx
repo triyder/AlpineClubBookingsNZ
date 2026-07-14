@@ -32,6 +32,9 @@ export function WebsiteMobileMenu({
   const pathname = usePathname();
   const detailsRef = useRef<HTMLDetailsElement>(null);
 
+  const isActiveLink = (href: string) =>
+    href === "/" ? pathname === "/" : pathname === href;
+
   const closeMenu = useCallback(() => {
     if (detailsRef.current) {
       detailsRef.current.open = false;
@@ -59,13 +62,17 @@ export function WebsiteMobileMenu({
             textClassName="text-brand-snow"
           />
         </div>
-        <nav aria-label="Website menu" className="flex max-h-72 flex-col gap-1 overflow-y-auto">
+        <nav
+          aria-label="Website menu"
+          className="flex max-h-72 flex-col gap-1 overflow-y-auto"
+        >
           {navLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}
               onClick={closeMenu}
-              className="rounded-md px-3 py-2.5 text-sm font-medium text-brand-snow/85 transition-colors hover:bg-brand-snow/10 hover:text-brand-snow"
+              aria-current={isActiveLink(link.href) ? "page" : undefined}
+              className="rounded-md px-3 py-2.5 text-sm font-medium text-brand-snow/85 transition-colors hover:bg-brand-snow/10 hover:text-brand-snow aria-[current=page]:bg-brand-snow/15 aria-[current=page]:font-semibold aria-[current=page]:text-brand-snow"
             >
               {link.label}
             </Link>
