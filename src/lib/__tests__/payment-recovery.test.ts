@@ -157,6 +157,7 @@ import {
   bookingModificationRefundReasonForKeyPrefix,
   enqueueBookingCancellationRefundRecovery,
   enqueueBookingModificationRefundRecovery,
+  enqueueCapacityClaimFailedRefundRecovery,
   enqueueGroupSettlementRefundRecovery,
   enqueueRefundRequestRefundRecovery,
   processPaymentRecoveryOperations,
@@ -1251,6 +1252,90 @@ describe("payment recovery worker", () => {
         update: expect.objectContaining({
           amountCents: 4000,
           allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+        }),
+      }),
+    );
+  });
+
+  it("enqueueCapacityClaimFailedRefundRecovery persists the claim-frozen plan and the inline capacity_claim_failed Stripe key prefix", async () => {
+    await enqueueCapacityClaimFailedRefundRecovery({
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      paymentIntentId: "pi_original",
+      amountCents: 10000,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 10000 }],
+    });
+
+    expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          idempotencyKey:
+            "capacity_claim_failed_refund_recovery_booking-1_pi_original",
+        },
+        create: expect.objectContaining({
+          type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+          status: PaymentRecoveryOperationStatus.PENDING,
+          bookingId: "booking-1",
+          paymentId: "payment-1",
+          amountCents: 10000,
+          stripeKeyPrefix: "capacity_claim_failed_booking-1_pi_original",
+          allocationPlan: [
+            { paymentTransactionId: "txn-1", amountCents: 10000 },
+          ],
+        }),
+        update: expect.objectContaining({
+          amountCents: 10000,
+          stripeKeyPrefix: "capacity_claim_failed_booking-1_pi_original",
+          allocationPlan: [
+            { paymentTransactionId: "txn-1", amountCents: 10000 },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("replays a capacity-race refund recovery under the stored inline Stripe key prefix with the reconstructed inline metadata", async () => {
+    const capacityOp = makeOperation({
+      id: "recovery-capacity",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 10000,
+      idempotencyKey:
+        "capacity_claim_failed_refund_recovery_booking-1_pi_original",
+      stripeKeyPrefix: "capacity_claim_failed_booking-1_pi_original",
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 10000 }],
+      paymentTransactionId: null,
+      paymentIntentId: "pi_original",
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(capacityOp);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...capacityOp, status: "PENDING" }]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    // The replay executes the FROZEN slices under the inline
+    // `capacity_claim_failed_<bookingId>_<pi>` prefix with the byte-identical
+    // metadata the inline path sent — Stripe answers a refund that already
+    // succeeded with the original refund instead of idempotency_error, and
+    // the ledger dedupes on refund id (never a double refund).
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith({
+      paymentId: "payment-1",
+      amountCents: 10000,
+      allocation: [{ paymentTransactionId: "txn-1", amountCents: 10000 }],
+      metadata: { bookingId: "booking-1", reason: "capacity_claim_failed" },
+      idempotencyKeyPrefix: "capacity_claim_failed_booking-1_pi_original",
+    });
+    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "recovery-capacity" },
+        data: expect.objectContaining({
+          status: PaymentRecoveryOperationStatus.SUCCEEDED,
         }),
       }),
     );

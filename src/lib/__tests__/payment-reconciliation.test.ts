@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => ({
   upsertPaymentIntentTransaction: vi.fn(),
   findPaymentTransactionByIntentId: vi.fn(),
   refundPaymentTransactions: vi.fn(),
+  planStripeRefundAllocation: vi.fn(),
+  enqueueCapacityClaimFailedRefundRecovery: vi.fn(),
+  markCapacityClaimFailedRefundRecoverySucceeded: vi.fn(),
+  recordCapacityClaimFailedRefundRecoveryInlineError: vi.fn(),
   restoreCreditFromBooking: vi.fn(),
   deriveBookingAppliedCreditCents: vi.fn(),
   sendAdminPaymentFailureAlert: vi.fn(),
@@ -32,6 +36,17 @@ vi.mock("@/lib/payment-transactions", () => ({
     mocks.findPaymentTransactionByIntentId(...args),
   refundPaymentTransactions: (...args: unknown[]) =>
     mocks.refundPaymentTransactions(...args),
+  planStripeRefundAllocation: (...args: unknown[]) =>
+    mocks.planStripeRefundAllocation(...args),
+}));
+
+vi.mock("@/lib/payment-recovery", () => ({
+  enqueueCapacityClaimFailedRefundRecovery: (...args: unknown[]) =>
+    mocks.enqueueCapacityClaimFailedRefundRecovery(...args),
+  markCapacityClaimFailedRefundRecoverySucceeded: (...args: unknown[]) =>
+    mocks.markCapacityClaimFailedRefundRecoverySucceeded(...args),
+  recordCapacityClaimFailedRefundRecoveryInlineError: (...args: unknown[]) =>
+    mocks.recordCapacityClaimFailedRefundRecoveryInlineError(...args),
 }));
 
 vi.mock("@/lib/member-credit", () => ({
@@ -127,7 +142,22 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
     mocks.restoreCreditFromBooking.mockResolvedValue(undefined);
     mocks.deriveBookingAppliedCreditCents.mockResolvedValue(0);
-    mocks.refundPaymentTransactions.mockResolvedValue({});
+    mocks.sendAdminPaymentFailureAlert.mockResolvedValue(undefined);
+    mocks.refundPaymentTransactions.mockResolvedValue({ refunds: [] });
+    mocks.planStripeRefundAllocation.mockResolvedValue({
+      slices: [{ paymentTransactionId: "txn-1", amountCents: 10000 }],
+      plannedAmountCents: 10000,
+      totalRefundableCents: 10000,
+    });
+    mocks.enqueueCapacityClaimFailedRefundRecovery.mockResolvedValue({
+      id: "recovery-op-1",
+    });
+    mocks.markCapacityClaimFailedRefundRecoverySucceeded.mockResolvedValue({
+      count: 1,
+    });
+    mocks.recordCapacityClaimFailedRefundRecoveryInlineError.mockResolvedValue({
+      count: 1,
+    });
   });
 
   it("pays a staggered booking when only one bed is available on each active guest night", async () => {
@@ -420,6 +450,156 @@ describe("markBookingPaymentSucceeded", () => {
       "booking-1",
       expect.anything()
     );
+  });
+
+  // Capacity-race auto-refund durability: when two members race for the last
+  // beds and the loser's payment_intent.succeeded lands after the winner
+  // claimed capacity, the loser's booking is cancelled inside the claim
+  // transaction and auto-refunded inline. That inline Stripe refund is the
+  // member's whole charge — a transient failure (Stripe 5xx / network) must
+  // leave a durable, cron-replayable recovery operation (the #1349
+  // enqueue-then-execute pattern), not just an admin alert email.
+  describe("capacity-race auto-refund durable recovery", () => {
+    function primeCapacityRaceLoss() {
+      mocks.bookingFindUnique.mockResolvedValue({
+        id: "booking-1",
+        memberId: "member-1",
+        status: BookingStatus.PAYMENT_PENDING,
+        checkIn: parseDateOnly("2026-04-10"),
+        checkOut: parseDateOnly("2026-04-12"),
+        finalPriceCents: 10000,
+        guests: [
+          {
+            id: "guest-1",
+            isMember: true,
+            stayStart: parseDateOnly("2026-04-10"),
+            stayEnd: parseDateOnly("2026-04-12"),
+          },
+        ],
+        member: {
+          firstName: "Alice",
+          lastName: "Member",
+          email: "alice@example.com",
+        },
+      });
+      // The winner already committed every bed.
+      mocks.bookingFindMany.mockResolvedValue([
+        {
+          id: "winner-booking",
+          status: BookingStatus.PAID,
+          checkIn: parseDateOnly("2026-04-10"),
+          checkOut: parseDateOnly("2026-04-12"),
+          guests: Array.from({ length: LODGE_CAPACITY }, (_, index) => ({
+            id: `winner-${index}`,
+            stayStart: parseDateOnly("2026-04-10"),
+            stayEnd: parseDateOnly("2026-04-12"),
+          })),
+        },
+      ]);
+    }
+
+    it("enqueues a durable refund-recovery op with the claim-frozen plan inside the cancel transaction, so a transient inline refund failure is replayed by the cron instead of stranding the charge", async () => {
+      primeCapacityRaceLoss();
+      mocks.refundPaymentTransactions.mockRejectedValue(
+        new Error("Stripe is unavailable (503)")
+      );
+
+      const result = await markBookingPaymentSucceeded({
+        bookingId: "booking-1",
+        paymentIntentId: "pi_race",
+        amountCents: 10000,
+        paymentMethodId: "pm_123",
+      });
+
+      expect(result.outcome).toBe("cancelled_refund_failed");
+      expect(result.refundError).toContain("503");
+
+      // The durable debt was persisted with the transaction client (atomic
+      // with the CANCELLED flip) BEFORE the Stripe call, carrying the frozen
+      // allocation plan and the capacity_claim_failed_<bookingId>_<pi> Stripe
+      // key identity via bookingId + paymentIntentId.
+      expect(
+        mocks.enqueueCapacityClaimFailedRefundRecovery
+      ).toHaveBeenCalledTimes(1);
+      expect(mocks.enqueueCapacityClaimFailedRefundRecovery).toHaveBeenCalledWith(
+        {
+          bookingId: "booking-1",
+          paymentId: "payment-1",
+          paymentIntentId: "pi_race",
+          amountCents: 10000,
+          allocationPlan: [
+            { paymentTransactionId: "txn-1", amountCents: 10000 },
+          ],
+          store: tx,
+        }
+      );
+      // The plan was frozen from the same locked transaction read.
+      expect(mocks.planStripeRefundAllocation).toHaveBeenCalledWith({
+        paymentId: "payment-1",
+        amountCents: 10000,
+        store: tx,
+      });
+
+      // Failure path: the operation stays PENDING for the cron (never marked
+      // succeeded), the inline error is recorded on it for operator
+      // visibility, and the existing admin alert still goes out.
+      expect(
+        mocks.markCapacityClaimFailedRefundRecoverySucceeded
+      ).not.toHaveBeenCalled();
+      expect(
+        mocks.recordCapacityClaimFailedRefundRecoveryInlineError
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookingId: "booking-1",
+          paymentIntentId: "pi_race",
+          message: expect.stringContaining("503"),
+        })
+      );
+      expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalled();
+    });
+
+    it("executes the inline refund from the frozen plan under the shared capacity_claim_failed Stripe key prefix and closes the pre-persisted operation on success", async () => {
+      primeCapacityRaceLoss();
+
+      const result = await markBookingPaymentSucceeded({
+        bookingId: "booking-1",
+        paymentIntentId: "pi_race",
+        amountCents: 10000,
+        paymentMethodId: "pm_123",
+      });
+
+      expect(result.outcome).toBe("cancelled_refunded");
+      // The durable backstop is enqueued unconditionally, before the refund.
+      expect(
+        mocks.enqueueCapacityClaimFailedRefundRecovery
+      ).toHaveBeenCalledTimes(1);
+      // The inline refund replays the frozen slices under the same
+      // `capacity_claim_failed_<bookingId>_<paymentIntentId>` prefix the cron
+      // reconstructs from the persisted operation, with the shared
+      // cron-reconstructible metadata shape — so an ambiguous failure
+      // (refunded on Stripe, response lost) is replayed, never repeated.
+      expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith({
+        paymentId: "payment-1",
+        amountCents: 10000,
+        reason: "requested_by_customer",
+        allocation: [{ paymentTransactionId: "txn-1", amountCents: 10000 }],
+        metadata: { bookingId: "booking-1", reason: "capacity_claim_failed" },
+        idempotencyKeyPrefix: "capacity_claim_failed_booking-1_pi_race",
+      });
+      // Happy-path close of the pre-persisted operation.
+      expect(
+        mocks.markCapacityClaimFailedRefundRecoverySucceeded
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookingId: "booking-1",
+          paymentIntentId: "pi_race",
+        })
+      );
+      expect(
+        mocks.recordCapacityClaimFailedRefundRecoveryInlineError
+      ).not.toHaveBeenCalled();
+      expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    });
   });
 
   // #1771 — a booking deliberately admitted above the ceiling by an admin
