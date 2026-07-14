@@ -42,6 +42,9 @@ export const ALLOWED_IMAGE_EXTS = new Set([
 // Returns null if the path would escape the images root (path traversal).
 export function resolveInImagesRoot(rel: string): string | null {
   const normalized = path.normalize(rel);
+  // This function IS the path-traversal containment check: it resolves under a
+  // trusted constant root and returns null (below) for anything that escapes.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const resolved = path.resolve(IMAGES_ROOT, normalized);
   if (
     resolved !== IMAGES_ROOT &&

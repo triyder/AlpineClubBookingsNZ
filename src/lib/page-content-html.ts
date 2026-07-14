@@ -4,13 +4,18 @@ import sanitizeHtml from "sanitize-html";
 import { prisma } from "@/lib/prisma";
 import type { EditablePageRecord } from "@/lib/page-content";
 
+// Hardcoded literal regexes (not a dynamic `new RegExp`) so the pattern can
+// never be shaped by input and there is no non-literal-RegExp/ReDoS surface.
+const PIXEL_DIMENSION_PATTERNS = {
+  width: /width\s*:\s*(\d+)(?:px)?\b/i,
+  height: /height\s*:\s*(\d+)(?:px)?\b/i,
+} as const;
+
 function extractPixelDimension(
   style: string,
   property: "width" | "height",
 ): string | null {
-  const match = style.match(
-    new RegExp(`${property}\\s*:\\s*(\\d+)(?:px)?\\b`, "i"),
-  );
+  const match = style.match(PIXEL_DIMENSION_PATTERNS[property]);
   return match?.[1] ?? null;
 }
 

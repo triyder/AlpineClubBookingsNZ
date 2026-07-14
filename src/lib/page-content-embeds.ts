@@ -299,6 +299,9 @@ async function listPhotoGalleryImagesFromDirectory(
 
   const images = await Promise.all(
     files.map(async (entry) => {
+      // absDir is resolveInImagesRoot-contained; entry.name comes from readdir
+      // of that directory (filtered to allowed image extensions), not input.
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const filePath = path.join(absDir, entry.name);
       const bytes = await fs.readFile(filePath);
       const ext = path.extname(entry.name).toLowerCase();

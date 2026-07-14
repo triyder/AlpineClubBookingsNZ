@@ -59,6 +59,8 @@ function hasAdminGuard(contents: string) {
   return (
     /\brequireAdmin\s*\(/.test(contents) ||
     Object.keys(sharedAdminGuardWrappers).some((wrapper) =>
+      // Test helper: wrapper comes from Object.keys of an internal constant map, not user input.
+      // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
       new RegExp(`\\b${wrapper}\\s*\\(`).test(contents),
     )
   );
