@@ -232,6 +232,22 @@ export async function buildSubscriptionBillingPreview(input: {
   const fallbackTypeByKey = new Map(fallbackTypes.map((type) => [type.key, type]));
 
   const coveredSet = new Set(alreadyCovered.map((row) => row.memberId));
+  // The effective fee depends only on the membership type and the decision
+  // date, and the decision date is fixed for the whole preview, so memoize
+  // per membership type instead of querying once per member (#1886).
+  const feeByMembershipTypeId = new Map<
+    string,
+    Awaited<ReturnType<typeof getEffectiveMembershipAnnualFee>>
+  >();
+  const getMemoizedFee = async (membershipTypeId: string) => {
+    if (!feeByMembershipTypeId.has(membershipTypeId)) {
+      feeByMembershipTypeId.set(
+        membershipTypeId,
+        await getEffectiveMembershipAnnualFee(membershipTypeId, decisionDate, db),
+      );
+    }
+    return feeByMembershipTypeId.get(membershipTypeId) ?? null;
+  };
   const billedFamilyTypes = new Map(existingFamilyCharges.map((charge) => [
     `${input.seasonYear}:${charge.membershipTypeId}:family:${charge.familyGroupId}`,
     charge.id,
@@ -257,7 +273,7 @@ export async function buildSubscriptionBillingPreview(input: {
       continue;
     }
     if (membershipType.subscriptionBehavior === "NOT_REQUIRED") continue;
-    const fee = await getEffectiveMembershipAnnualFee(membershipType.id, decisionDate, db);
+    const fee = await getMemoizedFee(membershipType.id);
     if (!fee) {
       exceptions.push(exception({
         code: "MISSING_FEE_SCHEDULE",
@@ -578,6 +594,12 @@ export async function confirmSubscriptionBillingPreview(input: {
         }),
       }, tx);
     }
+  }, {
+    // A whole-club annual run touches every member sequentially; Prisma's
+    // default 5s interactive-transaction budget aborts it with P2028 for
+    // clubs of a few hundred members. Match the 60s whole-run batch
+    // precedent in config-transfer/apply (#1886, F12).
+    timeout: 60_000,
   });
   return { chargeIds: [...new Set(chargeIds)], exceptionCount: input.preview.exceptions.length };
 }
