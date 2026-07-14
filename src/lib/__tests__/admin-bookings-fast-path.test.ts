@@ -2,23 +2,29 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    booking: { findMany: vi.fn() },
+    booking: { findMany: vi.fn(), count: vi.fn() },
     xeroSyncOperation: { findMany: vi.fn() },
     xeroObjectLink: { findMany: vi.fn() },
   },
 }));
 
 import {
+  ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE,
+  ADMIN_BOOKINGS_PAGE_SIZE,
   adminBookingsQuerySchema,
   listAdminBookings,
 } from "@/lib/admin-bookings-service";
 import { prisma } from "@/lib/prisma";
+import { installAdminBookingsDbMock } from "./admin-bookings-db-mock";
 
 /**
- * The #1146 fast path: with the derived-state filters at their "all" defaults,
- * listAdminBookings must sort a lightweight projection first and load the
- * heavy relations for only the returned page — while producing exactly the
- * ordering the legacy full-scan comparator produces.
+ * The #1146 fast path, hardened by #1884: with the derived-state filters at
+ * their "all" defaults, listAdminBookings must not load every matching
+ * booking into memory. SQL-expressible sorts (checkIn / lastUpdated / total /
+ * guests) are pushed down as orderBy + skip/take; only the member-name and
+ * lifecycle-rank (status) sorts still use the JS comparator over a
+ * lightweight projection — and both paths must produce exactly the ordering
+ * the legacy full-scan comparator produced.
  */
 
 function makeGuests(count: number) {
@@ -63,38 +69,54 @@ function makeBooking(id: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("listAdminBookings fast path (#1146)", () => {
+function makePayment(id: string, source: "STRIPE" | "INTERNET_BANKING") {
+  return {
+    id,
+    source,
+    status: "SUCCEEDED",
+    xeroInvoiceId: null,
+    xeroInvoiceNumber: null,
+    refundedAmountCents: 0,
+  };
+}
+
+describe("listAdminBookings fast path (#1146, #1884)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.xeroSyncOperation.findMany).mockResolvedValue([]);
     vi.mocked(prisma.xeroObjectLink.findMany).mockResolvedValue([]);
   });
 
-  it("uses a lightweight select pass then loads relations for only the page", async () => {
+  it("pushes the default sort down to SQL and hydrates only the page (#1884)", async () => {
     const fixtures = [
       makeBooking("b1", { updatedAt: new Date("2026-06-03T00:00:00.000Z") }),
       makeBooking("b2", { updatedAt: new Date("2026-06-01T00:00:00.000Z") }),
       makeBooking("b3", { updatedAt: new Date("2026-06-02T00:00:00.000Z") }),
     ];
-    vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as never);
+    installAdminBookingsDbMock(fixtures);
 
     const result = await listAdminBookings(adminBookingsQuerySchema.parse({}));
 
     // Default sort is lastUpdated desc; ordering must match the legacy comparator.
     expect(result.bookings.map((b) => b.id)).toEqual(["b1", "b3", "b2"]);
     expect(result.total).toBe(3);
+    // The total comes from a SQL count, not from loading every row.
+    expect(vi.mocked(prisma.booking.count)).toHaveBeenCalledTimes(1);
 
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;
     expect(calls).toHaveLength(2);
-    // First pass: projection only, no relation includes.
+    // First pass: id-only page query — ordering and windowing happen in SQL.
     expect(calls[0][0]).not.toHaveProperty("include");
-    expect(calls[0][0]).toHaveProperty("select");
+    expect(calls[0][0]?.select).toEqual({ id: true });
+    expect(calls[0][0]?.orderBy).toEqual([{ updatedAt: "desc" }, { id: "asc" }]);
+    expect(calls[0][0]?.skip).toBe(0);
+    expect(calls[0][0]?.take).toBe(ADMIN_BOOKINGS_PAGE_SIZE);
     // Second pass: heavy include restricted to the page ids.
     expect(calls[1][0]).toHaveProperty("include");
     expect(calls[1][0]?.where).toEqual({ id: { in: ["b1", "b3", "b2"] } });
   });
 
-  it("orders every sort key identically on the fast and full comparators", async () => {
+  it("orders every sort key identically to the legacy comparator", async () => {
     const fixtures = [
       makeBooking("b1", {
         finalPriceCents: 300,
@@ -121,11 +143,10 @@ describe("listAdminBookings fast path (#1146)", () => {
         guests: makeGuests(1),
       }),
     ];
-    vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as never);
 
     const expectations: Array<[string, string, string[]]> = [
       // sortBy, sortDir, expected order (legacy comparator semantics)
-      ["member", "asc", ["b1", "b3", "b2"]], // "adams zoe" < "adams ben"? No: localeCompare("adams zoe","adams ben") — z > b, so b3 first.
+      ["member", "asc", ["b3", "b1", "b2"]], // "adams ben" < "adams zoe" < "baker amy"
       ["total", "desc", ["b1", "b3", "b2"]],
       ["guests", "asc", ["b3", "b1", "b2"]],
       ["checkIn", "asc", ["b2", "b3", "b1"]],
@@ -137,30 +158,125 @@ describe("listAdminBookings fast path (#1146)", () => {
 
     for (const [sortBy, sortDir, expected] of expectations) {
       vi.mocked(prisma.booking.findMany).mockClear();
-      vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as never);
+      vi.mocked(prisma.booking.count).mockClear();
+      installAdminBookingsDbMock(fixtures);
       const result = await listAdminBookings(
         adminBookingsQuerySchema.parse({ sortBy, sortDir })
       );
-      if (sortBy === "member") {
-        // Verified inline: "adams ben" < "adams zoe" per localeCompare.
-        expect(result.bookings.map((b) => b.id)).toEqual(["b3", "b1", "b2"]);
-      } else {
-        expect(result.bookings.map((b) => b.id)).toEqual(expected);
-      }
+      expect(result.bookings.map((b) => b.id)).toEqual(expected);
     }
   });
 
-  it("falls back to the full-scan path when a derived-state filter is active", async () => {
-    const fixtures = [makeBooking("b1")];
-    vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as never);
+  it("maps paymentSource=STRIPE onto the SQL where clause instead of a full scan (#1884)", async () => {
+    const fixtures = [
+      makeBooking("b-stripe", { payment: makePayment("payment-1", "STRIPE") }),
+      makeBooking("b-none"),
+    ];
+    installAdminBookingsDbMock(fixtures);
 
-    await listAdminBookings(
+    const result = await listAdminBookings(
       adminBookingsQuerySchema.parse({ paymentSource: "STRIPE" })
     );
 
+    expect(result.bookings.map((b) => b.id)).toEqual(["b-stripe"]);
+    expect(result.total).toBe(1);
+
+    // paymentSource is a real Payment column, so it must ride the fast SQL
+    // path: count + bounded id page, both filtered by the payment predicate.
+    const countArgs = vi.mocked(prisma.booking.count).mock.calls[0]?.[0];
+    expect(countArgs?.where?.payment).toEqual({ is: { source: "STRIPE" } });
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;
-    expect(calls).toHaveLength(1);
+    expect(calls[0][0]?.where?.payment).toEqual({ is: { source: "STRIPE" } });
+    expect(calls[0][0]).not.toHaveProperty("include");
+    expect(calls[0][0]?.take).toBe(ADMIN_BOOKINGS_PAGE_SIZE);
+  });
+
+  it("maps paymentSource=NONE onto a no-payment SQL predicate (#1884)", async () => {
+    const fixtures = [
+      makeBooking("b-none"),
+      makeBooking("b-stripe", { payment: makePayment("payment-1", "STRIPE") }),
+    ];
+    installAdminBookingsDbMock(fixtures);
+
+    const result = await listAdminBookings(
+      adminBookingsQuerySchema.parse({ paymentSource: "NONE" })
+    );
+
+    expect(result.bookings.map((b) => b.id)).toEqual(["b-none"]);
+    // Payment.source is a non-nullable enum, so "no source" ⇔ no payment row.
+    const countArgs = vi.mocked(prisma.booking.count).mock.calls[0]?.[0];
+    expect(countArgs?.where?.payment).toEqual({ is: null });
+    const calls = vi.mocked(prisma.booking.findMany).mock.calls;
+    expect(calls[0][0]?.where?.payment).toEqual({ is: null });
+    expect(calls[0][0]).not.toHaveProperty("include");
+    expect(calls[0][0]?.take).toBe(ADMIN_BOOKINGS_PAGE_SIZE);
+  });
+
+  it("bounds the candidate load when a genuinely derived filter is active (#1884)", async () => {
+    const fixtures = [makeBooking("b1")];
+    installAdminBookingsDbMock(fixtures);
+
+    await listAdminBookings(
+      adminBookingsQuerySchema.parse({ xeroState: "invoiceMissing" })
+    );
+
+    const calls = vi.mocked(prisma.booking.findMany).mock.calls;
+    // Chunked candidate scan (bounded take, stable id order) + page hydration.
+    expect(calls).toHaveLength(2);
     expect(calls[0][0]).toHaveProperty("include");
+    expect(calls[0][0]?.take).toBe(ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE);
+    expect(calls[0][0]?.orderBy).toEqual({ id: "asc" });
+    expect(calls[1][0]).toHaveProperty("include");
+    expect(calls[1][0]?.where).toEqual({ id: { in: [] } });
+  });
+
+  it("scans derived-filter candidates in id-ordered chunks and keeps exact totals (#1884)", async () => {
+    const total = ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE + 1;
+    const dayMs = 24 * 60 * 60 * 1000;
+    const fixtures = Array.from({ length: total }, (_, i) =>
+      makeBooking(`b${String(i).padStart(4, "0")}`, {
+        checkIn: new Date(Date.UTC(2026, 0, 1) + i * dayMs),
+        checkOut: new Date(Date.UTC(2026, 0, 3) + i * dayMs),
+        modifications: [
+          {
+            id: `mod-${i}`,
+            modificationType: "DATES",
+            priceDiffCents: 0,
+            createdAt: new Date("2026-06-01T00:00:00.000Z"),
+            creditsFromModification: [],
+          },
+        ],
+      })
+    );
+    installAdminBookingsDbMock(fixtures);
+
+    const result = await listAdminBookings(
+      adminBookingsQuerySchema.parse({
+        changeState: "hasModification",
+        sortBy: "checkIn",
+        sortDir: "asc",
+      })
+    );
+
+    // Exact totals and page contents are preserved — no truncation.
+    expect(result.total).toBe(total);
+    expect(result.totalPages).toBe(6);
+    expect(result.bookings).toHaveLength(ADMIN_BOOKINGS_PAGE_SIZE);
+    expect(result.bookings[0].id).toBe("b0000");
+    expect(result.bookings.at(-1)?.id).toBe("b0099");
+
+    const calls = vi.mocked(prisma.booking.findMany).mock.calls;
+    // Two bounded scan chunks (500 + 1) then one page hydration.
+    expect(calls).toHaveLength(3);
+    expect(calls[0][0]?.take).toBe(ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE);
+    expect(calls[0][0]?.orderBy).toEqual({ id: "asc" });
+    expect(calls[0][0]?.cursor).toBeUndefined();
+    expect(calls[1][0]?.take).toBe(ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE);
+    expect(calls[1][0]?.cursor).toEqual({ id: "b0499" });
+    expect(calls[1][0]?.skip).toBe(1);
+    expect(calls[2][0]?.where).toEqual({
+      id: { in: result.bookings.map((b) => b.id) },
+    });
   });
 
   it("sorts the status column by lifecycle order, not alphabetically (#1215)", async () => {
@@ -191,8 +307,8 @@ describe("listAdminBookings fast path (#1146)", () => {
 
   it("orders the status column identically on the fast and full paths (#1215)", async () => {
     // Zero-guest fixtures keep every row's derived bedState "complete", so the
-    // bedState:"complete" filter forces the full-scan path yet drops no rows —
-    // letting us compare the sortRowValue (fast) and sortValue (full)
+    // bedState:"complete" filter forces the derived-filter path yet drops no
+    // rows — letting us compare the sortRowValue (fast) and sortValue (full)
     // comparators on the same set for sortBy:"status".
     const makeFixtures = () => [
       makeBooking("b-confirmed", { status: "CONFIRMED" }),
@@ -209,14 +325,15 @@ describe("listAdminBookings fast path (#1146)", () => {
     expect(vi.mocked(prisma.booking.findMany).mock.calls).toHaveLength(2);
 
     vi.mocked(prisma.booking.findMany).mockClear();
-    vi.mocked(prisma.booking.findMany).mockResolvedValue(makeFixtures() as never);
+    installAdminBookingsDbMock(makeFixtures());
     const fullResult = await listAdminBookings(
       adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc", bedState: "complete" })
     );
-    // Full path: single scan with heavy relation include.
+    // Derived path: one bounded scan chunk + one page hydration.
     const fullCalls = vi.mocked(prisma.booking.findMany).mock.calls;
-    expect(fullCalls).toHaveLength(1);
+    expect(fullCalls).toHaveLength(2);
     expect(fullCalls[0][0]).toHaveProperty("include");
+    expect(fullCalls[0][0]?.take).toBe(ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE);
 
     const fastOrder = fastResult.bookings.map((b) => b.id);
     const fullOrder = fullResult.bookings.map((b) => b.id);

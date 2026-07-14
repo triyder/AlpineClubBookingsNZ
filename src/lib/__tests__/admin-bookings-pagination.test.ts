@@ -2,19 +2,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    booking: { findMany: vi.fn() },
+    booking: { findMany: vi.fn(), count: vi.fn() },
     xeroSyncOperation: { findMany: vi.fn() },
     xeroObjectLink: { findMany: vi.fn() },
   },
 }));
 
 import {
+  ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE,
   ADMIN_BOOKINGS_PAGE_SIZE,
   adminBookingsQuerySchema,
   listAdminBookings,
 } from "@/lib/admin-bookings-service";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
+import { installAdminBookingsDbMock } from "./admin-bookings-db-mock";
 
 // Distinct ascending check-in dates (relative to NZ today) so `sortBy:checkIn
 // asc` orders the fixtures b0, b1, ... deterministically and we know exactly
@@ -62,7 +64,7 @@ describe("listAdminBookings pagination (#1738)", () => {
 
   it("fast path: returns the first page and page metadata by default", async () => {
     const fixtures = Array.from({ length: TOTAL }, (_, i) => makeBooking(i));
-    vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as never);
+    installAdminBookingsDbMock(fixtures);
 
     const result = await listAdminBookings(
       adminBookingsQuerySchema.parse({ sortBy: "checkIn", sortDir: "asc" })
@@ -77,9 +79,9 @@ describe("listAdminBookings pagination (#1738)", () => {
     expect(result.bookings.at(-1)?.id).toBe(`b${ADMIN_BOOKINGS_PAGE_SIZE - 1}`);
   });
 
-  it("fast path: windows to the requested page", async () => {
+  it("fast path: windows to the requested page in SQL (#1884)", async () => {
     const fixtures = Array.from({ length: TOTAL }, (_, i) => makeBooking(i));
-    vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as never);
+    installAdminBookingsDbMock(fixtures);
 
     const result = await listAdminBookings(
       adminBookingsQuerySchema.parse({ sortBy: "checkIn", sortDir: "asc", page: "2" })
@@ -91,15 +93,19 @@ describe("listAdminBookings pagination (#1738)", () => {
     // Only the 101st booking spills onto page 2.
     expect(result.bookings.map((b) => b.id)).toEqual([`b${ADMIN_BOOKINGS_PAGE_SIZE}`]);
 
-    // The heavy relation load is restricted to just the page's id.
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;
     expect(calls).toHaveLength(2);
+    // The page window is applied in SQL (#1884), not by slicing a full load.
+    expect(calls[0][0]?.orderBy).toEqual([{ checkIn: "asc" }, { id: "asc" }]);
+    expect(calls[0][0]?.skip).toBe(ADMIN_BOOKINGS_PAGE_SIZE);
+    expect(calls[0][0]?.take).toBe(ADMIN_BOOKINGS_PAGE_SIZE);
+    // The heavy relation load is restricted to just the page's id.
     expect(calls[1][0]?.where).toEqual({ id: { in: [`b${ADMIN_BOOKINGS_PAGE_SIZE}`] } });
   });
 
   it("fast path: clamps an out-of-range page to the last non-empty page", async () => {
     const fixtures = Array.from({ length: TOTAL }, (_, i) => makeBooking(i));
-    vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as never);
+    installAdminBookingsDbMock(fixtures);
 
     const result = await listAdminBookings(
       adminBookingsQuerySchema.parse({ sortBy: "checkIn", sortDir: "asc", page: "99" })
@@ -111,10 +117,37 @@ describe("listAdminBookings pagination (#1738)", () => {
   });
 
   it("filtered path: windows the derived-filter result set to the requested page", async () => {
-    // paymentSource:NONE forces the full-scan path; every fixture has no
-    // payment, so all 101 survive the filter and get windowed in JS.
+    // bedState:"complete" forces the derived-filter path; every zero-guest
+    // fixture derives bedState "complete", so all 101 survive the filter and
+    // get windowed in JS after the bounded chunk scan.
     const fixtures = Array.from({ length: TOTAL }, (_, i) => makeBooking(i));
-    vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as never);
+    installAdminBookingsDbMock(fixtures);
+
+    const result = await listAdminBookings(
+      adminBookingsQuerySchema.parse({
+        sortBy: "checkIn",
+        sortDir: "asc",
+        bedState: "complete",
+        page: "2",
+      })
+    );
+
+    // One bounded scan chunk (101 < chunk size) + one page hydration (#1884).
+    const calls = vi.mocked(prisma.booking.findMany).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][0]).toHaveProperty("include");
+    expect(calls[0][0]?.take).toBe(ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE);
+    expect(result.page).toBe(2);
+    expect(result.totalPages).toBe(2);
+    expect(result.total).toBe(TOTAL);
+    expect(result.bookings.map((b) => b.id)).toEqual([`b${ADMIN_BOOKINGS_PAGE_SIZE}`]);
+  });
+
+  it("paymentSource=NONE pages in SQL instead of the derived-filter scan (#1884)", async () => {
+    // Every fixture has no payment row, so the SQL no-payment predicate keeps
+    // all 101 and pagination behaves exactly as the unfiltered fast path.
+    const fixtures = Array.from({ length: TOTAL }, (_, i) => makeBooking(i));
+    installAdminBookingsDbMock(fixtures);
 
     const result = await listAdminBookings(
       adminBookingsQuerySchema.parse({
@@ -125,8 +158,11 @@ describe("listAdminBookings pagination (#1738)", () => {
       })
     );
 
-    // Single scan (no fast-path projection pass).
-    expect(vi.mocked(prisma.booking.findMany).mock.calls).toHaveLength(1);
+    const calls = vi.mocked(prisma.booking.findMany).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][0]).not.toHaveProperty("include");
+    expect(calls[0][0]?.where?.payment).toEqual({ is: null });
+    expect(calls[0][0]?.take).toBe(ADMIN_BOOKINGS_PAGE_SIZE);
     expect(result.page).toBe(2);
     expect(result.totalPages).toBe(2);
     expect(result.total).toBe(TOTAL);

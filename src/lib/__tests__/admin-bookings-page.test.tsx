@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    booking: { findMany: vi.fn() },
+    booking: { findMany: vi.fn(), count: vi.fn() },
     xeroSyncOperation: { findMany: vi.fn() },
     xeroObjectLink: { findMany: vi.fn() },
     // Multi-lodge phase 8: the page loads active lodges for the lodge
@@ -59,6 +59,7 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
+import { installAdminBookingsDbMock } from "./admin-bookings-db-mock";
 
 const effectiveModulesOn = {
   kiosk: true,
@@ -89,6 +90,7 @@ describe("AdminBookingsPage", () => {
     vi.clearAllMocks();
     vi.mocked(loadEffectiveModuleFlags).mockResolvedValue(effectiveModulesOn);
     vi.mocked(prisma.booking.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.booking.count).mockResolvedValue(0);
     vi.mocked(prisma.xeroSyncOperation.findMany).mockResolvedValue([]);
     vi.mocked(prisma.xeroObjectLink.findMany).mockResolvedValue([]);
     vi.mocked(auth).mockResolvedValue({
@@ -381,7 +383,9 @@ describe("AdminBookingsPage", () => {
   });
 
   it("filters bookings by no-payment source", async () => {
-    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+    // paymentSource maps to a SQL predicate (#1884), so the mock must apply
+    // the where.payment filter like the database would.
+    installAdminBookingsDbMock([
       makeBooking({ id: "booking-none", payment: null }),
       makeBooking({
         id: "booking-stripe",
@@ -394,7 +398,7 @@ describe("AdminBookingsPage", () => {
           refundedAmountCents: 0,
         },
       }),
-    ] as any);
+    ]);
 
     const result = await listAdminBookings(
       adminBookingsQuerySchema.parse({ paymentSource: "NONE" })
@@ -557,10 +561,10 @@ describe("AdminBookingsPage", () => {
   });
 
   it("does not render pagination controls when everything fits on one page", async () => {
-    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+    installAdminBookingsDbMock([
       makeBooking({ id: "booking-1" }),
       makeBooking({ id: "booking-2" }),
-    ] as any);
+    ]);
 
     const element = await AdminBookingsPage({
       searchParams: Promise.resolve({}),
@@ -574,7 +578,7 @@ describe("AdminBookingsPage", () => {
     const fixtures = Array.from({ length: 101 }, (_, i) =>
       makeBooking({ id: `b${String(i).padStart(3, "0")}` })
     );
-    vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as any);
+    installAdminBookingsDbMock(fixtures);
 
     const element = await AdminBookingsPage({
       searchParams: Promise.resolve({ page: "2" }),
@@ -594,7 +598,7 @@ describe("AdminBookingsPage", () => {
     const fixtures = Array.from({ length: 101 }, (_, i) =>
       makeBooking({ id: `b${String(i).padStart(3, "0")}` })
     );
-    vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as any);
+    installAdminBookingsDbMock(fixtures);
 
     const element = await AdminBookingsPage({
       searchParams: Promise.resolve({ page: "99" }),
