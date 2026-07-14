@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
-import { findOverlappingCapacityHoldingBookings } from "@/lib/capacity";
+import {
+  acquireLodgeCapacityLock,
+  findOverlappingCapacityHoldingBookings,
+} from "@/lib/capacity";
 import logger from "@/lib/logger";
 import { z } from "zod";
 
@@ -20,10 +23,15 @@ const exclusiveHoldSchema = z.object({
  * fields; it is the admin entry point that complements the school request path.
  *
  * ADR-001 decision 1: setting a hold has NO empty-lodge precondition — it is
- * allowed regardless of existing overlapping bookings, and NO capacity engine
- * runs here. Conflicts are surfaced and resolved by the officer, never
- * auto-displaced. Authorisation mirrors the sibling capacity-hold route
- * (requireAdmin: admin/full-admin); both set and clear are audited.
+ * allowed regardless of existing overlapping bookings and is NEVER refused.
+ * Conflicts are surfaced and resolved by the officer, never auto-displaced, and
+ * no bed-arithmetic capacity engine runs here. But per ADR-001's Security/safety
+ * section the two-sided rule must be lock-serialised (issue #154): the flag
+ * write and the conflict read run inside the per-lodge capacity lock
+ * (`acquireLodgeCapacityLock`), the same lock every admission takes, so a hold
+ * set cannot race an in-flight admission at the lodge. Authorisation mirrors the
+ * sibling capacity-hold route (requireAdmin: admin/full-admin); both set and
+ * clear are audited.
  */
 export async function POST(
   request: NextRequest,
@@ -66,6 +74,21 @@ export async function POST(
         return { error: "Booking not found", status: 404 as const };
       }
 
+      // ADR-001 Security/safety: the two-sided hold rule must be lock-serialised.
+      // Take the per-lodge capacity lock — the same key every admission and
+      // capacity writer takes (acquireLodgeCapacityLock, booking-create.ts,
+      // approveSchoolBookingRequest) — BEFORE reading conflicts and writing the
+      // flag. This serialises a hold set against a concurrent admission at this
+      // lodge: either the admission commits first and surfaces here as a
+      // conflict (decision 1), or the hold commits first and the admission then
+      // hard-blocks on wholeLodgeHold (issue #118). The school approval sets the
+      // same flag inside its lock-holding transaction; this is the admin twin.
+      // lodgeId is NOT NULL for real bookings; guard defensively (a null-lodge
+      // row has no lodge to serialise, mirroring the conflict-read guard below).
+      if (booking.lodgeId) {
+        await acquireLodgeCapacityLock(tx, booking.lodgeId);
+      }
+
       if (hold && booking.wholeLodgeHold) {
         return {
           error: "This booking already has an exclusive whole-lodge hold.",
@@ -79,9 +102,10 @@ export async function POST(
         };
       }
 
-      // No capacity engine (ADR-001 decision 1): the hold is settable over
-      // existing overlapping bookings. Mirror capacity-hold's clear semantics —
-      // null the who/when audit columns when clearing.
+      // No capacity refusal (ADR-001 decision 1): the hold is settable over
+      // existing overlapping bookings — the lock above serialises the write, it
+      // never refuses. Mirror capacity-hold's clear semantics — null the
+      // who/when audit columns when clearing.
       const updated = await tx.booking.update({
         where: { id: booking.id },
         data: hold
