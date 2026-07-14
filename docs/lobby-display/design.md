@@ -648,6 +648,15 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > still seed **empty child slots** because `DisplayAreaChild` has no
 > `defaultContent` field yet — a documented follow-up.
 >
+> *Built-in edit guardrail (#156).* Opening a built-in Layout or Template in its
+> authoring editor shows a **persistent notice** that in-place edits are
+> overwritten by re-seed/upgrade, with a one-click **Duplicate to customise**
+> action that forks the definition into a new custom draft; **saving** an
+> in-place built-in edit requires an explicit confirmation acknowledging it is
+> not upgrade-safe. Built-ins are detected by their reserved **key** (the seed
+> matches on key). The re-seed contract itself is unchanged — this only surfaces
+> the "duplicate to customise" rule at the point of edit.
+>
 > *Device binding (the point of a Template).* The **Devices** picker offers the
 > **club default** and every **v2 template** (bound by `templateId`) from
 > `/api/admin/display/templates` GET (`{ templates }`). Since **LTV-038** the
