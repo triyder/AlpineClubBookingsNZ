@@ -1,0 +1,23 @@
+-- Contract migration: drop the legacy standalone CommitteeMember table.
+--
+-- CommitteeMember (added 20260410020000) was a public committee directory that
+-- the member-linked committee system (CommitteeRole + CommitteeAssignment, added
+-- 20260629130000) fully superseded. Since that release the public committee
+-- (/api/committee, the {{committee-members-cards}} embed) and contact recipient
+-- routing read only from published, active assignments; nothing at the code
+-- level has read or written CommitteeMember since its admin CRUD was retired in
+-- this release (issue #1864). The table was free-standing with no foreign keys
+-- in or out, so this drop loses no referential integrity.
+--
+-- Deploy ordering: the code that stopped using the table ships in this same
+-- release. Drop after cutover to the runtime that no longer references it. The
+-- CommitteeMember_contactKey_key unique index is dropped with the table. No
+-- CASCADE, so any unexpected dependency fails loud rather than silently
+-- cascading.
+--
+-- The historical migrations that seeded CommitteeRole/CommitteeAssignment from
+-- legacy CommitteeMember rows (20260629130000, 20260701130000) are untouched:
+-- they already ran against the table while it existed.
+
+-- DropTable
+DROP TABLE IF EXISTS "CommitteeMember";

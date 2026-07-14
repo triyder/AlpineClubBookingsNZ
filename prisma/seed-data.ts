@@ -3,10 +3,6 @@
 // free of real personal data: names, phone numbers, and emails are clearly
 // generic placeholders that a club replaces through the admin screens.
 
-// test seam (seed constant asserted by tests)
-// Placeholder phone number used for every seeded committee entry.
-export const SEED_PLACEHOLDER_PHONE = "+64 21 000 0000";
-
 export interface SeedMemberAccountData {
   email: string;
   passwordHash: string;
@@ -62,17 +58,6 @@ export function buildSeedLodgeMemberData(params: {
   };
 }
 
-export interface SeedCommitteeMember {
-  id: string;
-  role: string;
-  name: string;
-  phone: string;
-  email: string | null;
-  contactKey: string;
-  description: string;
-  sortOrder: number;
-}
-
 export interface SeedCommitteeRole {
   id: string;
   key: string;
@@ -83,17 +68,22 @@ export interface SeedCommitteeRole {
 }
 
 /**
- * Generic committee placeholders. Names and phone numbers are deliberately
- * fake; clubs replace them in Admin -> Committee after first login. Emails
- * derive from the deployed club config so they are never hardcoded here.
- * The contact keys feed the public contact form recipient list, and the
- * "bookings" key also powers the booking officer sidebar.
+ * Generic committee master roles. Names are deliberately generic; clubs replace
+ * them in Admin -> Committee after first login. Emails derive from the deployed
+ * club config so they are never hardcoded here. The keys feed the public contact
+ * form recipient list, and the "bookings" key also powers the booking officer
+ * sidebar.
  */
-export function buildSeedCommitteePlaceholders(params: {
-  domainEmail: (localPart: string) => string;
-  contactEmail: string;
-}): SeedCommitteeMember[] {
-  const placeholders: Array<{
+export function buildSeedCommitteeRoles(
+  params: {
+    domainEmail: (localPart: string) => string;
+    contactEmail: string;
+  } = {
+    domainEmail: () => "committee@example.invalid",
+    contactEmail: "committee@example.invalid",
+  },
+): SeedCommitteeRole[] {
+  const positions: Array<{
     role: string;
     contactKey: string;
     email: string | null;
@@ -144,34 +134,13 @@ export function buildSeedCommitteePlaceholders(params: {
     },
   ];
 
-  return placeholders.map((entry, sortOrder) => ({
-    id: `seed-committee-${entry.contactKey}`,
-    role: entry.role,
-    name: `Example ${entry.role}`,
-    phone: SEED_PLACEHOLDER_PHONE,
-    email: entry.email,
-    contactKey: entry.contactKey,
-    description: entry.description,
-    sortOrder,
-  }));
-}
-
-export function buildSeedCommitteeRoles(
-  params: {
-    domainEmail: (localPart: string) => string;
-    contactEmail: string;
-  } = {
-    domainEmail: () => "committee@example.invalid",
-    contactEmail: "committee@example.invalid",
-  },
-): SeedCommitteeRole[] {
-  return buildSeedCommitteePlaceholders(params).map((entry) => ({
+  return positions.map((entry, sortOrder) => ({
     id: `seed-committee-role-${entry.contactKey}`,
     key: entry.contactKey,
     name: entry.role,
     description: entry.description,
     contactEmail: entry.email,
-    sortOrder: entry.sortOrder,
+    sortOrder,
   }));
 }
 

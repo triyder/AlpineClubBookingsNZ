@@ -31,7 +31,6 @@ import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import {
   buildSeedAdminMemberData,
   buildSeedChoreTemplates,
-  buildSeedCommitteePlaceholders,
   buildSeedCommitteeRoles,
   buildSeedLodgeMemberData,
   shouldSkipTokoroaThemeSeed,
@@ -568,24 +567,6 @@ async function main() {
     });
   }
   console.log(`Site content seeded: ${starterSiteContent.length} sections`);
-
-  // Seed generic committee placeholders only when the table is empty, so a
-  // populated production committee is never touched by a re-run.
-  const committeeCount = await prisma.committeeMember.count();
-  if (committeeCount === 0) {
-    const committeeData = buildSeedCommitteePlaceholders({
-      domainEmail: clubDomainEmail,
-      contactEmail: CLUB_CONTACT_EMAIL,
-    });
-    for (const cm of committeeData) {
-      await prisma.committeeMember.create({ data: cm });
-    }
-    console.log(
-      `Committee placeholders seeded: ${committeeData.length} entries (replace in Admin -> Committee)`,
-    );
-  } else {
-    console.log("Committee members already present; skipping");
-  }
 
   const committeeRoles = buildSeedCommitteeRoles({
     domainEmail: clubDomainEmail,

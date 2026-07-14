@@ -28,9 +28,9 @@ import { RowValidator, nz, readCsvRows } from "../values";
 //  - CommitteeAssignment (who currently holds each role) — bound to real Member
 //    rows, so it cannot travel in a member-free bundle; the target re-assigns
 //    against its own members.
-//  - CommitteeMember (the legacy standalone directory, "LegacyCommitteeMember"
-//    in the admin UI) — a migration aid for clubs moving onto the role/assignment
-//    model, not ongoing config, so it is not maintained through a transfer.
+// The former standalone CommitteeMember directory (the migration aid ADR-001
+// records as out of scope) has since been removed from the model, so there is
+// no legacy table left to consider here.
 // See ADR-001 "committee scope".
 
 const ROLE_FILE = "committee/roles.csv";
