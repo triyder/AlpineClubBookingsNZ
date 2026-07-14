@@ -221,14 +221,14 @@ export function SkifieldWhakapapaWidget() {
               </h3>
               <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-start">
                 <div className="sm:flex-1">
-                  <p className="text-xs text-slate-700">
-                    {data.roadStatus.name || "Unknown road"}
+                  <div className="text-xs text-slate-700">
+                    <span>{data.roadStatus.name || "Unknown road"}&nbsp;</span>
                     <span
                       className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${roadStatusTone}`}
                     >
                       {data.roadStatus.status || "Status unavailable"}
                     </span>
-                  </p>
+                  </div>
                 </div>
                 {data.roadStatus.wheelRequirements ||
                 data.roadStatus.roadContent ? (

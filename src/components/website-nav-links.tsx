@@ -23,7 +23,7 @@ export function WebsiteNavLinks({
           key={link.href}
           href={link.href}
           aria-current={isActive(link.href) ? "page" : undefined}
-          className="rounded-md px-3 py-2 text-sm font-medium text-brand-snow/80 transition-colors hover:bg-brand-snow/10 hover:text-brand-snow"
+          className="rounded-md px-3 py-2 text-sm font-medium text-brand-snow/80 transition-colors hover:bg-brand-snow/10 hover:text-brand-snow aria-[current=page]:bg-brand-snow/15 aria-[current=page]:font-semibold aria-[current=page]:text-brand-snow"
         >
           {link.label}
         </Link>
