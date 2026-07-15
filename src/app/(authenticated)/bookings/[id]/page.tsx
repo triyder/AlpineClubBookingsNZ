@@ -823,6 +823,17 @@ export default async function BookingDetailPage({
             heldByName: booking.wholeLodgeHoldBy
               ? `${booking.wholeLodgeHoldBy.firstName} ${booking.wholeLodgeHoldBy.lastName}`
               : null,
+            // Gate the Set control (issue #173): an exclusive hold is only
+            // meaningful on a capacity-holding booking (ADR-001 capacity rule).
+            // Unlike holdsCapacityNaturally above, this includes the #1764
+            // admin-capacity-hold disjunct so a PAYMENT_PENDING booking that
+            // already carries an admin hold can take the exclusive hold too —
+            // matching the route guard exactly.
+            holdsCapacity: bookingHoldsCapacity({
+              status: booking.status,
+              isRequestConverted: Boolean(booking.originBookingRequest),
+              hasAdminCapacityHold: Boolean(booking.adminCapacityHoldAt),
+            }),
             conflicts: exclusiveHoldConflicts,
           }}
         />

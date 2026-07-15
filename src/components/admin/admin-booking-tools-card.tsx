@@ -62,6 +62,12 @@ export function AdminBookingToolsCard({
     wholeLodgeHold: boolean;
     wholeLodgeHoldAt: string | null;
     heldByName: string | null;
+    /**
+     * Whether the booking holds lodge capacity (#173). The Set control is
+     * gated on this — an exclusive hold on a non-holding booking blocks
+     * nothing (ADR-001 capacity rule).
+     */
+    holdsCapacity: boolean;
     /** Overlapping bookings to resolve when the hold is set (issue #119). */
     conflicts?: ExclusiveHoldConflict[];
   };
@@ -117,6 +123,7 @@ export function AdminBookingToolsCard({
               wholeLodgeHold={exclusiveHold.wholeLodgeHold}
               wholeLodgeHoldAt={exclusiveHold.wholeLodgeHoldAt}
               heldByName={exclusiveHold.heldByName}
+              holdsCapacity={exclusiveHold.holdsCapacity}
               conflicts={exclusiveHold.conflicts}
             />
           )}
