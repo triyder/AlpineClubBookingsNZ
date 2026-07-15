@@ -183,6 +183,13 @@ export async function POST(
     // so the lock key is stable.
     if (booking.finalPriceCents === 0) {
       const zeroResult = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        // Two-tier protocol (#1881): this branch CLAIMS capacity (PENDING -> a
+        // capacity-holding status), so it takes BOTH locks — global lock(1)
+        // first (mutual exclusion with cancel/settlement), then the per-lodge
+        // capacity lock so the re-check below serialises against per-lodge
+        // booking creators. lodgeId is immutable, so keying from the pre-tx
+        // read is safe.
         await acquireLodgeCapacityLock(tx, booking.lodgeId);
 
         // Re-read this booking's own capacity inputs INSIDE the lock (mirroring
@@ -325,6 +332,11 @@ export async function POST(
     // charge-then-refund churn window is gone. The lock is released before
     // Stripe — never hold a DB lock across a payment-provider network call.
     const claim = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      // Two-tier protocol (#1881): this branch CLAIMS capacity (PENDING ->
+      // CONFIRMED), so it takes BOTH locks — global lock(1) first, then the
+      // per-lodge capacity lock so the re-check serialises against per-lodge
+      // creators. lodgeId is immutable.
       await acquireLodgeCapacityLock(tx, booking.lodgeId);
       // Re-read this booking's own capacity inputs INSIDE the lock (see the
       // zero-dollar branch) so a concurrent guest-count change can't gate the

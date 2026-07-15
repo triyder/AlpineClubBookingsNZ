@@ -38,6 +38,8 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/capacity", () => ({
+  // #172/#1881 — the capacity-claiming branches take the per-lodge lock (under
+  // the global lock(1)) so the re-check serialises against per-lodge creators.
   acquireLodgeCapacityLock: mocks.acquireLodgeCapacityLock,
   checkCapacityForGuestRanges: mocks.checkCapacity,
 }));
@@ -175,15 +177,23 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
 
     expect(res.status).toBe(200);
     expect(body).toMatchObject({ success: true, status: "PAID", charged: true });
-    // #172: the claim transaction serialises on the per-lodge capacity lock
-    // (not the legacy club-wide pg_advisory_xact_lock(1)), keyed on the
-    // booking's lodgeId, on the same tx client the capacity re-check uses.
+    // #1881 two-tier protocol (on top of #172's per-lodge lock): the
+    // capacity-claiming charge branch takes BOTH locks — the global
+    // pg_advisory_xact_lock(1) FIRST, then the per-lodge capacity lock (keyed
+    // on the booking's lodgeId, on the same tx client the capacity re-check
+    // uses) — so the claim serialises against both status/money transitions
+    // and per-lodge creators.
+    expect(mocks.executeRaw).toHaveBeenCalled();
     expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(txClient, "lodge-1");
-    // The lock is taken BEFORE the capacity re-check inside the same tx.
+    // Lock order: the global lock(1) is taken BEFORE the per-lodge lock, which
+    // is taken BEFORE the capacity re-check, all inside the same tx.
+    expect(
+      mocks.executeRaw.mock.invocationCallOrder[0]
+    ).toBeLessThan(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]);
     expect(
       mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]
     ).toBeLessThan(mocks.checkCapacity.mock.invocationCallOrder[0]);
-    // The pre-charge capacity re-check runs under that lock.
+    // The pre-charge capacity re-check runs under those locks.
     expect(mocks.checkCapacity).toHaveBeenCalledWith(
       "lodge-1",
       expect.any(Date),
