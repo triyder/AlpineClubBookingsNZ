@@ -13,8 +13,11 @@
  *
  * Run locally against a scratch database, e.g.:
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
- *   CONCURRENCY_RACE_DATABASE_URL=postgresql://user:pass@127.0.0.1:55442/racedb \
+ *   DATABASE_URL=postgresql://user:pass@127.0.0.1:55442/racedb \
  *   npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts
+ *
+ * The app's prisma singleton connects via DATABASE_URL (driver adapter), so the
+ * target is DATABASE_URL and the safety guard is applied to it.
  *
  * The harness validates the MECHANISM the whole fix rests on — advisory-lock
  * mutual exclusion plus status-guarded compare-and-set — against a scratch
@@ -23,11 +26,10 @@
  * lock manager and MVCC that the production code depends on.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
-const RACE_DB_URL =
-  process.env.CONCURRENCY_RACE_DATABASE_URL ?? process.env.DATABASE_URL ?? "";
+const RACE_DB_URL = process.env.DATABASE_URL ?? "";
 
 /**
  * Guard: never run against a default/production Postgres. Require a non-5432
@@ -61,23 +63,18 @@ const PROBE_TABLE = "_concurrency_race_probe_1881";
 (RUN ? describe : describe.skip)(
   "two-tier lock protocol — real-DB interleavings (#1881)",
   () => {
-    let prisma: PrismaClient;
-
     beforeAll(async () => {
+      // Never touch a default/production DB: the singleton connects via
+      // DATABASE_URL, so guard THAT before creating any scratch state.
       assertSafeRaceDbUrl(RACE_DB_URL);
-      prisma = new PrismaClient({
-        datasources: { db: { url: RACE_DB_URL } },
-      });
       await prisma.$executeRawUnsafe(
         `CREATE TABLE IF NOT EXISTS "${PROBE_TABLE}" (id text PRIMARY KEY, status text NOT NULL)`
       );
     });
 
     afterAll(async () => {
-      if (prisma) {
-        await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "${PROBE_TABLE}"`);
-        await prisma.$disconnect();
-      }
+      await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "${PROBE_TABLE}"`);
+      await prisma.$disconnect();
     });
 
     async function seedProbe(id: string, status: string) {

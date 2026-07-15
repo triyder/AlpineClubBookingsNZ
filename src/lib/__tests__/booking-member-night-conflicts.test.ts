@@ -178,9 +178,11 @@ describe("findBookingMemberNightConflicts", () => {
   // invariant is serialised even though capacity locks are per-lodge only.
   it("locks every member-linked guest's per-member key (sorted) before reading, then throws on a conflict", async () => {
     const executeRawCalls: string[] = [];
+    const lockValues: unknown[][] = [];
     const db = {
-      $executeRaw: vi.fn((strings: TemplateStringsArray) => {
+      $executeRaw: vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
         executeRawCalls.push(strings.join("|"));
+        lockValues.push(values);
         return Promise.resolve(1);
       }),
       bookingGuest: {
@@ -207,8 +209,9 @@ describe("findBookingMemberNightConflicts", () => {
       expect(call).toContain("pg_advisory_xact_lock");
       expect(call).toContain("hashtext");
     }
-    // Sorted memberId order: the bind params carry member-1 before member-2.
-    const lockOrder = db.$executeRaw.mock.calls.map((c) => c[2] as string);
+    // Sorted memberId order: each lock's bind params are [namespace, memberId],
+    // and the sorted acquisition puts member-1 before member-2.
+    const lockOrder = lockValues.map((values) => values[1]);
     expect(lockOrder).toEqual(["member-1", "member-2"]);
   });
 });
