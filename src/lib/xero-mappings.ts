@@ -244,3 +244,25 @@ export function buildEntranceFeeInvoiceIdempotencyKey(
     "v1"
   );
 }
+
+// F21 (#1886): the Xero `createInvoices` idempotency key for the entrance-fee
+// mint is member-scoped ONLY — it deliberately omits amount and category so
+// that two operations racing for the same member (e.g. a re-enqueue carrying a
+// different amount override or a reclassified category, which produce distinct
+// correlation keys and therefore both slip past the enqueue-time dedupe)
+// converge on ONE Xero invoice instead of minting two. This mirrors the
+// member-scoped contact idempotency key in `findOrCreateXeroContact` (F7,
+// #1355), which is the codebase's established way to serialise concurrent
+// provider creates WITHOUT holding a DB lock across a Xero call. An entrance
+// fee is a one-time per-member charge, so a member-only key matches the
+// domain. Kept distinct from the amount-scoped correlation key above, which
+// still governs outbox-operation dedupe semantics.
+export function buildEntranceFeeInvoiceMintIdempotencyKey(memberId: string) {
+  return buildXeroIdempotencyKey(
+    "member",
+    memberId,
+    "entrance-fee-invoice",
+    "mint",
+    "v1"
+  );
+}
