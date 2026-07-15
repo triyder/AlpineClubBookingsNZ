@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   bookingUpdate: vi.fn(),
   paymentUpdate: vi.fn(),
   settlementUpdate: vi.fn(),
+  settlementUpdateMany: vi.fn(),
+  txExecuteRaw: vi.fn(),
   transaction: vi.fn(),
   processRefund: vi.fn(),
   cancelPaymentIntentIfCancellable: vi.fn(),
@@ -39,8 +41,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const txClient = {
+  $executeRaw: mocks.txExecuteRaw,
   booking: { update: mocks.bookingUpdate },
   payment: { update: mocks.paymentUpdate },
+  groupBookingSettlement: { updateMany: mocks.settlementUpdateMany },
 };
 
 vi.mock("@/lib/prisma", () => ({
@@ -140,6 +144,8 @@ beforeEach(() => {
   mocks.paymentUpdate.mockResolvedValue(undefined);
   mocks.groupBookingUpdate.mockResolvedValue(undefined);
   mocks.settlementUpdate.mockResolvedValue(undefined);
+  mocks.settlementUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.txExecuteRaw.mockResolvedValue(undefined);
   mocks.reconcileBedAllocations.mockResolvedValue(undefined);
   mocks.revokePaymentLinks.mockResolvedValue(undefined);
   mocks.recordBookingEvent.mockResolvedValue(undefined);
@@ -365,8 +371,19 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
 
     expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_settle_1");
-    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
-      where: { id: "settle-1" },
+    // #1881 — the FAILED claim is now a status-guarded updateMany under lock(1),
+    // mirroring markGroupSettlementIntentFailed (never clobbers a terminal state).
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "settle-1",
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
+      },
       data: { status: PaymentStatus.FAILED },
     });
     expect(mocks.processRefund).not.toHaveBeenCalled();

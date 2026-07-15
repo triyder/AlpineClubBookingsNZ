@@ -375,10 +375,14 @@ async function releaseSettlementChildren(
     });
 
     for (const child of children) {
-      await tx.booking.update({
-        where: { id: child.id },
+      // Status-guarded revert (#1881): CONFIRMED -> PAYMENT_PENDING only. Under
+      // the shared lock(1) a concurrent settle (which now also takes lock(1))
+      // cannot interleave; the guard makes the no-clobber guarantee structural.
+      const reverted = await tx.booking.updateMany({
+        where: { id: child.id, status: BookingStatus.CONFIRMED },
         data: { status: BookingStatus.PAYMENT_PENDING },
       });
+      if (reverted.count === 0) continue;
       // PAYMENT_PENDING does not hold capacity: drop the bed allocations.
       await reconcileBedAllocationsForBooking({
         bookingId: child.id,
@@ -394,8 +398,19 @@ async function releaseSettlementChildren(
     // FAILED settlement would keep reverted children in PAYMENT_PENDING
     // forever.
     if (children.length > 0 || current.status !== PaymentStatus.FAILED) {
-      await tx.groupBookingSettlement.update({
-        where: { id: settlementId },
+      // Status-guarded FAILED claim (#1881): never overwrite a settlement a
+      // concurrent settle already moved to SUCCEEDED/REFUNDED under lock(1).
+      await tx.groupBookingSettlement.updateMany({
+        where: {
+          id: settlementId,
+          status: {
+            notIn: [
+              PaymentStatus.SUCCEEDED,
+              PaymentStatus.REFUNDED,
+              PaymentStatus.PARTIALLY_REFUNDED,
+            ],
+          },
+        },
         data: { status: PaymentStatus.FAILED },
       });
     }
@@ -458,8 +473,10 @@ async function cancelReapedChildren(
     });
 
     for (const child of children) {
-      await tx.booking.update({
-        where: { id: child.id },
+      // Status-guarded cancel (#1881): PAYMENT_PENDING -> CANCELLED only, so a
+      // concurrent settle retry that moved a child on cannot be clobbered.
+      await tx.booking.updateMany({
+        where: { id: child.id, status: BookingStatus.PAYMENT_PENDING },
         data: {
           status: BookingStatus.CANCELLED,
           ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,

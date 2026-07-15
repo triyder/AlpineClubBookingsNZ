@@ -208,6 +208,8 @@ export async function settleGroupBookingOnOrganiserCancel(
     settlement.status === PaymentStatus.PENDING &&
     settlement.stripePaymentIntentId
   ) {
+    // The Stripe void is an external provider call — keep it OUTSIDE the DB
+    // transaction (the whole point of the lock discipline).
     try {
       await cancelPaymentIntentIfCancellable(settlement.stripePaymentIntentId);
     } catch (err) {
@@ -216,11 +218,43 @@ export async function settleGroupBookingOnOrganiserCancel(
         "Failed to void open group settlement intent on organiser cancel"
       );
     }
-    await prisma.groupBookingSettlement.update({
-      where: { id: settlement.id },
-      data: { status: PaymentStatus.FAILED },
+    // #1881 — the FAILED claim was previously a bare `update` gated on a STALE
+    // in-memory status read, taking NO lock, so it could not mutually exclude a
+    // concurrent settle/reaper (which now serialise on lock(1)). Mirror
+    // markGroupSettlementIntentFailed: take lock(1), re-read, and status-guard
+    // the FAILED claim so a settle that captured the organiser's money under
+    // the same lock is never clobbered back to FAILED.
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await tx.groupBookingSettlement.updateMany({
+        where: {
+          id: settlement.id,
+          status: {
+            notIn: [
+              PaymentStatus.SUCCEEDED,
+              PaymentStatus.REFUNDED,
+              PaymentStatus.PARTIALLY_REFUNDED,
+            ],
+          },
+        },
+        data: { status: PaymentStatus.FAILED },
+      });
     });
   }
+
+  // #1881 — re-read the settlement status AFTER the guarded FAILED claim so the
+  // refund decision below reflects a settle that may have captured the
+  // organiser's money under lock(1) between the initial load and here. Without
+  // this, a stale PENDING read would skip the owed refund on a now-SUCCEEDED
+  // settlement.
+  const settlementStatusNow = settlement
+    ? (
+        await prisma.groupBookingSettlement.findUnique({
+          where: { id: settlement.id },
+          select: { status: true },
+        })
+      )?.status ?? settlement.status
+    : undefined;
 
   // Refund the organiser when the group was already settled. Only genuinely PAID
   // children were charged (a member could have joined after settlement and still
@@ -231,7 +265,7 @@ export async function settleGroupBookingOnOrganiserCancel(
   // child-loop finishes, so gating the reconstruct on `settled` would lose the
   // plan and cancel the remaining paid children WITHOUT their refund mirror.
   // Reconstruct never recomputes — see the header (tier drift on a >24h re-drive).
-  const settled = settlement?.status === PaymentStatus.SUCCEEDED;
+  const settled = settlementStatusNow === PaymentStatus.SUCCEEDED;
   let refundByChildId = new Map<string, number>();
   let totalRefundCents = 0;
 

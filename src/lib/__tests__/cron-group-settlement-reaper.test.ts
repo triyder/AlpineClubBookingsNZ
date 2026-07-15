@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   settlementUpdate: vi.fn(),
   bookingFindMany: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingUpdateMany: vi.fn(),
+  settlementUpdateMany: vi.fn(),
   groupBookingFindMany: vi.fn(),
   txExecuteRaw: vi.fn(),
   transaction: vi.fn(),
@@ -31,10 +33,12 @@ const txClient = {
   booking: {
     findMany: mocks.bookingFindMany,
     update: mocks.bookingUpdate,
+    updateMany: mocks.bookingUpdateMany,
   },
   groupBookingSettlement: {
     findUnique: mocks.settlementFindUnique,
     update: mocks.settlementUpdate,
+    updateMany: mocks.settlementUpdateMany,
   },
 };
 
@@ -124,6 +128,8 @@ beforeEach(() => {
   mocks.settlementFindUnique.mockResolvedValue({ status: PaymentStatus.PENDING });
   mocks.settlementUpdate.mockResolvedValue({});
   mocks.bookingUpdate.mockResolvedValue({});
+  mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.settlementUpdateMany.mockResolvedValue({ count: 1 });
   mocks.reconcileBedAllocations.mockResolvedValue(undefined);
   mocks.recordBookingEvent.mockResolvedValue(undefined);
   mocks.processWaitlistForDates.mockResolvedValue(undefined);
@@ -181,14 +187,24 @@ describe("reapStaleGroupSettlements", () => {
       resumedInterruptedCancels: 0,
     });
     // Children revert to their pre-commit, non-capacity-holding state.
-    expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "child-1" },
+    // #1881 — status-guarded updateMany (CONFIRMED -> PAYMENT_PENDING).
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "child-1", status: BookingStatus.CONFIRMED },
       data: { status: BookingStatus.PAYMENT_PENDING },
     });
     expect(mocks.reconcileBedAllocations).toHaveBeenCalledTimes(2);
-    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
-      where: { id: "settle-1" },
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "settle-1",
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
+      },
       data: { status: PaymentStatus.FAILED },
     });
     // The abandoned intent is voided so a stale tab cannot capture.
@@ -227,8 +243,17 @@ describe("reapStaleGroupSettlements", () => {
 
     expect(result.reaped).toBe(1);
     expect(mocks.cancelPaymentIntent).not.toHaveBeenCalled();
-    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
-      where: { id: "settle-1" },
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "settle-1",
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
+      },
       data: { status: PaymentStatus.FAILED },
     });
     expect(mocks.sendSettlementExpired).toHaveBeenCalledTimes(1);
@@ -386,9 +411,10 @@ describe("expiry of reaped organiser-pays children (#1094)", () => {
 
     expect(result.expiredSettlements).toBe(1);
     expect(result.cancelledChildBookings).toBe(2);
-    expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "child-1" },
+    // #1881 — status-guarded child cancel (PAYMENT_PENDING -> CANCELLED).
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "child-1", status: BookingStatus.PAYMENT_PENDING },
       data: {
         status: BookingStatus.CANCELLED,
         adminCapacityHoldAt: null,

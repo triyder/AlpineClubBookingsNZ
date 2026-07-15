@@ -581,14 +581,18 @@ async function settleConfirmedChildrenAndNotify(
   }
 ): Promise<GroupSettlementAppliedResult> {
   const settled = await prisma.$transaction(async (tx) => {
-    // This path only flips CONFIRMED -> PAID; both statuses already hold
-    // capacity, so NO net-new capacity claim occurs here and the lock key is
-    // immaterial to capacity correctness. The default-lodge key is therefore
-    // acceptable (and kept for continuity) — do NOT copy this into a path that
-    // CLAIMS capacity (e.g. commitChildrenToConfirmed above), which must lock
-    // the specific lodge whose beds it reserves.
-    const defaultLodgeId = await getDefaultLodgeId(tx);
-    await acquireLodgeCapacityLock(tx, defaultLodgeId);
+    // #1881 two-tier protocol. This path flips CONFIRMED -> PAID (no net-new
+    // capacity claim — both statuses already hold beds) AND flips the settlement
+    // status (a money/booking-status transition). The settlement-status tier is
+    // serialised by the GLOBAL lock(1), which is the SAME key the group-settlement
+    // reaper, markGroupSettlementIntentFailed/Refunded, and the organiser-cancel
+    // FAILED claim take, so settle can never interleave a reap/fail/refund of the
+    // same settlement. (The pre-#1881 default-lodge key did NOT exclude the
+    // reaper's lock(1), so a settle could race a reap into an inconsistent
+    // settlement/child state.) No per-lodge lock is needed here because nothing
+    // claims capacity; a path that CLAIMS capacity (commitChildrenToConfirmed)
+    // still takes the specific child lodge locks.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
     // Re-confirm the settlement is still unpaid inside the lock (idempotency).
     const current = await tx.groupBookingSettlement.findUnique({
@@ -599,8 +603,8 @@ async function settleConfirmedChildrenAndNotify(
       return [] as string[];
     }
     // #1883 — a refund can land between the caller's status read and this
-    // lock (markGroupSettlementIntentRefunded takes the SAME lock, so the two
-    // serialize). Refunded money must never settle the children.
+    // lock (markGroupSettlementIntentRefunded takes the SAME global lock, so the
+    // two serialize). Refunded money must never settle the children.
     if (
       current?.status === PaymentStatus.REFUNDED ||
       current?.status === PaymentStatus.PARTIALLY_REFUNDED
@@ -661,8 +665,11 @@ async function settleConfirmedChildrenAndNotify(
           stripeCustomerId: options.stripeCustomerId ?? null,
         },
       });
-      await tx.booking.update({
-        where: { id: child.id },
+      // Status-guarded PAID flip (#1881): CONFIRMED -> PAID only. The children
+      // query already filtered CONFIRMED under lock(1); the guard makes the
+      // no-clobber guarantee structural against a racing reaper revert.
+      await tx.booking.updateMany({
+        where: { id: child.id, status: BookingStatus.CONFIRMED },
         data: { status: BookingStatus.PAID, draftExpiresAt: null },
       });
       await reconcileBedAllocationsForBooking({
@@ -673,8 +680,19 @@ async function settleConfirmedChildrenAndNotify(
       settledIds.push(child.id);
     }
 
-    await tx.groupBookingSettlement.update({
-      where: { id: settlement.id },
+    // Status-guarded settlement SUCCEEDED claim (#1881): never overwrite a
+    // settlement a concurrent reaper/refund already moved to a terminal state.
+    await tx.groupBookingSettlement.updateMany({
+      where: {
+        id: settlement.id,
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
+      },
       data: { status: PaymentStatus.SUCCEEDED, paidAt: new Date() },
     });
 
@@ -891,9 +909,9 @@ export async function applyGroupSettlementSucceededFromInvoice(
  * row itself: the settle-page reuse branch, applyGroupSettlementSucceeded and
  * the in-lock re-check all refuse REFUNDED/PARTIALLY_REFUNDED settlements.
  *
- * Runs under the SAME default-lodge advisory lock as
- * settleConfirmedChildrenAndNotify so the mark serializes with any in-flight
- * settle of the same settlement. The guarded updateMany never overwrites a
+ * Runs under the SAME global lock(1) as settleConfirmedChildrenAndNotify and the
+ * reaper (#1881) so the mark serializes with any in-flight settle/reap of the
+ * same settlement. The guarded updateMany never overwrites a
  * settlement that already SUCCEEDED (the refund path alerts admins about that
  * conflict) and is idempotent across webhook redelivery; a no-match (e.g. the
  * settlement was legitimately re-pointed at a newer intent) is a no-op.
@@ -905,8 +923,7 @@ export async function markGroupSettlementIntentRefunded(
   paymentIntentId: string
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
-    const defaultLodgeId = await getDefaultLodgeId(tx);
-    await acquireLodgeCapacityLock(tx, defaultLodgeId);
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     await tx.groupBookingSettlement.updateMany({
       where: {
         stripePaymentIntentId: paymentIntentId,

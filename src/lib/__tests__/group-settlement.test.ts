@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindMany: vi.fn(),
   bookingFindUnique: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingUpdateMany: vi.fn(),
   paymentUpsert: vi.fn(),
   settlementUpsert: vi.fn(),
   settlementFindUnique: vi.fn(),
@@ -45,6 +46,7 @@ const txClient = {
     findUnique: mocks.bookingFindUnique,
     findMany: mocks.bookingFindMany,
     update: mocks.bookingUpdate,
+    updateMany: mocks.bookingUpdateMany,
   },
   payment: { upsert: mocks.paymentUpsert },
   groupBookingSettlement: {
@@ -154,6 +156,7 @@ beforeEach(() => {
   });
   mocks.settlementUpsert.mockResolvedValue({ id: "settle-1", groupBookingId: GROUP_ID });
   mocks.settlementUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.findOrCreateCustomer.mockResolvedValue({ id: "cus_123" });
   mocks.createPaymentIntent.mockResolvedValue({
     id: "pi_settle_1",
@@ -780,13 +783,14 @@ describe("createGroupSettlementIntent", () => {
 });
 
 describe("markGroupSettlementIntentRefunded", () => {
-  it("marks the settlement REFUNDED under the settle advisory lock (#1883)", async () => {
+  it("marks the settlement REFUNDED under the settle advisory lock (#1883/#1881)", async () => {
     await markGroupSettlementIntentRefunded("pi_settle_1");
 
-    // Same default-lodge advisory lock as the settle path, so the mark cannot
-    // interleave with an in-flight settle of the same settlement.
+    // Same GLOBAL lock(1) as the settle path and the reaper (#1881), so the mark
+    // cannot interleave with an in-flight settle/reap of the same settlement.
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
-    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(txClient, "lodge-1");
+    expect(mocks.txExecuteRaw).toHaveBeenCalled();
+    expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalled();
     // Guarded updateMany: never clobbers SUCCEEDED (already applied — that
     // conflict is alerted upstream) and is idempotent across redelivery.
     expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
@@ -1079,12 +1083,14 @@ describe("applyGroupSettlementSucceeded", () => {
         }),
       })
     );
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith(
+    // #1881 — status-guarded child PAID flip + settlement SUCCEEDED flip.
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({ status: BookingStatus.CONFIRMED }),
         data: expect.objectContaining({ status: BookingStatus.PAID }),
       })
     );
-    expect(mocks.settlementUpdate).toHaveBeenCalledWith(
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: PaymentStatus.SUCCEEDED }),
       })
@@ -1212,12 +1218,13 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
         }),
       })
     );
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith(
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({ status: BookingStatus.CONFIRMED }),
         data: expect.objectContaining({ status: BookingStatus.PAID }),
       })
     );
-    expect(mocks.settlementUpdate).toHaveBeenCalledWith(
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: PaymentStatus.SUCCEEDED }),
       })
