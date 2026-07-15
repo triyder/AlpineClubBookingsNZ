@@ -150,6 +150,52 @@ describe("email-theme palette cache", () => {
     expect(html).not.toContain(DEFAULT_CLUB_THEME_VALUES.brandGold);
   });
 
+  it("does not let a stale in-flight background refresh clobber a save-time prime (#1912)", async () => {
+    const OLD_THEME_VALUES = CUSTOM_THEME_VALUES; // gold #123456
+    const NEW_THEME_VALUES = {
+      ...CUSTOM_THEME_VALUES,
+      brandGold: "#0f9d58",
+      brandCharcoal: "#202124",
+    };
+
+    // A deferred result so we control exactly when the background refresh's OLD
+    // read resolves (i.e. keep it in flight while the prime lands).
+    let releaseOldRefresh!: () => void;
+    const oldRefreshResult = new Promise<{ values: typeof OLD_THEME_VALUES }>(
+      (resolve) => {
+        releaseOldRefresh = () => resolve({ values: OLD_THEME_VALUES });
+      },
+    );
+
+    mocks.getWebsiteThemeRenderState
+      // 1st call: the TTL-triggered background refresh reads the OLD scheme, but
+      // its promise stays pending until we release it below.
+      .mockReturnValueOnce(oldRefreshResult)
+      // 2nd call: the save-time prime reads the NEW scheme and resolves at once.
+      .mockResolvedValueOnce({ values: NEW_THEME_VALUES });
+
+    // Cold cache (cachedAt = 0) => this trips the TTL and starts a background
+    // refresh, which is now parked awaiting the deferred OLD read.
+    emailPalette();
+
+    // The admin save re-primes with the NEW scheme while the OLD refresh is
+    // still in flight. The prime reads NEW and writes the cache.
+    await primeEmailPalette();
+    expect(emailPalette().gold).toBe("#0f9d58");
+
+    // Now the stale background refresh finally resolves with the OLD scheme. It
+    // started BEFORE the prime, so it must not overwrite the prime's palette.
+    releaseOldRefresh();
+    await oldRefreshResult;
+    await Promise.resolve(); // flush the refresh's post-await continuation
+
+    const html = passwordResetTemplate("Jo");
+    expect(html).toContain("#0f9d58"); // NEW accent/button preserved
+    expect(html).toContain("#202124"); // NEW header preserved
+    expect(html).not.toContain("#123456"); // stale OLD gold did NOT clobber
+    expect(emailPalette().gold).toBe("#0f9d58");
+  });
+
   it("serves cached values within the TTL without re-hitting the loader", async () => {
     mocks.getWebsiteThemeRenderState.mockResolvedValue({
       values: CUSTOM_THEME_VALUES,
