@@ -30,8 +30,10 @@ const exclusiveHoldSchema = z.object({
  * no bed-arithmetic capacity engine runs here. But per ADR-001's Security/safety
  * section the two-sided rule must be lock-serialised (issue #154): the flag
  * write and the conflict read run inside the per-lodge capacity lock
- * (`acquireLodgeCapacityLock`), the same lock every admission takes, so a hold
- * set cannot race an in-flight admission at the lodge. Authorisation mirrors the
+ * (`acquireLodgeCapacityLock`), the same key every admission takes, so a hold
+ * set cannot race an in-flight admission at the lodge. (confirm-pending-guests
+ * was the last admission path still on the legacy club-wide key; #172 moved it
+ * onto this per-lodge key so the guarantee holds again.) Authorisation mirrors the
  * sibling capacity-hold route (requireAdmin: admin/full-admin); both set and
  * clear are audited.
  */
