@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { formatRedactedJson } from "@/lib/redact-sensitive-json"
 import { cn } from "@/lib/utils"
+import { CHIP_TONE_CLASSES, type SemanticTone } from "@/lib/chip-tones"
 import type {
   AccountMappingKey,
   CreditItemMappingKey,
@@ -150,15 +151,10 @@ export function HealthStatCard({
 // alone. StatusChip's typed `kind` API only covers domain enums
 // (booking/payment/…), so per the epic these Xero-specific statuses reuse the
 // SAME tone → token mapping rather than inventing a new StatusChip kind.
-export type XeroTone = "neutral" | "info" | "success" | "warning" | "danger"
-
-const XERO_TONE_CHIP_CLASSES: Record<XeroTone, string> = {
-  neutral: "bg-muted text-foreground",
-  info: "bg-info-muted text-info",
-  success: "bg-success-muted text-success",
-  warning: "bg-warning-muted text-warning",
-  danger: "bg-danger-muted text-danger",
-}
+// Xero's non-domain statuses map onto the SAME five semantic tones as every
+// other chip, so the tone -> chip-class map is the shared one from
+// `@/lib/chip-tones` (#156) rather than a private copy that could drift.
+export type XeroTone = SemanticTone
 
 // Solid tone fills for meters / progress-bar fills (no text sits on these).
 const XERO_TONE_SOLID_CLASSES: Record<XeroTone, string> = {
@@ -199,7 +195,7 @@ export function ToneChip({
       data-tone={tone}
       className={cn(
         "inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap",
-        XERO_TONE_CHIP_CLASSES[tone],
+        CHIP_TONE_CLASSES[tone],
         className,
       )}
       {...props}

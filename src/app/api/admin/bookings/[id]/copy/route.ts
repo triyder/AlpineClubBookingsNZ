@@ -50,9 +50,11 @@ export async function POST(
     if (error instanceof ApiError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
+    // #1888 — unexpected (non-ApiError) errors must not leak their message to
+    // the client; the raw error stays in the log only.
     logger.error({ err: error, bookingId }, "Failed to copy booking");
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to copy booking" },
+      { error: "Failed to copy booking" },
       { status: 400 },
     );
   }

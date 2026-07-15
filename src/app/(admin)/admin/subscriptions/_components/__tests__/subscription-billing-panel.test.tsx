@@ -56,7 +56,7 @@ function payload(options: { decisionDate?: string; membershipTypeName?: string }
       coverage: [{ memberName: "Member One" }],
     }],
     exceptions: [{ id: "exception-1", fingerprint: "same", message: "Configure billing" }],
-    settings: { invoiceDueDays: 30 },
+    settings: { invoiceDueDays: 30, familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER" },
   };
 }
 
@@ -138,6 +138,46 @@ describe("subscription billing panel", () => {
     expect(await screen.findByText("Due days saved")).toBeTruthy();
     await waitFor(() => expect(screen.getByRole("button", { name: "Confirm and queue annual batch" })).toBeTruthy());
     expect(screen.getByText("Due days saved")).toBeTruthy();
+  });
+
+  it("saves the selected family billing mode with the current due days", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    const fetchMock = vi.mocked(fetch);
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    await screen.findByRole("button", { name: "Save billing mode" });
+    // Switch the mode via the Select, then save.
+    const trigger = screen.getByRole("combobox", { name: "Family billing mode" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    fireEvent.click(screen.getByRole("option", { name: "Bill members individually" }));
+    fetchMock.mockClear();
+    fetchMock.mockImplementationOnce(() => Promise.resolve({ ok: true, json: async () => ({ message: "Subscription billing settings updated." }) } as Response));
+    fireEvent.click(screen.getByRole("button", { name: "Save billing mode" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "POST")).toBe(true));
+    const postCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST");
+    expect(JSON.parse(String((postCall![1] as RequestInit).body))).toEqual({
+      action: "UPDATE_SETTINGS", invoiceDueDays: 30, familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY",
+    });
+  });
+
+  it("saves the billing mode with the last-saved due days, ignoring an unsaved due-days edit", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    const fetchMock = vi.mocked(fetch);
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    await screen.findByRole("button", { name: "Save billing mode" });
+    // Type a new due-days value but do NOT save it, then save the mode.
+    fireEvent.change(screen.getByLabelText("Invoice due days"), { target: { value: "45" } });
+    const trigger = screen.getByRole("combobox", { name: "Family billing mode" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    fireEvent.click(screen.getByRole("option", { name: "Bill members individually" }));
+    fetchMock.mockClear();
+    fetchMock.mockImplementationOnce(() => Promise.resolve({ ok: true, json: async () => ({ message: "Subscription billing settings updated." }) } as Response));
+    fireEvent.click(screen.getByRole("button", { name: "Save billing mode" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "POST")).toBe(true));
+    const postCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST");
+    // The unsaved "45" is not persisted; the last-saved 30 is sent instead.
+    expect(JSON.parse(String((postCall![1] as RequestInit).body))).toEqual({
+      action: "UPDATE_SETTINGS", invoiceDueDays: 30, familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY",
+    });
   });
 
   it("reloads the latest selection when an older-selection mutation completes", async () => {

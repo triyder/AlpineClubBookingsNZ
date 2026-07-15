@@ -273,6 +273,40 @@ describe("PATCH /api/admin/lodges/[id]", () => {
     expect(mocks.lodgeUpdate).not.toHaveBeenCalled();
   });
 
+  it("counts dependencies against the NZ calendar date, not the raw instant (F32, #1888)", async () => {
+    // checkOut and hutLeaderAssignment.endDate are @db.Date (NZ calendar date
+    // at UTC midnight). At NZ 2026-07-16 08:00 (NZST +12) the UTC day (Jul 15)
+    // trails the NZ day, so a raw `new Date()` boundary would mis-date them.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T20:00:00.000Z"));
+    try {
+      mocks.lodgeFindUnique.mockResolvedValue(lodgeRecord());
+      mocks.lodgeCount.mockResolvedValue(1);
+      mocks.bookingCount.mockResolvedValue(0);
+      mocks.hutLeaderAssignmentCount.mockResolvedValue(0);
+      mocks.memberLodgeAccessCount.mockResolvedValue(0);
+      mocks.lodgeUpdate.mockResolvedValue(lodgeRecord({ active: false }));
+      mocks.lodgeFindMany.mockResolvedValue([
+        { name: "Other Lodge", doorCode: null, travelNote: null },
+      ]);
+
+      await PATCH(jsonRequest("PATCH", { active: false }), params("lodge-1"));
+
+      const bookingWhere = mocks.bookingCount.mock.calls[0][0].where;
+      expect(bookingWhere.checkOut.gte.toISOString()).toBe(
+        "2026-07-16T00:00:00.000Z",
+      );
+      // The raw-instant version would have used Date.now(); the fix must not.
+      expect(bookingWhere.checkOut.gte.getTime()).not.toBe(Date.now());
+      const hutWhere = mocks.hutLeaderAssignmentCount.mock.calls[0][0].where;
+      expect(hutWhere.endDate.gte.toISOString()).toBe(
+        "2026-07-16T00:00:00.000Z",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("force-deactivates past dependencies when force is set", async () => {
     mocks.lodgeFindUnique.mockResolvedValue(lodgeRecord());
     mocks.lodgeCount.mockResolvedValue(1);

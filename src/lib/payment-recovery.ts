@@ -350,6 +350,8 @@ import {
   buildBookingCancellationRefundIdempotencyKey,
   buildBookingCancellationRefundMetadata,
   buildBookingModificationRefundMetadata,
+  buildCapacityClaimFailedRefundRecoveryIdempotencyKey,
+  buildCapacityClaimFailedRefundStripeKeyPrefix,
   buildRefundRequestRefundMetadata,
   bookingModificationRefundReasonForKeyPrefix,
 } from "./payment-recovery-keys";
@@ -441,6 +443,119 @@ export async function recordBookingCancellationRefundRecoveryInlineError({
   return store.paymentRecoveryOperation.updateMany({
     where: {
       idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId),
+      status: PaymentRecoveryOperationStatus.PENDING,
+    },
+    data: {
+      lastError: message,
+    },
+  });
+}
+
+/**
+ * Durable recovery for the capacity-race auto-refund: member A's
+ * payment_intent.succeeded arrived after member B claimed the last beds, so
+ * A's booking was cancelled inside the reconciliation transaction and A's full
+ * charge must be handed back. Enqueued INSIDE that transaction — atomic with
+ * the CANCELLED flip, with the refund allocation frozen from the same locked
+ * read, BEFORE any Stripe call (the #1349 enqueue-then-execute pattern) — so a
+ * transient inline refund failure, or a process death anywhere after the
+ * commit, leaves a PENDING operation the recovery cron replays with backoff
+ * and alerts only at exhaustion, instead of a stranded charge whose only
+ * remediation was an admin reading a (best-effort) alert email. The processor
+ * replays the frozen plan under the stored inline Stripe key prefix
+ * (`capacity_claim_failed_<bookingId>_<paymentIntentId>`), so a refund that
+ * succeeded on Stripe but was never recorded is replayed, never repeated.
+ */
+export async function enqueueCapacityClaimFailedRefundRecovery({
+  bookingId,
+  paymentId,
+  paymentIntentId,
+  amountCents,
+  allocationPlan,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentId: string;
+  paymentIntentId: string;
+  amountCents: number;
+  /** Slices frozen inside the reconciliation claim transaction. */
+  allocationPlan?: RefundAllocationSlice[];
+  store?: PaymentRecoveryStore;
+}) {
+  return enqueueLedgerRefundRecovery({
+    bookingId,
+    paymentId,
+    amountCents,
+    idempotencyKey: buildCapacityClaimFailedRefundRecoveryIdempotencyKey(
+      bookingId,
+      paymentIntentId,
+    ),
+    stripeKeyPrefix: buildCapacityClaimFailedRefundStripeKeyPrefix(
+      bookingId,
+      paymentIntentId,
+    ),
+    allocationPlan,
+    store,
+  });
+}
+
+/**
+ * Happy-path close of the capacity-race refund recovery operation after the
+ * inline refund completed. Best-effort (mirrors #1349): a lost close leaves a
+ * PENDING operation whose replay re-requests the identical frozen slices under
+ * the identical Stripe keys — Stripe answers with the original refunds and the
+ * ledger dedupes on refund id, so no second money movement is possible.
+ */
+export async function markCapacityClaimFailedRefundRecoverySucceeded({
+  bookingId,
+  paymentIntentId,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentIntentId: string;
+  store?: PaymentRecoveryStore;
+}) {
+  return store.paymentRecoveryOperation.updateMany({
+    where: {
+      idempotencyKey: buildCapacityClaimFailedRefundRecoveryIdempotencyKey(
+        bookingId,
+        paymentIntentId,
+      ),
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+    },
+    data: {
+      status: PaymentRecoveryOperationStatus.SUCCEEDED,
+      nextRetryAt: null,
+      lastError: null,
+      processingStartedAt: null,
+      succeededAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Record why the inline capacity-race refund failed on the already-persisted
+ * recovery operation, for operator visibility on the health surfaces. Only
+ * touches a PENDING row (mirrors the #1349 recorder): once the cron has
+ * claimed or resolved the operation, its own lifecycle owns lastError.
+ */
+export async function recordCapacityClaimFailedRefundRecoveryInlineError({
+  bookingId,
+  paymentIntentId,
+  message,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentIntentId: string;
+  message: string;
+  store?: PaymentRecoveryStore;
+}) {
+  return store.paymentRecoveryOperation.updateMany({
+    where: {
+      idempotencyKey: buildCapacityClaimFailedRefundRecoveryIdempotencyKey(
+        bookingId,
+        paymentIntentId,
+      ),
       status: PaymentRecoveryOperationStatus.PENDING,
     },
     data: {

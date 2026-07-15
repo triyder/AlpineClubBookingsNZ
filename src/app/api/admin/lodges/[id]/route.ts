@@ -11,6 +11,7 @@ import {
   redactLodgeForAudit,
   serializeLodge,
 } from "@/lib/lodges";
+import { getTodayDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
@@ -89,14 +90,18 @@ export async function PATCH(
   // explicit force to proceed. (What deactivation ultimately means for existing
   // bookings is an open operational decision — see docs/multi-lodge.)
   if (parsed.data.active === false && existing.active && !parsed.data.force) {
-    const now = new Date();
+    // checkOut and hutLeaderAssignment.endDate are @db.Date (NZ calendar date at
+    // UTC midnight). Compare against the date-only "today" so a stay or hut-leader
+    // term ending today still registers as a live dependency for the whole NZ
+    // day, not just the first ~13h under the TZ=Pacific/Auckland pin (F32, #1888).
+    const today = getTodayDateOnly();
     const [futureBookings, waitlistEntries, hutLeaderAssignments, kioskBindings] =
       await Promise.all([
         prisma.booking.count({
           where: {
             lodgeId: existing.id,
             status: { in: [...ACTIVE_BOOKING_STATUSES] },
-            checkOut: { gte: now },
+            checkOut: { gte: today },
           },
         }),
         prisma.booking.count({
@@ -108,7 +113,7 @@ export async function PATCH(
           },
         }),
         prisma.hutLeaderAssignment.count({
-          where: { lodgeId: existing.id, endDate: { gte: now } },
+          where: { lodgeId: existing.id, endDate: { gte: today } },
         }),
         prisma.memberLodgeAccess.count({
           where: { lodgeId: existing.id, kind: "STAFF" },

@@ -6,7 +6,7 @@ import type {
   Prisma,
 } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
-import { getEffectiveMembershipAnnualFee } from "@/lib/authoritative-fees";
+import { getEffectiveMembershipAnnualFee, getFamilyBillingMode } from "@/lib/authoritative-fees";
 import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
 import { getSeasonStartMonth } from "@/lib/financial-year";
 import { prisma } from "@/lib/prisma";
@@ -22,6 +22,7 @@ export type SubscriptionBillingExceptionCode =
   | "AMBIGUOUS_FAMILY"
   | "MISSING_FAMILY_RECIPIENT"
   | "INVALID_FAMILY_RECIPIENT"
+  | "PER_FAMILY_FEE_IN_INDIVIDUAL_MODE"
   | "MISSING_XERO_ACCOUNT_MAPPING"
   | "FAMILY_ALREADY_BILLED";
 
@@ -147,8 +148,9 @@ export async function buildSubscriptionBillingPreview(input: {
   if (decisionDate < bounds.start || decisionDate > bounds.end) {
     throw new Error(`Decision date must fall within membership year ${input.seasonYear}.`);
   }
-  const [dueDays, alreadyCovered, existingFamilyCharges, members] = await Promise.all([
+  const [dueDays, familyBillingMode, alreadyCovered, existingFamilyCharges, members] = await Promise.all([
     getSubscriptionBillingDueDays(db),
+    getFamilyBillingMode(db),
     db.membershipSubscriptionChargeCoverage.findMany({
       where: {
         subscription: {
@@ -232,6 +234,22 @@ export async function buildSubscriptionBillingPreview(input: {
   const fallbackTypeByKey = new Map(fallbackTypes.map((type) => [type.key, type]));
 
   const coveredSet = new Set(alreadyCovered.map((row) => row.memberId));
+  // The effective fee depends only on the membership type and the decision
+  // date, and the decision date is fixed for the whole preview, so memoize
+  // per membership type instead of querying once per member (#1886).
+  const feeByMembershipTypeId = new Map<
+    string,
+    Awaited<ReturnType<typeof getEffectiveMembershipAnnualFee>>
+  >();
+  const getMemoizedFee = async (membershipTypeId: string) => {
+    if (!feeByMembershipTypeId.has(membershipTypeId)) {
+      feeByMembershipTypeId.set(
+        membershipTypeId,
+        await getEffectiveMembershipAnnualFee(membershipTypeId, decisionDate, db),
+      );
+    }
+    return feeByMembershipTypeId.get(membershipTypeId) ?? null;
+  };
   const billedFamilyTypes = new Map(existingFamilyCharges.map((charge) => [
     `${input.seasonYear}:${charge.membershipTypeId}:family:${charge.familyGroupId}`,
     charge.id,
@@ -257,7 +275,7 @@ export async function buildSubscriptionBillingPreview(input: {
       continue;
     }
     if (membershipType.subscriptionBehavior === "NOT_REQUIRED") continue;
-    const fee = await getEffectiveMembershipAnnualFee(membershipType.id, decisionDate, db);
+    const fee = await getMemoizedFee(membershipType.id);
     if (!fee) {
       exceptions.push(exception({
         code: "MISSING_FEE_SCHEDULE",
@@ -277,6 +295,22 @@ export async function buildSubscriptionBillingPreview(input: {
     let familyGroupId: string | null = null;
     let recipient = { id: member.id, name: memberName, email: member.email };
     if (fee.billingBasis === "PER_FAMILY") {
+      // Mode guard (#159): per-family billing is disallowed while the club bills
+      // members individually, so a stale PER_FAMILY schedule surfaces as a
+      // visible config exception instead of being silently reinterpreted as
+      // per-member. This also makes the never-infer-recipient family branch
+      // below (MISSING_FAMILY_RECIPIENT / INVALID_FAMILY_RECIPIENT) unreachable
+      // in individual mode, upholding the invariant by construction rather than
+      // by assumption.
+      if (familyBillingMode === "BILL_MEMBERS_INDIVIDUALLY") {
+        exceptions.push(exception({
+          code: "PER_FAMILY_FEE_IN_INDIVIDUAL_MODE",
+          message: `${membershipType.name} has a per-family fee but this club bills members individually. Change the fee's billing basis before invoicing.`,
+          seasonYear: input.seasonYear, memberId: member.id, familyGroupId: null,
+          membershipTypeId: membershipType.id, context: { memberName },
+        }));
+        continue;
+      }
       if (member.familyGroupMemberships.length === 0) {
         exceptions.push(exception({
           code: "MISSING_FAMILY", message: `${memberName} has a per-family fee but is not in a family.`,
@@ -578,6 +612,12 @@ export async function confirmSubscriptionBillingPreview(input: {
         }),
       }, tx);
     }
+  }, {
+    // A whole-club annual run touches every member sequentially; Prisma's
+    // default 5s interactive-transaction budget aborts it with P2028 for
+    // clubs of a few hundred members. Match the 60s whole-run batch
+    // precedent in config-transfer/apply (#1886, F12).
+    timeout: 60_000,
   });
   return { chargeIds: [...new Set(chargeIds)], exceptionCount: input.preview.exceptions.length };
 }

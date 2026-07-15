@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   updatePayment: vi.fn(),
   findUniqueBookingModification: vi.fn(),
   findUniqueBooking: vi.fn(),
+  findFirstPaymentTransaction: vi.fn(),
   completeXeroSyncOperation: vi.fn(),
   buildXeroContactUpdatePayload: vi.fn(),
   shouldRepairXeroContactNameOrder: vi.fn(),
@@ -45,6 +46,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     booking: {
       findUnique: mocks.findUniqueBooking,
+    },
+    paymentTransaction: {
+      findFirst: mocks.findFirstPaymentTransaction,
     },
   },
 }));
@@ -258,6 +262,8 @@ describe("retryXeroSyncOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findUniqueMember.mockResolvedValue(null);
+    // No SUCCEEDED ADDITIONAL capture exists unless a test says so (#1882).
+    mocks.findFirstPaymentTransaction.mockResolvedValue(null);
     mocks.shouldRepairXeroContactNameOrder.mockResolvedValue(false);
     mocks.buildXeroContactUpdatePayload.mockImplementation((member) => ({
       firstName: member.firstName,
@@ -676,6 +682,9 @@ describe("retryXeroSyncOperation", () => {
       changeFeeCents: 500,
       bookingModificationId: "mod_123",
       createdByMemberId: "admin_1",
+      // No queued payload and no SUCCEEDED ADDITIONAL capture in this
+      // scenario, so the retry must not record cash (#1882).
+      recordPayment: false,
       repairExistingLink: true,
     });
   });
@@ -712,6 +721,142 @@ describe("retryXeroSyncOperation", () => {
         priceDiffCents: 0,
         changeFeeCents: 1000,
       })
+    );
+  });
+
+  // F7 (#1882): the retry branch must thread recordPayment exactly like the
+  // outbox dispatch (`recordPayment: payload.recordPayment ?? true`). A
+  // positive-delta edit with no confirmed additional Stripe payment (e.g. an
+  // unpaid Internet-Banking supplementary invoice) is queued with
+  // recordPayment=false; a retry that drops the flag lets the worker default
+  // to true and books a phantom Stripe-clearing payment for cash that was
+  // never captured.
+  it("replays the STORED recordPayment=false so a retry cannot record phantom cash (#1882)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_ib_unpaid",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "book_123",
+          priceDiffCents: 2500,
+          changeFeeCents: 500,
+          recordPayment: false,
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: 2500,
+      changeFeeCents: 500,
+      createdAt: new Date("2026-07-01T00:00:00Z"),
+    });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ recordPayment: false })
+    );
+  });
+
+  it("defaults a stored payload without the flag to recordPayment=true like the outbox dispatch (#1882)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_pre_flag",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "book_123",
+          priceDiffCents: 2500,
+          changeFeeCents: 500,
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: 2500,
+      changeFeeCents: 500,
+      createdAt: new Date("2026-07-01T00:00:00Z"),
+    });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ recordPayment: true })
+    );
+  });
+
+  // F7 (#1882): the worker overwrites requestPayload with the raw Xero request
+  // shape before calling Xero, so a FAILED op from a real Xero error has lost
+  // the recordPayment flag. The retry must then derive it from capture
+  // evidence — a SUCCEEDED ADDITIONAL Stripe transaction for this booking
+  // matching the modification net — and never record cash without evidence.
+  it("derives recordPayment=false when the overwritten payload has no capture evidence (#1882)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_overwritten",
+        requestPayload: {
+          invoices: [{ lineItems: [{ unitAmount: 30 }] }],
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: 2500,
+      changeFeeCents: 500,
+      createdAt: new Date("2026-07-01T00:00:00Z"),
+    });
+    mocks.findFirstPaymentTransaction.mockResolvedValue(null);
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.findFirstPaymentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          payment: { bookingId: "book_123" },
+          kind: "ADDITIONAL",
+          source: "STRIPE",
+          status: "SUCCEEDED",
+          amountCents: 3000,
+        }),
+      })
+    );
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ recordPayment: false })
+    );
+  });
+
+  it("records payment on an overwritten-payload retry only with a SUCCEEDED ADDITIONAL capture (#1882)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_captured",
+        requestPayload: {
+          invoices: [{ lineItems: [{ unitAmount: 30 }] }],
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: 2500,
+      changeFeeCents: 500,
+      createdAt: new Date("2026-07-01T00:00:00Z"),
+    });
+    mocks.findFirstPaymentTransaction.mockResolvedValue({ id: "txn_1" });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ recordPayment: true })
     );
   });
 
@@ -761,6 +906,9 @@ describe("retryXeroSyncOperation", () => {
       changeFeeCents: 1000,
       bookingModificationId: "mod_mixed",
       createdByMemberId: "admin_1",
+      // No queued payload and no SUCCEEDED ADDITIONAL capture in this
+      // scenario, so the retry must not record cash (#1882).
+      recordPayment: false,
       repairExistingLink: true,
     });
   });

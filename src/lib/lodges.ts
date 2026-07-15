@@ -4,10 +4,10 @@ import type { Lodge, Prisma, PrismaClient } from "@prisma/client";
 // of the app prisma singleton and safe to import from prisma/seed.ts.
 type LodgeDb = Pick<PrismaClient, "lodge">;
 
-// Lodge management helpers for the multiLodge Admin Module (phase 1 of
-// docs/multi-lodge/implementation-plan.md). The Lodge table is core and every
-// deployment has at least one row; these helpers manage lodge identity only.
-// Capacity, pricing, and booking scoping arrive in later phases.
+// Lodge management helpers. Multi-lodge is core (ADR-005): the Lodge table is
+// always present and every deployment has at least one row; these helpers
+// manage lodge identity only. Capacity, pricing, and booking scoping live
+// elsewhere.
 
 export const lodgeSelect = {
   id: true,

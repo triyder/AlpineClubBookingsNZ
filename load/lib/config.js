@@ -1,0 +1,93 @@
+/**
+ * Shared env-driven configuration for the k6 load harness (issue #1884).
+ * All knobs come from `__ENV`; nothing is hardcoded except safe defaults
+ * for the throwaway staging stack. See docs/LOAD_TESTING.md.
+ */
+
+import { assertSafeTarget } from "./target-guard.js";
+
+function intEnv(env, name, fallback) {
+  const raw = env[name];
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return fallback;
+  }
+  const value = parseInt(String(raw), 10);
+  if (!isFinite(value) || value <= 0) {
+    throw new Error(name + ' must be a positive integer, got "' + raw + '"');
+  }
+  return value;
+}
+
+/**
+ * Build the config object every scenario uses. Runs the target-safety
+ * guard first, so importing a scenario script already enforces it.
+ */
+export function loadConfig(env) {
+  const baseUrl = assertSafeTarget(env);
+  return {
+    baseUrl,
+
+    // Load shape. PEAK_VUS is the headline knob (audit target: 100+).
+    peakVus: intEnv(env, "PEAK_VUS", 100),
+    rampUp: env.RAMP_UP || "1m",
+    steady: env.STEADY || "3m",
+    rampDown: env.RAMP_DOWN || "30s",
+
+    // Pass/fail knobs.
+    p95Ms: intEnv(env, "P95_MS", 800),
+    maxErrorRate: parseFloat(env.MAX_ERROR_RATE || "0.01"),
+
+    // Seconds of think time between page hits inside one iteration.
+    thinkTime: intEnv(env, "THINK_TIME", 1),
+
+    // Test credentials — env only, never committed secrets. The staging
+    // seed personas (docs/LOAD_TESTING.md) are the intended values.
+    userEmail: env.LOAD_USER_EMAIL || "alice@demo.alpineclub.test",
+    userPassword: env.LOAD_USER_PASSWORD || "",
+
+    // Optional comma-separated list of extra member emails (all sharing
+    // LOAD_USER_PASSWORD) so contention VUs can spread across accounts.
+    userPool: (env.LOAD_USERS || "")
+      .split(",")
+      .map(function (s) {
+        return s.trim();
+      })
+      .filter(Boolean),
+
+    // Booking-contention knobs.
+    lodgeId: env.LODGE_ID || "", // empty → app resolves the default lodge
+    contentionCheckIn: env.CONTENTION_CHECKIN || "2026-08-18",
+    contentionCheckOut: env.CONTENTION_CHECKOUT || "",
+    contentionAttempts: intEnv(env, "CONTENTION_ATTEMPTS", 3),
+    contentionP95Ms: intEnv(env, "CONTENTION_P95_MS", 5000),
+  };
+}
+
+/** Require login credentials; call from authenticated scenarios only. */
+export function requireCredentials(cfg) {
+  if (!cfg.userPassword) {
+    throw new Error(
+      "LOAD_USER_PASSWORD is not set. Authenticated scenarios need the " +
+        "seeded staging password (see docs/LOAD_TESTING.md); credentials " +
+        "are env-only and never hardcoded."
+    );
+  }
+}
+
+/** Standard ramp: up to peak, hold, down. */
+export function rampStages(cfg) {
+  return [
+    { duration: cfg.rampUp, target: cfg.peakVus },
+    { duration: cfg.steady, target: cfg.peakVus },
+    { duration: cfg.rampDown, target: 0 },
+  ];
+}
+
+/** Baseline pass/fail thresholds shared by the read scenarios. */
+export function standardThresholds(cfg) {
+  return {
+    http_req_duration: ["p(95)<" + cfg.p95Ms],
+    http_req_failed: ["rate<" + cfg.maxErrorRate],
+    checks: ["rate>" + (1 - cfg.maxErrorRate)],
+  };
+}

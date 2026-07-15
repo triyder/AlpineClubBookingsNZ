@@ -324,6 +324,11 @@ describe("degraded-mode policy for auth-sensitive limiters (#1142)", () => {
       "lodgePinLogin",
       "twoFactorVerify",
       "contact",
+      // Lobby display pairing start / admin code bind (#27, ADR-001 §5).
+      // displayClaim is deliberately NOT auth-sensitive: the claim poll can
+      // only present the code inside its own server-signed blob, so it has
+      // no credential-guessing surface.
+      "displayPairing",
     ].sort();
 
     const marked = Object.entries(rateLimiters)

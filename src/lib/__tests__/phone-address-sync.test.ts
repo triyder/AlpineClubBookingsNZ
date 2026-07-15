@@ -167,6 +167,42 @@ describe("Profile API: structured phone and address fields", () => {
     }));
   });
 
+  it("persists the lodge-screen phone opt-in when supplied (#126 / #37)", async () => {
+    vi.mocked(auth).mockResolvedValue(memberSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      lodgeScreenPhoneOptIn: false,
+    } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      lodgeScreenPhoneOptIn: true,
+    } as any);
+
+    const res = await updateProfile(
+      makeProfilePut({ ...validProfileBody, lodgeScreenPhoneOptIn: true }),
+    );
+    expect(res.status).toBe(200);
+    expect(prisma.member.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ lodgeScreenPhoneOptIn: true }),
+      }),
+    );
+  });
+
+  it("leaves the opt-in untouched when the field is omitted (#126)", async () => {
+    vi.mocked(auth).mockResolvedValue(memberSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      lodgeScreenPhoneOptIn: true,
+    } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember } as any);
+
+    const res = await updateProfile(makeProfilePut(validProfileBody));
+    expect(res.status).toBe(200);
+    const call = vi.mocked(prisma.member.update).mock.calls[0][0] as any;
+    expect(call.data).not.toHaveProperty("lodgeScreenPhoneOptIn");
+  });
+
   it("returns 403 for deactivated members", async () => {
     mockRequireActiveSessionUser.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: "Account is deactivated" }), {

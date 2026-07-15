@@ -1,0 +1,431 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
+// Lobby display device management (fork issue #33, epic #25): list devices
+// with pairing/last-seen state, create a device, arm pairing by entering the
+// code shown on the TV (ADR-001 admin bind), assign a registry template,
+// revoke. The lobbyDisplay module flag gates this page at the proxy.
+
+interface ClientDevice {
+  id: string;
+  name: string;
+  lodgeId: string;
+  lodgeName: string;
+  templateId: string | null;
+  templateName: string | null;
+  // Per-device refresh cadence in seconds (LTV-039); null = the default (~60s).
+  pollSeconds: number | null;
+  paired: boolean;
+  pairingArmedUntil: string | null;
+  lastSeenAt: string | null;
+  revoked: boolean;
+}
+
+interface TemplateOption {
+  id: string;
+  key: string;
+  name: string;
+  layout: { id: string; key: string; name: string };
+  deviceCount: number;
+  updatedAt: string;
+}
+
+// The picker offers the club default and every v2 template (LTV-038 retired the
+// separate built-ins group — the built-ins are now ordinary seeded templates).
+// The empty value is the club default; a template value is prefixed so the
+// change handler knows to PATCH its templateId.
+const CLUB_DEFAULT = "";
+const templateValue = (id: string) => `template:${id}`;
+
+interface LodgeOption {
+  id: string;
+  name: string;
+}
+
+export default function AdminDisplayDevicesPage() {
+  const [devices, setDevices] = useState<ClientDevice[]>([]);
+  const [templates, setTemplates] = useState<TemplateOption[]>([]);
+  const [lodges, setLodges] = useState<LodgeOption[]>([]);
+  const [newName, setNewName] = useState("");
+  const [newLodgeId, setNewLodgeId] = useState("");
+  const [codeByDevice, setCodeByDevice] = useState<Record<string, string>>({});
+  const [message, setMessage] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [displayUrl, setDisplayUrl] = useState("/display");
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    setDisplayUrl(`${window.location.origin}/display`);
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const [devicesRes, templatesRes, lodgesRes] = await Promise.all([
+      fetch("/api/admin/display/devices"),
+      fetch("/api/admin/display/templates"),
+      fetch("/api/admin/lodges").catch(() => null),
+    ]);
+    if (devicesRes.ok) {
+      const body = (await devicesRes.json()) as { devices: ClientDevice[] };
+      setDevices(body.devices);
+    }
+    if (templatesRes.ok) {
+      const body = (await templatesRes.json()) as {
+        templates: TemplateOption[];
+      };
+      setTemplates(body.templates ?? []);
+    }
+    if (lodgesRes?.ok) {
+      const body = (await lodgesRes.json()) as {
+        lodges?: Array<{ id: string; name: string; active?: boolean }>;
+      };
+      const active = (body.lodges ?? []).filter((lodge) => lodge.active !== false);
+      setLodges(active.map((lodge) => ({ id: lodge.id, name: lodge.name })));
+      setNewLodgeId((current) => current || active[0]?.id || "");
+    }
+    // When no lodge is selected (e.g. a single-lodge club shows no picker),
+    // creation falls back to the club's default lodge server-side.
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  async function createDevice() {
+    setMessage(null);
+    const response = await fetch("/api/admin/display/devices", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: newName, ...(newLodgeId ? { lodgeId: newLodgeId } : {}) }),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setMessage(body?.error ?? "Could not create the device");
+      return;
+    }
+    setNewName("");
+    await refresh();
+  }
+
+  async function armPairing(deviceId: string) {
+    setMessage(null);
+    const code = codeByDevice[deviceId] ?? "";
+    const response = await fetch(`/api/admin/display/devices/${deviceId}/pairing`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const body = (await response.json().catch(() => null)) as
+      | { ok?: boolean; error?: string }
+      | null;
+    setMessage(
+      response.ok
+        ? "Pairing armed — the display will connect within a few seconds."
+        : body?.error ?? "Pairing failed"
+    );
+    if (response.ok) {
+      setCodeByDevice((current) => ({ ...current, [deviceId]: "" }));
+      await refresh();
+    }
+  }
+
+  async function assignTemplate(deviceId: string, selection: string) {
+    setMessage(null);
+    // Decode the picker value into the binding to PATCH: a template value binds
+    // its id; the empty value clears the binding back to the club default
+    // (templateId null).
+    const patch: { templateId: string | null } = selection.startsWith("template:")
+      ? { templateId: selection.slice("template:".length) }
+      : { templateId: null };
+    const response = await fetch(`/api/admin/display/devices/${deviceId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setMessage(body?.error ?? "Could not assign the template");
+      return;
+    }
+    await refresh();
+  }
+
+  // Per-device refresh cadence (LTV-039). Blank resets to the default; a value
+  // is validated to the 15–600s range client-side before the PATCH (the route
+  // rejects out-of-range too). The poll doubles as the heartbeat, so this is
+  // also how often the device's "last seen" refreshes.
+  async function savePollSeconds(deviceId: string, raw: string) {
+    setMessage(null);
+    const trimmed = raw.trim();
+    let pollSeconds: number | null;
+    if (trimmed === "") {
+      pollSeconds = null;
+    } else {
+      const parsed = Number(trimmed);
+      if (!Number.isInteger(parsed) || parsed < 15 || parsed > 600) {
+        setMessage(
+          "Refresh interval must be a whole number of seconds between 15 and 600."
+        );
+        return;
+      }
+      pollSeconds = parsed;
+    }
+    const response = await fetch(`/api/admin/display/devices/${deviceId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pollSeconds }),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setMessage(body?.error ?? "Could not update the refresh interval");
+      return;
+    }
+    await refresh();
+  }
+
+  async function revoke(deviceId: string) {
+    setMessage(null);
+    const response = await fetch(`/api/admin/display/devices/${deviceId}/revoke`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      setMessage("Could not revoke the device");
+      return;
+    }
+    await refresh();
+  }
+
+  return (
+    <div className="space-y-6 p-6">
+      <div>
+        <h1 className="text-2xl font-bold">Display Devices</h1>
+        <p className="text-muted-foreground">
+          Paired lobby screens per lodge. Create a device, open the display URL
+          on the TV, then enter the code it shows to pair. Devices are
+          read-only and individually revocable.
+        </p>
+        {/* LTV-035 (#81): the per-lodge display config (name granularity,
+            committee notice, {{config:key}} values) moved to each lodge's own
+            configuration page. Point admins arriving from the old Display
+            Settings location at the new home. */}
+        <p className="text-muted-foreground mt-2 text-sm">
+          Per-lodge display values (guest name granularity, committee notice,
+          and {"{{config:key}}"} values) are edited on each lodge — Admin →
+          Lodges.
+        </p>
+      </div>
+
+      {message && <p className="text-sm font-medium">{message}</p>}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Setting up a screen</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          <p>
+            1. On the TV (or any browser on the screen device), open:{" "}
+            <code className="bg-muted rounded px-2 py-1 font-mono">{displayUrl}</code>{" "}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void navigator.clipboard.writeText(displayUrl).then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                });
+              }}
+            >
+              {copied ? "Copied" : "Copy URL"}
+            </Button>
+          </p>
+          <p>2. The screen shows a six-character pairing code.</p>
+          <p>
+            3. Create (or pick) a device below, type the code into its Pair box,
+            and the screen connects itself within a few seconds. It keeps
+            working across reboots until you revoke it.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Add a display device</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1">
+            <Label htmlFor="device-name">Name</Label>
+            <Input
+              id="device-name"
+              value={newName}
+              placeholder="Lobby TV"
+              onChange={(event) => setNewName(event.target.value)}
+            />
+          </div>
+          {lodges.length > 1 && (
+            <div className="space-y-1">
+              <Label htmlFor="device-lodge">Lodge</Label>
+              <select
+                id="device-lodge"
+                className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+                value={newLodgeId}
+                onChange={(event) => setNewLodgeId(event.target.value)}
+              >
+                {lodges.map((lodge) => (
+                  <option key={lodge.id} value={lodge.id}>
+                    {lodge.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <Button onClick={() => void createDevice()} disabled={!newName}>
+            Create device
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Devices</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading && <p className="text-muted-foreground text-sm">Loading…</p>}
+          {!loading && devices.length === 0 && (
+            <p className="text-muted-foreground text-sm">No display devices yet.</p>
+          )}
+          <div className="space-y-4">
+            {devices.map((device) => (
+              <div
+                key={device.id}
+                className="flex flex-wrap items-center gap-3 border-b pb-4 last:border-b-0"
+              >
+                <div className="min-w-48">
+                  <p className="font-medium">{device.name}</p>
+                  <p className="text-muted-foreground text-sm">{device.lodgeName}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {device.revoked ? (
+                    <Badge variant="destructive">Revoked</Badge>
+                  ) : device.paired ? (
+                    <Badge>Paired</Badge>
+                  ) : (
+                    <Badge variant="secondary">Unpaired</Badge>
+                  )}
+                  {device.pairingArmedUntil && !device.paired && (
+                    <Badge variant="outline">Pairing armed</Badge>
+                  )}
+                  <span className="text-muted-foreground text-xs">
+                    {device.lastSeenAt
+                      ? `Last seen ${new Date(device.lastSeenAt).toLocaleString("en-NZ")}`
+                      : "Never seen"}
+                  </span>
+                </div>
+                {!device.revoked && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className="w-32 uppercase"
+                        placeholder="TV code"
+                        maxLength={6}
+                        value={codeByDevice[device.id] ?? ""}
+                        onChange={(event) =>
+                          setCodeByDevice((current) => ({
+                            ...current,
+                            [device.id]: event.target.value.toUpperCase(),
+                          }))
+                        }
+                      />
+                      <Button
+                        variant="outline"
+                        onClick={() => void armPairing(device.id)}
+                        disabled={(codeByDevice[device.id] ?? "").length !== 6}
+                      >
+                        Pair
+                      </Button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Label className="text-xs" htmlFor={`template-${device.id}`}>
+                        Template
+                      </Label>
+                      <select
+                        id={`template-${device.id}`}
+                        className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+                        value={
+                          device.templateId
+                            ? templateValue(device.templateId)
+                            : CLUB_DEFAULT
+                        }
+                        onChange={(event) =>
+                          void assignTemplate(device.id, event.target.value)
+                        }
+                      >
+                        <option value={CLUB_DEFAULT}>Club default</option>
+                        {templates.length > 0 && (
+                          <optgroup label="Templates">
+                            {templates.map((template) => (
+                              <option
+                                key={template.id}
+                                value={templateValue(template.id)}
+                              >
+                                {template.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Label className="text-xs" htmlFor={`poll-${device.id}`}>
+                          Refresh every
+                        </Label>
+                        <Input
+                          id={`poll-${device.id}`}
+                          className="w-20"
+                          type="number"
+                          min={15}
+                          max={600}
+                          placeholder="60"
+                          // Uncontrolled: re-key on the saved value so a refresh
+                          // reflows the input to the persisted (or default) state.
+                          key={`poll-${device.id}-${device.pollSeconds ?? "default"}`}
+                          defaultValue={device.pollSeconds ?? ""}
+                          onBlur={(event) =>
+                            void savePollSeconds(device.id, event.target.value)
+                          }
+                        />
+                        <span className="text-muted-foreground text-xs">seconds</span>
+                      </div>
+                      <p className="text-muted-foreground text-xs">
+                        Blank uses the default (~60s). This is also how often the
+                        screen&apos;s &ldquo;last seen&rdquo; updates.
+                      </p>
+                    </div>
+                    <Button variant="outline" asChild>
+                      <a
+                        href={`/display?previewDevice=${device.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Preview
+                      </a>
+                    </Button>
+                    <Button variant="destructive" onClick={() => void revoke(device.id)}>
+                      Revoke
+                    </Button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

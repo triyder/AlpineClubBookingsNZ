@@ -123,6 +123,21 @@ export const explicitPublicApiRoutes = {
     boundary: "public",
     reason: "Token-bearing non-member group join confirmation; only the matching SHA-256 token resolves a staged join, the create is idempotent and rate limited, and it mirrors the booking-request approval conversion (non-login member, PENDING child booking, pay link).",
   },
+  "src/app/api/display/state/route.ts": {
+    boundary: "public",
+    reason:
+      "Display-token-authenticated lobby display data feed (#28): sessionless hashed-token credential resolves to one device's lodge; the payload is privacy-reduced in the serialiser (names at configured granularity, minors never individually named, no money/contact/member ids). A full-admin session may alternatively preview via ?previewDevice / ?preview[&templateId&previewLodge] / ?preview (#52, LTV-036) — GET-only, same reduced payload, never stamps lastSeenAt, and may pass ?previewDate=YYYY-MM-DD to simulate the window's start date (#60, preview-only; device fetches ignore it). Additionally a ?previewGrant=<token> — an HMAC-signed, 5-minute, single-purpose blob minted by the admin-only preview-grant endpoint (LTV-036, ADR-003 §5) — authorises exactly one template/lodge preview so an authoring page can embed it inside a sandboxed (opaque-origin) iframe without the admin session; the grant is not a display token, stamps no lastSeenAt, authorises no other route, and its cross-origin (opaque) response carries a permissive CORS header (no credentials sent). Rate limited; module-flag gated at the proxy.",
+  },
+  "src/app/api/display/pair/route.ts": {
+    boundary: "public",
+    reason:
+      "Lobby display pairing (ADR-001): anonymous start issues a code inside an HMAC-signed httpOnly blob and persists nothing; claim can only present the code from its own signed blob and succeeds only after an admin binds that code to a device. Both actions rate limited; module-flag gated at the proxy.",
+  },
+  "src/app/api/display/heartbeat/route.ts": {
+    boundary: "public",
+    reason:
+      "Display-token-authenticated heartbeat (ADR-001): sessionless hashed-token credential resolves to one device; updates only that device's lastSeenAt; rejected tokens update nothing. Rate limited; module-flag gated at the proxy.",
+  },
   "src/app/api/health/ready/route.ts": {
     boundary: "public",
     reason: "Readiness endpoint for load balancers and deploy checks.",

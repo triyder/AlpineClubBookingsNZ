@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
 import { expireStaleOffers } from "./waitlist";
+import { getTodayDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
@@ -73,9 +74,15 @@ async function processWaitlistCronOnce(): Promise<{
   // 1. Expire stale offers and re-offer
   const { expiredCount, reofferedCount } = await expireStaleOffers();
 
-  // 2. Auto-cancel waitlisted bookings where all dates are in the past
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // 2. Auto-cancel waitlisted bookings where all dates are in the past.
+  // checkOut is @db.Date (the NZ calendar date stored at UTC midnight), so
+  // compare it against the date-only "today" rather than a local-midnight
+  // instant. A raw new Date() + setHours(0,0,0,0) resolves to NZ-local midnight
+  // (D-1)T12:00Z under the TZ=Pacific/Auckland server pin, which excludes a stay
+  // checking out today until tomorrow — a day late. The stay whose dates are all
+  // in the past includes one checking out today, so it must cancel today
+  // (F32, #1888).
+  const today = getTodayDateOnly();
 
   const pastWaitlisted = await prisma.booking.findMany({
     where: {

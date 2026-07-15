@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { MemberAddressFields } from "@/components/member-address-fields";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -36,6 +37,7 @@ interface ProfileFormProps {
     postalPostalCode: string;
     postalCountry: string;
     occupation?: string;
+    lodgeScreenPhoneOptIn?: boolean;
   };
   editable?: boolean;
   formId?: string;
@@ -85,6 +87,7 @@ export function ProfileForm({
     postalPostalCode: member.postalPostalCode,
     postalCountry: withDefaultNzCountry(member.postalCountry),
     occupation: member.occupation ?? "",
+    lodgeScreenPhoneOptIn: member.lodgeScreenPhoneOptIn ?? false,
   });
   const [sameAsPhysical, setSameAsPhysical] = useState(() =>
     shouldDefaultPostalSameAsPhysical({
@@ -239,6 +242,31 @@ export function ProfileForm({
           Country code (e.g. 64), area code (e.g. 27), and number. Synced with Xero.
         </p>
       </div>
+
+      {ageTier === "ADULT" ? (
+        <div className="space-y-2">
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="lodgeScreenPhoneOptIn"
+              className="mt-0.5"
+              disabled={saving || readOnly}
+              checked={form.lodgeScreenPhoneOptIn}
+              onCheckedChange={(checked) => {
+                if (readOnly) return;
+                setForm((prev) => ({ ...prev, lodgeScreenPhoneOptIn: checked }));
+              }}
+            />
+            <Label htmlFor="lodgeScreenPhoneOptIn" className="font-normal">
+              Show my phone number on the lodge lobby display
+            </Label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Off by default. When your lodge turns on phone display, opting in
+            lets your number appear on the public lobby screen so other guests
+            can reach you. Lodge staff can still see it at check-in either way.
+          </p>
+        </div>
+      ) : null}
 
       <div className="space-y-2">
         <Label htmlFor="dateOfBirth">Date of Birth</Label>

@@ -28,6 +28,9 @@ class EmailNotVerifiedError extends CredentialsSignin {
 // matches the email so unknown and known accounts take the same time,
 // preventing account enumeration via response timing.
 const DUMMY_PASSWORD_HASH =
+  // Not a live credential: a bcrypt hash of a random throwaway value, only ever
+  // compared against to equalise response timing (see comment above).
+  // nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash
   "$2b$12$vgnj5fAMZNzi.jYdELu0f.rjCvFqb/tgzYxtvBWJu8vCJYVO64SKC";
 
 const SESSION_MEMBER_SECURITY_SELECT = {

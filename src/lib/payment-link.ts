@@ -273,6 +273,10 @@ export async function getPaymentLinkContext(token: string): Promise<PaymentLinkC
  * requester a fresh one (the self-service "fresh link" action offered on the
  * expired-link page). Revokes any prior unused links for the booking. The new
  * link expires at the end of the check-in day in NZT.
+ *
+ * Returns `emailed: false` when the requester's address is actively
+ * suppressed (prior SES bounce/complaint) — nothing was delivered, so the UI
+ * must not promise an email that will never arrive (F25, #1885).
  */
 export async function reissuePaymentLinkForToken(
   token: string
@@ -313,7 +317,7 @@ export async function reissuePaymentLinkForToken(
     });
   });
 
-  await sendBookingRequestApprovedEmail({
+  const emailOutcome = await sendBookingRequestApprovedEmail({
     email: booking.member.email,
     firstName: booking.member.firstName,
     lodgeId: booking.lodgeId ?? null,
@@ -325,6 +329,21 @@ export async function reissuePaymentLinkForToken(
     bookingReference: booking.id,
     expiresAt,
   });
+
+  if (emailOutcome.status === "suppressed") {
+    // sendEmail delivered nothing (recipient is SES-suppressed after a prior
+    // bounce/complaint). Report truthfully so the page can tell the requester
+    // to contact the club instead of watching an inbox that stays empty.
+    logger.warn(
+      {
+        bookingId: booking.id,
+        emailSuppressionId: emailOutcome.emailSuppressionId,
+        reason: emailOutcome.reason,
+      },
+      "Fresh payment link issued but the email was suppressed; recipient undeliverable"
+    );
+    return { emailed: false };
+  }
 
   return { emailed: true };
 }

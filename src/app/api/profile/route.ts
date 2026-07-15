@@ -56,6 +56,10 @@ const profileSchema = z.object({
   postalPostalCode: maxStr(20),
   postalCountry: maxStr(100),
   occupation: z.string().max(100).optional().nullable().or(z.literal("")),
+  // #126 / #37: member opt-in to show their phone on the PUBLIC lobby display
+  // (the serialiser also requires lodge config on + adult). The kiosk staff
+  // check-in view is exempt from this toggle.
+  lodgeScreenPhoneOptIn: z.boolean().optional(),
   postalSameAsPhysical: z.boolean().optional(),
 });
 
@@ -71,6 +75,7 @@ const PROFILE_AUDIT_FIELDS = [
   ...STREET_FIELDS,
   ...POSTAL_FIELDS,
   "occupation",
+  "lodgeScreenPhoneOptIn",
   "profileCompletedAt",
 ] as const;
 const PROFILE_XERO_SYNC_SELECT = {
@@ -86,6 +91,7 @@ const PROFILE_XERO_SYNC_SELECT = {
   dateOfBirth: true,
   ageTier: true,
   occupation: true,
+  lodgeScreenPhoneOptIn: true,
   email: true,
   xeroContactId: true,
   streetAddressLine1: true,
@@ -234,6 +240,13 @@ export async function PUT(req: NextRequest) {
     updateData.occupation = data.occupation?.trim() || null;
   }
 
+  // #126 / #37: the phone-display opt-in is a member's own privacy choice, so
+  // accept it whenever supplied. It is only meaningful for adults (the
+  // serialiser never releases a non-adult phone) but is harmless to store.
+  if (data.lodgeScreenPhoneOptIn !== undefined) {
+    updateData.lodgeScreenPhoneOptIn = data.lodgeScreenPhoneOptIn;
+  }
+
   if (existing.canLogin && hasAccessRole(existing, "USER")) {
     const profileCompleteness = evaluateSelfServiceProfilePayload({
       firstName: updateData.firstName as string | null | undefined,
@@ -307,6 +320,9 @@ export async function PUT(req: NextRequest) {
               dateOfBirth: changedFields.includes("dateOfBirth"),
               ageTier: changedFields.includes("ageTier"),
               occupation: changedFields.includes("occupation"),
+              lodgeScreenPhoneOptIn: changedFields.includes(
+                "lodgeScreenPhoneOptIn"
+              ),
               profileCompleted: changedFields.includes("profileCompletedAt"),
             },
             postalSameAsPhysical: data.postalSameAsPhysical === true,

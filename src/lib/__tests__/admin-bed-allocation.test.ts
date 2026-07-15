@@ -50,6 +50,8 @@ import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 
 function readRepoFile(relativePath: string) {
+  // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
@@ -2586,5 +2588,161 @@ describe("deleteBedAllocation orphan auto-promote (#1743)", () => {
     } finally {
       delete prismaMock.$transaction;
     }
+  });
+});
+
+describe("getBedAllocationDashboard exclusive whole-lodge holds (#119/#120)", () => {
+  const room = {
+    id: "room-a",
+    name: "Room A",
+    sortOrder: 1,
+    active: true,
+    notes: null,
+    lodgeId: "lodge-1",
+    beds: [1, 2, 3, 4].map((n) => ({
+      id: `bed-a-${n}`,
+      roomId: "room-a",
+      name: `A${n}`,
+      sortOrder: n,
+      active: true,
+      bedType: "SINGLE",
+      bunkGroup: null,
+    })),
+  };
+
+  const guest = (id: string, bookingId: string) => ({
+    id,
+    bookingId,
+    firstName: id,
+    lastName: "Test",
+    ageTier: "ADULT",
+    stayStart: parseDateOnly("2026-07-01"),
+    stayEnd: parseDateOnly("2026-07-04"),
+  });
+
+  function bookingRow(overrides: Record<string, unknown>) {
+    return {
+      status: "CONFIRMED",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      checkIn: parseDateOnly("2026-07-01"),
+      checkOut: parseDateOnly("2026-07-04"),
+      lodgeId: "lodge-1",
+      requestedRoomId: null,
+      parentBookingId: null,
+      originBookingRequest: null,
+      heldForBookingRequest: null,
+      requestedRoom: null,
+      adminCapacityHoldAt: null,
+      wholeLodgeHold: false,
+      member: { firstName: "Org", lastName: "Contact", email: "s@x.nz" },
+      guests: [],
+      ...overrides,
+    };
+  }
+
+  function buildDb(bookings: unknown[]) {
+    return {
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({
+          autoAllocationEnabled: true,
+          updatedByMemberId: null,
+          updatedAt: parseDateOnly("2026-06-30"),
+        }),
+      },
+      lodgeRoom: { findMany: vi.fn().mockResolvedValue([room]) },
+      booking: { findMany: vi.fn().mockResolvedValue(bookings) },
+      bedAllocation: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+  }
+
+  it("short-circuits a held booking out of allocation, represents it distinctly, and flags overlapping bookings", async () => {
+    const range = parseBedAllocationDateRange({
+      from: "2026-07-01",
+      to: "2026-07-05",
+    });
+    const held = bookingRow({
+      id: "held",
+      wholeLodgeHold: true,
+      guests: [guest("held-g1", "held"), guest("held-g2", "held")],
+    });
+    const ordinary = bookingRow({
+      id: "ordinary",
+      checkIn: parseDateOnly("2026-07-02"),
+      checkOut: parseDateOnly("2026-07-03"),
+      guests: [
+        {
+          id: "ord-g1",
+          bookingId: "ordinary",
+          firstName: "Ord",
+          lastName: "Guest",
+          ageTier: "ADULT",
+          stayStart: parseDateOnly("2026-07-02"),
+          stayEnd: parseDateOnly("2026-07-03"),
+        },
+      ],
+    });
+
+    const dashboard = await getBedAllocationDashboard({
+      range,
+      db: buildDb([held, ordinary]) as never,
+    });
+
+    // #120: the held booking's guests are NOT awaiting allocation and are never
+    // fed to the planner (no suggested allocation, no gap/stuck state).
+    expect(
+      dashboard.unallocatedGuestNights.every((g) => g.bookingId !== "held"),
+    ).toBe(true);
+    expect(
+      dashboard.suggestedAllocations.every((a) => a.bookingId !== "held"),
+    ).toBe(true);
+
+    // #120: the held booking is represented distinctly instead.
+    expect(dashboard.exclusiveHolds).toHaveLength(1);
+    expect(dashboard.exclusiveHolds[0]).toMatchObject({
+      bookingId: "held",
+      guestCount: 2,
+    });
+    expect(dashboard.exclusiveHolds[0].nights).toEqual([
+      "2026-07-01",
+      "2026-07-02",
+      "2026-07-03",
+    ]);
+
+    // Regression: an ordinary overlapping booking still needs a bed AND is
+    // flagged as overlapping the hold (#119, the other direction).
+    expect(
+      dashboard.unallocatedGuestNights.some((g) => g.bookingId === "ordinary"),
+    ).toBe(true);
+    const ordinaryRow = dashboard.bookings.find((b) => b.id === "ordinary");
+    expect(ordinaryRow?.overlapsExclusiveHold).toBe(true);
+    expect(ordinaryRow?.wholeLodgeHold).toBe(false);
+
+    // The held booking itself is never flagged as "overlapping".
+    const heldRow = dashboard.bookings.find((b) => b.id === "held");
+    expect(heldRow?.wholeLodgeHold).toBe(true);
+    expect(heldRow?.overlapsExclusiveHold).toBe(false);
+  });
+
+  it("a non-held booking with no hold nearby is unaffected (regression)", async () => {
+    const range = parseBedAllocationDateRange({
+      from: "2026-07-01",
+      to: "2026-07-05",
+    });
+    const ordinary = bookingRow({
+      id: "solo",
+      guests: [guest("solo-g1", "solo")],
+    });
+
+    const dashboard = await getBedAllocationDashboard({
+      range,
+      db: buildDb([ordinary]) as never,
+    });
+
+    expect(dashboard.exclusiveHolds).toEqual([]);
+    const soloRow = dashboard.bookings.find((b) => b.id === "solo");
+    expect(soloRow?.overlapsExclusiveHold).toBe(false);
+    expect(
+      dashboard.unallocatedGuestNights.some((g) => g.bookingId === "solo"),
+    ).toBe(true);
   });
 });

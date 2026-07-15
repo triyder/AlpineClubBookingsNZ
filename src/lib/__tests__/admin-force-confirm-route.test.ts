@@ -262,6 +262,51 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
     expect(updateData).not.toHaveProperty("capacityOverriddenByMemberId");
   });
 
+  // ADR-001 decision 5 (issue #118): an exclusive whole-lodge hold on the
+  // target nights is NOT bypassable — even with allowOverbook the force-confirm
+  // is refused and nothing advances.
+  describe("whole-lodge hold non-bypass (issue #118)", () => {
+    function heldCapacity() {
+      return {
+        available: false,
+        minAvailable: 0,
+        nightDetails: [
+          {
+            date: new Date("2026-07-01T00:00:00.000Z"),
+            occupiedBeds: 8,
+            // Pinned to 0 (never negative), so it never shows in overbookDates.
+            availableBeds: 0,
+            wholeLodgeHeld: true,
+          },
+          {
+            date: new Date("2026-07-02T00:00:00.000Z"),
+            occupiedBeds: 8,
+            availableBeds: 0,
+            wholeLodgeHeld: true,
+          },
+        ],
+      };
+    }
+
+    it("refuses with 409 WHOLE_LODGE_HOLD_BLOCKED even when allowOverbook is set, committing nothing", async () => {
+      mocks.checkCapacityForGuestRanges.mockResolvedValue(heldCapacity());
+
+      const response = await POST(
+        forceConfirmRequest({ allowOverbook: true }),
+        routeParams(),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(body.error).toBe("WHOLE_LODGE_HOLD_BLOCKED");
+      expect(body.code).toBe("WHOLE_LODGE_HOLD_BLOCKED");
+      expect(body.blockedNights).toEqual(["2026-07-01", "2026-07-02"]);
+      // No booking advances onto a held night; no audit row is written.
+      expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+      expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
+    });
+  });
+
   // #1723 path 1 (owner decision B): a past-dated force-confirm that lands
   // PAYMENT_PENDING is allowed but flagged at creation — in the response and
   // in the audit trail — because it creates an unpaid finished stay. Stay

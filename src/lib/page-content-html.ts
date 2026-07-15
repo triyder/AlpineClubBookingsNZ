@@ -4,13 +4,18 @@ import sanitizeHtml from "sanitize-html";
 import { prisma } from "@/lib/prisma";
 import type { EditablePageRecord } from "@/lib/page-content";
 
+// Hardcoded literal regexes (not a dynamic `new RegExp`) so the pattern can
+// never be shaped by input and there is no non-literal-RegExp/ReDoS surface.
+const PIXEL_DIMENSION_PATTERNS = {
+  width: /width\s*:\s*(\d+)(?:px)?\b/i,
+  height: /height\s*:\s*(\d+)(?:px)?\b/i,
+} as const;
+
 function extractPixelDimension(
   style: string,
   property: "width" | "height",
 ): string | null {
-  const match = style.match(
-    new RegExp(`${property}\\s*:\\s*(\\d+)(?:px)?\\b`, "i"),
-  );
+  const match = style.match(PIXEL_DIMENSION_PATTERNS[property]);
   return match?.[1] ?? null;
 }
 
@@ -157,8 +162,38 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
   },
 };
 
-export function sanitizePageContentHtml(contentHtml: string): string {
-  return sanitizeHtml(contentHtml, SANITIZE_OPTIONS).trim();
+export interface SanitizePageContentHtmlOptions {
+  /**
+   * Lobby-display authoring/render path ONLY (issue #161, ADR-003 residual):
+   * constrain `<img>` src to relative/root-absolute paths or `data:` URIs,
+   * matching the display CSP's `img-src 'self' data:` (src/lib/csp.ts) so an
+   * authoring admin gets a save-time sanitiser signal instead of an image the
+   * browser silently refuses to fetch on the unattended wall. The CMS default
+   * (this flag omitted/false) is UNCHANGED — public-site page content keeps
+   * allowing `http`/`https` image sources, which `data:` URIs deliberately do
+   * not (see the "keeps uploaded image library URLs but strips data: URIs"
+   * test) — do not flip this default.
+   */
+  restrictImgSrc?: boolean;
+}
+
+export function sanitizePageContentHtml(
+  contentHtml: string,
+  options: SanitizePageContentHtmlOptions = {},
+): string {
+  const sanitizeOptions: sanitizeHtml.IOptions = options.restrictImgSrc
+    ? {
+        ...SANITIZE_OPTIONS,
+        // Replaces (not extends) SANITIZE_OPTIONS.allowedSchemesByTag — img is
+        // its only key today. Dropping http/https here silently strips the
+        // whole `src` attribute (same mechanism the CMS default already uses
+        // to strip data: — see the "strips data: URIs" test) and allowing
+        // data: instead means a display author's now-blocked external image
+        // renders with no src rather than throwing.
+        allowedSchemesByTag: { img: ["data"] },
+      }
+    : SANITIZE_OPTIONS;
+  return sanitizeHtml(contentHtml, sanitizeOptions).trim();
 }
 
 /**

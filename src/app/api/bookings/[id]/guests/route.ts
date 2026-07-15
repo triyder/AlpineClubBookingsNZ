@@ -33,6 +33,7 @@ import {
   replacePromoRedemptionAllocations,
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
+import { ApiError as SharedApiError } from "@/lib/api-error";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
@@ -831,9 +832,19 @@ export async function POST(
     if (err instanceof ApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
-    const message =
-      err instanceof Error ? err.message : "Failed to add guests";
-    return NextResponse.json({ error: message }, { status: 400 });
+    // Shared-lib domain errors (e.g. the #1032 quote-priced edit block from
+    // assertBookingNotQuotePriced) are the shared ApiError class, distinct
+    // from this route's local ApiError above.
+    if (err instanceof SharedApiError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    // #1888 — unexpected (non-typed) errors must not leak their message to
+    // the client; the raw error stays in the log only.
+    logger.error({ err, bookingId }, "Failed to add guests to booking");
+    return NextResponse.json(
+      { error: "Failed to add guests" },
+      { status: 400 }
+    );
   }
 }
 

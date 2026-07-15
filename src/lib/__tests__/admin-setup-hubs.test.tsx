@@ -18,6 +18,7 @@ vi.mock("@/components/admin/finance-report-mappings-panel", () => ({
 }));
 
 import AppearanceHubPage from "@/app/(admin)/admin/appearance/page";
+import DisplayHubPage from "@/app/(admin)/admin/display/page";
 import BookingsSetupHubPage from "@/app/(admin)/admin/bookings-setup/page";
 import BookingRulesSetupHubPage from "@/app/(admin)/admin/setup/booking-rules/page";
 import CancellationSetupHubPage from "@/app/(admin)/admin/setup/cancellation/page";
@@ -61,6 +62,33 @@ describe("admin setup hub pages", () => {
     expect(html).toContain("Membership Types");
     expect(html).toContain("Member Fields");
     expect(html).toContain("Subscription Lockout");
+  });
+
+  it("renders the Lobby Display hub cards (fork issue #109)", async () => {
+    const html = await renderPage(DisplayHubPage);
+
+    expect(html).toContain("Lobby Display");
+    // The four surfaces the old four-item sidebar group linked, now cards.
+    expect(html).toContain("Devices");
+    expect(html).toContain("/admin/display/devices");
+    expect(html).toContain("Layouts");
+    expect(html).toContain("/admin/display/layouts");
+    expect(html).toContain("Templates");
+    expect(html).toContain("/admin/display/templates");
+    expect(html).toContain("Reference");
+    expect(html).toContain("/admin/display/reference");
+  });
+
+  it("hides Lobby Display hub cards when the module is disabled", async () => {
+    vi.mocked(loadEffectiveModuleFlags).mockResolvedValue({
+      ...allOn,
+      lobbyDisplay: false,
+    });
+
+    const html = await renderPage(DisplayHubPage);
+
+    expect(html).not.toContain("/admin/display/devices");
+    expect(html).not.toContain("/admin/display/layouts");
   });
 
   it("renders the Bookings Setup hub without the removed sidebar duplicate", async () => {

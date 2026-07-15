@@ -3,6 +3,7 @@ import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import {
+  CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   MODULE_KEYS,
   getEffectiveModuleFlags,
   type ModuleSettingsValues,
@@ -13,7 +14,6 @@ const mocks = vi.hoisted(() => ({
   requireActiveSessionUser: vi.fn(),
   clubModuleSettingsFindUnique: vi.fn(),
   clubModuleSettingsUpsert: vi.fn(),
-  lodgeCount: vi.fn(),
   auditLogCreate: vi.fn(),
   transaction: vi.fn(),
   buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
@@ -44,9 +44,6 @@ vi.mock("@/lib/prisma", () => ({
     clubModuleSettings: {
       findUnique: mocks.clubModuleSettingsFindUnique,
       upsert: mocks.clubModuleSettingsUpsert,
-    },
-    lodge: {
-      count: mocks.lodgeCount,
     },
     auditLog: {
       create: mocks.auditLogCreate,
@@ -84,6 +81,8 @@ function request(body: unknown) {
 }
 
 function readRepoFile(relativePath: string) {
+  // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
@@ -143,6 +142,12 @@ describe("Admin modules schema contract", () => {
         "prisma/migrations/20260702143000_add_analytics_module/migration.sql",
       ),
     ).toContain('"analytics" BOOLEAN NOT NULL DEFAULT false');
+    expect(model).toContain("lobbyDisplay            Boolean  @default(false)");
+    expect(
+      readRepoFile(
+        "prisma/migrations/20260712130000_add_lobby_display/migration.sql",
+      ),
+    ).toContain('"lobbyDisplay" BOOLEAN NOT NULL DEFAULT false');
   });
 });
 
@@ -307,6 +312,16 @@ describe("Admin modules API", () => {
         ...nextSettings,
         updatedByMemberId: "admin-1",
       },
+      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+    });
+    // The PUT handler's pre-write read must use the explicit column select
+    // (#153) so it stays blue/green-safe for a later DROP of a retired column,
+    // matching the invariant #150 established for the other reads. The
+    // upsert's implicit RETURNING needs the same select (#175) — Prisma
+    // names every column on a write, too.
+    expect(mocks.clubModuleSettingsFindUnique).toHaveBeenCalledWith({
+      where: { id: "default" },
+      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     });
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.auditLogCreate).toHaveBeenCalledWith(
@@ -330,41 +345,6 @@ describe("Admin modules API", () => {
     );
   });
 
-  it("rejects disabling multiLodge while more than one active lodge exists", async () => {
-    mocks.auth.mockResolvedValue(adminSession);
-    mocks.clubModuleSettingsFindUnique.mockResolvedValue({
-      id: "default",
-      ...allEnabled,
-      updatedAt: new Date("2026-05-18T10:00:00.000Z"),
-      updatedByMemberId: "admin-0",
-    });
-    mocks.lodgeCount.mockResolvedValue(2);
-
-    const response = await PUT(
-      request({ settings: { ...allEnabled, multiLodge: false } }),
-    );
-
-    expect(response.status).toBe(409);
-    expect(mocks.clubModuleSettingsUpsert).not.toHaveBeenCalled();
-  });
-
-  it("allows disabling multiLodge while at most one active lodge exists", async () => {
-    mocks.auth.mockResolvedValue(adminSession);
-    mocks.clubModuleSettingsFindUnique.mockResolvedValue({
-      id: "default",
-      ...allEnabled,
-      updatedAt: new Date("2026-05-18T10:00:00.000Z"),
-      updatedByMemberId: "admin-0",
-    });
-    mocks.lodgeCount.mockResolvedValue(1);
-
-    const response = await PUT(
-      request({ settings: { ...allEnabled, multiLodge: false } }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(mocks.clubModuleSettingsUpsert).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("effective module state", () => {

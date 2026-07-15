@@ -5,6 +5,8 @@ import { spawnSync } from "child_process";
 import { describe, expect, it } from "vitest";
 
 function readRepoFile(relativePath: string) {
+  // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
@@ -79,7 +81,11 @@ function createTempMigration(
   migrationName = "20990101000000_test_migration"
 ) {
   const tempDir = mkdtempSync(path.join(tmpdir(), "tac-migration-safety-"));
+  // Test fixture: joins a freshly created temp dir with a test-controlled migration name; no user input.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const migrationDir = path.join(tempDir, migrationName);
+  // Test fixture: appends the hardcoded "migration.sql" filename to the temp migration dir.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   const migrationPath = path.join(migrationDir, "migration.sql");
   const ledgerPath = path.join(tempDir, "safety.tsv");
 
@@ -118,8 +124,12 @@ function createTempMigrationsTree(
   const ledgerPath = path.join(tempDir, "safety.tsv");
 
   for (const migration of migrations) {
+    // Test fixture: joins the temp migrations dir with a test-controlled migration name; no user input.
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const dir = path.join(migrationsDir, migration.name);
     mkdirSync(dir, { recursive: true });
+    // Test fixture: appends the hardcoded "migration.sql" filename to the temp migration dir.
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     writeFileSync(path.join(dir, "migration.sql"), migration.sql);
   }
   writeFileSync(ledgerPath, ledger);

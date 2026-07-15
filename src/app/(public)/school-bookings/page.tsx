@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { DEFAULT_SCHOOL_GROUP_SOFT_CAP } from "@/lib/school-booking-constants";
@@ -59,6 +60,9 @@ export default function SchoolBookingRequestPage() {
   const [cateringPreference, setCateringPreference] = useState<
     "CATERED" | "NON_CATERED" | "QUOTE_BOTH"
   >("QUOTE_BOTH");
+  // Whole-lodge exclusivity request (issue #121). A request, not a guarantee —
+  // an officer decides at approval whether to grant sole occupancy.
+  const [exclusivityRequested, setExclusivityRequested] = useState(false);
   const [teachers, setTeachers] = useState<TeacherInput[]>([emptyTeacher()]);
   const [childCounts, setChildCounts] = useState<Record<string, number>>({
     INFANT: 0,
@@ -171,6 +175,7 @@ export default function SchoolBookingRequestPage() {
             CHILD: childCounts.CHILD || undefined,
             YOUTH: childCounts.YOUTH || undefined,
           },
+          exclusivityRequested,
           message: message || undefined,
         }),
       });
@@ -340,6 +345,24 @@ export default function SchoolBookingRequestPage() {
                 <SelectItem value="NON_CATERED">Non-catered</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <Checkbox
+                checked={exclusivityRequested}
+                onCheckedChange={setExclusivityRequested}
+                className="mt-0.5"
+              />
+              <span>
+                Request exclusive use of the lodge (sole occupancy for our group)
+              </span>
+            </label>
+            <p className="text-xs text-muted-foreground">
+              We&apos;ll do our best, but this is a request — {club.lodgeName} will
+              confirm whether the whole lodge can be reserved for your group when
+              we send your quote.
+            </p>
           </div>
 
           <div className="space-y-3">

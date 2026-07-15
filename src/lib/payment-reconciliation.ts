@@ -8,9 +8,19 @@ import {
 } from "@prisma/client";
 import {
   findPaymentTransactionByIntentId,
+  planStripeRefundAllocation,
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
+import {
+  enqueueCapacityClaimFailedRefundRecovery,
+  markCapacityClaimFailedRefundRecoverySucceeded,
+  recordCapacityClaimFailedRefundRecoveryInlineError,
+} from "@/lib/payment-recovery";
+import {
+  buildBookingModificationRefundMetadata,
+  buildCapacityClaimFailedRefundStripeKeyPrefix,
+} from "@/lib/payment-recovery-keys";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
   deriveBookingAppliedCreditCents,
@@ -24,6 +34,7 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import {
   bookingHasCapacityOverride,
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+  RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
@@ -244,6 +255,19 @@ export async function markBookingPaymentSucceeded({
       // Persisted capacity override (#1771): this booking was deliberately
       // admitted above the ceiling by an admin. Settle it instead of cancelling
       // — fall through to the PAID update below.
+      //
+      // Whole-lodge hold (ADR-001, issue #118) is DELIBERATELY not enforced on
+      // this settle path (and the other persisted-override settlements: cron-
+      // confirm-pending, switch-to-internet-banking, charge-saved-method,
+      // payment-link, xero-inbound invoice-paid-effects, group-settlement).
+      // Those settle a PRE-EXISTING overridden booking; a hold may have been
+      // placed over it AFTERWARDS. Per ADR-001 decision 1 (conflicts are
+      // allowed, surfaced, and manually resolved — no auto-displacement/refusal)
+      // an already-admitted booking is not a "new admission", so auto-refusing
+      // it here would contradict decision 1. The hold blocks only NEW admissions
+      // (decision 5), enforced at the admission choke points (booking-create,
+      // date/modify-plan, and the admin allowOverbook routes force-confirm /
+      // confirm-pending-guests / capacity-hold).
       logger.info(
         { bookingId: booking.id },
         "Settling an over-capacity booking with a persisted capacity override (#1771); skipping the capacity cancel"
@@ -256,6 +280,12 @@ export async function markBookingPaymentSucceeded({
           status: BookingStatus.CANCELLED,
           draftExpiresAt: null,
           ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+          // Best-effort field clearing (#177): this settlement capacity-cancel
+          // has no per-booking audit context, so it mirrors the capacity-hold
+          // sibling — clear the stale hold, no released audit. NB this is the
+          // NON-override branch; the documented decision-1 carve-out settlement
+          // (the override branch above) is untouched.
+          ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
         },
       });
       await reconcileBedAllocationsForBooking({
@@ -269,11 +299,42 @@ export async function markBookingPaymentSucceeded({
 
       await restoreCreditFromBooking(booking.memberId, booking.id, tx);
 
+      // Durable refund debt, ATOMIC with the cancel claim (mirrors the #1349
+      // enqueue-then-execute pattern in booking-cancel): freeze the refund
+      // allocation from this locked read and persist the recovery operation
+      // BEFORE any Stripe call. A transient inline refund failure below — or
+      // a process death between this commit and the refund — now leaves a
+      // PENDING operation the recovery cron replays with backoff, instead of
+      // the member's full charge stranded on a CANCELLED booking with only a
+      // best-effort alert email as remediation. The frozen plan makes
+      // inline-vs-cron replay exactly-once: both execute identical slices, so
+      // both mint identical `capacity_claim_failed_<bookingId>_<pi>_<txn>_
+      // <amount>` Stripe keys, Stripe answers repeats with the original
+      // refunds, and the ledger dedupes on refund id.
+      const { slices: refundPlan, plannedAmountCents: plannedRefundCents } =
+        await planStripeRefundAllocation({
+          paymentId: payment.id,
+          amountCents,
+          store: tx,
+        });
+      if (plannedRefundCents > 0) {
+        await enqueueCapacityClaimFailedRefundRecovery({
+          bookingId: booking.id,
+          paymentId: payment.id,
+          paymentIntentId,
+          amountCents: plannedRefundCents,
+          allocationPlan: refundPlan,
+          store: tx,
+        });
+      }
+
       return {
         outcome: "capacity_failed" as const,
         booking,
         paymentId: payment.id,
         bumpedBookingIds: [] as string[],
+        refundPlan,
+        plannedRefundCents,
       };
     }
 
@@ -337,18 +398,62 @@ export async function markBookingPaymentSucceeded({
       },
     });
 
+    // The refund debt was persisted INSIDE the claim transaction with the
+    // frozen allocation plan (see the enqueue above): everything below is the
+    // inline attempt at the same slices, and any failure leaves the PENDING
+    // operation for the recovery cron — never a stranded charge that only an
+    // alert email knows about.
+    const { refundPlan, plannedRefundCents } = reconciliation;
+    if (plannedRefundCents < amountCents) {
+      // Mirror-vs-ledger drift (same guard as booking-cancel): refund what
+      // the payment ledger actually shows refundable and surface the gap.
+      logger.error(
+        { bookingId, paymentIntentId, amountCents, plannedRefundCents },
+        "Capacity-race refund plan covers less than the captured amount; refunding what the payment ledger shows refundable"
+      );
+    }
+
     try {
+      if (refundPlan.length === 0 || plannedRefundCents <= 0) {
+        throw new Error(
+          "Capacity-race refund plan is empty: no captured Stripe transaction to refund"
+        );
+      }
+
       await refundPaymentTransactions({
         paymentId: reconciliation.paymentId,
-        amountCents,
+        amountCents: plannedRefundCents,
         reason: "requested_by_customer",
-        metadata: {
+        allocation: refundPlan,
+        // Shared with the recovery cron's replay (via
+        // bookingModificationRefundReasonForKeyPrefix) so the two send a
+        // byte-identical request body under the same
+        // `capacity_claim_failed_<bookingId>_<paymentIntentId>` key prefix —
+        // Stripe replays the original refund instead of rejecting the reused
+        // key with idempotency_error. The metadata deliberately carries only
+        // values the cron can reconstruct from the persisted operation.
+        metadata: buildBookingModificationRefundMetadata(
           bookingId,
-          paymentIntentId,
-          reason: "capacity_claim_failed",
-        },
-        idempotencyKeyPrefix: `capacity_claim_failed_${bookingId}_${paymentIntentId}`,
+          "capacity_claim_failed"
+        ),
+        idempotencyKeyPrefix: buildCapacityClaimFailedRefundStripeKeyPrefix(
+          bookingId,
+          paymentIntentId
+        ),
       });
+
+      // Happy-path close of the pre-persisted operation. Best-effort: a lost
+      // close leaves a PENDING row whose replay re-requests the identical
+      // slices/keys, which Stripe answers with the original refunds.
+      await markCapacityClaimFailedRefundRecoverySucceeded({
+        bookingId,
+        paymentIntentId,
+      }).catch((markErr) =>
+        logger.error(
+          { err: markErr, bookingId, paymentIntentId },
+          "Failed to mark capacity-race refund recovery succeeded; the cron will replay the frozen plan idempotently"
+        )
+      );
 
       await recordBookingEvent({
         bookingId,
@@ -364,9 +469,29 @@ export async function markBookingPaymentSucceeded({
         bumpedBookingIds: [],
       };
     } catch (refundError) {
+      // The cancel claim already committed together with the recovery
+      // operation, so nothing needs enqueueing here: the cron replays the
+      // frozen plan with backoff and alerts on exhaustion. A partial success
+      // has recorded its completed slices; the replay re-requests the SAME
+      // slices/keys, so completed slices are replayed by Stripe, not
+      // repeated, and only the remainder moves money. Record the inline
+      // error on the operation and keep the immediate admin alert.
       logger.error(
         { err: refundError, bookingId, paymentIntentId },
-        "Failed to auto-refund booking after final capacity claim failed"
+        "Failed to auto-refund booking after final capacity claim failed; the pre-persisted recovery operation will replay the refund"
+      );
+      await recordCapacityClaimFailedRefundRecoveryInlineError({
+        bookingId,
+        paymentIntentId,
+        message:
+          refundError instanceof Error
+            ? refundError.message
+            : String(refundError),
+      }).catch((recordErr) =>
+        logger.error(
+          { err: recordErr, bookingId, paymentIntentId },
+          "Failed to record inline capacity-race refund failure on the recovery operation"
+        )
       );
       await alertRefundFailure({
         booking: reconciliation.booking,

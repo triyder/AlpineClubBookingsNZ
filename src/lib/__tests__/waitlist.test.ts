@@ -1135,6 +1135,74 @@ describe("processWaitlistCron", () => {
       })
     );
   });
+
+  // F32 (#1888): checkOut is @db.Date (the NZ calendar date stored at UTC
+  // midnight). The auto-cancel cutoff must key off the NZ calendar date, not a
+  // local-midnight instant, or a stay checking out today (NZ) is skipped until
+  // tomorrow for the first ~13h of each NZ day under the TZ=Pacific/Auckland
+  // server pin. This test pins TZ + the clock into that window and proves a stay
+  // checking out on today's NZ date IS in the auto-cancel set.
+  it("auto-cancels a stay checking out on today's NZ date, not a day late (F32, #1888)", async () => {
+    const { processWaitlistCron } = await import("@/lib/cron-waitlist");
+
+    const originalTz = process.env.TZ;
+    process.env.TZ = "Pacific/Auckland";
+    vi.useFakeTimers();
+    // NZ 2026-07-16 08:00 (NZST +12); the UTC day (Jul 15) trails the NZ day.
+    // The local-midnight bug would set the cutoff to NZ midnight = Jul 15 12:00Z,
+    // excluding a Jul 16 00:00Z (@db.Date) checkout; the date-only cutoff is
+    // Jul 16 00:00Z, which includes it (lte).
+    vi.setSystemTime(new Date("2026-07-15T20:00:00.000Z"));
+    try {
+      // expireStaleOffers (step 1) runs first inside a transaction; no offers.
+      mockTx.booking.findMany.mockResolvedValueOnce([]);
+
+      // A waitlisted stay whose checkOut is today's NZ calendar date, stored as
+      // @db.Date (UTC midnight).
+      const todayNzCheckout = new Date("2026-07-16T00:00:00.000Z");
+      const candidates = [
+        {
+          id: "checks-out-today-nz",
+          checkIn: new Date("2026-07-14T00:00:00.000Z"),
+          checkOut: todayNzCheckout,
+        },
+      ];
+      // Behavioural fake: apply the checkOut <= cutoff filter the DB would apply,
+      // so the assertion turns on which cutoff the code computed.
+      mockBookingFindMany.mockImplementationOnce(
+        async (args: { where: { checkOut: { lte: Date } } }) => {
+          const cutoff = args.where.checkOut.lte;
+          return candidates.filter(
+            (b) => b.checkOut.getTime() <= cutoff.getTime()
+          );
+        }
+      );
+      mockBookingUpdateMany.mockResolvedValue({ count: 1 });
+
+      const result = await processWaitlistCron();
+
+      // Behavioural: the today-NZ checkout is in the cancel set (was excluded
+      // under the local-midnight bug).
+      expect(result.autoCancelled).toBe(1);
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ["checks-out-today-nz"] } },
+          data: expect.objectContaining({ status: "CANCELLED" }),
+        })
+      );
+      // The cutoff is the NZ calendar date at exact UTC midnight, not the
+      // local-midnight instant (Jul 15 12:00Z) the bug produced.
+      const cutoff = mockBookingFindMany.mock.calls[0][0].where.checkOut.lte;
+      expect(cutoff.toISOString()).toBe("2026-07-16T00:00:00.000Z");
+    } finally {
+      vi.useRealTimers();
+      if (originalTz === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = originalTz;
+      }
+    }
+  });
 });
 
 // ─── Booking Creation Waitlist Path Tests ───

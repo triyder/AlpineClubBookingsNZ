@@ -30,6 +30,8 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
     emailLog: {
       create: vi.fn().mockResolvedValue({ id: "log-1" }),
       update: vi.fn().mockResolvedValue({}),
+      // Pre-send retry claim (F33, #1885): claim succeeds by default.
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       findFirst: vi.fn().mockResolvedValue(null),
       findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
@@ -323,11 +325,18 @@ describe("N-11: retryFailedEmails", () => {
     expect(result.retried).toBe(1);
     expect(result.succeeded).toBe(1);
     expect(result.failed).toBe(0);
+    // The attempts increment moved into the pre-send claim (F33, #1885).
+    expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
+      where: { id: "log-fail-1", status: "FAILED" },
+      data: expect.objectContaining({
+        status: "QUEUED",
+        attempts: 2,
+      }),
+    });
     expect(mockPrisma.emailLog.update).toHaveBeenCalledWith({
       where: { id: "log-fail-1" },
       data: expect.objectContaining({
         status: "SENT",
-        attempts: 2,
       }),
     });
     expect(mockTransporter.sendMail).toHaveBeenCalledWith(

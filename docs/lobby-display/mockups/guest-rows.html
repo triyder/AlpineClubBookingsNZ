@@ -1,0 +1,146 @@
+<meta charset="utf-8">
+<title>Silverpeak lobby — guest-centric views</title>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="peak" viewBox="0 0 100 100"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"><path d="M8 78 L38 30 L54 55 L66 38 L92 78 Z"/><path d="M31 41 L38 48 L45 41"/></g></symbol>
+</svg>
+<style>
+  :root { --bg:#e8eef1; --panel:#fff; --ink:#10242a; --muted:#4f6670; --line:#d2dde1; --accent:#0e6e78; --accent-ink:#0a545c; --radius:14px; --maxw:1120px; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#081a1f; --panel:#0f242b; --ink:#e8f4f6; --muted:#8fb0b8; --line:#20343b; --accent:#3fb9cb; --accent-ink:#6fd2e0; } }
+  :root[data-theme="light"]{ --bg:#e8eef1; --panel:#fff; --ink:#10242a; --muted:#4f6670; --line:#d2dde1; --accent:#0e6e78; --accent-ink:#0a545c; }
+  :root[data-theme="dark"]{ --bg:#081a1f; --panel:#0f242b; --ink:#e8f4f6; --muted:#8fb0b8; --line:#20343b; --accent:#3fb9cb; --accent-ink:#6fd2e0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:var(--maxw); margin:0 auto; padding: clamp(20px,4vw,52px) clamp(16px,4vw,40px) 70px; }
+  .eyebrow { font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent-ink); font-weight:700; margin:0 0 10px; display:flex; align-items:center; gap:9px; } .eyebrow .badge { width:20px; height:20px; color:var(--accent); }
+  h1 { font-size:clamp(26px,5vw,42px); line-height:1.05; margin:0 0 14px; letter-spacing:-.02em; font-weight:800; }
+  .lede { font-size:clamp(15px,2.2vw,18px); color:var(--muted); max-width:70ch; margin:0 0 8px; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px 20px; margin:16px 0 0; font-size:14px; color:var(--muted); } .legend .k { display:inline-flex; align-items:center; gap:7px; } .legend .sw { width:12px; height:12px; border-radius:50%; }
+  .example { margin-top: clamp(30px,5vw,50px); }
+  .cap { display:flex; gap:14px; align-items:baseline; margin-bottom:14px; }
+  .cap .n { flex:none; width:30px; height:30px; border-radius:8px; display:grid; place-items:center; font-weight:700; font-size:14px; background:var(--accent); color:#fff; }
+  .cap h2 { font-size:clamp(18px,2.6vw,23px); margin:0 0 3px; } .cap p { margin:0; color:var(--muted); font-size:15px; max-width:80ch; }
+
+  .tv { border-radius:var(--radius); padding: clamp(5px,.8vw,9px); background:linear-gradient(180deg,#04070c,#0a1016); box-shadow:0 22px 55px -30px rgba(0,0,0,.7); }
+  .screen { position:relative; aspect-ratio:16/9; width:100%; container-type:size; border-radius:7px; overflow:hidden; font-size:2.5cqh; color:#eef8fa;
+    background: radial-gradient(120% 90% at 88% -10%, rgba(63,185,203,.13), transparent 55%), radial-gradient(90% 80% at -5% 115%, rgba(75,196,141,.06), transparent 50%), linear-gradient(160deg,#08171d 0%,#0a1c23 55%,#07141a 100%);
+    --p:rgba(255,255,255,.05); --ln:rgba(255,255,255,.12); --mu:#8fb2ba; --ac:#43c2d4; --arr:#4bc48d; --dep:#e6a84f; --grp:#b79bff; --inkc:#eef8fa; }
+  .scr { position:absolute; inset:0; display:flex; flex-direction:column; padding:3.6cqh 3.4cqw; }
+  .head { display:flex; justify-content:space-between; align-items:flex-start; gap:2cqw; }
+  .brand { display:flex; align-items:center; gap:1.5cqw; } .brand .lg { width:6.8cqh; height:6.8cqh; color:var(--ac); } .brand .nm { font-weight:800; font-size:3.6cqh; line-height:1; } .brand .sb { color:var(--mu); font-size:2cqh; margin-top:.7cqh; }
+  .upd { text-align:right; color:var(--mu); font-size:2cqh; } .upd .big { font-size:3.6cqh; font-weight:800; color:var(--inkc); letter-spacing:-.01em; }
+  .scr-title { font-size:2.7cqh; font-weight:750; margin:3cqh 0 2cqh; display:flex; align-items:center; gap:1.2cqw; } .scr-title .ac { color:var(--ac); } .scr-title .rule { flex:1; height:1px; background:var(--ln); }
+
+  /* Frame A — general list, 3 columns */
+  .cols3 { display:grid; grid-template-columns:repeat(3,1fr); gap:2.6cqw; flex:1; min-height:0; }
+  .col { display:flex; flex-direction:column; min-height:0; }
+  .col .ch { display:flex; justify-content:space-between; align-items:baseline; padding-bottom:1.1cqh; border-bottom:2px solid var(--ln); margin-bottom:1.6cqh; }
+  .col.today .ch { border-color:var(--ac); } .col .ch b { font-size:2.6cqh; font-weight:750; } .col .ch .cnt { color:var(--mu); font-size:2cqh; } .col.today .ch .cnt { color:var(--ac); font-weight:700; }
+  .plist { display:flex; flex-direction:column; gap:1.5cqh; }
+  .prow { display:flex; align-items:baseline; gap:1.2cqw; }
+  .prow .dot { width:1.5cqh; height:1.5cqh; border-radius:50%; flex:none; align-self:center; }
+  .prow .dot.arr { background:var(--arr); } .prow .dot.stay { background:var(--mu); } .prow .dot.dep { background:var(--dep); }
+  .prow .nm { font-size:2.3cqh; font-weight:650; color:var(--inkc); }
+  .prow .rm { font-size:1.9cqh; color:var(--ac); font-weight:600; }
+  .prow .dt { margin-left:auto; font-size:1.9cqh; color:var(--mu); font-variant-numeric:tabular-nums; white-space:nowrap; }
+
+  /* Frame B — guest rows, room in the cells */
+  .board { position:relative; display:grid; grid-template-columns:27% repeat(3,1fr); grid-template-rows:auto repeat(6, minmax(9cqh, auto)); align-content:start; flex:1; min-height:0; }
+  .nhead { grid-row:1; font-size:2cqh; color:var(--mu); font-weight:700; display:flex; align-items:flex-end; padding:0 0 1cqh 1cqw; border-bottom:1.5px solid var(--ln); } .nhead.today { color:var(--ac); }
+  .glab { grid-column:1; display:flex; flex-direction:column; justify-content:center; font-size:2.15cqh; font-weight:700; color:var(--inkc); border-bottom:1px solid var(--ln); padding-right:1.4cqw; line-height:1.15; }
+  .glab .sz { color:var(--mu); font-weight:600; font-size:1.7cqh; }
+  .cbg { border-bottom:1px solid var(--ln); border-left:1px solid var(--ln); }
+  .bar { z-index:2; margin:.8cqh .5cqw; border-radius:1.3cqh; display:flex; flex-direction:column; justify-content:center; gap:.2cqh; padding:0 1.4cqw; overflow:hidden; background:var(--p); }
+  .bar .room { font-weight:750; font-size:2cqh; color:var(--inkc); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .bar .bmeta { font-size:1.5cqh; color:var(--mu); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .bar.arr { background: color-mix(in srgb, var(--arr) 24%, var(--p)); box-shadow: inset .55cqw 0 0 var(--arr); }
+  .bar.dep { background: color-mix(in srgb, var(--dep) 24%, var(--p)); box-shadow: inset -.55cqw 0 0 var(--dep); }
+  .bar.grp { background: color-mix(in srgb, var(--grp) 26%, var(--p)); box-shadow: inset .55cqw 0 0 var(--grp); }
+
+  .foot { display:flex; align-items:center; gap:2.2cqw; margin-top:2cqh; padding-top:1.8cqh; border-top:1px solid var(--ln); font-size:2cqh; }
+  .foot .item { display:flex; align-items:center; gap:1cqw; color:var(--mu); } .foot .item .i { color:var(--ac); } .foot .item b { color:var(--inkc); font-weight:650; } .foot .camera { margin-left:auto; color:var(--ac); font-weight:700; }
+  .note { display:flex; gap:12px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-top:14px; font-size:14.5px; color:var(--muted); } .note b { color:var(--ink); font-weight:650; }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow"><svg class="badge"><use href="#peak"/></svg> Silverpeak lobby display · guest-centric</p>
+  <h1>Guest-first views — people, not rooms, down the side</h1>
+  <p class="lede">Two takes on "find your name, see where you are". <b>A</b> revives the old "next 3 nights" list (now with each person's room); <b>B</b> is your transpose idea — the 3-night grid with <b>names down the side</b> and each cell telling them <b>which room</b> they're in.</p>
+  <div class="legend">
+    <span class="k"><span class="sw" style="background:#4bc48d"></span> Arriving</span>
+    <span class="k"><span class="sw" style="background:#8fb0b8"></span> Staying on</span>
+    <span class="k"><span class="sw" style="background:#e6a84f"></span> Leaving</span>
+    <span class="k"><span class="sw" style="background:#b79bff"></span> Group</span>
+  </div>
+
+  <!-- A: general list -->
+  <section class="example">
+    <div class="cap"><div class="n">A</div><div><h2>The list — "coming up", with rooms</h2><p>Three columns for the next three nights, each listing who's in and when they leave — now with the room beside each name so a guest can spot themselves and their room in one glance.</p></div></div>
+    <div class="tv"><div class="screen"><div class="scr">
+      <div class="head"><div class="brand"><svg class="lg"><use href="#peak"/></svg><div><div class="nm">Silverpeak Lodge</div><div class="sb">Alpine Sports Club</div></div></div><div class="upd"><div class="big">Next 3 nights</div>who's in &amp; where</div></div>
+      <div class="scr-title"><span class="ac">Coming up</span><span class="rule"></span></div>
+      <div class="cols3">
+        <div class="col today">
+          <div class="ch"><b>Tonight · Fri 3</b><span class="cnt">14 in</span></div>
+          <div class="plist">
+            <div class="prow"><span class="dot arr"></span><span class="nm">Dave N +5</span> <span class="rm">Kea</span><span class="dt">out Sat 4</span></div>
+            <div class="prow"><span class="dot arr"></span><span class="nm">Alex B +5</span> <span class="rm">Tui</span><span class="dt">→ Mon 6</span></div>
+            <div class="prow"><span class="dot arr"></span><span class="nm">Elinor R +2</span> <span class="rm">Weka</span><span class="dt">out Sun 5</span></div>
+            <div class="prow"><span class="dot stay"></span><span class="nm">Ruth K</span> <span class="rm">Ruru</span><span class="dt">out Sun 5</span></div>
+            <div class="prow"><span class="dot dep"></span><span class="nm">Ana W +1</span> <span class="rm">Pukeko</span><span class="dt">leaves Sat</span></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="ch"><b>Sat 4</b><span class="cnt">17 in · 6 new</span></div>
+          <div class="plist">
+            <div class="prow"><span class="dot arr"></span><span class="nm">Alpine Skills ×14</span> <span class="rm">Ruru · Kereru</span><span class="dt">→ Mon 6</span></div>
+            <div class="prow"><span class="dot arr"></span><span class="nm">Tama W +1</span> <span class="rm">Kaka</span><span class="dt">→ Mon 6</span></div>
+            <div class="prow"><span class="dot stay"></span><span class="nm">Alex B +5</span> <span class="rm">Tui</span><span class="dt">→ Mon 6</span></div>
+            <div class="prow"><span class="dot stay"></span><span class="nm">Elinor R +2</span> <span class="rm">Weka</span><span class="dt">out Sun 5</span></div>
+            <div class="prow"><span class="dot dep"></span><span class="nm">Dave N +5</span> <span class="rm">Kea</span><span class="dt">left</span></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="ch"><b>Sun 5</b><span class="cnt">19 in · 0 new</span></div>
+          <div class="plist">
+            <div class="prow"><span class="dot stay"></span><span class="nm">Alpine Skills ×14</span> <span class="rm">Ruru · Kereru</span><span class="dt">→ Mon 6</span></div>
+            <div class="prow"><span class="dot stay"></span><span class="nm">Alex B +5</span> <span class="rm">Tui</span><span class="dt">→ Mon 6</span></div>
+            <div class="prow"><span class="dot stay"></span><span class="nm">Tama W +1</span> <span class="rm">Kaka</span><span class="dt">→ Mon 6</span></div>
+            <div class="prow"><span class="dot dep"></span><span class="nm">Elinor R +2</span> <span class="rm">Weka</span><span class="dt">leaves</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="foot"><span class="item"><span class="i">📶</span>Wi-Fi <b>LodgeGuest</b> · <b>alpine1234</b></span><span class="item"><span class="i">✉</span><b>bookings@example.org</b></span><span class="camera">😊 Smile — you're on camera</span></div>
+    </div></div></div>
+  </section>
+
+  <!-- B: guest rows grid, room in cells -->
+  <section class="example">
+    <div class="cap"><div class="n">B</div><div><h2>The grid, transposed — names down, room in the cell</h2><p>Same 3-night grid, but each <b>row is a booking</b> and each cell tells them the <b>room</b> they're in that night. A stay reads as one bar labelled with its room; if someone changes rooms mid-stay, the bar simply shows the new room from that night on.</p></div></div>
+    <div class="tv"><div class="screen"><div class="scr">
+      <div class="head"><div class="brand"><svg class="lg"><use href="#peak"/></svg><div><div class="nm">Silverpeak Lodge</div><div class="sb">Alpine Sports Club</div></div></div><div class="upd"><div class="big">4:32 PM</div>Fri 3 Jul · who's where</div></div>
+      <div class="board" style="margin-top:2.6cqh">
+        <div class="nhead" style="grid-column:1">Guest</div><div class="nhead today">Tonight · Fri 3</div><div class="nhead">Sat 4</div><div class="nhead">Sun 5</div>
+        <div class="cbg" style="grid-column:2;grid-row:2"></div><div class="cbg" style="grid-column:3;grid-row:2"></div><div class="cbg" style="grid-column:4;grid-row:2"></div>
+        <div class="cbg" style="grid-column:2;grid-row:3"></div><div class="cbg" style="grid-column:3;grid-row:3"></div><div class="cbg" style="grid-column:4;grid-row:3"></div>
+        <div class="cbg" style="grid-column:2;grid-row:4"></div><div class="cbg" style="grid-column:3;grid-row:4"></div><div class="cbg" style="grid-column:4;grid-row:4"></div>
+        <div class="cbg" style="grid-column:2;grid-row:5"></div><div class="cbg" style="grid-column:3;grid-row:5"></div><div class="cbg" style="grid-column:4;grid-row:5"></div>
+        <div class="cbg" style="grid-column:2;grid-row:6"></div><div class="cbg" style="grid-column:3;grid-row:6"></div><div class="cbg" style="grid-column:4;grid-row:6"></div>
+        <div class="cbg" style="grid-column:2;grid-row:7"></div><div class="cbg" style="grid-column:3;grid-row:7"></div><div class="cbg" style="grid-column:4;grid-row:7"></div>
+        <div class="glab" style="grid-row:2">Dave N <span class="sz">+5</span></div>
+        <div class="glab" style="grid-row:3">Alex B <span class="sz">+5</span></div>
+        <div class="glab" style="grid-row:4">Alpine Skills course <span class="sz">×14</span></div>
+        <div class="glab" style="grid-row:5">Elinor R <span class="sz">+2 (family)</span></div>
+        <div class="glab" style="grid-row:6">Tama W <span class="sz">+1</span></div>
+        <div class="glab" style="grid-row:7">Ana W <span class="sz">+1</span></div>
+        <div class="bar arr" style="grid-column:2/3;grid-row:2"><span class="room">Kea</span><span class="bmeta">out Sat 4</span></div>
+        <div class="bar arr" style="grid-column:2/5;grid-row:3"><span class="room">Tui</span><span class="bmeta">out Mon 6 →</span></div>
+        <div class="bar grp" style="grid-column:2/5;grid-row:4"><span class="room">Ruru + Kereru</span><span class="bmeta">out Mon 6 →</span></div>
+        <div class="bar arr" style="grid-column:2/4;grid-row:5"><span class="room">Weka</span><span class="bmeta">out Sun 5</span></div>
+        <div class="bar arr" style="grid-column:3/5;grid-row:6"><span class="room">Kaka</span><span class="bmeta">in Sat · out Mon 6 →</span></div>
+        <div class="bar dep" style="grid-column:2/3;grid-row:7"><span class="room">Pukeko</span><span class="bmeta">since Wed · out Sat 4</span></div>
+      </div>
+      <div class="foot"><span class="item"><span class="i">📶</span>Wi-Fi <b>LodgeGuest</b> · <b>alpine1234</b></span><span class="item"><span class="i">✉</span><b>bookings@example.org</b></span><span class="camera">😊 Smile — you're on camera</span></div>
+    </div></div></div>
+    <div class="note"><span>💡</span><span>Trade-off vs the room-down-the-side board: this is great for <b>a guest finding themselves</b>, but you lose the "which rooms are free" read (empty rooms don't appear as rows). Could pair the two on rotation — room board for staff, guest grid for arrivals.</span></div>
+  </section>
+</div>

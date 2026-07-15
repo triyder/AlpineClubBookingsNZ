@@ -3,7 +3,7 @@ import { sendAdminCapacityWarningAlert } from "./email";
 import { getOccupiedBedsForNight } from "./capacity";
 import { getLodgeCapacity } from "./lodge-capacity";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
-import { getNZSTToday } from "./nzst-date";
+import { getTodayDateOnly } from "./date-only";
 import { eachDayOfInterval, addDays } from "date-fns";
 import logger from "@/lib/logger";
 import { capacityHoldingBookingFilter } from "@/lib/booking-status";
@@ -23,7 +23,7 @@ const WARN_THRESHOLD_BEDS = 5; // Alert when <= 5 beds remaining
  * skipped: they cannot be overbooked and would otherwise alarm daily.
  */
 export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> {
-  const todayNZ = getNZSTToday();
+  const todayNZ = getTodayDateOnly();
   const endDate = addDays(todayNZ, 14);
 
   const nights = eachDayOfInterval({

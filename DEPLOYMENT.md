@@ -24,6 +24,38 @@ Production Compose services:
 - `caddy` - public reverse proxy and health-aware upstream routing
 - `migrate` - explicit Prisma migration runner
 
+## Connection pool sizing
+
+Each app container's Prisma pool size is the `connection_limit` in its
+`DATABASE_URL` (in `docker-compose.yml`). Prisma treats it as a hard ceiling,
+and advisory-lock waiters hold their connection while blocked — so an
+undersized web pool lets a single-lodge booking burst exhaust it and stall
+unrelated requests. The defaults are sized for ~100 concurrent users against
+Postgres `max_connections=30`:
+
+| Service | Role | `connection_limit` |
+| --- | --- | --- |
+| `app_blue` / `app_green` | web slots | 10 each |
+| `app` | cron leader + warm fallback web | 5 |
+| `migrate` | deploy-window migrations | 2 |
+
+Postgres keeps 3 superuser-reserved slots, leaving **27 usable**. The worst
+case is a blue/green handover (both web slots briefly live) that overlaps a
+migration:
+
+```
+app_blue(10) + app_green(10) + app(5) = 25 steady
+                                 + migrate(2) = 27  <=  27 usable
+```
+
+Steady state (one active web slot + cron leader) is far lower. If a fork needs
+more web headroom, **raise Postgres `max_connections` to 40 and its `mem_limit`
+to ~768m** (in the `postgres` service) rather than squeezing these per-pool
+ceilings past the 27-usable budget — over-committing `connection_limit` beyond
+`max_connections` surfaces as `FATAL: sorry, too many clients` under load. Keep
+the arithmetic (sum of all live pools ≤ usable connections) whenever you change
+a pool size or the replica count.
+
 ## Prerequisites
 
 - A host sized for your traffic and runtime memory needs
@@ -266,6 +298,11 @@ not configured, the job no longer reports healthy: the dump is marked
 check-in is sent as an error. A healthy scheduled backup requires S3 upload and
 readback verification.
 
+`BACKUP_RETENTION_DAYS` prunes only the local backup files; it does not delete
+objects already uploaded to S3. Enforce S3 retention with a bucket lifecycle
+policy (or equivalent object-expiry rule) so uploaded dumps do not accumulate
+indefinitely.
+
 Operators should also keep provider-level snapshots or equivalent independent
 backups. Test restore procedures before relying on backups.
 
@@ -327,9 +364,10 @@ truth. The public POST endpoints are:
 
 Without `/api/cron/payments?task=recovery` running on a regular schedule,
 abandoned zero-dollar batch edits leave PaymentIntents held in Stripe
-indefinitely. The `/api/health` detailed report surfaces a stale recovery
-queue when any `PaymentRecoveryOperation` row has been `PENDING` for more
-than 15 minutes. Each cron tick also sends an admin alert (re-using
+indefinitely. The admin `/api/admin/health` detailed report surfaces a stale
+recovery queue when any `PaymentRecoveryOperation` row has been `PENDING` for
+more than 15 minutes (the public `/api/health` report does not include this
+signal). Each cron tick also sends an admin alert (re-using
 `sendAdminPaymentFailureAlert`) when the queue contains a row that has
 been pending for more than 30 minutes, with a one-hour cooldown to avoid
 storming the inbox.

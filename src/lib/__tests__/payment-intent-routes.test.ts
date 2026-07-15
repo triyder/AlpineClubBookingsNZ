@@ -14,18 +14,38 @@ const mocks = vi.hoisted(() => ({
   findPaymentTransactionByIntentId: vi.fn().mockResolvedValue(null),
   sendBookingConfirmedEmail: vi.fn(),
   queueXeroInvoiceForPaidBooking: vi.fn(),
+  // F31 (#1888) — DRAFT preflight-capacity path dependencies.
+  acquireLodgeCapacityLock: vi.fn(),
+  checkCapacityForGuestRanges: vi.fn(),
+  getDefaultLodgeId: vi.fn().mockResolvedValue("lodge-1"),
+  reconcileBedAllocationsForBooking: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: {
       findUnique: vi.fn(),
+      update: vi.fn(),
     },
     payment: {
       findUnique: vi.fn(),
       upsert: vi.fn(),
     },
+    $transaction: vi.fn(),
   },
+}));
+
+vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: mocks.acquireLodgeCapacityLock,
+  checkCapacityForGuestRanges: mocks.checkCapacityForGuestRanges,
+}));
+
+vi.mock("@/lib/lodges", () => ({
+  getDefaultLodgeId: mocks.getDefaultLodgeId,
+}));
+
+vi.mock("@/lib/bed-allocation-lifecycle", () => ({
+  reconcileBedAllocationsForBooking: mocks.reconcileBedAllocationsForBooking,
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -88,6 +108,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import logger from "@/lib/logger";
 import {
   createPaymentIntent as stripeCreatePaymentIntent,
   createSetupIntent as stripeCreateSetupIntent,
@@ -100,11 +121,15 @@ import { POST as createSetupIntentRoute } from "@/app/api/payments/create-setup-
 import { POST as confirmPaymentRoute } from "@/app/api/bookings/[id]/confirm-payment/route";
 
 const mockPrisma = prisma as unknown as {
-  booking: { findUnique: ReturnType<typeof vi.fn> };
+  booking: {
+    findUnique: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+  };
   payment: {
     findUnique: ReturnType<typeof vi.fn>;
     upsert: ReturnType<typeof vi.fn>;
   };
+  $transaction: ReturnType<typeof vi.fn>;
 };
 
 const mockAuth = auth as ReturnType<typeof vi.fn>;
@@ -593,5 +618,142 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ success: true });
+  });
+});
+
+// F31 (#1888): the generic fallback catch on money routes must never echo an
+// unexpected error's message (Prisma constraint names, connection-string
+// fragments, ...) back to the client. The raw error stays in the pino log
+// only; intentional user-facing messages (typed/domain branches) are
+// unchanged.
+describe("generic-catch error-message leak (F31 #1888)", () => {
+  it("confirm-payment: unexpected reconciliation error returns the fixed generic message, not the raw error", async () => {
+    mockPrisma.payment.findUnique.mockResolvedValue({
+      id: "payment-1",
+      stripePaymentIntentId: "pi_success",
+      status: "PROCESSING",
+      booking: {
+        memberId: "member-1",
+        finalPriceCents: 12500,
+        status: "CONFIRMED",
+      },
+    });
+    mockGetPaymentIntent.mockResolvedValue({
+      id: "pi_success",
+      amount: 12500,
+      payment_method: "pm_123",
+      status: "succeeded",
+    });
+    mocks.markBookingPaymentSucceeded.mockRejectedValue(
+      new Error(
+        'insert or update on table "Payment" violates foreign key constraint "Payment_secret_col_fkey"'
+      )
+    );
+
+    const req = new NextRequest(
+      "http://localhost/api/bookings/booking-1/confirm-payment",
+      {
+        method: "POST",
+        body: JSON.stringify({ paymentIntentId: "pi_success" }),
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+    const res = await confirmPaymentRoute(req, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(body).toEqual({ error: "Failed to confirm payment" });
+    expect(JSON.stringify(body)).not.toContain("secret_col");
+    // The raw error is still logged for operators.
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      "Failed to confirm primary booking payment"
+    );
+  });
+
+  it("create-payment-intent: unexpected infrastructure error returns the fixed generic message, not the raw error", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "CONFIRMED",
+      hasNonMembers: false,
+      organiserSettled: false,
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      guests: [],
+      payment: null,
+    });
+    mockFindOrCreateCustomer.mockRejectedValue(
+      new Error(
+        'connection to server at "10.1.2.3", port 5432 failed: password authentication failed for user "app_rw"'
+      )
+    );
+
+    const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await createPaymentIntentRoute(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(body).toEqual({ error: "Failed to create payment intent" });
+    expect(JSON.stringify(body)).not.toContain("app_rw");
+    expect(JSON.stringify(body)).not.toContain("10.1.2.3");
+  });
+
+  it("create-payment-intent: the intentional DRAFT capacity-race message still reaches the client at 409", async () => {
+    // Outer route read: a DRAFT booking owned by the caller.
+    mockPrisma.booking.findUnique.mockResolvedValueOnce({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "DRAFT",
+      hasNonMembers: false,
+      organiserSettled: false,
+      finalPriceCents: 12500,
+      lodgeId: "lodge-1",
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      guests: [],
+      payment: null,
+    });
+    // In-transaction re-read: still DRAFT, but the beds are gone.
+    mockPrisma.booking.findUnique.mockResolvedValueOnce({
+      id: "booking-1",
+      status: "DRAFT",
+      checkIn: new Date("2026-08-15"),
+      checkOut: new Date("2026-08-17"),
+      guests: [],
+    });
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma)
+    );
+    mocks.checkCapacityForGuestRanges.mockResolvedValue({ available: false });
+
+    const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await createPaymentIntentRoute(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body).toEqual({
+      error:
+        "Not enough beds available for your dates. Please choose different dates.",
+    });
   });
 });

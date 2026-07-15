@@ -426,3 +426,69 @@ describe("resendSchoolAttendeeConfirmation (#1153)", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 });
+
+// F32 (#1888): checkIn is @db.Date (the NZ calendar date at UTC midnight).
+// Comparing it against the raw `now` instant shifts the boundary by a day for
+// the first ~13h of each NZ day under the TZ=Pacific/Auckland server pin. These
+// tests pin the boundary to the NZ calendar date at UTC midnight and assert the
+// raw-instant value (which would shift) is not used.
+describe("school attendee @db.Date boundaries (F32, #1888)", () => {
+  // 2026-08-01T20:00Z is NZ 2026-08-02 08:00 (NZST +12): the UTC calendar day
+  // (Aug 1) trails the NZ calendar day (Aug 2), which is exactly the window
+  // where a raw `new Date()` comparison mis-dates a @db.Date column.
+  const NOW_MORNING_NZ = new Date("2026-08-01T20:00:00.000Z");
+  // leadDays defaults to 14 in beforeEach.
+  const NZ_TODAY_ISO = "2026-08-02T00:00:00.000Z";
+  const NZ_WINDOW_END_ISO = "2026-08-16T00:00:00.000Z"; // today + 14 days
+
+  it("sendSchoolAttendeeConfirmationPrompts filters checkIn on the NZ calendar date, not the instant", async () => {
+    mocks.requestFindMany.mockResolvedValue([]);
+
+    await sendSchoolAttendeeConfirmationPrompts(NOW_MORNING_NZ);
+
+    const where = mocks.requestFindMany.mock.calls[0][0].where;
+    const checkIn = where.convertedBooking.checkIn;
+    expect(checkIn.gt.toISOString()).toBe(NZ_TODAY_ISO);
+    expect(checkIn.lte.toISOString()).toBe(NZ_WINDOW_END_ISO);
+    // The raw-instant version would have used NOW itself; the fix must not.
+    expect(checkIn.gt.getTime()).not.toBe(NOW_MORNING_NZ.getTime());
+  });
+
+  it("countUnconfirmedSchoolAttendeeLists uses the same NZ-calendar-date window", async () => {
+    mocks.requestCount.mockResolvedValue(0);
+
+    await countUnconfirmedSchoolAttendeeLists(NOW_MORNING_NZ);
+
+    const where = mocks.requestCount.mock.calls[0][0].where;
+    const checkIn = where.convertedBooking.checkIn;
+    expect(checkIn.gt.toISOString()).toBe(NZ_TODAY_ISO);
+    expect(checkIn.lte.toISOString()).toBe(NZ_WINDOW_END_ISO);
+    expect(checkIn.gt.getTime()).not.toBe(NOW_MORNING_NZ.getTime());
+  });
+
+  it("resend treats a check-in on today's NZ date as arrived, not still-future", async () => {
+    // checkIn stored as the NZ 'today' date at UTC midnight. Against the raw
+    // instant NOW_MORNING_NZ (Aug 1 20:00Z) it looks future (Aug 2 00:00Z is
+    // later), so the raw path would set the expiry to check-in. Keyed off the
+    // NZ calendar date it is at/after check-in, so the short 3-day window wins.
+    const request = schoolRequest();
+    (request.convertedBooking as { checkIn: Date }).checkIn = new Date(
+      NZ_TODAY_ISO,
+    );
+    mocks.requestFindUnique.mockResolvedValue(request);
+
+    await resendSchoolAttendeeConfirmation({
+      bookingRequestId: "req-1",
+      adminMemberId: "admin-1",
+      now: NOW_MORNING_NZ,
+    });
+
+    const expiresAt = mocks.requestUpdate.mock.calls[0][0].data
+      .attendeeConfirmationTokenExpiresAt as Date;
+    // Short window measured from the instant, not the check-in date.
+    expect(expiresAt.getTime()).toBe(
+      NOW_MORNING_NZ.getTime() + 3 * DAY_MS,
+    );
+    expect(expiresAt.toISOString()).not.toBe(NZ_TODAY_ISO);
+  });
+});

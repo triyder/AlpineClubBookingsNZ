@@ -9,6 +9,7 @@ import { siteContentExporter } from "./categories/site-content";
 import { clubSettingsExporter } from "./categories/club-settings";
 import { lodgeConfigExporter } from "./categories/lodge-config";
 import { lodgeOpsExporter } from "./categories/lodge-ops";
+import { displayExporter } from "./categories/display";
 import { committeeExporter } from "./categories/committee";
 import { inductionExporter } from "./categories/induction";
 import { xeroConfigExporter } from "./categories/xero-config";
@@ -23,6 +24,7 @@ export const CATEGORY_EXPORTERS: CategoryExporter[] = [
   clubSettingsExporter,
   lodgeConfigExporter,
   lodgeOpsExporter,
+  displayExporter,
   committeeExporter,
   inductionExporter,
   xeroConfigExporter,

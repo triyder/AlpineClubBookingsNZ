@@ -33,8 +33,9 @@ work. The full phase breakdown, risk labels, and standing rules live in
 [implementation-plan.md](implementation-plan.md); the short version:
 
 0. **Decisions** — complete; owner decisions recorded in ADR-001.
-1. **Lodge entity** and the `multiLodge` Admin Module flag (default OFF)
-   gating lodge management (ADR-002).
+1. **Lodge entity** and lodge management. (Originally behind a `multiLodge`
+   Admin Module flag; the flag was removed and multi-lodge made core in
+   ADR-005 — lodge management is always available.)
 2. **Scoping migrations** — `lodgeId` FKs and singleton-to-per-lodge
    conversions, staged per `BLUE_GREEN_MIGRATION_POLICY.md`.
 3. **Capacity, pricing, and booking-transaction core** — the critical
@@ -51,9 +52,9 @@ work. The full phase breakdown, risk labels, and standing rules live in
 
 Each numbered phase is one or more separate PRs, not one large change.
 Single-lodge behaviour is preserved at every merge point: the data model
-is core, but lodge management sits behind the `multiLodge` Admin Module
-(default OFF), and member-facing UI only changes once a second active
-lodge actually exists (ADR-002).
+is core and lodge management is always available (multi-lodge is core,
+ADR-005 — no module flag), while member-facing UI only changes once a
+second active lodge actually exists (ADR-002).
 
 ## Documents
 

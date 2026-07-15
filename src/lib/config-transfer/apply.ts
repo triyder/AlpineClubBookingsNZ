@@ -94,6 +94,19 @@ export async function applyConfigImport(
   if (backup.error) {
     throw new ConfigImportBackupError(backup.error);
   }
+  // Durability gate (ADR-002): with backups ENABLED but no S3 destination the
+  // backup lands only on this web slot's local disk — wiped by the next
+  // deploy, so it is no restore path for the pre-import state. Both write
+  // modes mutate config (merge creates rows and overwrites non-blank fields),
+  // so refuse the import outright rather than clobber unrecoverable state.
+  if (backup.success && !backup.uploadedToS3) {
+    throw new ConfigImportBackupError(
+      "the backup was written only to this server's local disk, which does " +
+        "not survive a redeploy; configure BACKUP_S3_BUCKET so a durable " +
+        "pre-import backup exists, or set BACKUP_ENABLED=false to explicitly " +
+        "opt out of the safety backup",
+    );
+  }
 
   const totals: CategoryApplyResult = {
     created: 0,
@@ -199,7 +212,13 @@ export async function applyConfigImport(
       totals,
       perCategory,
       diff: auditDiff,
-      backup: { skipped: backup.skipped === true },
+      // Actual durability, so an incident responder is never misled into
+      // believing a restorable pre-import backup exists when it does not.
+      backup: {
+        skipped: backup.skipped === true,
+        uploadedToS3: backup.uploadedToS3 === true,
+        ...(backup.s3Key ? { s3Key: backup.s3Key } : {}),
+      },
     },
   });
 

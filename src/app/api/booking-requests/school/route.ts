@@ -47,6 +47,9 @@ const schoolBookingRequestSchema = z.object({
     .default("QUOTE_BOTH"),
   teachers: z.array(schoolTeacherSchema).min(1, "At least one teacher is required").max(50),
   childCounts: schoolChildCountsSchema,
+  // Whole-lodge exclusivity request (issue #121). School front-door only — the
+  // general booking-request path deliberately does not accept this.
+  exclusivityRequested: z.boolean().optional().default(false),
   message: z
     .string()
     .max(1000)
@@ -119,6 +122,7 @@ export async function POST(request: NextRequest) {
       cateringPreference: parsed.data.cateringPreference as SchoolCateringPreference,
       teachers,
       childCounts,
+      exclusivityRequested: parsed.data.exclusivityRequested,
       message: parsed.data.message,
       lodgeId,
     });

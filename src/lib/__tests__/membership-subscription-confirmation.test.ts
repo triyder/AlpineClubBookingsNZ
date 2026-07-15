@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   mapping: vi.fn(),
   fee: vi.fn(),
+  familyMode: vi.fn(),
   client: null as unknown,
 }));
 
@@ -35,7 +36,7 @@ vi.mock("@/lib/prisma", () => {
   mocks.client = client;
   return { prisma: client };
 });
-vi.mock("@/lib/authoritative-fees", () => ({ getEffectiveMembershipAnnualFee: mocks.fee }));
+vi.mock("@/lib/authoritative-fees", () => ({ getEffectiveMembershipAnnualFee: mocks.fee, getFamilyBillingMode: mocks.familyMode }));
 vi.mock("@/lib/xero-mappings", () => ({ getResolvedAccountMapping: mocks.mapping }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
 
@@ -48,6 +49,7 @@ describe("membership subscription confirmation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.settingsFind.mockResolvedValue({ invoiceDueDays: 30 });
+    mocks.familyMode.mockResolvedValue("BILL_FAMILY_VIA_BILLING_MEMBER");
     mocks.coverageFindMany.mockResolvedValue([]);
     mocks.coverageFindUnique.mockResolvedValue(null);
     mocks.memberFindMany.mockResolvedValue([{
@@ -101,5 +103,20 @@ describe("membership subscription confirmation", () => {
     expect(replay.chargeIds).toEqual(["charge-1"]);
     expect(mocks.chargeUpsert).toHaveBeenCalledTimes(1);
     expect(mocks.operationCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("raises the interactive transaction timeout above Prisma's 5s default for whole-club batch runs (#1886)", async () => {
+    const preview = await buildSubscriptionBillingPreview({
+      seasonYear: 2026,
+      decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+    });
+    await confirmSubscriptionBillingPreview({
+      preview,
+      expectedConfirmationToken: preview.confirmationToken,
+      source: "ANNUAL_BATCH",
+    });
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    const options = mocks.transaction.mock.calls[0][1] as { timeout?: number } | undefined;
+    expect(options?.timeout).toBeGreaterThanOrEqual(60_000);
   });
 });

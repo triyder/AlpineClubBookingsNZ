@@ -55,6 +55,10 @@ recommended reading paths.
 - Admin-managed site banners (urgent/warning/notify) shown above the site
   header for a set NZ date window, dismissible per browser
 - Lodge kiosk with PIN access, week-at-a-glance counts, arrivals/departures,
+- Lobby TV display: read-only paired screens per lodge showing arrivals,
+  departures, rooms, chores, and lodge info, driven entirely by live booking
+  data with privacy-reduced names (module-flagged, off by default; see
+  `docs/lobby-display/`)
   chores, and issue reporting
 - Xero integrations for operational accounting, Internet Banking settlement,
   and finance reports backed by the same operational Xero connection

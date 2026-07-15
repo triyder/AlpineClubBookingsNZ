@@ -33,7 +33,9 @@ vi.mock("@/lib/stripe", () => ({
 }));
 
 vi.mock("@/lib/email", () => ({
-  sendBookingRequestApprovedEmail: vi.fn().mockResolvedValue(undefined),
+  sendBookingRequestApprovedEmail: vi
+    .fn()
+    .mockResolvedValue({ status: "sent", emailLogId: "log-1", messageId: null }),
 }));
 
 vi.mock("@/lib/payment-reconciliation", () => ({
@@ -347,6 +349,26 @@ describe("reissuePaymentLinkForToken", () => {
     expect(sendBookingRequestApprovedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ email: "tara@example.com" })
     );
+  });
+
+  it("returns emailed:false when the requester's address is actively suppressed (F25, #1885)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({ expiresAt: new Date("2000-01-01T00:00:00.000Z") }) as never
+    );
+    // sendEmail suppressed the delivery (prior SES bounce/complaint): nothing
+    // was sent, so the caller must not be told an email is on the way.
+    vi.mocked(sendBookingRequestApprovedEmail).mockResolvedValueOnce({
+      status: "suppressed",
+      emailLogId: "log-1",
+      emailSuppressionId: "sup-1",
+      reason: "BOUNCE",
+    } as never);
+
+    const result = await reissuePaymentLinkForToken(RAW_TOKEN);
+
+    expect(result.emailed).toBe(false);
+    // The fresh link itself is still minted; only the email claim changes.
+    expect(vi.mocked(prisma.paymentLink.create)).toHaveBeenCalled();
   });
 
   it("refuses to re-issue a link for a booking that can no longer be paid", async () => {

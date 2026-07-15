@@ -11,7 +11,7 @@ import {
   formatNZDateTime,
 } from "../nzst-date";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
-import { sendEmail } from "./core";
+import { sendEmail, type EmailSendOutcome } from "./core";
 
 // ---- Public booking request flow (issue #707) ----
 
@@ -68,11 +68,13 @@ export async function sendBookingRequestApprovedEmail(params: {
   // Lodge the request is for (multi-lodge): overlays that lodge's
   // identity via prepareEmailMessage; null keeps club-wide identity.
   lodgeId?: string | null;
-}) {
+}): Promise<EmailSendOutcome> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const payUrl = `${baseUrl}/pay/${params.token}`;
 
-  await sendEmail({
+  // Return the send outcome so callers can tell a delivered email from a
+  // suppressed one (F25, #1885) instead of assuming the mail went out.
+  return sendEmail({
     to: params.email,
     lodgeId: params.lodgeId,
     subject: `Your booking request has been approved — ${CLUB_NAME}`,

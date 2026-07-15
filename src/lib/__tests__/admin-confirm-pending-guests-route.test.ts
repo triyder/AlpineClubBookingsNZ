@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   paymentUpsert: vi.fn(),
   transaction: vi.fn(),
   executeRaw: vi.fn(),
+  acquireLodgeCapacityLock: vi.fn(),
   checkCapacity: vi.fn(),
   chargePaymentMethod: vi.fn(),
   markBookingPaymentSucceeded: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: mocks.acquireLodgeCapacityLock,
   checkCapacityForGuestRanges: mocks.checkCapacity,
 }));
 vi.mock("@/lib/stripe", () => ({ chargePaymentMethod: mocks.chargePaymentMethod }));
@@ -146,6 +148,7 @@ beforeEach(() => {
   mocks.sendPaymentFailureAlert.mockResolvedValue(undefined);
   mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
   mocks.executeRaw.mockResolvedValue(1);
+  mocks.acquireLodgeCapacityLock.mockResolvedValue(undefined);
   // Default: capacity is available. Each test that needs a full lodge overrides.
   mocks.checkCapacity.mockResolvedValue(AVAILABLE);
   mocks.transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
@@ -172,7 +175,15 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
 
     expect(res.status).toBe(200);
     expect(body).toMatchObject({ success: true, status: "PAID", charged: true });
-    // The pre-charge capacity re-check runs under the advisory lock.
+    // #172: the claim transaction serialises on the per-lodge capacity lock
+    // (not the legacy club-wide pg_advisory_xact_lock(1)), keyed on the
+    // booking's lodgeId, on the same tx client the capacity re-check uses.
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(txClient, "lodge-1");
+    // The lock is taken BEFORE the capacity re-check inside the same tx.
+    expect(
+      mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]
+    ).toBeLessThan(mocks.checkCapacity.mock.invocationCallOrder[0]);
+    // The pre-charge capacity re-check runs under that lock.
     expect(mocks.checkCapacity).toHaveBeenCalledWith(
       "lodge-1",
       expect.any(Date),
@@ -253,6 +264,53 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(confirmData.capacityOverriddenByMemberId).toBe("admin1");
   });
 
+  // ADR-001 decision 5 (issue #118): an exclusive whole-lodge hold on the target
+  // nights is NOT bypassable — even with allowOverbook the confirm is refused,
+  // before any CONFIRMED claim, Stripe charge, or $0 PAID advance.
+  const HELD = {
+    available: false,
+    minAvailable: 0,
+    nightDetails: [
+      {
+        date: new Date("2026-07-15T00:00:00.000Z"),
+        occupiedBeds: 4,
+        // Pinned to 0 (never negative) so it never appears in overbookDates.
+        availableBeds: 0,
+        wholeLodgeHeld: true,
+      },
+    ],
+  };
+
+  it("refuses the charge branch with 409 WHOLE_LODGE_HOLD_BLOCKED even with allowOverbook, never charging or claiming", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+    mocks.checkCapacity.mockResolvedValue(HELD);
+
+    const res = await POST(makeRequest({ allowOverbook: true }), { params });
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toBe("WHOLE_LODGE_HOLD_BLOCKED");
+    expect(body.code).toBe("WHOLE_LODGE_HOLD_BLOCKED");
+    expect(body.blockedNights).toEqual(["2026-07-15"]);
+    expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
+  });
+
+  it("refuses the $0 branch with 409 WHOLE_LODGE_HOLD_BLOCKED even with allowOverbook, never advancing to PAID", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking({ finalPriceCents: 0 }));
+    mocks.checkCapacity.mockResolvedValue(HELD);
+
+    const res = await POST(makeRequest({ allowOverbook: true }), { params });
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toBe("WHOLE_LODGE_HOLD_BLOCKED");
+    expect(body.blockedNights).toEqual(["2026-07-15"]);
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+  });
+
   // #1418: charge captured, then reconciliation throws (e.g. transient DB
   // failure or a concurrent status change). The captured money must never go
   // silent: the transaction row is already durably recorded (webhook can
@@ -315,6 +373,21 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
         nonMemberHoldUntil: new Date("2026-07-08"),
       },
     });
+    // #172: BOTH transactions on this path — the claim and the release —
+    // serialise on the per-lodge capacity lock keyed on the booking's lodgeId,
+    // on the same tx client. The release must re-lock, not run unserialised.
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledTimes(2);
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenNthCalledWith(1, txClient, "lodge-1");
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenNthCalledWith(2, txClient, "lodge-1");
+    // The release-tx lock is acquired before the CONFIRMED -> PENDING revert.
+    const releaseRevertOrder = mocks.bookingUpdateMany.mock.calls.findIndex(
+      (c) => (c[0] as { where: { status?: string } }).where.status === "CONFIRMED"
+    );
+    expect(
+      mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[1]
+    ).toBeLessThan(
+      mocks.bookingUpdateMany.mock.invocationCallOrder[releaseRevertOrder]
+    );
     expect(mocks.sendPaymentFailureAlert).toHaveBeenCalledWith(
       expect.objectContaining({
         amountCents: 10000,
@@ -416,6 +489,12 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
 
     expect(res.status).toBe(200);
     expect(body).toMatchObject({ status: "PAID", charged: false });
+    // #172: the $0 promote transaction serialises on the per-lodge capacity
+    // lock keyed on the booking's lodgeId, on the same tx client.
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(txClient, "lodge-1");
+    expect(
+      mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]
+    ).toBeLessThan(mocks.checkCapacity.mock.invocationCallOrder[0]);
     expect(mocks.checkCapacity).toHaveBeenCalledWith(
       "lodge-1",
       expect.any(Date),

@@ -154,6 +154,7 @@ export default async function ProfilePage({
       accessRoles: { select: { role: true } },
       ageTier: true,
       occupation: true,
+      lodgeScreenPhoneOptIn: true,
       active: true,
       createdAt: true,
       passwordChangedAt: true,
@@ -231,6 +232,7 @@ export default async function ProfilePage({
     postalPostalCode: member.postalPostalCode ?? "",
     postalCountry: member.postalCountry ?? "",
     occupation: member.occupation ?? "",
+    lodgeScreenPhoneOptIn: member.lodgeScreenPhoneOptIn,
   };
 
   return (

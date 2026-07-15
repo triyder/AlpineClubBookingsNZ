@@ -1274,6 +1274,10 @@ export async function approveMemberApplication(
   const passwordSetupToken = buildResetToken();
   const passwordSetupExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
+  // Resolved before the transaction so the entrance-fee outbox enqueue can run
+  // inside it (#1886, F22).
+  const entranceFeeDecision = entranceFeeInvoiceDecision ?? { action: "CREATE" as const };
+
   const approved = await prisma.$transaction(async (tx) => {
     await lockMembershipApplication(tx, applicationId);
 
@@ -1464,10 +1468,60 @@ export async function approveMemberApplication(
       },
     });
 
+    // F22 (#1886): the entrance-fee invoice outbox ROW is written inside this
+    // transaction (store: tx) so it commits atomically with the member
+    // creation and application approval. It used to be enqueued post-commit,
+    // where a process death between the approval commit and the enqueue
+    // silently lost the fee — no outbox row, no exception, no admin warning.
+    // Only the durable row moves in here; the worker kick that performs the
+    // live Xero call stays post-commit below (provider calls never run inside
+    // a database transaction).
+    let entranceFeeQueue: {
+      queueOperationId: string | null;
+      message: string;
+    } | null = null;
+    let entranceFeeQueueFailed = false;
+    if (entranceFeeDecision.action === "CREATE") {
+      try {
+        const entranceFeeInvoiceOptions: {
+          createdByMemberId: string;
+          amountCents?: number;
+          description?: string;
+        } = {
+          createdByMemberId: adminMemberId,
+        };
+        if (entranceFeeDecision.amountCents) {
+          entranceFeeInvoiceOptions.amountCents = entranceFeeDecision.amountCents;
+        }
+        const narration = entranceFeeDecision.narration?.trim();
+        if (narration) {
+          entranceFeeInvoiceOptions.description = narration;
+        }
+
+        entranceFeeQueue = await enqueueXeroEntranceFeeInvoiceOperation(
+          applicantMember.id,
+          { ...entranceFeeInvoiceOptions, store: tx }
+        );
+      } catch (err) {
+        // Non-database failures stay non-fatal, matching the pre-#1886
+        // behavior: the approval commits and the admin sees a warning. A
+        // database-level failure aborts the transaction at commit regardless,
+        // rolling back the whole approval — either way there is never a
+        // committed approval with a silently missing entrance fee.
+        logger.error(
+          { err, memberId: applicantMember.id },
+          "Failed to queue entrance fee invoice for approved application"
+        );
+        entranceFeeQueueFailed = true;
+      }
+    }
+
     return {
       application: updatedApplication,
       applicantMember,
       createdMemberIds: [applicantMember.id, ...dependentMemberIds],
+      entranceFeeQueue,
+      entranceFeeQueueFailed,
     };
   });
 
@@ -1495,43 +1549,23 @@ export async function approveMemberApplication(
     warnings.push("Membership subscription billing could not be queued automatically");
   }
 
-  const entranceFeeDecision = entranceFeeInvoiceDecision ?? { action: "CREATE" as const };
+  // The entrance-fee outbox row is enqueued INSIDE the approval transaction
+  // above (#1886, F22). Post-commit, this block only surfaces the enqueue
+  // warning and kicks the outbox worker — the live Xero call — which must
+  // stay outside the transaction.
   if (entranceFeeDecision.action === "CREATE") {
-    try {
-      const entranceFeeInvoiceOptions: {
-        createdByMemberId: string;
-        amountCents?: number;
-        description?: string;
-      } = {
-        createdByMemberId: adminMemberId,
-      };
-      if (entranceFeeDecision.amountCents) {
-        entranceFeeInvoiceOptions.amountCents = entranceFeeDecision.amountCents;
-      }
-      const narration = entranceFeeDecision.narration?.trim();
-      if (narration) {
-        entranceFeeInvoiceOptions.description = narration;
-      }
-
-      const queuedEntranceFeeInvoice = await enqueueXeroEntranceFeeInvoiceOperation(
-        approved.applicantMember.id,
-        entranceFeeInvoiceOptions
-      );
-
-      if (queuedEntranceFeeInvoice.queueOperationId && (await isXeroConnected())) {
-        void processQueuedXeroOutboxOperations({ limit: 1 }).catch((err) => {
-          logger.error(
-            { err, memberId: approved.applicantMember.id },
-            "Failed to kick Xero entrance fee outbox worker for approved application"
-          );
-        });
-      }
-    } catch (err) {
-      logger.error(
-        { err, memberId: approved.applicantMember.id },
-        "Failed to queue entrance fee invoice for approved application"
-      );
+    if (approved.entranceFeeQueueFailed) {
       warnings.push("Entrance fee invoice could not be queued automatically");
+    } else if (
+      approved.entranceFeeQueue?.queueOperationId &&
+      (await isXeroConnected())
+    ) {
+      void processQueuedXeroOutboxOperations({ limit: 1 }).catch((err) => {
+        logger.error(
+          { err, memberId: approved.applicantMember.id },
+          "Failed to kick Xero entrance fee outbox worker for approved application"
+        );
+      });
     }
   } else {
     await logAudit({

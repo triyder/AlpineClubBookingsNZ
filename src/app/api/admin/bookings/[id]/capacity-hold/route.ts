@@ -7,6 +7,7 @@ import {
   checkCapacityForGuestRanges,
   type NightAvailability,
 } from "@/lib/capacity";
+import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
@@ -124,6 +125,24 @@ export async function POST(
       const overbookedNights = getOverbookedNights(capacity.nightDetails);
       const overbookDates = overbookedNights.map((night) => night.date);
 
+      // Exclusive whole-lodge hold (ADR-001 decision 5, issue #118): a hold on
+      // ANOTHER overlapping booking blocks placing this admin hold's occupancy
+      // even under allowOverbook, before the hold is written. Held nights are
+      // pinned to 0, so they never surface in overbookDates — this is the only
+      // guard that catches them. (Placing a hold is #121; this route sets an
+      // adminCapacityHold, which admits the booking's beds — a new admission.)
+      const blockedNights = wholeLodgeBlockedNights({
+        nightDetails: capacity.nightDetails,
+      });
+      if (blockedNights.length > 0) {
+        return {
+          error: "WHOLE_LODGE_HOLD_BLOCKED" as const,
+          code: "WHOLE_LODGE_HOLD_BLOCKED" as const,
+          blockedNights,
+          status: 409 as const,
+        };
+      }
+
       if (!capacity.available && !allowOverbook) {
         return {
           error: "CAPACITY_EXCEEDED" as const,
@@ -202,8 +221,12 @@ export async function POST(
       return NextResponse.json(
         {
           error: result.error,
+          ...("code" in result ? { code: result.code } : {}),
           ...("overbookDates" in result
             ? { overbookDates: result.overbookDates }
+            : {}),
+          ...("blockedNights" in result
+            ? { blockedNights: result.blockedNights }
             : {}),
         },
         { status: result.status },

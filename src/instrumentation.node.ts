@@ -34,6 +34,18 @@ export async function register() {
   // OBS-01: Initialize Sentry for the Node.js runtime
   if (process.env.NEXT_RUNTIME === "nodejs") {
     await import("../sentry.server.config");
+
+    // #1912: warm the HTML-email brand palette from the persisted Site Style
+    // theme so the first email after a cold start uses the configured colours,
+    // not the built-in default. Best-effort and runs regardless of cron config;
+    // never blocks or fails startup (emailPalette() also self-warms on first
+    // use as a fallback).
+    try {
+      const { primeEmailPalette } = await import("./lib/email-theme");
+      await primeEmailPalette();
+    } catch {
+      // Ignore — the email palette self-warms in the background on first use.
+    }
   }
 
   if (process.env.NEXT_RUNTIME === "edge") {
@@ -560,35 +572,86 @@ export async function register() {
         const { expireStalePartnerInviteTokens } = await import(
           "./lib/partner-invite-token"
         );
-        await pruneCronRuns();
-        await pruneWebhookLogs();
-        const auditRetention = await runAuditLogRetentionJob();
-        // Prune expired tokens
-        await prisma.emailVerificationToken.deleteMany({
-          where: { expiresAt: { lt: new Date() } },
-        });
-        await prisma.emailChangeToken.deleteMany({
-          where: { expiresAt: { lt: new Date() } },
-        });
-        await prisma.guestChoreToken.deleteMany({
-          where: { expiresAt: { lt: new Date() } },
-        });
-        await prisma.passwordResetToken.deleteMany({
-          where: { expiresAt: { lt: new Date() } },
-        });
+        // F27 (#1888): these cleanups are independent. Isolate each so an early
+        // failure (e.g. an unreachable audit-archive DB) cannot starve the
+        // privacy-driven token sweeps that follow. Every step runs regardless;
+        // any step failure surfaces as an aggregate FAILURE run + Sentry error.
+        const stepErrors: string[] = [];
+        const runStep = async <T>(
+          tag: string,
+          fn: () => Promise<T>,
+        ): Promise<T | undefined> => {
+          try {
+            return await fn();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            stepErrors.push(`${tag}: ${message}`);
+            reportCronError({
+              tag: `data-pruning:${tag}`,
+              err,
+              message: `Error in data pruning step ${tag}`,
+            });
+            return undefined;
+          }
+        };
+
+        await runStep("prune-cron-runs", () => pruneCronRuns());
+        await runStep("prune-webhook-logs", () => pruneWebhookLogs());
+        const auditRetention = await runStep("audit-retention", () =>
+          runAuditLogRetentionJob(),
+        );
+        await runStep("prune-email-verification-tokens", () =>
+          prisma.emailVerificationToken.deleteMany({
+            where: { expiresAt: { lt: new Date() } },
+          }),
+        );
+        await runStep("prune-email-change-tokens", () =>
+          prisma.emailChangeToken.deleteMany({
+            where: { expiresAt: { lt: new Date() } },
+          }),
+        );
+        await runStep("prune-guest-chore-tokens", () =>
+          prisma.guestChoreToken.deleteMany({
+            where: { expiresAt: { lt: new Date() } },
+          }),
+        );
+        await runStep("prune-password-reset-tokens", () =>
+          prisma.passwordResetToken.deleteMany({
+            where: { expiresAt: { lt: new Date() } },
+          }),
+        );
         // Expired partner-invite tokens (#1682): idempotent hard-delete sweep.
-        await expireStalePartnerInviteTokens();
-        logger.info({ job: "data-pruning" }, "Data pruning complete");
-        await recordCronRun("data-pruning", startedAt, "SUCCESS", {
-          auditRetention: {
-            anonymized: auditRetention.requestData.anonymized,
-            archived: auditRetention.archive.archived,
-            archiveSkipped: auditRetention.archive.skipped,
-            mainPruned: auditRetention.mainPrune.deleted,
-            archivePruned: auditRetention.archivePrune.pruned,
-          },
-        });
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "data-pruning", status: "ok" });
+        await runStep("expire-partner-invite-tokens", () =>
+          expireStalePartnerInviteTokens(),
+        );
+
+        const auditRetentionSummary = auditRetention
+          ? {
+              anonymized: auditRetention.requestData.anonymized,
+              archived: auditRetention.archive.archived,
+              archiveSkipped: auditRetention.archive.skipped,
+              mainPruned: auditRetention.mainPrune.deleted,
+              archivePruned: auditRetention.archivePrune.pruned,
+            }
+          : null;
+
+        if (stepErrors.length === 0) {
+          logger.info({ job: "data-pruning" }, "Data pruning complete");
+          await recordCronRun("data-pruning", startedAt, "SUCCESS", {
+            auditRetention: auditRetentionSummary,
+          });
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "data-pruning", status: "ok" });
+        } else {
+          const message = `data-pruning completed with ${stepErrors.length} failed step(s): ${stepErrors.join("; ")}`;
+          logger.warn(
+            { job: "data-pruning", stepErrors },
+            "Data pruning completed with step failures",
+          );
+          await recordCronRun("data-pruning", startedAt, "FAILURE", {
+            auditRetention: auditRetentionSummary,
+          }, message);
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "data-pruning", status: "error" });
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         reportCronError({ tag: "data-pruning", err, message: "Error in data pruning" });

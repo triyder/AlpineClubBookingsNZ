@@ -307,14 +307,13 @@ on and setting up a second lodge. Design rationale lives in
 `docs/multi-lodge/` (start with `feature-overview.md`); this is the operator
 how-to.
 
-### 1. Enable the Multiple lodges module
+### 1. Open the Lodges page
 
-Admin > Modules > **Multiple lodges** (default OFF). Enabling it exposes the
-lodge-management admin surface (the Lodges page and per-lodge settings). It
-does **not** by itself change anything members see — member-facing screens
-only gain a lodge dimension once a *second active lodge actually exists*. The
-module cannot be turned off again while more than one active lodge exists, so a
-multi-lodge club can never strand itself without the UI to manage its lodges.
+Multi-lodge is **core** — there is no module to enable (ADR-005). Admin >
+**Lodges** is always available; every club starts with one seeded lodge and
+adds more with **Add lodge** as needed. Adding a lodge does **not** by itself
+change anything members see — member-facing screens only gain a lodge dimension
+once a *second active lodge actually exists*.
 
 ### 2. Create the lodge
 
@@ -633,12 +632,13 @@ committee-contact marker in EmailLog rows instead of persisting the recipient
 address. Phone numbers come from the linked member profile and display only when
 the assignment's show-phone flag is enabled.
 
-The legacy `CommitteeMember` table remains editable for historical/public
-migration reference, but it no longer powers `/api/committee` or committee
-recipient routing. Seed and migration steps create master roles and hidden
-member-linked assignments where a legacy committee email exactly matches a
-member email, but they do not delete or blank existing legacy rows. Assignment
-changes and master role changes are audited with before/after metadata.
+The legacy standalone `CommitteeMember` table has been removed. It was a
+migration aid for clubs moving onto the role/assignment model and never powered
+`/api/committee` or committee recipient routing once assignments existed. Seed
+steps now create master roles only; the historical migrations that seeded roles
+and hidden assignments from legacy rows remain in place for installs that ran
+them. Assignment changes and master role changes are audited with before/after
+metadata.
 
 Booking and subscription enforcement is season-aware:
 
@@ -671,7 +671,30 @@ decision month is included.
 
 An operator must explicitly confirm the unchanged preview token before durable
 charge snapshots and Xero outbox rows are created. Invoice due days are persisted
-in `MembershipSubscriptionBillingSettings` and default to 30. Missing seasonal
+in `MembershipSubscriptionBillingSettings` and default to 30. The same settings
+row holds `familyBillingMode`, the club billing model, also editable from
+`/admin/subscriptions`:
+
+- `BILL_FAMILY_VIA_BILLING_MEMBER` (the default, preserving pre-#159 behaviour):
+  each family is invoiced once via its nominated billing member, `PER_FAMILY`
+  fee schedules are allowed, and a missing or inactive same-family billing
+  recipient is a visible exception.
+- `BILL_MEMBERS_INDIVIDUALLY`: every member is invoiced directly. The
+  fee-configuration family-billing card is hidden, no billing-member exception
+  is raised, and `PER_FAMILY` schedules are rejected server-side on
+  create/update. A `PER_FAMILY` schedule left over from a mode switch is not
+  reinterpreted as per-member; it surfaces as a
+  `PER_FAMILY_FEE_IN_INDIVIDUAL_MODE` exception and must be changed to a
+  per-member or no-invoice basis before it can be invoiced.
+
+Operator rollout: a club that invoices each member directly should switch
+`familyBillingMode` to `BILL_MEMBERS_INDIVIDUALLY` from `/admin/subscriptions`
+after this feature deploys. Before flipping the mode, re-base any existing
+`PER_FAMILY` fee schedules to per-member or no-invoice; a `PER_FAMILY` schedule
+left in place becomes an uninvoiceable `PER_FAMILY_FEE_IN_INDIVIDUAL_MODE`
+exception under individual billing.
+
+Missing seasonal
 type, fee schedule, family, or active same-family billing recipient becomes a
 visible exception and never produces an invoice. `NO_INVOICE` produces a
 zero-cent, not-required snapshot rather than being confused with missing setup.
@@ -750,7 +773,6 @@ cannot be read, optional modules fail closed.
 | Hut leaders | on | Hut-leader assignments, kiosk access, and auto-assignment. |
 | Communications | on | Admin bulk email to members. Transactional notifications are unaffected. |
 | Ski-field conditions | on | Live mountain/road status panel, public API routes, and admin cache controls. |
-| Multiple lodges | off | Lodge-management admin surface for clubs with more than one lodge property. The lodge data model is core and always present; member-facing screens only change once a second active lodge exists. Cannot be turned off while more than one active lodge exists. See `docs/multi-lodge/README.md`. |
 | Two-factor authentication | off | Requires users to complete authenticator-app, email-code, or recovery-code verification after password login. |
 | Google Analytics | off | Consent-gated GA4 tracking on public website and public account pages. Requires `NEXT_PUBLIC_GA_MEASUREMENT_ID`; GA scripts load only after a visitor accepts the analytics banner. |
 
@@ -839,6 +861,18 @@ descriptions/listing under `/admin/membership-types`; Finance editors own
 effective-dated amounts and family billing members under
 `/admin/fee-configuration`. Hut fees remain lodge season/rate configuration.
 See `docs/AUTHORITATIVE_FEES.md` for operator and compatibility rules.
+
+The `/admin/fee-configuration` page shows annual membership fees, entrance fees,
+and (only when `familyBillingMode` is `BILL_FAMILY_VIA_BILLING_MEMBER`) family
+billing members. Each section loads read-only. Use the section's Edit button to
+expose its form and per-row controls; changes are staged locally and only
+written when you commit that section (Add/Update fee, or Save billing members).
+Leaving a section without committing (Close section on the fee sections, Cancel
+on family billing) discards staged changes without an API call, and finance
+view-only users see the saved values with no Edit buttons. When the club bills
+members individually the family-billing card is hidden entirely, the membership
+billing-basis picker omits the per-family option, and any pre-existing
+per-family schedule shows a warning prompting an operator to change its basis.
 
 The finance dashboard reads its revenue, cost, and balance figures from the
 single operational Xero connection configured above. There are no separate

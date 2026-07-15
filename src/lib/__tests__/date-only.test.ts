@@ -76,6 +76,63 @@ describe("date-only helpers", () => {
   });
 });
 
+// Regression coverage for issue #1878 (finding F8): the removed NZST
+// "today"/"tomorrow" helpers built `new Date(`${y}-${m}-${d}T00:00:00`)`
+// — no timezone suffix, so the string parsed in the server's LOCAL zone. Under
+// the production TZ=Pacific/Auckland pin that instant is NZ-local midnight,
+// which is still the PREVIOUS calendar day in UTC — the value every Prisma
+// @db.Date comparison actually sees. Crons must instead use the date-only
+// helper family, which pins the NZ calendar date to UTC midnight.
+describe("NZ cron date boundary (#1878)", () => {
+  const nzIntlDate = () =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Pacific/Auckland",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+
+  it("getTodayDateOnly serializes to the Intl-derived NZ calendar date, not the previous UTC day", () => {
+    // Capture the NZ date before and after the call so the assertion stays
+    // deterministic even if NZ midnight rolls over mid-test.
+    const nzBefore = nzIntlDate();
+    const today = getTodayDateOnly("Pacific/Auckland");
+    const nzAfter = nzIntlDate();
+
+    expect([nzBefore, nzAfter]).toContain(today.toISOString().slice(0, 10));
+    // Prisma derives the @db.Date comparand from the UTC date part, so the
+    // helper must sit exactly at UTC midnight of that NZ calendar date.
+    expect(today.toISOString().slice(10)).toBe("T00:00:00.000Z");
+  });
+
+  it("addDaysDateOnly(getTodayDateOnly(), 1) is UTC midnight of the next NZ calendar date", () => {
+    const today = getTodayDateOnly("Pacific/Auckland");
+    const tomorrow = addDaysDateOnly(today, 1);
+
+    expect(tomorrow.getTime() - today.getTime()).toBe(86_400_000);
+    expect(tomorrow.toISOString().slice(10)).toBe("T00:00:00.000Z");
+    expect(formatDateOnly(tomorrow)).toBe(
+      formatDateOnly(addDaysDateOnly(parseDateOnly(formatDateOnly(today)), 1))
+    );
+  });
+
+  it("documents the removed construction's shift: NZ-local midnight is the previous UTC day", () => {
+    // The old helper produced NZ-local midnight under the production TZ pin.
+    // That instant, expressed deterministically via startOfDateOnlyForTimeZone,
+    // serializes one day earlier than the NZ calendar date it represents:
+    const nzLocalMidnight = startOfDateOnlyForTimeZone(
+      "2026-07-08",
+      "Pacific/Auckland"
+    );
+    expect(nzLocalMidnight.toISOString()).toBe("2026-07-07T12:00:00.000Z");
+    expect(nzLocalMidnight.toISOString().slice(0, 10)).toBe("2026-07-07");
+    // The date-only family keeps the same calendar day at UTC midnight.
+    expect(parseDateOnly("2026-07-08").toISOString()).toBe(
+      "2026-07-08T00:00:00.000Z"
+    );
+  });
+});
+
 describe("todayDateOnlyForTimeZone", () => {
   afterEach(() => {
     vi.useRealTimers();

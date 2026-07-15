@@ -7,6 +7,31 @@ export function buildBookingCancellationRefundIdempotencyKey(bookingId: string) 
   return `booking_cancel_refund_recovery_${bookingId}`;
 }
 
+// Capacity-race auto-refund durability: the recovery-operation dedup key for a
+// payment that succeeded AFTER the final capacity claim failed (the booking was
+// cancelled inside the reconciliation transaction and the full charge must be
+// handed back). One row per (booking, intent): a Stripe event redelivery for
+// the same intent upserts the same row, never a second refund debt.
+export function buildCapacityClaimFailedRefundRecoveryIdempotencyKey(
+  bookingId: string,
+  paymentIntentId: string,
+) {
+  return `capacity_claim_failed_refund_recovery_${bookingId}_${paymentIntentId}`;
+}
+
+// The Stripe idempotency-key prefix the INLINE capacity-race auto-refund has
+// always used (payment-reconciliation.ts). The recovery cron replays the frozen
+// plan under this stored prefix, so per-slice keys
+// `capacity_claim_failed_<bookingId>_<pi>_<txn>_<amount>` are identical between
+// the inline attempt and any replay — Stripe answers a repeat with the original
+// refund and the ledger dedupes on refund id, never a double refund.
+export function buildCapacityClaimFailedRefundStripeKeyPrefix(
+  bookingId: string,
+  paymentIntentId: string,
+) {
+  return `capacity_claim_failed_${bookingId}_${paymentIntentId}`;
+}
+
 // #1494: the Stripe refund `metadata` for a booking-cancellation card refund.
 // The inline cancel path (which creates the Stripe refund) and the recovery
 // cron (which replays it under the shared `booking_cancel_refund_<bookingId>`
@@ -90,6 +115,14 @@ export function bookingModificationRefundReasonForKeyPrefix(
   }
   if (keyPrefix?.startsWith("guest_remove_refund_")) {
     return "guest_removed_price_decrease";
+  }
+  // Capacity-race auto-refund (payment succeeded after the final capacity
+  // claim failed). The inline path builds its Stripe metadata from
+  // buildBookingModificationRefundMetadata(bookingId, "capacity_claim_failed"),
+  // so a recovery replay under the stored capacity_claim_failed_<...> prefix
+  // reconstructs the identical body from the persisted operation alone.
+  if (keyPrefix?.startsWith("capacity_claim_failed_")) {
+    return "capacity_claim_failed";
   }
   return "booking_modification_refund_recovery";
 }

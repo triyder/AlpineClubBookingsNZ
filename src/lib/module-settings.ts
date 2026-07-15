@@ -1,5 +1,6 @@
 import type { ClubModuleSettings } from "@prisma/client";
 import {
+  CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   DEFAULT_MODULE_SETTINGS,
   MODULE_DEFINITIONS,
   MODULE_KEYS,
@@ -133,6 +134,7 @@ export function buildClubModuleSettingsPayload(
 export async function loadClubModuleSettings(): Promise<ClubModuleSettingsPayload> {
   const record = await prisma.clubModuleSettings.findUnique({
     where: { id: CLUB_MODULE_SETTINGS_ID },
+    select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   });
 
   return buildClubModuleSettingsPayload(record);
@@ -146,6 +148,7 @@ export async function loadEffectiveModuleFlags(): Promise<FeatureFlags> {
   try {
     const record = await prisma.clubModuleSettings.findUnique({
       where: { id: CLUB_MODULE_SETTINGS_ID },
+      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     });
 
     return getEffectiveModuleFlags(normalizeClubModuleSettings(record));

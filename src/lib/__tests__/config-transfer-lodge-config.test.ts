@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { strFromU8 } from "fflate";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
 vi.mock("server-only", () => ({}));
 
@@ -23,7 +23,14 @@ function sourceDb(): ReadDb {
   return {
     lodge: {
       findMany: vi.fn().mockResolvedValue([
-        { slug: "main", name: "Main Lodge", active: true, travelNote: "Turn left", doorCode: "9999", isDefault: true },
+        {
+          slug: "main", name: "Main Lodge", active: true, travelNote: "Turn left",
+          doorCode: "9999", isDefault: true,
+          displayConfig: { "wifi-code": "alpine1234" },
+          displayNameGranularity: "FULL_NAME",
+          displayNotice: "Working bee Sunday",
+          showGuestPhonesOnScreens: true,
+        },
       ]),
     },
     lodgeRoom: {
@@ -60,6 +67,10 @@ function sourceDb(): ReadDb {
     },
     lodgeInstruction: { findMany: vi.fn().mockResolvedValue([]) },
     choreTemplate: { findMany: vi.fn().mockResolvedValue([]) },
+    // The club-wide display library (LTV-037) rides with lodge-config; an export
+    // reads both tables even when empty.
+    displayLayout: { findMany: vi.fn().mockResolvedValue([]) },
+    displayTemplate: { findMany: vi.fn().mockResolvedValue([]) },
   } as unknown as ReadDb;
 }
 
@@ -72,6 +83,8 @@ function emptyTargetDb(): ReadDb {
     seasonRate: { findMany: vi.fn().mockResolvedValue([]) },
     lodgeInstruction: { findMany: vi.fn().mockResolvedValue([]) },
     choreTemplate: { findMany: vi.fn().mockResolvedValue([]) },
+    displayLayout: { findMany: vi.fn().mockResolvedValue([]) },
+    displayTemplate: { findMany: vi.fn().mockResolvedValue([]) },
     xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
   } as unknown as ReadDb;
 }
@@ -147,5 +160,56 @@ describe("config-transfer lodge-config (per-lodge folders)", () => {
     expect(plan.integrityWarnings).toEqual([]);
     // The bundle designates "main" as default and the target has none yet.
     expect(cat.warnings.join(" ")).toMatch(/default lodge will be set to "main"/i);
+  });
+});
+
+describe("config-transfer lobby display (issue #50)", () => {
+  it("exports display settings in lodge.json (templates dropped in LTV-024)", async () => {
+    const { zip } = await exportLodges(false);
+    const { files } = readBundle(zip);
+
+    const lodge = readJson(files, LODGE_JSON);
+    expect(lodge.displayConfig).toEqual({ "wifi-code": "alpine1234" });
+    expect(lodge.displayNameGranularity).toBe("FULL_NAME");
+    expect(lodge.displayNotice).toBe("Working bee Sunday");
+    // Phone-display toggle travels with the descriptor (#137 / #37).
+    expect(lodge.showGuestPhonesOnScreens).toBe(true);
+
+    // The retired club-wide template file is no longer emitted (LTV-024).
+    expect(files.get("lodge-config/display-templates.json")).toBeUndefined();
+  });
+
+  it("plans lodge display settings on the lodge entity against an empty target", async () => {
+    const { zip } = await exportLodges(false);
+    const plan = await buildImportPlan(emptyTargetDb(), zip, { mode: "merge" });
+    const cat = plan.categories.find((c) => c.category === "lodge-config")!;
+    expect(cat.errors).toEqual([]);
+    // Display settings travel on the lodge descriptor, not a separate entity.
+    expect(cat.items.find((i) => i.entity === "display-template")).toBeUndefined();
+    expect(cat.items.find((i) => i.entity === "lodge")).toMatchObject({
+      action: "create",
+    });
+  });
+
+  it("rejects invalid display settings in lodge.json with explicit errors", async () => {
+    const { zip } = await exportLodges(false);
+    const unzipped = unzipSync(zip);
+    unzipped[LODGE_JSON] = strToU8(
+      JSON.stringify({
+        slug: "main",
+        name: "Main Lodge",
+        active: true,
+        displayNameGranularity: "SHOUT_EVERYTHING",
+        displayConfig: { "Bad Key!": "x" },
+        displayNotice: "x".repeat(2001),
+      }),
+    );
+    const rezipped = zipSync(unzipped); // integrity is warn-only by design
+    const plan = await buildImportPlan(emptyTargetDb(), rezipped, { mode: "merge" });
+    const cat = plan.categories.find((c) => c.category === "lodge-config")!;
+    const joined = cat.errors.join("\n");
+    expect(joined).toMatch(/displayNameGranularity/);
+    expect(joined).toMatch(/displayConfig key "Bad Key!"/);
+    expect(joined).toMatch(/displayNotice/);
   });
 });

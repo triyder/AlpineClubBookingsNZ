@@ -147,6 +147,9 @@ describe("cancelBooking split cascade (#738)", () => {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
   });

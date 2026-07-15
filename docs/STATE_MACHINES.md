@@ -574,8 +574,13 @@ migration -> public membership types hidden
 legacy entrance amount -> authoritative row at migration-date boundary
 membership editor -> public copy/listing review -> audited save -> cache invalidation
 finance editor -> validate cents/dates -> lock schedule key -> reject overlap | audited save
-family recipient removed -> billing member cleared -> visible billing exception
+family billing mode = via billing member -> family recipient removed -> billing member cleared -> visible billing exception
+family billing mode = members individually -> family-billing card hidden, no billing-member exceptions, PER_FAMILY create/update rejected server-side
 ```
+
+The `familyBillingMode` setting on `MembershipSubscriptionBillingSettings` (edited
+from `/admin/subscriptions`) selects between the two branches above. It defaults
+to `BILL_FAMILY_VIA_BILLING_MEMBER`, so existing clubs keep today's behaviour.
 
 This lifecycle creates no invoice and calls no provider. During the one-release
 bridge, a category with no current entrance schedule reads its deprecated
@@ -593,6 +598,7 @@ INVOICE_CREATED -> email fails -> EMAIL_FAILED -> retry -> same invoice -> EMAIL
 provider reference exists but snapshot differs -> CONFLICT (no provider rewrite)
 provider reference exists but is not AUTHORISED -> CONFLICT (never emailed)
 late member joins already-billed family -> FAMILY_ALREADY_BILLED exception (old coverage unchanged; no second invoice)
+stale per-family schedule under individual billing -> PER_FAMILY_FEE_IN_INDIVIDUAL_MODE exception (no invoice; basis must change)
 NO_INVOICE -> NOT_REQUIRED (zero-cent durable snapshot; no provider work)
 ```
 

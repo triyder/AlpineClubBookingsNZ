@@ -164,6 +164,16 @@ export default function PayByLinkPage() {
       if (!res.ok) {
         throw new Error(data.error || "Unable to send a new link right now.");
       }
+      if (data.emailed === false) {
+        // The link was re-issued but the email was suppressed (this address
+        // previously bounced or complained), so nothing will arrive (#1885).
+        // Never claim an email is on the way.
+        setRefreshState("idle");
+        setRefreshError(
+          `We weren't able to send email to this address. Please contact ${club.lodgeName} and we'll help you complete payment.`
+        );
+        return;
+      }
       setRefreshState("sent");
     } catch (err) {
       setRefreshState("idle");

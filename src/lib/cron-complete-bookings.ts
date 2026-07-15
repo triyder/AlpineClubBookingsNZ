@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
-import { getNZSTToday } from "@/lib/nzst-date";
+import { getTodayDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
@@ -15,7 +15,7 @@ export interface CompleteBookingsResult {
  * and it's too late to amend) once checkIn <= today.
  */
 export async function completeBookings(): Promise<CompleteBookingsResult> {
-  const today = getNZSTToday();
+  const today = getTodayDateOnly();
 
   const bookingsToComplete = await prisma.booking.findMany({
     where: {

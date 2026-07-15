@@ -57,6 +57,8 @@ import {
 import { SortHeader } from "@/components/admin/sort-header";
 import { Pagination } from "@/components/admin/admin-pagination";
 import { StatusChip } from "@/components/ui/status-chip";
+import { MiniChip } from "@/components/ui/mini-chip";
+import { type ChipTone } from "@/lib/chip-tones";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
@@ -93,42 +95,11 @@ const paymentSortColumns = new Set<PaymentSortBy>([
   "settlement",
 ]);
 
-// Presentational chip family shared with the redesigned admin tables (#1800):
-// icon + label in one of five semantic tones, so the non-status signals this
-// screen keeps inline (payment source, Xero state, settlement kind) read as one
-// calm family instead of bespoke hardcoded hues. Meaning is carried by icon +
-// label, never colour alone.
-type ChipTone = "neutral" | "info" | "success" | "warning" | "danger";
-
-const CHIP_TONE_CLASSES: Record<ChipTone, string> = {
-  neutral: "bg-muted text-foreground",
-  info: "bg-info-muted text-info",
-  success: "bg-success-muted text-success",
-  warning: "bg-warning-muted text-warning",
-  danger: "bg-danger-muted text-danger",
-};
-
-function MiniChip({
-  tone,
-  icon: Icon,
-  children,
-}: {
-  tone: ChipTone;
-  icon: LucideIcon;
-  children: ReactNode;
-}) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-transparent px-2 py-0.5 text-xs font-medium",
-        CHIP_TONE_CLASSES[tone],
-      )}
-    >
-      <Icon aria-hidden="true" className="size-3.5 shrink-0" />
-      <span>{children}</span>
-    </span>
-  );
-}
+// The presentational chip family (icon + label) is the shared `MiniChip`, which
+// draws its tone -> class map from `@/lib/chip-tones` — the single source shared
+// with StatusChip and the other admin tables. This screen uses it for the
+// non-status signals it keeps inline (payment source, Xero state, settlement
+// kind). Meaning is carried by icon + label, never colour alone.
 
 // Human labels for the active-filter chips. These mirror the option labels shown
 // in the filter selects; they are display-only and never affect which rows the
@@ -241,21 +212,45 @@ function xeroStateLabel(state: string) {
 }
 
 // Xero states have no StatusChip `kind`, so they render through the shared
-// MiniChip family: a semantic tone + icon carrying the same meaning the old
-// colour-only badges did (linked = success, missing/partial/pending = warning,
-// failed = danger, not-needed = neutral). Labels are unchanged (xeroStateLabel).
+// MiniChip family: a tone + icon carrying the same meaning the old colour-only
+// badges did. Restores the distinct hues the five-tone collapse flattened (#156):
+// linked = success (green), invoiceMissing = orange (its own accent hue, as the
+// old `xeroStateClass` used), partial/pending = warning (amber, distinguished by
+// icon), failed = danger (red), not-needed = neutral. Labels are unchanged.
 function xeroStateChip(state: string): { tone: ChipTone; icon: LucideIcon } {
   switch (state) {
     case "invoiceLinked":
       return { tone: "success", icon: CheckCircle2 };
     case "invoiceMissing":
-      return { tone: "warning", icon: FileText };
+      return { tone: "orange", icon: FileText };
     case "operationFailed":
       return { tone: "danger", icon: XCircle };
     case "operationPartial":
       return { tone: "warning", icon: AlertTriangle };
     case "operationPending":
       return { tone: "warning", icon: Clock };
+    default:
+      return { tone: "neutral", icon: MinusCircle };
+  }
+}
+
+// Each cancellation-settlement kind gets a distinct hue (#156): the Settlement
+// column previously rendered every kind on the same neutral tone, hiding what
+// kind of settlement happened. Icon + label still carry the meaning.
+function settlementKindChip(kind: string): { tone: ChipTone; icon: LucideIcon } {
+  switch (kind) {
+    case "cardRefund":
+      return { tone: "info", icon: CreditCard };
+    case "accountCredit":
+      return { tone: "purple", icon: Wallet };
+    case "mixed":
+      // Pulled out of the blue-purple arc (#156): info/indigo/purple crowded
+      // three kinds into pale blue, and cardRefund vs mixed co-occur. Orange sits
+      // well clear of the other four kinds (info 250 / purple 315 / teal 185).
+      return { tone: "orange", icon: Receipt };
+    case "restoredCredit":
+      return { tone: "teal", icon: Wallet };
+    case "none":
     default:
       return { tone: "neutral", icon: MinusCircle };
   }
@@ -920,7 +915,7 @@ export default function PaymentsPage() {
                       )}
                       {isInternetBanking && (
                         <div className="space-y-1">
-                          <MiniChip tone="info" icon={Landmark}>Internet Banking</MiniChip>
+                          <MiniChip tone="teal" icon={Landmark}>Internet Banking</MiniChip>
                           {p.reference && (
                             <Link
                               href={xeroActivityHref}
@@ -1023,9 +1018,14 @@ export default function PaymentsPage() {
                   </TableCell>
                   <TableCell>
                     <div className="space-y-1">
-                      <MiniChip tone="neutral" icon={Wallet}>
-                        {settlementKindLabel(p.settlementKind)}
-                      </MiniChip>
+                      {(() => {
+                        const s = settlementKindChip(p.settlementKind);
+                        return (
+                          <MiniChip tone={s.tone} icon={s.icon}>
+                            {settlementKindLabel(p.settlementKind)}
+                          </MiniChip>
+                        );
+                      })()}
                       {p.refundedAmountCents > 0 ? (
                         <div className="space-y-1 text-xs text-muted-foreground">
                         {settlement.refundToOriginalMethodCents > 0 && (

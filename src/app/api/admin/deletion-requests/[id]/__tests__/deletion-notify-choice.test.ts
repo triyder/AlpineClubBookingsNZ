@@ -174,4 +174,33 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
     );
     expect(h.sendAccountDeletionRejectedEmail).not.toHaveBeenCalled();
   });
+
+  // F32 (#1888): booking.checkIn is @db.Date (NZ calendar date at UTC midnight).
+  // The future-paid and future-cancellable guards must key off the NZ calendar
+  // date, not a raw instant, or a stay checking in today drops out of both
+  // guards for the first ~13h of the NZ day.
+  it("scopes the future-booking guards to the NZ calendar date, not the raw instant", async () => {
+    // NZ 2026-07-16 08:00 (NZST +12); the UTC day (Jul 15) trails the NZ day.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T20:00:00.000Z"));
+    try {
+      const res = await POST(req({ action: "approve" }), { params });
+      expect(res.status).toBe(200);
+
+      const firstWhere = h.prisma.booking.findMany.mock.calls[0][0].where;
+      expect(firstWhere.checkIn.gte.toISOString()).toBe(
+        "2026-07-16T00:00:00.000Z",
+      );
+      // The raw-instant version would have used Date.now(); the fix must not.
+      expect(firstWhere.checkIn.gte.getTime()).not.toBe(Date.now());
+
+      // Both guards share the same date-only boundary.
+      const secondWhere = h.prisma.booking.findMany.mock.calls[1][0].where;
+      expect(secondWhere.checkIn.gte.toISOString()).toBe(
+        "2026-07-16T00:00:00.000Z",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

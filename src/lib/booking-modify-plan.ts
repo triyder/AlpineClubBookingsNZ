@@ -38,6 +38,8 @@ import {
 import {
   OverCapacityConfirmationRequiredError,
   overCapacityNights,
+  wholeLodgeBlockedNights,
+  WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
 import {
   type SeasonRateData,
@@ -860,13 +862,22 @@ export async function calculateModifiedPricing(
           );
     if (!capacity.available) {
       if (!adminOverride) {
+        // Member / non-override path: a held night is unavailable exactly like a
+        // full lodge (ADR-001 decision 6, issue #118) — no exclusive signal.
         throw new ApiError("Not enough beds available for these changes", 400);
       }
       if (!confirmOverCapacity) {
         throw new OverCapacityConfirmationRequiredError(overCapacityNights(capacity));
       }
-      // Admin explicitly confirmed the overbooking; proceed and report it so the
-      // caller can audit capacityOverridden.
+      // Admin explicitly confirmed the overbooking. An exclusive hold is NOT
+      // bypassable by the override (ADR-001 decision 5, issue #118) — refuse
+      // before reporting capacityOverridden so no guest is admitted onto a held
+      // night.
+      const blocked = wholeLodgeBlockedNights(capacity);
+      if (blocked.length > 0) {
+        throw new WholeLodgeHoldBlockedError(blocked);
+      }
+      // proceed and report it so the caller can audit capacityOverridden.
       capacityOverridden = true;
     }
   }

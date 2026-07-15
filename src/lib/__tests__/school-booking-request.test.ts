@@ -48,6 +48,8 @@ vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/capacity", () => ({
   acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   checkCapacityForGuestRanges: vi.fn(),
+  // Read-only conflict surfacing (issue #119); defaults to no conflicts.
+  findOverlappingCapacityHoldingBookings: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@/lib/lodge-capacity", () => ({
@@ -96,7 +98,10 @@ import {
   sendAdminSchoolManualInvoiceEmail,
   sendAdminOwnerSubstitutionAlert,
 } from "@/lib/email";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  checkCapacityForGuestRanges,
+  findOverlappingCapacityHoldingBookings,
+} from "@/lib/capacity";
 import { logAudit } from "@/lib/audit";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
@@ -356,6 +361,41 @@ describe("createSchoolBookingRequest", () => {
     const data = mockedCreate.mock.calls[0][0].data as Record<string, unknown>;
     expect(data.lodgeId).toBe("lodge-2");
   });
+
+  it("persists exclusivityRequested=true when the requester asked for sole occupancy (#121)", async () => {
+    await createSchoolBookingRequest({
+      schoolName: "New Plymouth Primary School",
+      contactFirstName: "Carol",
+      contactLastName: "Contact",
+      contactEmail: "office@school.test",
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      teachers: [{ firstName: "Tana", lastName: "Teacher" }],
+      childCounts: { CHILD: 2 },
+      cateringPreference: "NON_CATERED" as const,
+      exclusivityRequested: true,
+    });
+
+    const data = mockedCreate.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.exclusivityRequested).toBe(true);
+  });
+
+  it("defaults exclusivityRequested to false when the checkbox is not set", async () => {
+    await createSchoolBookingRequest({
+      schoolName: "New Plymouth Primary School",
+      contactFirstName: "Carol",
+      contactLastName: "Contact",
+      contactEmail: "office@school.test",
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      teachers: [{ firstName: "Tana", lastName: "Teacher" }],
+      childCounts: { CHILD: 2 },
+      cateringPreference: "NON_CATERED" as const,
+    });
+
+    const data = mockedCreate.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.exclusivityRequested).toBe(false);
+  });
 });
 
 describe("approveSchoolBookingRequest", () => {
@@ -494,6 +534,94 @@ describe("approveSchoolBookingRequest", () => {
     expect(mockedSendManualInvoice).not.toHaveBeenCalled();
     // No substitution on a normal conversion → no owner-substitution alert (#1377).
     expect(mockedSendOwnerSubstitution).not.toHaveBeenCalled();
+  });
+
+  it("sets the exclusive whole-lodge hold on the booking when the request asked for exclusivity (#121)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ exclusivityRequested: true }) as never,
+    );
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toMatchObject({ type: "approved", bookingId: "booking-1" });
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    // The hold flag + who/when audit fields are stamped by the approving admin.
+    expect(bookingArgs.wholeLodgeHold).toBe(true);
+    expect(bookingArgs.wholeLodgeHoldAt).toBeInstanceOf(Date);
+    expect(bookingArgs.wholeLodgeHoldByMemberId).toBe("admin-1");
+
+    // Dedicated audit row for the capacity-affecting flag.
+    const setAudit = mockedLogAudit.mock.calls
+      .map((call) => call[0])
+      .find((entry) => entry.action === "booking.exclusiveHold.set");
+    expect(setAudit).toMatchObject({
+      actorMemberId: "admin-1",
+      entityType: "Booking",
+      entityId: "booking-1",
+    });
+  });
+
+  it("surfaces overlapping conflicts when a hold is set at approval, without refusing (issue #119)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ exclusivityRequested: true }) as never,
+    );
+    const conflicts = [
+      {
+        id: "booking-2",
+        memberName: "Jane Doe",
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        guestCount: 2,
+        status: "CONFIRMED",
+      },
+    ];
+    vi.mocked(findOverlappingCapacityHoldingBookings).mockResolvedValueOnce(
+      conflicts,
+    );
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toMatchObject({
+      type: "approved",
+      exclusiveHoldConflicts: conflicts,
+    });
+    // Excludes the just-approved booking; still succeeded (decision 1).
+    expect(findOverlappingCapacityHoldingBookings).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ excludeBookingId: "booking-1" }),
+    );
+    const setAudit = mockedLogAudit.mock.calls
+      .map((call) => call[0])
+      .find((entry) => entry.action === "booking.exclusiveHold.set");
+    expect(setAudit?.metadata).toMatchObject({ overlappingConflictCount: 1 });
+  });
+
+  it("leaves the booking non-exclusive when the request did not ask for exclusivity", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ exclusivityRequested: false }) as never,
+    );
+
+    await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(bookingArgs.wholeLodgeHold).toBeUndefined();
+    expect(bookingArgs.wholeLodgeHoldByMemberId).toBeUndefined();
+
+    const setAudit = mockedLogAudit.mock.calls
+      .map((call) => call[0])
+      .find((entry) => entry.action === "booking.exclusiveHold.set");
+    expect(setAudit).toBeUndefined();
   });
 
   it("creates the booking at the request's lodge instead of the default lodge", async () => {

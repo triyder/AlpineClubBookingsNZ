@@ -112,11 +112,11 @@ For a Docker-backed local/staging-style setup:
 
 ```bash
 cp .env.staging.example .env.staging
-docker compose --env-file .env.staging -p alpineclubbookingsnz-staging \
+docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml up -d --build postgres app
-docker compose --env-file .env.staging -p alpineclubbookingsnz-staging \
+docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml run --rm migrate
-docker compose --env-file .env.staging -p alpineclubbookingsnz-staging \
+docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml exec app npx tsx prisma/seed.ts
 ```
 

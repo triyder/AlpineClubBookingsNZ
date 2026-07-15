@@ -33,6 +33,20 @@ Future reviews and issues should cite this file when proposing changes.
 - `PER_MEMBER` bills that member. `PER_FAMILY` requires one explicit active,
   unarchived recipient in the exact family. `NO_INVOICE` is an explicit
   zero-cent outcome, not missing configuration.
+- The club-level `familyBillingMode` on `MembershipSubscriptionBillingSettings`
+  decides whether family billing exists at all. `BILL_FAMILY_VIA_BILLING_MEMBER`
+  (the default, preserving pre-#159 behaviour) allows `PER_FAMILY` schedules and
+  invoices each family via its nominated billing member.
+  `BILL_MEMBERS_INDIVIDUALLY` invoices every member directly: the fee-config
+  family-billing card is hidden, no billing-member exception is ever raised, and
+  `PER_FAMILY` schedules are blocked server-side on create/update. A stale
+  `PER_FAMILY` schedule left over from a mode switch is never silently
+  reinterpreted as per-member; the billing engine surfaces it as a visible
+  `PER_FAMILY_FEE_IN_INDIVIDUAL_MODE` exception and invoices nothing for it. The
+  guard sits ahead of every per-family branch, so it makes the per-family
+  family-resolution branches (including `MISSING_FAMILY` / `AMBIGUOUS_FAMILY` /
+  `MISSING_FAMILY_RECIPIENT` / `INVALID_FAMILY_RECIPIENT`) unreachable in
+  individual mode by construction.
 - One family/membership-type/membership-year tuple can have at most one durable
   charge. A later family member produces a visible exception; neither coverage
   mutation nor a second invoice is allowed.
@@ -44,6 +58,30 @@ Future reviews and issues should cite this file when proposing changes.
   conflicts are visible and never trigger a silent provider rewrite. Xero
   delivery resolves the snapshotted recipient member's current contact/email;
   frozen name/email remain audit evidence rather than a stale delivery target.
+- A member has at most one entrance-fee invoice (#1886, F21). The worker mints
+  only after re-checking the durable `ENTRANCE_FEE_INVOICE` link and, failing
+  that, looking the member-unique invoice reference (full member id, not a
+  truncated prefix) up in Xero. A found invoice is adopted only when it is THIS
+  member's own `AUTHORISED` invoice for the expected amount; a voided/deleted/
+  draft invoice is ignored (so it never blocks a legitimate re-issue), a
+  different-contact match is never adopted, and a wrong-amount or >1-match case
+  surfaces a visible `PROVIDER_MISMATCH`/`DUPLICATE_REFERENCE` conflict for
+  human reconciliation rather than a silent adopt-first. The enqueue-time guard
+  and its amount/category-keyed correlation dedupe are not sufficient — a
+  re-enqueue carrying a different amount override or a reclassified category
+  produces a fresh key. Concurrent double-minting is prevented by a member-scoped
+  Xero mint idempotency key (concurrent mints converge on one invoice, the same
+  provider-side convergence pattern as the contact path, F7/#1355) rather than a
+  DB lock held across the provider call; the DB-level backstop is the raw partial
+  unique index `XeroObjectLink_entrance_fee_active_unique` guaranteeing at most
+  one ACTIVE entrance-fee link per member. Residual: a same-day re-issue after a
+  void can be returned the voided invoice by the idempotency key within Xero's
+  key-retention window — acceptable for a one-time charge. Second residual: the
+  member-scoped mint key makes convergence Xero's responsibility, so if Xero ever
+  failed to collapse a concurrent duplicate, a second invoice could mint and its
+  link upsert would then fail on the partial unique index — leaving an orphan
+  invoice in Xero (no local double-link, so no local double-charge) that needs
+  operator reconciliation.
 
 ## Booking Dates And Capacity
 
@@ -51,6 +89,14 @@ Future reviews and issues should cite this file when proposing changes.
   unless a feature explicitly requires time-of-day semantics.
 - `BookingGuest.stayStart` and `BookingGuest.stayEnd` represent each guest's
   date-only occupancy inside the booking envelope.
+- `@db.Date` columns (e.g. `Booking.checkIn`/`checkOut`,
+  `BookingGuest.stayStart`/`stayEnd`, `HutLeaderAssignment.endDate`) store an NZ
+  calendar date at UTC midnight. Compare them only against date-only values
+  (`getTodayDateOnly()` / `normalizeDateOnlyForTimeZone()` from
+  `src/lib/date-only.ts`), never a raw `new Date()` or a local-midnight
+  (`setHours(0,0,0,0)`) instant: under the `TZ=Pacific/Auckland` server pin the
+  latter resolves to `(D-1)T12:00Z` and shifts the boundary by a day for the
+  first ~13h of each NZ day (F8/F32, #1888).
 - Capacity is per lodge. A booking belongs to exactly one lodge
   (`Booking.lodgeId`); capacity is "beds available on date D at lodge L", and
   no code path may sum beds across lodges into a single club-wide number. Two
@@ -260,6 +306,14 @@ Future reviews and issues should cite this file when proposing changes.
   carry a NULL member id and sit outside the constraint.
 - Draft, pending, waitlist, payment-recovery, and review states must have
   expiry, retry, admin visibility, or repair paths.
+- **Exclusive whole-lodge hold (ADR-001, #118):** a night overlapped by a
+  capacity-holding booking with `Booking.wholeLodgeHold = true` admits no
+  further capacity from any admission path — the night's `availableBeds` is
+  hard-blocked at 0, never negative, so it cannot be bypassed by the admin
+  over-capacity override (#1668). To non-admins the held lodge presents
+  exactly as an ordinary full lodge (decision 6); only admin surfaces are told
+  a hold is in effect. Full scenario table in `docs/CAPACITY_MODEL.md`,
+  "Exclusive whole-lodge hold — a non-bypassable block".
 
 ## Payment And Settlement
 
@@ -1453,9 +1507,12 @@ booking eligibility, pricing, or any member-visible UI, because family
 visibility and eligibility everywhere derive from `familyGroupMemberships`
 (`getMemberFamily`, `resolveMemberFamily`), never from bare `FamilyGroup` rows.
 Family billing never infers a recipient from group role, login holder, or email
-inheritance. The explicit billing member must be an active, unarchived member
-of that family; missing or removed recipients are visible exceptions and those
-families are omitted from invoice generation.
+inheritance. In `BILL_FAMILY_VIA_BILLING_MEMBER` mode the explicit billing
+member must be an active, unarchived member of that family; missing or removed
+recipients are visible exceptions and those families are omitted from invoice
+generation. In `BILL_MEMBERS_INDIVIDUALLY` mode there is no family-billing
+surface: no billing member is required, requested, or flagged, because every
+member is invoiced directly.
 Memberless groups are created intentionally ahead of approval — the member
 "create group from scratch" flow (#1681) files a memberless group with a
 `PENDING` `GROUP_CREATE` request, and the legacy request-join flow leaves a

@@ -1088,6 +1088,31 @@ export default function AdminBedAllocationPage() {
           onDragEnd={handleDragEnd}
           onDragCancel={handleDragCancel}
         >
+          {payload.exclusiveHolds.length > 0 ? (
+            <Alert
+              variant="info"
+              title="Exclusive whole-lodge hold — no per-bed allocation needed"
+            >
+              <p className="mb-1">
+                {payload.exclusiveHolds.length === 1
+                  ? "This booking holds the whole lodge for its nights"
+                  : "These bookings hold the whole lodge for their nights"}
+                , so its guests are not placed on individual beds. The lodge is
+                taken.
+              </p>
+              <ul className="space-y-1">
+                {payload.exclusiveHolds.map((hold) => (
+                  <li key={hold.bookingId}>
+                    <span className="font-medium">{hold.memberName}</span> ·{" "}
+                    <span className="font-mono text-xs">{hold.bookingId}</span> ·{" "}
+                    {hold.checkIn} → {hold.checkOut} · {hold.guestCount} guest
+                    {hold.guestCount === 1 ? "" : "s"}
+                  </li>
+                ))}
+              </ul>
+            </Alert>
+          ) : null}
+
           <Card>
             <CardHeader>
               <CardTitle className="text-base">

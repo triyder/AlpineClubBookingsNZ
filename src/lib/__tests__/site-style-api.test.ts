@@ -8,10 +8,17 @@ const mocks = vi.hoisted(() => ({
   clubThemeUpsert: vi.fn(),
   auditLogCreate: vi.fn(),
   revalidatePath: vi.fn(),
+  primeEmailPalette: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({
   requireAdmin: mocks.requireAdmin,
+}));
+
+// #1912: the route re-primes the cached email brand palette after a save so
+// emails pick up the new scheme immediately. Mock it to assert the wiring.
+vi.mock("@/lib/email-theme", () => ({
+  primeEmailPalette: mocks.primeEmailPalette,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -61,6 +68,7 @@ describe("site style admin API", () => {
       }),
     );
     mocks.auditLogCreate.mockResolvedValue({});
+    mocks.primeEmailPalette.mockResolvedValue(undefined);
   });
 
   it("rejects unsafe colour values before storage", async () => {
@@ -144,5 +152,25 @@ describe("site style admin API", () => {
       ["/(admin)", "layout"],
     ]);
     expect(mocks.auditLogCreate).toHaveBeenCalled();
+  });
+
+  it("re-primes the email palette after a successful save so emails use the new scheme (#1912)", async () => {
+    const response = await PUT(request({ ...DEFAULT_CLUB_THEME_VALUES }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.clubThemeUpsert).toHaveBeenCalled();
+    // The email brand palette is cached separately from the app-shell CSS, so
+    // the save must explicitly refresh it or emails keep the old colours.
+    expect(mocks.primeEmailPalette).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-prime the email palette when the save is rejected (#1912)", async () => {
+    const response = await PUT(
+      request({ ...DEFAULT_CLUB_THEME_VALUES, brandGold: "not-a-colour" }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.clubThemeUpsert).not.toHaveBeenCalled();
+    expect(mocks.primeEmailPalette).not.toHaveBeenCalled();
   });
 });

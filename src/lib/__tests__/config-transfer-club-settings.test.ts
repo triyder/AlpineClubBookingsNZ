@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { strFromU8 } from "fflate";
+import { strFromU8, strToU8 } from "fflate";
 
 vi.mock("server-only", () => ({}));
 
@@ -8,8 +8,12 @@ import { Prisma } from "@prisma/client";
 import { buildConfigExport } from "@/lib/config-transfer/export";
 import { buildImportPlan } from "@/lib/config-transfer/import";
 import { readBundle } from "@/lib/config-transfer/bundle";
-import { SINGLETONS } from "@/lib/config-transfer/categories/club-settings";
-import type { ReadDb } from "@/lib/config-transfer/import-types";
+import {
+  SINGLETONS,
+  clubSettingsImporter,
+} from "@/lib/config-transfer/categories/club-settings";
+import type { ApplyContext, ReadDb, TxDb } from "@/lib/config-transfer/import-types";
+import { CLUB_MODULE_SETTINGS_COLUMN_SELECT } from "@/config/modules";
 
 // Delegate names touched by the club-settings category.
 const SINGLETON_DELEGATES = [
@@ -44,7 +48,7 @@ const MODULES = {
   xeroIntegration: false, bedAllocation: true, internetBankingPayments: false,
   addressAutocomplete: false, groupBookings: true, lockers: true,
   induction: true, workParties: true, promoCodes: true, hutLeaders: true,
-  communications: true, skifieldConditions: true, multiLodge: true,
+  communications: true, skifieldConditions: true,
   twoFactor: false, analytics: false,
 };
 const EMAIL = {
@@ -87,15 +91,130 @@ describe("config-transfer club-settings", () => {
     const { zip } = await exportBundle(false);
     // Target: module settings differ (update); email settings absent (create).
     const target = stubDb({
-      clubModuleSettings: { ...MODULES, multiLodge: false },
+      clubModuleSettings: { ...MODULES, bedAllocation: false },
     });
     const plan = await buildImportPlan(target, zip, { mode: "merge" });
     const items = plan.categories[0].items;
     const modules = items.find((i) => i.entity === "club-module-settings");
     const email = items.find((i) => i.entity === "email-message-setting");
     expect(modules?.action).toBe("update");
-    expect(modules?.changedFields).toContain("multiLodge");
+    expect(modules?.changedFields).toContain("bedAllocation");
     expect(email?.action).toBe("create");
+  });
+});
+
+// Guard against the #153 regression: every ClubModuleSettings read in this
+// category (export, plan, apply) must use the shared column select so a
+// retired-but-not-yet-dropped column never appears in the generated SQL (see
+// CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts and #150/#139).
+describe("club-module-settings singleton reads use the explicit column select", () => {
+  it("declares the shared select on the SINGLETONS spec", () => {
+    const spec = SINGLETONS.find((s) => s.entity === "club-module-settings");
+    expect(spec?.select).toEqual(CLUB_MODULE_SETTINGS_COLUMN_SELECT);
+  });
+
+  it("passes the select through on export", async () => {
+    const db = stubDb({ clubModuleSettings: MODULES });
+    await buildConfigExport({
+      db,
+      categories: ["club-settings"],
+      includeDoorCodes: false,
+      appVersion: "0.10.1",
+      prismaMigration: null,
+      generatedAt: "2026-07-08T00:00:00.000Z",
+    });
+    const findUnique = (
+      db as unknown as { clubModuleSettings: { findUnique: ReturnType<typeof vi.fn> } }
+    ).clubModuleSettings.findUnique;
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: "default" },
+      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+    });
+  });
+
+  it("passes the select through on plan", async () => {
+    const { zip } = await exportBundle(false);
+    const target = stubDb({ clubModuleSettings: MODULES });
+    await buildImportPlan(target, zip, { mode: "merge" });
+    const findUnique = (
+      target as unknown as { clubModuleSettings: { findUnique: ReturnType<typeof vi.fn> } }
+    ).clubModuleSettings.findUnique;
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: "default" },
+      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+    });
+  });
+
+  it("passes the select through on apply (create branch, no existing row)", async () => {
+    const findUnique = vi.fn().mockResolvedValue(null);
+    const upsert = vi.fn().mockResolvedValue(null);
+    const tx = {
+      clubModuleSettings: {
+        findUnique,
+        upsert,
+      },
+    } as unknown as TxDb;
+    const files = new Map<string, Uint8Array>();
+    files.set(
+      "club-settings/club-module-settings.json",
+      strToU8(JSON.stringify(MODULES)),
+    );
+    const ctx: ApplyContext = {
+      tx,
+      files,
+      manifest: {} as unknown as ApplyContext["manifest"],
+      mode: "merge",
+      resolutions: new Map(),
+      actorMemberId: "test-actor",
+      imageRemap: new Map(),
+      notes: { doorCodesWritten: [] },
+    };
+    await clubSettingsImporter.apply(ctx);
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: "default" },
+      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+    });
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "default" },
+        select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+      }),
+    );
+  });
+
+  it("passes the select through on apply (update branch, existing row changed)", async () => {
+    const findUnique = vi
+      .fn()
+      .mockResolvedValue({ ...MODULES, bedAllocation: false });
+    const upsert = vi.fn().mockResolvedValue(null);
+    const tx = {
+      clubModuleSettings: {
+        findUnique,
+        upsert,
+      },
+    } as unknown as TxDb;
+    const files = new Map<string, Uint8Array>();
+    files.set(
+      "club-settings/club-module-settings.json",
+      strToU8(JSON.stringify(MODULES)),
+    );
+    const ctx: ApplyContext = {
+      tx,
+      files,
+      manifest: {} as unknown as ApplyContext["manifest"],
+      mode: "merge",
+      resolutions: new Map(),
+      actorMemberId: "test-actor",
+      imageRemap: new Map(),
+      notes: { doorCodesWritten: [] },
+    };
+    await clubSettingsImporter.apply(ctx);
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "default" },
+        select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+      }),
+    );
   });
 });
 

@@ -89,6 +89,8 @@ async function replaceDefaultTheme(
   values: ClubThemeValues,
   completedAt: Date | null,
 ) {
+  // Test fixture: hardcoded UPDATE against a disposable per-test schema; no user input in the SQL.
+  // nosemgrep: javascript.express.db.pg-express.pg-express
   await client.query(
     `
       UPDATE "ClubTheme"
@@ -212,6 +214,8 @@ describeWithDatabase("untouched ClubTheme teal corrective migration PostgreSQL b
         ...LEGACY_SAGE_AFTER_PRIOR_MIGRATIONS,
       });
 
+      // Test fixture: runs the migration's own corrective SQL against a disposable per-test schema; no user input.
+      // nosemgrep: javascript.express.db.pg-express.pg-express
       await client.query(correctiveSql);
 
       expect(await readTheme(client)).toMatchObject({
@@ -232,6 +236,8 @@ describeWithDatabase("untouched ClubTheme teal corrective migration PostgreSQL b
       );
       const before = await readTheme(client);
 
+      // Test fixture: runs the migration's own corrective SQL against a disposable per-test schema; no user input.
+      // nosemgrep: javascript.express.db.pg-express.pg-express
       await client.query(correctiveSql);
 
       expect(await readTheme(client)).toEqual(before);
@@ -247,6 +253,8 @@ describeWithDatabase("untouched ClubTheme teal corrective migration PostgreSQL b
       );
       const before = await readTheme(client);
 
+      // Test fixture: runs the migration's own corrective SQL against a disposable per-test schema; no user input.
+      // nosemgrep: javascript.express.db.pg-express.pg-express
       await client.query(correctiveSql);
 
       expect(await readTheme(client)).toEqual(before);
@@ -260,6 +268,8 @@ describeWithDatabase("untouched ClubTheme teal corrective migration PostgreSQL b
       await replaceDefaultTheme(client, TOKOROA_CLUB_THEME_VALUES, null);
       const before = await readTheme(client);
 
+      // Test fixture: runs the migration's own corrective SQL against a disposable per-test schema; no user input.
+      // nosemgrep: javascript.express.db.pg-express.pg-express
       await client.query(correctiveSql);
 
       expect(await readTheme(client)).toEqual(before);
@@ -268,6 +278,8 @@ describeWithDatabase("untouched ClubTheme teal corrective migration PostgreSQL b
 
   it("leaves a non-default untouched legacy row unchanged", async () => {
     await withThemeMigrationSchema(async (client, correctiveSql) => {
+      // Test fixture: hardcoded INSERT seeding a second row in a disposable per-test schema; no user input.
+      // nosemgrep: javascript.express.db.pg-express.pg-express
       await client.query(`
         INSERT INTO "ClubTheme" (
           "id", "brandGold", "brandCharcoal", "brandDeep", "brandRidge",
@@ -282,6 +294,8 @@ describeWithDatabase("untouched ClubTheme teal corrective migration PostgreSQL b
       `);
       const before = await readTheme(client, "secondary");
 
+      // Test fixture: runs the migration's own corrective SQL against a disposable per-test schema; no user input.
+      // nosemgrep: javascript.express.db.pg-express.pg-express
       await client.query(correctiveSql);
 
       expect(await readTheme(client, "secondary")).toEqual(before);
@@ -291,9 +305,13 @@ describeWithDatabase("untouched ClubTheme teal corrective migration PostgreSQL b
 
   it("is idempotent when the actual SQL executes a second time", async () => {
     await withThemeMigrationSchema(async (client, correctiveSql) => {
+      // Test fixture: runs the migration's own corrective SQL against a disposable per-test schema; no user input.
+      // nosemgrep: javascript.express.db.pg-express.pg-express
       await client.query(correctiveSql);
       const afterFirstRun = await readTheme(client);
 
+      // Test fixture: re-runs the migration's own corrective SQL to assert idempotency; no user input.
+      // nosemgrep: javascript.express.db.pg-express.pg-express
       const secondRun = await client.query(correctiveSql);
 
       expect(secondRun.rowCount).toBe(0);

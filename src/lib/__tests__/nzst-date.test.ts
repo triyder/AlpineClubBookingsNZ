@@ -1,32 +1,28 @@
 import { describe, it, expect } from "vitest";
-import { getNZSTToday, getNZSTTomorrow } from "../nzst-date";
+import { formatNZDate, formatNZDateTime } from "../nzst-date";
 
-describe("getNZSTToday", () => {
-  it("returns a Date object", () => {
-    const today = getNZSTToday();
-    expect(today).toBeInstanceOf(Date);
-  });
+// The NZST "today"/"tomorrow" helpers were removed in #1878 (they parsed
+// `${y}-${m}-${d}T00:00:00` in the server's LOCAL zone, shifting Prisma
+// @db.Date comparisons a day back under the production TZ=Pacific/Auckland
+// pin). Cron "today"/"tomorrow" coverage now lives in date-only.test.ts
+// ("NZ cron date boundary (#1878)"). Only the display formatters remain here.
+//
+// 2026-04-15T23:30:00Z is 2026-04-16 11:30 in Pacific/Auckland (NZST, +12):
+// the NZ calendar date differs from the UTC one, so these assertions fail if
+// the formatters ever stop rendering in the club time zone.
+const INSTANT = new Date("2026-04-15T23:30:00.000Z");
 
-  it("returns midnight (00:00:00)", () => {
-    const today = getNZSTToday();
-    expect(today.getHours()).toBe(0);
-    expect(today.getMinutes()).toBe(0);
-    expect(today.getSeconds()).toBe(0);
-  });
-
-  it("returns a date not in the future", () => {
-    const today = getNZSTToday();
-    const now = new Date();
-    // Allow 1 day buffer for timezone differences
-    expect(today.getTime()).toBeLessThanOrEqual(now.getTime() + 86400000);
+describe("formatNZDate", () => {
+  it("renders the NZ calendar date, not the UTC date", () => {
+    expect(formatNZDate(INSTANT)).toBe("16 Apr 2026");
   });
 });
 
-describe("getNZSTTomorrow", () => {
-  it("returns exactly 1 day after getNZSTToday", () => {
-    const today = getNZSTToday();
-    const tomorrow = getNZSTTomorrow();
-    const diffMs = tomorrow.getTime() - today.getTime();
-    expect(diffMs).toBe(86400000); // 24 hours in ms
+describe("formatNZDateTime", () => {
+  it("renders the NZ-local date and time", () => {
+    const formatted = formatNZDateTime(INSTANT);
+    expect(formatted).toContain("16 Apr 2026");
+    // \s tolerates the narrow no-break space some ICU versions emit.
+    expect(formatted).toMatch(/11:30\sam/);
   });
 });

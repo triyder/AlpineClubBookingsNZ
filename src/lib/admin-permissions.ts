@@ -245,6 +245,9 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/work-parties",
       "/api/admin/lodge-instructions",
       "/api/admin/lodge-settings",
+      // Lobby display management (#27/#33, epic #25): lodge operations.
+      "/admin/display",
+      "/api/admin/display",
     ],
   },
   {

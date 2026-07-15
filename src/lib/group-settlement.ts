@@ -74,7 +74,12 @@ type GroupSettlementOutcome =
   | "ready"
   | "invoice_sent"
   | "already_settled"
-  | "nothing_to_settle";
+  | "nothing_to_settle"
+  // A succeeded intent could not be applied (#1883): the settle route surfaces
+  // the real apply outcome instead of masking it as "already_settled".
+  | "refunded"
+  | "amount_mismatch"
+  | "not_found";
 
 export interface GroupSettlementIntentResult {
   outcome: GroupSettlementOutcome;
@@ -199,18 +204,42 @@ export async function createGroupSettlementIntent(
 
   // Reuse an outstanding intent for the same total before creating a new one,
   // mirroring the single-booking create-payment-intent route. A succeeded intent
-  // means the webhook is mid-flight or was missed; reconcile and report settled.
+  // means the webhook is mid-flight or was missed; reconcile and report the
+  // real outcome. A settlement with refund history is never reused (#1883,
+  // mirroring #1765): a refunded Stripe intent reports "succeeded" forever, so
+  // re-admitting it would settle the children with money already handed back.
+  // Skipping the branch mints a FRESH intent whose idempotency key is
+  // discriminated by the refunded intent id, so Stripe cannot replay it either.
+  const settlementHasRefundHistory =
+    group.settlement?.status === PaymentStatus.REFUNDED ||
+    group.settlement?.status === PaymentStatus.PARTIALLY_REFUNDED;
   if (
     group.settlement?.stripePaymentIntentId &&
-    group.settlement.amountCents === amountCents
+    group.settlement.amountCents === amountCents &&
+    !settlementHasRefundHistory
   ) {
     const existing = await getPaymentIntent(group.settlement.stripePaymentIntentId);
     if (existing.status === "succeeded") {
-      await applyGroupSettlementSucceeded({
+      const applied = await applyGroupSettlementSucceeded({
         id: existing.id,
         amount: existing.amount,
       });
-      return { outcome: "already_settled", amountCents, childCount: children.length };
+      if (
+        applied.outcome === "settled" ||
+        applied.outcome === "already_settled"
+      ) {
+        return { outcome: "already_settled", amountCents, childCount: children.length };
+      }
+      // The capture did NOT settle anything (refund history, drifted total, or
+      // a vanished settlement row). Never report it settled (#1883): surface
+      // the real state and mint nothing — the webhook safety net owns
+      // refunding an unapplied capture, and the organiser can retry once the
+      // settlement state is resolved.
+      return {
+        outcome: applied.outcome,
+        amountCents,
+        childCount: children.length,
+      };
     }
     if (existing.client_secret && existing.status !== "canceled") {
       // Make sure the children are committed even when we reuse the intent.
@@ -497,7 +526,14 @@ async function commitChildrenToConfirmed(children: SettleableChild[]) {
 }
 
 export interface GroupSettlementAppliedResult {
-  outcome: "settled" | "already_settled" | "not_found" | "amount_mismatch";
+  outcome:
+    | "settled"
+    | "already_settled"
+    | "not_found"
+    | "amount_mismatch"
+    // #1883 — the settlement carries refund history; the (still "succeeded")
+    // intent's money was handed back, so it must never settle the children.
+    | "refunded";
   settledBookingIds: string[];
 }
 
@@ -561,6 +597,15 @@ async function settleConfirmedChildrenAndNotify(
     });
     if (current?.status === PaymentStatus.SUCCEEDED) {
       return [] as string[];
+    }
+    // #1883 — a refund can land between the caller's status read and this
+    // lock (markGroupSettlementIntentRefunded takes the SAME lock, so the two
+    // serialize). Refunded money must never settle the children.
+    if (
+      current?.status === PaymentStatus.REFUNDED ||
+      current?.status === PaymentStatus.PARTIALLY_REFUNDED
+    ) {
+      return "refunded" as const;
     }
 
     const children = await tx.booking.findMany({
@@ -635,6 +680,14 @@ async function settleConfirmedChildrenAndNotify(
 
     return settledIds;
   });
+
+  if (settled === "refunded") {
+    logger.warn(
+      { groupBookingId: settlement.groupBookingId, settlementId: settlement.id },
+      "Group settlement was refunded before the settle transaction ran - refusing to settle (#1883)"
+    );
+    return { outcome: "refunded", settledBookingIds: [] };
+  }
 
   if (settled === null) {
     return { outcome: "amount_mismatch", settledBookingIds: [] };
@@ -754,6 +807,26 @@ export async function applyGroupSettlementSucceeded(paymentIntent: {
     return { outcome: "already_settled", settledBookingIds: [] };
   }
 
+  // #1883 — refund history is immutable (mirrors #1765 for single bookings):
+  // a refunded intent keeps status "succeeded" in Stripe forever, so once the
+  // settlement is marked REFUNDED/PARTIALLY_REFUNDED the same intent must
+  // never be re-admitted as settlement. The children stay unsettled; the
+  // organiser owes a fresh payment via a new intent.
+  if (
+    settlement.status === PaymentStatus.REFUNDED ||
+    settlement.status === PaymentStatus.PARTIALLY_REFUNDED
+  ) {
+    logger.warn(
+      {
+        paymentIntentId: paymentIntent.id,
+        groupBookingId: settlement.groupBookingId,
+        settlementStatus: settlement.status,
+      },
+      "Group settlement has refund history - refusing to re-admit its intent as settlement (#1883)"
+    );
+    return { outcome: "refunded", settledBookingIds: [] };
+  }
+
   // Never auto-apply a payment whose amount does not match what we recorded;
   // leave the settlement PENDING for an operator to review.
   if (paymentIntent.amount !== settlement.amountCents) {
@@ -808,6 +881,45 @@ export async function applyGroupSettlementSucceededFromInvoice(
     reference: settlement.xeroInvoiceNumber ?? xeroInvoiceId,
     stripeCustomerId: null,
     enqueueChildInvoices: false,
+  });
+}
+
+/**
+ * #1883 — close the re-admit window after the webhook safety net refunds a
+ * captured group-settlement intent. A refunded Stripe PaymentIntent reports
+ * status "succeeded" forever, so the refund must be recorded on the settlement
+ * row itself: the settle-page reuse branch, applyGroupSettlementSucceeded and
+ * the in-lock re-check all refuse REFUNDED/PARTIALLY_REFUNDED settlements.
+ *
+ * Runs under the SAME default-lodge advisory lock as
+ * settleConfirmedChildrenAndNotify so the mark serializes with any in-flight
+ * settle of the same settlement. The guarded updateMany never overwrites a
+ * settlement that already SUCCEEDED (the refund path alerts admins about that
+ * conflict) and is idempotent across webhook redelivery; a no-match (e.g. the
+ * settlement was legitimately re-pointed at a newer intent) is a no-op.
+ * stripePaymentIntentId is deliberately KEPT: the next settle attempt then
+ * mints a fresh intent keyed `groupsettle_<group>_<amount>_<refundedIntent>`,
+ * so Stripe's 24h idempotency window cannot replay the refunded intent.
+ */
+export async function markGroupSettlementIntentRefunded(
+  paymentIntentId: string
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const defaultLodgeId = await getDefaultLodgeId(tx);
+    await acquireLodgeCapacityLock(tx, defaultLodgeId);
+    await tx.groupBookingSettlement.updateMany({
+      where: {
+        stripePaymentIntentId: paymentIntentId,
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
+      },
+      data: { status: PaymentStatus.REFUNDED },
+    });
   });
 }
 

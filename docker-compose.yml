@@ -1,17 +1,24 @@
 x-app-environment: &app-environment
   TZ: Pacific/Auckland
-  DATABASE_URL: postgresql://tac:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10
+  # Default DATABASE_URL for the WEB slots (app_blue / app_green). Prisma's
+  # connection_limit is the hard pool ceiling per container. Advisory-lock
+  # waiters hold their connection while blocked, so a single-lodge booking
+  # burst on a 5-conn pool exhausts it and stalls every other request
+  # (#1884, F17). Raised to 10 for headroom under ~100 concurrent users.
+  #
+  # Postgres runs max_connections=30 (see the postgres service) with the
+  # default 3 superuser-reserved slots => 27 usable. The cron-leader (`app`)
+  # overrides this to connection_limit=5 and `migrate` to =2, so the worst
+  # case fits: blue(10) + green(10) + cron(5) = 25 steady, + migrate(2) during
+  # a deploy window = 27 <= 27 usable. If a fork needs more web headroom, raise
+  # Postgres to max_connections=40 AND its mem_limit to ~768m rather than
+  # squeezing this ceiling (owner call — see docs/DEPLOYMENT.md "Connection
+  # pool sizing").
+  DATABASE_URL: postgresql://tac:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/tacbookings?connection_limit=10&pool_timeout=10
   NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
   NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
   AUTH_SECRET: ${AUTH_SECRET:-${NEXTAUTH_SECRET}}
   AUTH_TRUST_HOST: ${AUTH_TRUST_HOST:-true}
-  FEATURE_KIOSK: ${FEATURE_KIOSK:-false}
-  FEATURE_CHORES: ${FEATURE_CHORES:-false}
-  FEATURE_FINANCE_DASHBOARD: ${FEATURE_FINANCE_DASHBOARD:-false}
-  FEATURE_WAITLIST: ${FEATURE_WAITLIST:-false}
-  FEATURE_XERO_INTEGRATION: ${FEATURE_XERO_INTEGRATION:-false}
-  FEATURE_BED_ALLOCATION: ${FEATURE_BED_ALLOCATION:-false}
-  FEATURE_INTERNET_BANKING_PAYMENTS: ${FEATURE_INTERNET_BANKING_PAYMENTS:-false}
   STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
   ADDY_API_KEY: ${ADDY_API_KEY:-}
@@ -148,6 +155,10 @@ services:
     environment:
       <<: *app-environment
       APP_RUNTIME_ROLE: cron-leader
+      # Cron-leader keeps the original 5-conn pool: its workload is scheduled
+      # background jobs, not the concurrent web burst the slots above size for.
+      # Holding it at 5 keeps the total within max_connections=30 (#1884, F17).
+      DATABASE_URL: postgresql://tac:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10
 
   app_blue:
     <<: *app-service
@@ -200,7 +211,12 @@ services:
         condition: service_healthy
     environment:
       TZ: Pacific/Auckland
-      DATABASE_URL: postgresql://tac:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/tacbookings
+      # Bound the deploy-window migrate pool to 2 so a blue/green overlap that
+      # also runs migrations still fits: blue(10)+green(10)+cron(5)+migrate(2)
+      # = 27 <= 27 usable connections (max_connections=30 less 3 reserved)
+      # (#1884, F17). migrate only needs a couple of connections for
+      # `prisma migrate deploy`.
+      DATABASE_URL: postgresql://tac:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/tacbookings?connection_limit=2&pool_timeout=10
     command: ./node_modules/.bin/prisma migrate deploy
 
 volumes:

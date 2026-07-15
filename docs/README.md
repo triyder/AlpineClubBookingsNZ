@@ -38,6 +38,10 @@ AlpineClubBookingsNZ.
 - `MAINTENANCE.md` records the public validation and release checklist.
 - `E2E_PLAYWRIGHT.md` covers the Playwright browser E2E suite that drives the
   Critical journeys against the staging compose stack.
+- `LOAD_TESTING.md` documents the k6 HTTP load harness in `../load/` (public
+  browse, login, booking-hold contention, member dashboard), its pass/fail
+  thresholds, and the hard safety rails: throwaway local stack only, never a
+  live deployment, never port 5432.
 - The TypeScript registry in `../src/lib/email-message-registry.ts` is the
   authoritative catalogue of admin-editable outbound email templates, approved
   tokens, and subject/body safety rules.

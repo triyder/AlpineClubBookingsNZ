@@ -6,6 +6,7 @@ import {
   resolveGuestNameUpdates,
   type ResolvedGuestNameUpdate,
 } from "@/lib/booking-modify";
+import { addDaysDateOnly, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
 import { sendSchoolAttendeeConfirmationEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -38,7 +39,14 @@ export async function sendSchoolAttendeeConfirmationPrompts(
     return { scanned: 0, sent: 0, failed: 0 };
   }
 
-  const windowEnd = new Date(now.getTime() + leadDays * DAY_MS);
+  // checkIn is stored as @db.Date (the NZ calendar date at UTC midnight), so
+  // comparing it against the raw `now` instant shifts the window boundary by a
+  // day for the first ~13h of each NZ day under the TZ=Pacific/Auckland server
+  // pin. Derive the NZ calendar date and step it with the date-only helpers so
+  // the window lines up with how @db.Date is stored (F32, #1888). `now` stays
+  // the instant used below for the cadence and timestamp writes.
+  const today = normalizeDateOnlyForTimeZone(now);
+  const windowEnd = addDaysDateOnly(today, leadDays);
   const requests = await prisma.bookingRequest.findMany({
     where: {
       type: BookingRequestType.SCHOOL,
@@ -47,7 +55,7 @@ export async function sendSchoolAttendeeConfirmationPrompts(
       convertedBooking: {
         deletedAt: null,
         status: { notIn: [...CLOSED_BOOKING_STATUSES] },
-        checkIn: { gt: now, lte: windowEnd },
+        checkIn: { gt: today, lte: windowEnd },
       },
     },
     include: {
@@ -397,6 +405,9 @@ export async function countUnconfirmedSchoolAttendeeLists(
   const leadDays = settings.attendeeConfirmationLeadDays;
   if (leadDays <= 0) return 0;
 
+  // Same @db.Date boundary as sendSchoolAttendeeConfirmationPrompts (F32, #1888):
+  // pin the NZ calendar date to UTC midnight so the count matches the prompts.
+  const today = normalizeDateOnlyForTimeZone(now);
   return prisma.bookingRequest.count({
     where: {
       type: BookingRequestType.SCHOOL,
@@ -405,7 +416,7 @@ export async function countUnconfirmedSchoolAttendeeLists(
       convertedBooking: {
         deletedAt: null,
         status: { notIn: [...CLOSED_BOOKING_STATUSES] },
-        checkIn: { gt: now, lte: new Date(now.getTime() + leadDays * DAY_MS) },
+        checkIn: { gt: today, lte: addDaysDateOnly(today, leadDays) },
       },
     },
   });
@@ -469,8 +480,12 @@ export async function resendSchoolAttendeeConfirmation({
   // Rotate before sending, like the cron. Pre-check-in links stay valid
   // until check-in; after check-in a short window covers late roster fixes.
   const { token, tokenHash } = issueActionToken();
+  // checkIn is @db.Date; compare it against the NZ calendar date (not the raw
+  // `now` instant) so a check-in still in the future is not mis-classified as
+  // past for the first ~13h of each NZ day (F32, #1888). The 3-day fallback
+  // stays a genuine timestamp window measured from `now`.
   const expiresAt =
-    booking.checkIn > now
+    booking.checkIn > normalizeDateOnlyForTimeZone(now)
       ? booking.checkIn
       : new Date(now.getTime() + 3 * DAY_MS);
   await prisma.bookingRequest.update({

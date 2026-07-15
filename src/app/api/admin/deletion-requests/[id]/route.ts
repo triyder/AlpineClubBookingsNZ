@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
+import { getTodayDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { logAudit } from "@/lib/audit";
@@ -165,14 +166,17 @@ export async function POST(
       );
     }
 
-    const now = new Date();
+    // checkIn is @db.Date (NZ calendar date at UTC midnight). Use the date-only
+    // "today" rather than a raw instant so a stay checking in today still counts
+    // as future for the whole NZ day, not just the first ~13h (F32, #1888).
+    const today = getTodayDateOnly();
 
     // 1. Block approval while future paid stays still need financial/lodge follow-up.
     const futurePaidBookings = await prisma.booking.findMany({
       where: {
         memberId: member.id,
         status: "PAID",
-        checkIn: { gte: now },
+        checkIn: { gte: today },
       },
       select: { id: true },
     });
@@ -209,7 +213,7 @@ export async function POST(
       where: {
         memberId: member.id,
         status: { in: [...CANCELLABLE_DELETION_BOOKING_STATUSES] },
-        checkIn: { gte: now },
+        checkIn: { gte: today },
       },
       select: { id: true },
     });

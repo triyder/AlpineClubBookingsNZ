@@ -2,6 +2,12 @@ interface XeroErrorHeaders {
   [key: string]: string | number | undefined;
 }
 
+// Escape regex metacharacters so a header name can never form a pathological
+// pattern. All call sites pass fixed internal literals, so this is defensive.
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export interface XeroErrorShape {
   response?: {
     statusCode?: number;
@@ -141,7 +147,11 @@ export function getXeroErrorHeader(
   }
 
   for (const value of getStringCandidates(error)) {
-    const match = value.match(new RegExp(`"${headerName}":"([^"]+)"`, "i"));
+    // headerName is always an internal literal header key; escaped above so no
+    // ReDoS surface exists despite the dynamic RegExp.
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
+    const pattern = new RegExp(`"${escapeRegExp(headerName)}":"([^"]+)"`, "i");
+    const match = value.match(pattern);
     if (match) {
       return match[1];
     }

@@ -77,7 +77,10 @@ import {
   loadCancellationPolicy,
 } from "./cancellation";
 import { reconcileBedAllocationsForBooking } from "./bed-allocation-lifecycle";
-import { RELEASE_ADMIN_CAPACITY_HOLD_UPDATE } from "./booking-status";
+import {
+  RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+  RELEASE_WHOLE_LODGE_HOLD_UPDATE,
+} from "./booking-status";
 import { revokePaymentLinksForBooking } from "./payment-link";
 import { recordBookingEvent } from "./booking-events";
 import { logAudit } from "./audit";
@@ -416,6 +419,10 @@ export async function settleGroupBookingOnOrganiserCancel(
           data: {
             status: BookingStatus.CANCELLED,
             ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+            // Best-effort field clearing (#177): this bulk group-cancel child
+            // transition has no per-booking audit context, so it mirrors the
+            // capacity-hold sibling — clear the stale hold, no released audit.
+            ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
           },
         });
         await reconcileBedAllocationsForBooking({

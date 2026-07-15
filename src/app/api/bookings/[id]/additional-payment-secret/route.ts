@@ -66,9 +66,12 @@ export async function GET(
       amountCents: payment.additionalAmountCents,
     });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Failed to get payment secret";
+    // #1888 — never echo an unexpected error's message to the client; the raw
+    // error stays in the log only.
     logger.error({ err, bookingId }, "Failed to retrieve additional payment secret");
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to get payment secret" },
+      { status: 500 }
+    );
   }
 }

@@ -85,7 +85,7 @@ for (const { rawPath, resolverPath } of routes) {
 const OVERVIEW_ALLOWLIST = ["/api/admin/pending-counts"] as const;
 
 // Frozen snapshot of the COMPLETE /api/admin route -> area assignment, derived
-// from getAdminRouteRequirement() over the working tree (211 routes). See the
+// from getAdminRouteRequirement() over the working tree. See the
 // header comment: a mismatch is a real change to effective role access — verify
 // intent before repasting. Several groupings are deliberate and adjudicated as
 // intended (issue #1548), NOT bugs to "fix" by remapping:
@@ -146,6 +146,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/bookings/[id]/confirm-pending-guests": "bookings",
   "/api/admin/bookings/[id]/copy": "bookings",
   "/api/admin/bookings/[id]/eligible-family": "bookings",
+  "/api/admin/bookings/[id]/exclusive-hold": "bookings",
   "/api/admin/bookings/[id]/force-confirm": "bookings",
   "/api/admin/bookings/[id]/requested-room": "bookings",
   "/api/admin/bookings/[id]/review": "bookings",
@@ -153,8 +154,6 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/bookings/search": "bookings",
   "/api/admin/chores": "lodge",
   "/api/admin/chores/[id]": "lodge",
-  "/api/admin/committee": "membership",
-  "/api/admin/committee/[id]": "membership",
   "/api/admin/committee/assignments": "membership",
   "/api/admin/committee/assignments/[id]": "membership",
   "/api/admin/config-transfer/apply": "support",
@@ -168,6 +167,18 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/credit-approvals": "finance",
   "/api/admin/deletion-requests": "membership",
   "/api/admin/deletion-requests/[id]": "membership",
+  "/api/admin/display/devices": "lodge",
+  "/api/admin/display/devices/[id]": "lodge",
+  "/api/admin/display/devices/[id]/pairing": "lodge",
+  "/api/admin/display/devices/[id]/revoke": "lodge",
+  "/api/admin/display/layouts": "lodge",
+  "/api/admin/display/layouts/[id]": "lodge",
+  "/api/admin/display/lodge-config": "lodge",
+  "/api/admin/display/preview": "lodge",
+  "/api/admin/display/preview-grant": "lodge",
+  "/api/admin/display/reference/conditions": "lodge",
+  "/api/admin/display/templates": "lodge",
+  "/api/admin/display/templates/[id]": "lodge",
   "/api/admin/email-failures/[id]/reissue-token": "support",
   "/api/admin/email-failures/[id]/review": "support",
   "/api/admin/email-settings": "support",

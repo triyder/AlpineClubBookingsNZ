@@ -376,10 +376,20 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     logger.error({ err: error }, "Error creating payment intent");
-    const message = error instanceof Error ? error.message : "Failed to create payment intent";
+    // The DRAFT preflight capacity race above throws a plain Error whose
+    // message is intentionally user-facing; keep it (and its 409). Every other
+    // unexpected error gets the fixed generic message so internal detail
+    // (Prisma constraint names, connection strings, ...) never reaches the
+    // client (#1888).
+    const isCapacityConflict =
+      error instanceof Error && error.message.includes("Not enough beds");
     return NextResponse.json(
-      { error: message },
-      { status: error instanceof Error && error.message.includes("Not enough beds") ? 409 : 500 }
+      {
+        error: isCapacityConflict
+          ? error.message
+          : "Failed to create payment intent",
+      },
+      { status: isCapacityConflict ? 409 : 500 }
     );
   }
 }

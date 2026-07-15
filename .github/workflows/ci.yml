@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v6.4.0
         with:
           node-version: 24
           cache: npm
@@ -46,6 +46,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      security-events: write # upload Semgrep SARIF to GitHub code scanning
     env:
       SEMGREP_IMAGE: semgrep/semgrep:1.161.0
     steps:
@@ -78,6 +79,16 @@ jobs:
           name: semgrep-sarif-${{ github.run_id }}
           path: ${{ runner.temp }}/semgrep-output/semgrep-results.sarif
           if-no-files-found: ignore
+
+      # Surface findings as GitHub code scanning alerts (Security tab) without
+      # any Semgrep Cloud dependency. Runs even when the scan step failed the
+      # gate on findings so the alerts still publish.
+      - name: Upload Semgrep SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4.36.3
+        with:
+          sarif_file: ${{ runner.temp }}/semgrep-output/semgrep-results.sarif
+          category: semgrep
 
   gitleaks-full-repo:
     runs-on: ubuntu-latest
@@ -142,7 +153,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v6.4.0
         with:
           node-version: 24
           cache: npm
@@ -214,7 +225,7 @@ jobs:
         run: bash scripts/check-migration-safety-coverage.sh
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v6.4.0
         with:
           node-version: 24
           cache: npm
@@ -232,6 +243,16 @@ jobs:
         env:
           CLUB_THEME_MIGRATION_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
         run: npx vitest run src/lib/__tests__/club-theme-default-reseed-migration.test.ts
+
+      # F28 (#1888): wire the real-DB BookingGuest stay-range trigger suite so it
+      # is no longer a silent no-op. It self-provisions a throwaway schema and
+      # applies only the two trigger migrations, so it needs any reachable
+      # Postgres. This step MUST stay wired — the suite describe.skip's itself
+      # when the env var is absent, which is exactly how it went unrun before.
+      - name: Test guarded BookingGuest stay-range triggers against PostgreSQL
+        env:
+          BOOKING_GUEST_RANGE_TRIGGER_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: npx vitest run src/lib/__tests__/booking-guest-range-triggers.test.ts
 
       # Fails (exit 2) if the committed migrations do not reproduce
       # schema.prisma — the parity gate enforced at deploy time. See issue #760.

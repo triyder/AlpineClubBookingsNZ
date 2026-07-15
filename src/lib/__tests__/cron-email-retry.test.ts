@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   update: vi.fn(),
+  updateMany: vi.fn(),
   memberFindMany: vi.fn(),
   sendMail: vi.fn(),
   resolveEmailDeliveryConfig: vi.fn(),
   sendEmail: vi.fn(),
+  getActiveEmailSuppression: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -14,11 +16,16 @@ vi.mock("@/lib/prisma", () => ({
     emailLog: {
       findMany: mocks.findMany,
       update: mocks.update,
+      updateMany: mocks.updateMany,
     },
     member: {
       findMany: mocks.memberFindMany,
     },
   },
+}));
+
+vi.mock("@/lib/email-suppression", () => ({
+  getActiveEmailSuppression: mocks.getActiveEmailSuppression,
 }));
 
 vi.mock("nodemailer", () => ({
@@ -71,7 +78,9 @@ describe("retryFailedEmails (issue #820)", () => {
       issues: [],
     });
     mocks.update.mockResolvedValue({});
+    mocks.updateMany.mockResolvedValue({ count: 1 });
     mocks.memberFindMany.mockResolvedValue([]);
+    mocks.getActiveEmailSuppression.mockResolvedValue(null);
   });
 
   it("only queries retryable failures: FAILED, under max attempts, with a retained HTML body", async () => {
@@ -97,10 +106,17 @@ describe("retryFailedEmails (issue #820)", () => {
     const result = await retryFailedEmails();
 
     expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
+    // The row is claimed atomically (FAILED -> QUEUED, attempts incremented)
+    // before the send so a concurrent/interrupted run cannot double-send (F33).
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: "email_1", status: "FAILED" },
+      data: expect.objectContaining({ status: "QUEUED", attempts: 2 }),
+    });
+    expect(mocks.sendMail).toHaveBeenCalledTimes(1);
     expect(mocks.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "email_1" },
-        data: expect.objectContaining({ status: "SENT", attempts: 2 }),
+        data: expect.objectContaining({ status: "SENT", messageId: "msg_1" }),
       }),
     );
     expect(mocks.sendEmail).not.toHaveBeenCalled();
@@ -113,11 +129,69 @@ describe("retryFailedEmails (issue #820)", () => {
     const result = await retryFailedEmails();
 
     expect(result).toEqual({ retried: 1, succeeded: 0, failed: 1 });
-    // attempts incremented, status NOT set to SENT (stays FAILED for next run).
+    // attempts incremented, status restored to FAILED for the next run
+    // (the pre-send claim moved it to QUEUED).
     const updateArg = mocks.update.mock.calls[0][0];
     expect(updateArg.data.attempts).toBe(1);
-    expect(updateArg.data.status).toBeUndefined();
+    expect(updateArg.data.status).toBe("FAILED");
     expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("re-checks suppression and marks the row BOUNCED without sending (F26, #1885)", async () => {
+    // Race: the FAILED row was created before an SNS bounce/complaint
+    // suppressed the recipient. The retry must re-check and never re-deliver.
+    mocks.findMany.mockResolvedValue([failedEmail({ attempts: 1 })]);
+    mocks.getActiveEmailSuppression.mockResolvedValue({
+      id: "sup-1",
+      reason: "BOUNCE",
+    });
+
+    const result = await retryFailedEmails();
+
+    expect(mocks.getActiveEmailSuppression).toHaveBeenCalledWith(
+      "member@example.test",
+    );
+    expect(mocks.sendMail).not.toHaveBeenCalled();
+    // Never claimed — a suppressed skip is not a retry attempt.
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    // Mirrors core.ts's suppressed write: BOUNCED, body dropped, same reason string.
+    expect(mocks.update).toHaveBeenCalledWith({
+      where: { id: "email_1" },
+      data: {
+        status: "BOUNCED",
+        htmlBody: null,
+        errorMessage: "Email suppressed after SES bounce feedback",
+      },
+    });
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+  });
+
+  it("does not send when the pre-send claim is lost (row already claimed/sent) (F33, #1885)", async () => {
+    mocks.findMany.mockResolvedValue([failedEmail()]);
+    mocks.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await retryFailedEmails();
+
+    expect(mocks.sendMail).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+  });
+
+  it("never restores FAILED when the post-send SENT write fails, so an interrupted retry cannot re-send (F33, #1885)", async () => {
+    mocks.findMany.mockResolvedValue([failedEmail()]);
+    mocks.sendMail.mockResolvedValue({ messageId: "msg_1" });
+    // SES accepted the message but the SENT write dies (crash-equivalent).
+    mocks.update.mockRejectedValue(new Error("db connection lost"));
+
+    const result = await retryFailedEmails();
+
+    expect(mocks.sendMail).toHaveBeenCalledTimes(1);
+    // The row must stay QUEUED (claimed) — writing FAILED back would re-send
+    // an email SES already accepted on the next cron run.
+    for (const call of mocks.update.mock.calls) {
+      expect(call[0].data.status).not.toBe("FAILED");
+    }
+    expect(result).toEqual({ retried: 1, succeeded: 1, failed: 0 });
   });
 
   it("alerts admins when an email exhausts its retries", async () => {

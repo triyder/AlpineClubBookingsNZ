@@ -1,7 +1,7 @@
 "use client";
 
 import { useDroppable } from "@dnd-kit/core";
-import { CircleDashed, Focus, Inbox, Lock } from "lucide-react";
+import { CircleDashed, Focus, Inbox, Lock, TriangleAlert } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 import { getBookingAccent } from "./booking-accent";
@@ -137,6 +137,15 @@ export function BucketBoard({
                   )}
                   {holdsCapacity ? "Held" : "Provisional"}
                 </span>
+                {booking.overlapsExclusiveHold ? (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-warning-muted px-2 py-0.5 text-xs font-medium text-warning"
+                    title="This booking overlaps another booking's exclusive whole-lodge hold. Resolve the clash before allocating."
+                  >
+                    <TriangleAlert className="h-3 w-3" aria-hidden />
+                    Overlaps exclusive hold
+                  </span>
+                ) : null}
                 {booking.parentBookingId ? (
                   <span className="rounded-full bg-info-muted px-2 py-0.5 text-xs font-medium text-info">
                     Linked party · provisional non-member guests
