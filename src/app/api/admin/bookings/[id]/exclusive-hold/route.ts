@@ -6,6 +6,7 @@ import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import {
   acquireLodgeCapacityLock,
   findOverlappingCapacityHoldingBookings,
+  findOverlappingOverriddenNonHoldingBookings,
 } from "@/lib/capacity";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import logger from "@/lib/logger";
@@ -169,7 +170,7 @@ export async function POST(
       // the set already succeeded above; nothing is refused or displaced. Never
       // runs the capacity engine (decision 1). On clear there is nothing to
       // surface. lodgeId is NOT NULL for real bookings; guard defensively.
-      const conflicts =
+      const holdingConflicts =
         hold && booking.lodgeId
           ? await findOverlappingCapacityHoldingBookings(tx, {
               lodgeId: booking.lodgeId,
@@ -178,6 +179,25 @@ export async function POST(
               excludeBookingId: booking.id,
             })
           : [];
+
+      // Override-settle blind spot (ADR-001 decision 1, issue #177): additionally
+      // surface overlapping bookings that carry a persisted capacity override but
+      // are NOT yet capacity-holding (chiefly overridden PAYMENT_PENDING). They
+      // are invisible to the capacity-holding conflict read above, yet the
+      // settlement carve-out (#1771, unchanged) will later admit them onto the
+      // held nights — so the officer must see them now, marked `overridden`.
+      // Never-refuse semantics unchanged: this is read-only and informational.
+      const overriddenConflicts =
+        hold && booking.lodgeId
+          ? await findOverlappingOverriddenNonHoldingBookings(tx, {
+              lodgeId: booking.lodgeId,
+              checkIn: booking.checkIn,
+              checkOut: booking.checkOut,
+              excludeBookingId: booking.id,
+            })
+          : [];
+
+      const conflicts = [...holdingConflicts, ...overriddenConflicts];
 
       await createAuditLog(
         {
@@ -209,8 +229,16 @@ export async function POST(
                   // Conflict surfacing (issue #119): record how many existing
                   // overlapping capacity-holding bookings the officer must
                   // resolve, plus their ids for the audit trail.
-                  overlappingConflictCount: conflicts.length,
-                  overlappingConflictBookingIds: conflicts.map((c) => c.id),
+                  overlappingConflictCount: holdingConflicts.length,
+                  overlappingConflictBookingIds: holdingConflicts.map((c) => c.id),
+                  // Override-settle blind-spot surfacing (issue #177): the
+                  // overridden-but-not-yet-holding overlaps recorded distinctly
+                  // so the audit shows the officer was warned about the future
+                  // settle onto the held nights.
+                  overriddenNonHoldingConflictCount: overriddenConflicts.length,
+                  overriddenNonHoldingConflictBookingIds: overriddenConflicts.map(
+                    (c) => c.id,
+                  ),
                 }
               : {
                   previouslyHeldAt: booking.wholeLodgeHoldAt?.toISOString() ?? null,

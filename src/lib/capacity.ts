@@ -1,5 +1,8 @@
 import { prisma } from "./prisma";
-import { capacityHoldingBookingFilter } from "@/lib/booking-status";
+import {
+  ACTIVE_BOOKING_STATUSES,
+  capacityHoldingBookingFilter,
+} from "@/lib/booking-status";
 import {
   getLodgeCapacity,
   getLodgePartnerSharedCapacityStatus,
@@ -222,6 +225,17 @@ export interface HoldConflictBooking {
   checkOut: string;
   guestCount: number;
   status: string;
+  /**
+   * True for the override-settle blind-spot surfacing (ADR-001 decision 1,
+   * issue #177): this overlapping booking is NOT capacity-holding yet, but it
+   * carries a persisted `capacityOverriddenAt` marker, so a payment-time /
+   * settlement re-check will admit it onto the held nights unchecked (the
+   * documented decision-1 carve-out — settlement is deliberately unchanged).
+   * The officer sees it flagged distinctly ("overridden, not yet holding") so
+   * the future settle is not a silent surprise. Absent/false on the ordinary
+   * capacity-holding conflicts from `findOverlappingCapacityHoldingBookings`.
+   */
+  overridden?: boolean;
 }
 
 /**
@@ -279,6 +293,80 @@ export async function findOverlappingCapacityHoldingBookings(
     checkOut: formatDateOnly(row.checkOut),
     guestCount: row._count.guests,
     status: row.status,
+  }));
+}
+
+/**
+ * Companion to `findOverlappingCapacityHoldingBookings` for the override-settle
+ * blind spot (ADR-001 decision 1, issue #177): the ACTIVE, NOT-yet-capacity-
+ * holding bookings that overlap [checkIn, checkOut) at `lodgeId` AND carry a
+ * persisted `capacityOverriddenAt` marker (excluding `excludeBookingId`).
+ *
+ * Why a SEPARATE query rather than widening the sibling: the capacity-holding
+ * conflict list is reused by the booking detail page and the school approval,
+ * and its contract is exactly "the capacity-holding overlaps". An overridden
+ * PAYMENT_PENDING booking is not capacity-holding (a PAYMENT_PENDING booking
+ * holds only under an admin capacity hold, #1764), so
+ * `capacityHoldingBookingFilter()` — and therefore the sibling — never sees it.
+ * Yet the settlement carve-out (`payment-reconciliation.ts`, #1771) will admit
+ * that override onto the held nights unchecked, so at hold-set the officer must
+ * be told it exists. This surfaces it, marked `overridden: true`, WITHOUT
+ * changing the sibling's semantics for its other callers.
+ *
+ * Scope: `NOT capacityHoldingBookingFilter()` excludes anything already listed
+ * by the sibling (no double-count); `status in ACTIVE_BOOKING_STATUSES` excludes
+ * cancelled/bumped/draft rows that can never settle onto the nights, leaving the
+ * live blind-spot population (chiefly overridden PAYMENT_PENDING). Read-only and
+ * INFORMATIONAL, admin-only — it never refuses, blocks, or displaces (decision
+ * 1), and it does NOT change settlement behaviour (the carve-out stays as
+ * documented; this only makes the future settle visible up front).
+ */
+export async function findOverlappingOverriddenNonHoldingBookings(
+  db: Pick<TransactionClient, "booking">,
+  input: {
+    lodgeId: string;
+    checkIn: Date;
+    checkOut: Date;
+    excludeBookingId?: string;
+  }
+): Promise<HoldConflictBooking[]> {
+  const start = normalizeDateOnlyForTimeZone(input.checkIn);
+  const end = normalizeDateOnlyForTimeZone(input.checkOut);
+  const rows = await db.booking.findMany({
+    where: {
+      checkIn: { lt: end },
+      checkOut: { gt: start },
+      deletedAt: null,
+      lodgeId: input.lodgeId,
+      // Persisted admin override (#1771) but NOT yet in the capacity-holding
+      // population — the exact settle-time blind spot (#177).
+      capacityOverriddenAt: { not: null },
+      status: { in: [...ACTIVE_BOOKING_STATUSES] },
+      NOT: capacityHoldingBookingFilter(),
+      ...(input.excludeBookingId ? { id: { not: input.excludeBookingId } } : {}),
+    },
+    select: {
+      id: true,
+      checkIn: true,
+      checkOut: true,
+      status: true,
+      member: { select: { firstName: true, lastName: true, email: true } },
+      _count: { select: { guests: true } },
+    },
+    orderBy: [{ checkIn: "asc" }, { id: "asc" }],
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    memberName:
+      [row.member?.firstName, row.member?.lastName].filter(Boolean).join(" ") ||
+      row.member?.email ||
+      "Unknown member",
+    checkIn: formatDateOnly(row.checkIn),
+    checkOut: formatDateOnly(row.checkOut),
+    guestCount: row._count.guests,
+    status: row.status,
+    overridden: true,
   }));
 }
 

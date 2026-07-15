@@ -14,6 +14,13 @@ export interface ExclusiveHoldConflict {
   checkOut: string;
   guestCount: number;
   status: string;
+  /**
+   * True when this overlap is NOT capacity-holding yet but carries a persisted
+   * capacity override (ADR-001 decision 1, issue #177): the settlement carve-out
+   * (#1771) will later admit it onto the held nights. Rendered with an
+   * "overridden, not yet holding" marker so the officer is warned up front.
+   */
+  overridden?: boolean;
 }
 
 interface AdminExclusiveHoldControlsProps {
@@ -172,6 +179,15 @@ export function AdminExclusiveHoldControls({
                 · {conflict.checkIn} → {conflict.checkOut} ·{" "}
                 {conflict.guestCount} guest
                 {conflict.guestCount === 1 ? "" : "s"} · {conflict.status}
+                {conflict.overridden && (
+                  // #177: an overridden-but-not-yet-holding overlap. It does not
+                  // block/refuse the hold, but the settlement carve-out (#1771)
+                  // will admit it onto the held nights later — flag it so the
+                  // officer resolves it before it settles.
+                  <span className="ml-1 rounded bg-amber-200 px-1.5 py-0.5 text-xs font-medium text-amber-900">
+                    overridden, not yet holding
+                  </span>
+                )}
               </li>
             ))}
           </ul>

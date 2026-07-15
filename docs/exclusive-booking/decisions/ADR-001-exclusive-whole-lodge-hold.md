@@ -203,3 +203,24 @@ Recorded as the children landed, to keep the design of record accurate:
   auto-displaced). This is the current behaviour by choice; revisit with
   operator feedback if a hold should also block those settlements. Documented in
   `src/lib/payment-reconciliation.ts` and `docs/CAPACITY_MODEL.md`.
+  - **#177 follow-up — the blind spot is now surfaced (settlement unchanged).**
+    An overridden booking that is *not yet capacity-holding* (chiefly an
+    overridden `PAYMENT_PENDING`, which holds no capacity without an admin
+    capacity hold, #1764) was invisible to the set-time conflict list yet still
+    settles onto the held nights under this carve-out. Set-time conflict
+    surfacing now additionally lists these overridden-but-not-holding overlaps,
+    marked `overridden: true` ("overridden, not yet holding"), via
+    `findOverlappingOverriddenNonHoldingBookings` (`src/lib/capacity.ts`) — a
+    *separate* query so the capacity-holding conflict list's contract is
+    unchanged for its other callers. Never-refuse and the settlement carve-out
+    itself are unchanged; the officer just sees the future settle up front.
+- **Stale hold on terminal transition — released (#177).** Every terminal
+  status flip that already spreads `RELEASE_ADMIN_CAPACITY_HOLD_UPDATE` now also
+  spreads `RELEASE_WHOLE_LODGE_HOLD_UPDATE`, clearing
+  `wholeLodgeHold`/`wholeLodgeHoldAt`/`wholeLodgeHoldByMemberId`. Enforcement is
+  status-scoped so a stale flag never blocked capacity, but a cancelled-then-
+  reinstated booking would otherwise silently re-arm its old hold with a stale
+  actor/audit trail. Where the transition runs with audit context (the
+  `booking-cancel.ts` funnel) a `booking.exclusiveHold.released` audit is
+  recorded; the cron/group-cancel bulk transitions clear the field best-effort
+  without a per-booking audit, exactly as the capacity-hold sibling does.

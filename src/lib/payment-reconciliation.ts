@@ -34,6 +34,7 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import {
   bookingHasCapacityOverride,
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+  RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
@@ -279,6 +280,12 @@ export async function markBookingPaymentSucceeded({
           status: BookingStatus.CANCELLED,
           draftExpiresAt: null,
           ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+          // Best-effort field clearing (#177): this settlement capacity-cancel
+          // has no per-booking audit context, so it mirrors the capacity-hold
+          // sibling — clear the stale hold, no released audit. NB this is the
+          // NON-override branch; the documented decision-1 carve-out settlement
+          // (the override branch above) is untouched.
+          ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
         },
       });
       await reconcileBedAllocationsForBooking({

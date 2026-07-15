@@ -216,6 +216,9 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
         status: BookingStatus.CANCELLED,
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
     expect(mocks.reconcileBedAllocations).toHaveBeenCalledTimes(2);
@@ -293,6 +296,9 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
         status: BookingStatus.CANCELLED,
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
     // Joiners emailed with their refund amount.
@@ -370,6 +376,9 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
         status: BookingStatus.CANCELLED,
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
     expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledWith(
@@ -525,6 +534,9 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
         status: BookingStatus.CANCELLED,
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
   });
@@ -610,6 +622,9 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
         status: BookingStatus.CANCELLED,
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
     expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, {
@@ -719,6 +734,9 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
         status: BookingStatus.CANCELLED,
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
     expect(mocks.paymentUpdate).not.toHaveBeenCalled();
@@ -825,6 +843,9 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
         status: BookingStatus.CANCELLED,
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
   });

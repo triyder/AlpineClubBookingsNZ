@@ -160,6 +160,36 @@ export const RELEASE_ADMIN_CAPACITY_HOLD_UPDATE = {
 } as const;
 
 /**
+ * Prisma update-data fragment that releases an exclusive whole-lodge hold
+ * (ADR-001, issue #177). Spread into every terminal status flip alongside
+ * `RELEASE_ADMIN_CAPACITY_HOLD_UPDATE` — the exact same cancel paths and
+ * cancel-like cron transitions — so no cancelled/bumped/expired booking keeps a
+ * stale `wholeLodgeHold` record.
+ *
+ * Capacity correctness never depends on this. Enforcement is status-scoped:
+ * `getLodgeHeldNights` and every masking index intersect the hold flag with
+ * `capacityHoldingBookingFilter()`, so a booking that left a capacity-holding
+ * status stopped blocking new admissions the moment it transitioned — a stale
+ * `wholeLodgeHold = true` on a cancelled row blocks nothing. The release exists
+ * to keep rows honest and, crucially, so a cancelled-then-reinstated booking
+ * does not silently RE-ARM its old hold with a stale actor/audit trail (#177):
+ * reinstatement must start from no hold, and the officer re-sets it deliberately
+ * through the audited exclusive-hold route.
+ *
+ * Mirrors the capacity-hold sibling: pure field clearing. Where the transition
+ * runs with an audit context (the `booking-cancel.ts` cancellation audit funnel)
+ * a `booking.exclusiveHold.released` entry is recorded when a hold was actually
+ * released; the bulk/fragment cron and group-cancel transitions have no
+ * per-booking audit context, so — exactly as the capacity-hold release does
+ * there — the field clearing is best-effort audit-wise and stands on its own.
+ */
+export const RELEASE_WHOLE_LODGE_HOLD_UPDATE = {
+  wholeLodgeHold: false,
+  wholeLodgeHoldAt: null,
+  wholeLodgeHoldByMemberId: null,
+} as const;
+
+/**
  * The single source of truth for "which bookings consume lodge capacity" as a
  * Prisma `where` fragment. Use this — never a bare `status: { in: [...] }` — in
  * every occupancy/availability query so the rule stays consistent everywhere.

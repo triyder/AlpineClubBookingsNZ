@@ -606,6 +606,9 @@ describe("cancelBooking credit refunds", () => {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
     // No FAILED flattening and no unpaid-branch clearing note.
@@ -828,6 +831,9 @@ describe("cancelBooking credit refunds", () => {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
     expect(mocks.paymentUpdate).not.toHaveBeenCalled();
@@ -1305,6 +1311,9 @@ describe("cancelBooking credit refunds", () => {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
   });
@@ -1522,6 +1531,9 @@ describe("cancelBooking credit refunds", () => {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
       });
       // ...and the debt was persisted in-tx BEFORE the refund attempt, with
@@ -1748,6 +1760,9 @@ describe("cancelBooking credit refunds", () => {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
@@ -2090,6 +2105,9 @@ describe("cancelBooking credit refunds", () => {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
       });
       expect(mocks.paymentUpdate).toHaveBeenCalledWith({
@@ -2619,6 +2637,9 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
         waitlistOfferedAt: null,
         waitlistOfferExpiresAt: null,
         waitlistPosition: null,
@@ -2784,6 +2805,9 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
         waitlistOfferedAt: null,
         waitlistOfferExpiresAt: null,
         waitlistPosition: null,
@@ -2906,6 +2930,9 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
         waitlistOfferedAt: null,
         waitlistOfferExpiresAt: null,
         waitlistPosition: null,
@@ -2976,7 +3003,94 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
+    });
+  });
+
+  // ── #177: exclusive whole-lodge hold release on terminal transition ──────
+  describe("releases the exclusive whole-lodge hold on cancel (issue #177)", () => {
+    const heldPaidBooking = {
+      id: "booking_held",
+      memberId: "member_1",
+      status: "PAID",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      // A capacity-holding booking carrying an exclusive whole-lodge hold.
+      wholeLodgeHold: true,
+      wholeLodgeHoldAt: new Date("2026-07-01"),
+      wholeLodgeHoldByMemberId: "admin_9",
+      member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
+      payment: {
+        id: "payment_1",
+        bookingId: "booking_held",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_1",
+      },
+    };
+
+    it("clears the hold fields in the same update as the status flip", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(heldPaidBooking);
+      mocks.txBookingFindUnique.mockResolvedValue(heldPaidBooking);
+
+      const result = await cancelBooking(
+        "booking_held",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.bookingUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "booking_held" },
+          data: expect.objectContaining({
+            status: "CANCELLED",
+            wholeLodgeHold: false,
+            wholeLodgeHoldAt: null,
+            wholeLodgeHoldByMemberId: null,
+          }),
+        }),
+      );
+    });
+
+    it("records a booking.exclusiveHold.released audit noting the auto-release", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(heldPaidBooking);
+      mocks.txBookingFindUnique.mockResolvedValue(heldPaidBooking);
+
+      await cancelBooking("booking_held", "member_1", "MEMBER", "127.0.0.1");
+
+      const released = mocks.logAudit.mock.calls.find(
+        (call) => call[0]?.action === "booking.exclusiveHold.released",
+      );
+      expect(released).toBeDefined();
+      expect(released![0]).toMatchObject({
+        entityType: "Booking",
+        entityId: "booking_held",
+        metadata: expect.objectContaining({
+          previouslyHeldByMemberId: "admin_9",
+        }),
+      });
+    });
+
+    it("does NOT record a released audit when the booking held nothing (no re-arm surprise)", async () => {
+      const unheld = { ...heldPaidBooking, wholeLodgeHold: false, wholeLodgeHoldAt: null, wholeLodgeHoldByMemberId: null };
+      mocks.bookingFindUnique.mockResolvedValue(unheld);
+      mocks.txBookingFindUnique.mockResolvedValue(unheld);
+
+      await cancelBooking("booking_held", "member_1", "MEMBER", "127.0.0.1");
+
+      const released = mocks.logAudit.mock.calls.find(
+        (call) => call[0]?.action === "booking.exclusiveHold.released",
+      );
+      expect(released).toBeUndefined();
     });
   });
 });

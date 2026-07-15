@@ -436,6 +436,9 @@ describe("markBookingPaymentSucceeded", () => {
         draftExpiresAt: null,
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
     expect(mocks.bookingUpdate).not.toHaveBeenCalledWith(

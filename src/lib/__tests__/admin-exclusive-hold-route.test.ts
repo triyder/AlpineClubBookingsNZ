@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => {
     acquireLodgeCapacityLock: vi.fn(),
     checkCapacityForGuestRanges: vi.fn(),
     findOverlappingCapacityHoldingBookings: vi.fn(),
+    findOverlappingOverriddenNonHoldingBookings: vi.fn(),
     loggerError: vi.fn(),
   };
 });
@@ -51,6 +52,9 @@ vi.mock("@/lib/capacity", () => ({
   // Read-only conflict surfacing (issue #119) — NOT the capacity engine.
   findOverlappingCapacityHoldingBookings:
     mocks.findOverlappingCapacityHoldingBookings,
+  // Override-settle blind-spot surfacing (issue #177) — also read-only.
+  findOverlappingOverriddenNonHoldingBookings:
+    mocks.findOverlappingOverriddenNonHoldingBookings,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -115,6 +119,7 @@ beforeEach(() => {
   });
   mocks.tx.auditLog.create.mockResolvedValue({});
   mocks.findOverlappingCapacityHoldingBookings.mockResolvedValue([]);
+  mocks.findOverlappingOverriddenNonHoldingBookings.mockResolvedValue([]);
 });
 
 describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
@@ -234,6 +239,56 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
     expect(audit.metadata).toMatchObject({ overlappingConflictCount: 1 });
   });
 
+  it("also surfaces overridden-but-not-yet-holding overlaps at set, marked overridden (issue #177)", async () => {
+    mocks.findOverlappingCapacityHoldingBookings.mockResolvedValue([
+      {
+        id: "booking-2",
+        memberName: "Jane Doe",
+        checkIn: "2026-09-01",
+        checkOut: "2026-09-02",
+        guestCount: 3,
+        status: "CONFIRMED",
+      },
+    ]);
+    mocks.findOverlappingOverriddenNonHoldingBookings.mockResolvedValue([
+      {
+        id: "booking-3",
+        memberName: "Sam Over",
+        checkIn: "2026-09-01",
+        checkOut: "2026-09-03",
+        guestCount: 2,
+        status: "PAYMENT_PENDING",
+        overridden: true,
+      },
+    ]);
+
+    const response = await POST(holdRequest({ hold: true }), routeParams());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    // Both populations merged into one conflicts list; the override marker is
+    // preserved so the UI can flag it distinctly. Never-refuse unchanged.
+    expect(body.conflicts).toHaveLength(2);
+    expect(body.conflicts).toContainEqual(
+      expect.objectContaining({ id: "booking-3", overridden: true }),
+    );
+    // Both reads are excluded on the held booking's own id, at its lodge/nights.
+    expect(mocks.findOverlappingOverriddenNonHoldingBookings).toHaveBeenCalledWith(
+      mocks.tx,
+      expect.objectContaining({
+        lodgeId: "lodge-1",
+        excludeBookingId: "booking-1",
+      }),
+    );
+    // Audit records the two populations separately.
+    const audit = mocks.tx.auditLog.create.mock.calls[0][0].data;
+    expect(audit.metadata).toMatchObject({
+      overlappingConflictCount: 1,
+      overriddenNonHoldingConflictCount: 1,
+      overriddenNonHoldingConflictBookingIds: ["booking-3"],
+    });
+  });
+
   it("does not query conflicts when clearing the hold (nothing to surface)", async () => {
     mocks.tx.booking.findUnique.mockResolvedValue(
       booking({ wholeLodgeHold: true }),
@@ -249,6 +304,9 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
     expect(response.status).toBe(200);
     expect(body.conflicts).toEqual([]);
     expect(mocks.findOverlappingCapacityHoldingBookings).not.toHaveBeenCalled();
+    expect(
+      mocks.findOverlappingOverriddenNonHoldingBookings,
+    ).not.toHaveBeenCalled();
   });
 
   it("clears the hold (200), nulls the who/when fields, and audits the clear", async () => {

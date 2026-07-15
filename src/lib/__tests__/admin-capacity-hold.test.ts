@@ -5,6 +5,7 @@ import {
   bookingHoldsCapacity,
   capacityHoldingBookingFilter,
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+  RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
 
 // Behavioural coverage for the admin capacity hold (issue #1764): a Full
@@ -96,6 +97,30 @@ describe("bookingHoldsCapacity admin-hold cases (issue #1764)", () => {
       adminCapacityHoldAt: null,
       adminCapacityHoldByMemberId: null,
     });
+  });
+});
+
+// Exclusive whole-lodge hold release on terminal transitions (ADR-001, #177).
+// The fragment is spread beside RELEASE_ADMIN_CAPACITY_HOLD_UPDATE at every
+// terminal transition; its shape is pinned here so the field clearing stays
+// exhaustive.
+describe("RELEASE_WHOLE_LODGE_HOLD_UPDATE (issue #177)", () => {
+  it("clears exactly the flag and the two who/when hold fields", () => {
+    expect(RELEASE_WHOLE_LODGE_HOLD_UPDATE).toEqual({
+      wholeLodgeHold: false,
+      wholeLodgeHoldAt: null,
+      wholeLodgeHoldByMemberId: null,
+    });
+  });
+
+  it("turns the hold OFF so a reinstated booking cannot re-arm a stale hold", () => {
+    // A cancelled-then-reinstated booking must start from no hold: the flag is
+    // false and the actor/timestamp are null, so a later status flip back to a
+    // capacity-holding state can never re-consult a stale actor/audit trail —
+    // the officer must re-set the hold deliberately through the audited route.
+    expect(RELEASE_WHOLE_LODGE_HOLD_UPDATE.wholeLodgeHold).toBe(false);
+    expect(RELEASE_WHOLE_LODGE_HOLD_UPDATE.wholeLodgeHoldByMemberId).toBeNull();
+    expect(RELEASE_WHOLE_LODGE_HOLD_UPDATE.wholeLodgeHoldAt).toBeNull();
   });
 });
 

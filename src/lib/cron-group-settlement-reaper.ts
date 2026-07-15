@@ -54,7 +54,10 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { RELEASE_ADMIN_CAPACITY_HOLD_UPDATE } from "@/lib/booking-status";
+import {
+  RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+  RELEASE_WHOLE_LODGE_HOLD_UPDATE,
+} from "@/lib/booking-status";
 import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
 import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
@@ -460,6 +463,10 @@ async function cancelReapedChildren(
         data: {
           status: BookingStatus.CANCELLED,
           ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+          // Best-effort field clearing (#177): this bulk reaper transition has
+          // no per-booking audit context, so it mirrors the capacity-hold
+          // sibling — clear the stale hold, no released audit.
+          ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
         },
       });
     }

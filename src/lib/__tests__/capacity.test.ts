@@ -34,6 +34,7 @@ import {
   checkCapacity,
   checkCapacityForGuestRanges,
   findOverlappingCapacityHoldingBookings,
+  findOverlappingOverriddenNonHoldingBookings,
   getLodgeHeldNights,
   getMonthAvailability,
   sameLodgeNullTolerant,
@@ -1005,6 +1006,73 @@ describe("findOverlappingCapacityHoldingBookings (issue #119)", () => {
         checkOut: parseDateOnly("2026-08-12"),
       }),
     ).toEqual([]);
+  });
+});
+
+describe("findOverlappingOverriddenNonHoldingBookings (issue #177)", () => {
+  const db = { booking: { findMany: mocks.bookingFindMany } } as never;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("surfaces an overridden PAYMENT_PENDING overlap, marked overridden", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        id: "booking-9",
+        checkIn: parseDateOnly("2026-08-10"),
+        checkOut: parseDateOnly("2026-08-12"),
+        status: "PAYMENT_PENDING",
+        member: { firstName: "Sam", lastName: "Over", email: "s@x.nz" },
+        _count: { guests: 2 },
+      },
+    ]);
+
+    const result = await findOverlappingOverriddenNonHoldingBookings(db, {
+      lodgeId: "lodge-a",
+      checkIn: parseDateOnly("2026-08-10"),
+      checkOut: parseDateOnly("2026-08-12"),
+      excludeBookingId: "held-1",
+    });
+
+    expect(result).toEqual([
+      {
+        id: "booking-9",
+        memberName: "Sam Over",
+        checkIn: "2026-08-10",
+        checkOut: "2026-08-12",
+        guestCount: 2,
+        status: "PAYMENT_PENDING",
+        overridden: true,
+      },
+    ]);
+  });
+
+  it("scopes to overridden + active + NOT capacity-holding (no double-count, no terminal noise)", async () => {
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    await findOverlappingOverriddenNonHoldingBookings(db, {
+      lodgeId: "lodge-a",
+      checkIn: parseDateOnly("2026-08-10"),
+      checkOut: parseDateOnly("2026-08-12"),
+      excludeBookingId: "held-1",
+    });
+
+    const where = mocks.bookingFindMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({
+      lodgeId: "lodge-a",
+      id: { not: "held-1" },
+      deletedAt: null,
+      capacityOverriddenAt: { not: null },
+    });
+    // Excludes the capacity-holding population so it never double-lists a
+    // booking already surfaced by findOverlappingCapacityHoldingBookings.
+    expect(where.NOT).toEqual(capacityHoldingBookingFilter());
+    // Only active statuses — a cancelled/bumped overridden row can never settle
+    // onto the held nights, so it must not be surfaced.
+    expect(Array.isArray(where.status.in)).toBe(true);
+    expect(where.status.in).not.toContain("CANCELLED");
+    expect(where.status.in).not.toContain("BUMPED");
   });
 });
 
