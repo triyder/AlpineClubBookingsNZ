@@ -34,6 +34,18 @@ export async function register() {
   // OBS-01: Initialize Sentry for the Node.js runtime
   if (process.env.NEXT_RUNTIME === "nodejs") {
     await import("../sentry.server.config");
+
+    // #1912: warm the HTML-email brand palette from the persisted Site Style
+    // theme so the first email after a cold start uses the configured colours,
+    // not the built-in default. Best-effort and runs regardless of cron config;
+    // never blocks or fails startup (emailPalette() also self-warms on first
+    // use as a fallback).
+    try {
+      const { primeEmailPalette } = await import("./lib/email-theme");
+      await primeEmailPalette();
+    } catch {
+      // Ignore — the email palette self-warms in the background on first use.
+    }
   }
 
   if (process.env.NEXT_RUNTIME === "edge") {

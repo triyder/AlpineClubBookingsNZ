@@ -84,7 +84,11 @@ The public utility (`/login`, `/school-bookings`, `/booking-requests`),
 authenticated, and admin app shells carry the club identity, not just stock
 shadcn neutral (epic #1800). `/admin/site-style` now supplies the same saved
 brand accent, neutral ramp, and font choices to the website and all three app
-shells (#1808, #1851); the occupancy meter follows that accent. Semantic
+shells (#1808, #1851); the occupancy meter follows that accent. HTML emails also
+derive their brand colours from this saved theme (`src/lib/email-theme.ts`);
+because emails render server-side from a cached palette, a Site Style save and
+server boot re-prime that cache so a colour-scheme change reaches emails right
+away rather than only after its TTL lapses (#1912). Semantic
 success, warning,
 information, danger/error, and waitlist tones remain curated, contrast-locked
 light/dark pairs rather than editable brand fields; public-site Raw CSS is never

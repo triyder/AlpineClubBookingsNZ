@@ -7,6 +7,7 @@ import {
 } from "@/lib/club-theme";
 import { getBlockingContrastWarnings } from "@/lib/club-theme-schema";
 import { clubThemeUpdateSchema } from "@/lib/club-theme-update-schema";
+import { primeEmailPalette } from "@/lib/email-theme";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -58,6 +59,12 @@ export async function PUT(request: NextRequest) {
     revalidatePath("/(website)", "layout");
     revalidatePath("/(authenticated)", "layout");
     revalidatePath("/(admin)", "layout");
+    // #1912: HTML emails resolve their brand colours from a cached copy of this
+    // theme (see email-theme.ts). Re-prime that cache from the just-saved values
+    // so booking/notification emails pick up the new colour scheme immediately
+    // rather than only after the cache TTL lapses. Reuses the same persisted
+    // ClubTheme source of truth and never throws.
+    await primeEmailPalette();
 
     logAudit({
       action: "site_style.updated",
