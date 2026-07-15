@@ -138,7 +138,15 @@ settle (`group-settlement.ts` `settleConfirmedChildrenAndNotify`), the reaper
 booking or settlement mutually exclude. The group-settlement paths in particular
 MUST share `lock(1)`: before #1881 the settle path took a per-lodge (default
 lodge) key while the reaper took `lock(1)`, so a settle could race a reap into an
-inconsistent settlement/child state.
+inconsistent settlement/child state. `markGroupSettlementIntentFailed` also
+initially skipped the lock; #1881 wrapped it in `lock(1)` to match this claim, so
+it can no longer execute between a multi-statement settle transaction's own
+statements. Note the FAILED mark and the settle path both leave `FAILED` OUT of
+their status-guard `notIn` set BY DESIGN: a settlement marked `FAILED` by a
+`payment_failed`/`payment_intent.canceled` webhook whose money is then genuinely
+captured (`payment_intent.succeeded` → settle) must still become `SUCCEEDED`, so
+settle legitimately overwrites `FAILED` → `SUCCEEDED`. `lock(1)` guarantees the
+two run whole-before-whole; it is not a veto on that transition.
 
 ### Writer doing both → `lock(1)` first, then per-lodge
 

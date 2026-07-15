@@ -667,10 +667,19 @@ async function settleConfirmedChildrenAndNotify(
       // Status-guarded PAID flip (#1881): CONFIRMED -> PAID only. The children
       // query already filtered CONFIRMED under lock(1); the guard makes the
       // no-clobber guarantee structural against a racing reaper revert.
-      await tx.booking.updateMany({
+      const paid = await tx.booking.updateMany({
         where: { id: child.id, status: BookingStatus.CONFIRMED },
         data: { status: BookingStatus.PAID, draftExpiresAt: null },
       });
+      // Defense-in-depth (#1881, mirroring F1's markBookingPaymentSucceeded
+      // claim): under lock(1) with the CONFIRMED-filtered read above this can
+      // never be 0, but assert it so a count-0 rolls the whole settle back
+      // rather than leaving this child's Payment SUCCEEDED with no PAID booking.
+      if (paid.count === 0) {
+        throw new Error(
+          "Group settlement child status changed concurrently during the PAID claim (#1881)"
+        );
+      }
       await reconcileBedAllocationsForBooking({
         bookingId: child.id,
         db: tx,
@@ -948,23 +957,41 @@ export async function markGroupSettlementIntentFailed(
   paymentIntentId: string,
   status: PaymentStatus = PaymentStatus.FAILED
 ): Promise<void> {
-  // Guard an out-of-order payment_failed/canceled webhook racing payment_intent.succeeded:
-  // atomically move only a settlement that is NOT already in a positive terminal state.
-  // markGroupSettlementIntentFailed only records a non-success outcome (its callers are the
-  // payment_failed and payment_intent.canceled webhooks, both stored as FAILED), so it can never
-  // legitimately need to leave SUCCEEDED/REFUNDED/PARTIALLY_REFUNDED. updateMany fuses the
-  // "still non-terminal?" check with the write; a no-match (incl. unknown intent) is a no-op.
-  await prisma.groupBookingSettlement.updateMany({
-    where: {
-      stripePaymentIntentId: paymentIntentId,
-      status: {
-        notIn: [
-          PaymentStatus.SUCCEEDED,
-          PaymentStatus.REFUNDED,
-          PaymentStatus.PARTIALLY_REFUNDED,
-        ],
+  // #1881 — take the SAME global lock(1) as its sibling
+  // markGroupSettlementIntentRefunded, the settle path
+  // (settleConfirmedChildrenAndNotify), the reaper, and the organiser-cancel
+  // FAILED claim. Before this the FAILED mark took NO lock, so it could execute
+  // BETWEEN the multi-statement settle transaction's own statements (the settle
+  // holds lock(1) for its whole duration; an unlocked updateMany does not
+  // serialise against it), leaving a torn interleaving the doc's "all
+  // settlement-status transitions take lock(1)" claim explicitly rules out.
+  // Wrapping the mark in lock(1) makes the two mutually exclude: they run
+  // whole-before-whole, never interleaved.
+  //
+  // The guard deliberately does NOT exclude FAILED from the settle path's notIn
+  // set: a settlement marked FAILED by a payment_failed/canceled webhook whose
+  // money is then GENUINELY captured (payment_intent.succeeded -> settle) MUST
+  // still become SUCCEEDED — real captured money has to settle the children, so
+  // letting settle overwrite FAILED -> SUCCEEDED is correct, not a bug. What the
+  // lock adds is atomicity (no interleaving), not a new veto. This mark records
+  // only a non-success outcome (callers: payment_failed, payment_intent.canceled,
+  // both stored FAILED), so it can never legitimately need to leave a positive
+  // terminal state; the guarded updateMany fuses the "still non-terminal?" check
+  // with the write, and a no-match (incl. unknown intent) is a no-op.
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    await tx.groupBookingSettlement.updateMany({
+      where: {
+        stripePaymentIntentId: paymentIntentId,
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
       },
-    },
-    data: { status },
+      data: { status },
+    });
   });
 }

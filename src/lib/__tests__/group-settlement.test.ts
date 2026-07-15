@@ -810,9 +810,17 @@ describe("markGroupSettlementIntentRefunded", () => {
 });
 
 describe("markGroupSettlementIntentFailed", () => {
-  it("atomically moves only a non-terminal settlement to FAILED", async () => {
+  it("atomically moves only a non-terminal settlement to FAILED under lock(1)", async () => {
     await markGroupSettlementIntentFailed("pi_settle_1");
 
+    // #1881 — the mark now runs inside a transaction holding the SAME global
+    // lock(1) as its sibling markGroupSettlementIntentRefunded, the settle path
+    // and the reaper, so it can no longer interleave BETWEEN a multi-statement
+    // settle transaction's statements (the doc's "all settlement-status
+    // transitions take lock(1)" claim). It takes no per-lodge lock.
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.txExecuteRaw).toHaveBeenCalled();
+    expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalled();
     // The guarded updateMany fuses the "still non-terminal?" check with the write,
     // so a racing succeeded/refunded settlement is never overwritten to FAILED.
     expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
