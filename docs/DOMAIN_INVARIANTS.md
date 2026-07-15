@@ -732,13 +732,36 @@ then keys on the EFFECTIVE (credit-reduced) price, not raw `finalPriceCents`,
 mirroring booking-create: a reduction that lands the booking fully
 credit-covered auto-confirms it at $0 instead of dead-ending as unpayable at the
 card-intent guard (which rejects `effectivePriceCents <= 0`) with the member's
-credit over-consumed. The clamp is gated on the payment's `creditAppliedCents`
-mirror so a no-credit modification is byte-for-byte unchanged and never touches
-the ledger; it re-derives the authoritative applied total from the ledger when
-credit is present, and is idempotent under transaction re-drive. (Xero note
-re-allocation for the returned slice on an Internet-Banking booking follows the
-existing IB reconcile path and remains an operator-reconciled residual, in line
-with the documented #1620 divergences; the member's LOCAL credit is conserved.)
+credit over-consumed. The clamp is gated on the LEDGER (a cheap unlocked
+`deriveBookingAppliedCreditCents` read) plus a pre-payment status
+(PENDING/PAYMENT_PENDING), NOT the payment's `creditAppliedCents` mirror (F1,
+#1887): a CARD booking has no `Payment` row until it requests a card intent, so
+the mirror gate missed exactly that surface and left the booking dead-ending
+unpayable with credit over-consumed. A no-credit modification reads the ledger
+once, finds nothing, and never takes the member-credit lock or writes a row —
+byte-for-byte unchanged. The clamp is idempotent under transaction re-drive.
+
+Because the clamp only fires in PENDING/PAYMENT_PENDING, a modification parked to
+AWAITING_REVIEW does NOT refund credit or auto-$0-pay before an admin approves it
+(F4, #1887), matching booking-create's under-review block on the zero-dollar
+path; the release-from-review transition lands PAYMENT_PENDING, at which point the
+clamp runs.
+
+Xero residual on Internet-Banking bookings (F3, #1887 — bounded, owner-accepted):
+an unpaid IB booking allocates its applied credit to the Xero invoice as
+ACCRECCREDIT notes at booking-create (a card booking's allocation waits for cash
+capture and is skipped for IB). The clamp returns the over-consumed slice to the
+LOCAL ledger but does NOT re-derive that Xero allocation, so the IB invoice keeps
+up to the refunded excess MORE credit allocated than the local ledger shows. The
+residual is one-directional and bounded by the refunded excess: the member's
+local credit is conserved (never under-credited) and the invoice only ever reads
+fully- or over-covered, never underpaid, so no one is over-charged. The daily
+credit reconciliation checks local consistency only (negative balances + orphaned
+applied credit), not per-invoice Xero-vs-local allocation, so it tolerates the
+residual without false alerts. This is consistent with the documented #1620 IB
+Xero divergences. Reversing the allocation needs an out-of-transaction Xero call
+(no provider calls under the ledger lock, F7/#1355) and is left as an owner
+decision rather than implemented here.
 
 Every modification path also applies the same lifecycle transitions: a
 PAYMENT_PENDING booking whose EFFECTIVE (credit-reduced) price drops to zero
