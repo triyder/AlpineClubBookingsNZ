@@ -16,6 +16,10 @@ import {
   serializeAdminSiteBanner,
   siteBannerAuditSnapshot,
 } from "@/lib/site-banners";
+import {
+  invalidatePublicLayoutConfig,
+  PUBLIC_LAYOUT_CACHE_TAGS,
+} from "@/lib/public-layout-cache";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -107,6 +111,8 @@ export async function POST(request: Request) {
 
     return created;
   });
+
+  invalidatePublicLayoutConfig(PUBLIC_LAYOUT_CACHE_TAGS.banners);
 
   return NextResponse.json(
     { banner: serializeAdminSiteBanner(banner) },

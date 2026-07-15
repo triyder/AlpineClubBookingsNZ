@@ -33,7 +33,9 @@ const SESSION_COOKIE_NAMES = [
  * iteration for scenarios that log in repeatedly).
  */
 export function syntheticClientIp(offset) {
-  const n = exec.vu.idInTest + (offset || 0) * 1024;
+  // setup/teardown execute outside a VU, where idInTest is not populated.
+  const vuId = Number(exec.vu.idInTest) || 0;
+  const n = vuId + (offset || 0) * 1024;
   const b = Math.floor(n / 250) % 250;
   const c = n % 250;
   return "10.99." + (b + 1) + "." + (c + 1);

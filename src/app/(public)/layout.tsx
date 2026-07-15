@@ -7,12 +7,14 @@ import { ThemeSwitcher } from "@/components/theme-switcher";
 import { WebsiteHeader } from "@/components/website-header";
 import { WebsiteFooter } from "@/components/website-footer";
 import { clubIdentity } from "@/config/club-identity";
-import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
-import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
-import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { getCurrentSiteBanners } from "@/lib/site-banners";
+import {
+  getCachedCurrentSiteBanners,
+  getCachedDefaultLodgeCapacity,
+  getCachedEffectiveModuleFlags,
+  getCachedWebsiteThemeRenderState,
+} from "@/lib/public-layout-config";
 
 export default async function PublicLayout({
   children,
@@ -24,10 +26,10 @@ export default async function PublicLayout({
       auth(),
       // Default lodge: public-site identity copy (per-lodge figures come
       // from the {{lodge-capacity:slug}} content token).
-      getDefaultLodgeCapacity(),
-      getCurrentSiteBanners(),
-      loadEffectiveModuleFlags(),
-      getWebsiteThemeRenderState(),
+      getCachedDefaultLodgeCapacity(),
+      getCachedCurrentSiteBanners(),
+      getCachedEffectiveModuleFlags(),
+      getCachedWebsiteThemeRenderState(),
     ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const requestHeaders = await headers();

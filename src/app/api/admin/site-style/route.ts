@@ -10,6 +10,10 @@ import { clubThemeUpdateSchema } from "@/lib/club-theme-update-schema";
 import { primeEmailPalette } from "@/lib/email-theme";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  invalidatePublicLayoutConfig,
+  PUBLIC_LAYOUT_CACHE_TAGS,
+} from "@/lib/public-layout-cache";
 
 export async function GET() {
   const guard = await requireAdmin();
@@ -56,6 +60,7 @@ export async function PUT(request: NextRequest) {
 
   try {
     const theme = await saveClubTheme(parsed.data);
+    invalidatePublicLayoutConfig(PUBLIC_LAYOUT_CACHE_TAGS.theme);
     revalidatePath("/(website)", "layout");
     revalidatePath("/(authenticated)", "layout");
     revalidatePath("/(admin)", "layout");

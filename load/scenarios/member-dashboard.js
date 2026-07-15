@@ -21,17 +21,18 @@
 
 import http from "k6/http";
 import { check, sleep } from "k6";
+import { Rate } from "k6/metrics";
 import { assertSafeTarget } from "../lib/target-guard.js";
 import {
   loadConfig,
   requireCredentials,
   rampStages,
-  standardThresholds,
 } from "../lib/config.js";
 import { ensureLoggedIn, vuHeaders } from "../lib/session.js";
 
 const cfg = loadConfig(__ENV); // init-context guard: aborts unsafe targets
 requireCredentials(cfg);
+const bootstrapLoginSuccess = new Rate("dashboard_bootstrap_login_success");
 
 export const options = {
   scenarios: {
@@ -42,7 +43,15 @@ export const options = {
       gracefulRampDown: "10s",
     },
   },
-  thresholds: standardThresholds(cfg),
+  thresholds: {
+    // Keep the read SLO independent from the deliberately expensive one-time
+    // bcrypt login. Bootstrap login health still has its own explicit gate.
+    "http_req_duration{flow:member_dashboard}": ["p(95)<" + cfg.p95Ms],
+    "http_req_failed{flow:member_dashboard}": ["rate<" + cfg.maxErrorRate],
+    dashboard_bootstrap_login_success: [
+      "rate>" + (1 - cfg.maxErrorRate),
+    ],
+  },
 };
 
 export function setup() {
@@ -64,7 +73,15 @@ const availYear = parseInt(cfg.contentionCheckIn.slice(0, 4), 10);
 const availMonth = parseInt(cfg.contentionCheckIn.slice(5, 7), 10) - 1; // 0-indexed
 
 export default function memberDashboard() {
-  if (!ensureLoggedIn(cfg, cfg.userEmail, cfg.userPassword, vuState)) {
+  const wasLoggedIn = vuState.loggedIn;
+  const loggedIn = ensureLoggedIn(
+    cfg,
+    cfg.userEmail,
+    cfg.userPassword,
+    vuState
+  );
+  if (!wasLoggedIn) bootstrapLoginSuccess.add(loggedIn);
+  if (!loggedIn) {
     sleep(cfg.thinkTime);
     return;
   }
