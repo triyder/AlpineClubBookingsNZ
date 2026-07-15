@@ -6,6 +6,7 @@ import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationT
 import { buildBookingAppliedCreditDescription, getAmountCentsFromAllocationMetadata, getCreditNoteAmountCents, getCreditNoteIdFromAllocationMetadata, getJsonRecord, getNextRefundedPaymentStatus, getRefundContributionCentsFromCreditNoteMetadata, isIncludedRefundCreditNoteStatus } from "./amounts";
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
+import { lockMemberCreditLedger } from "@/lib/member-credit";
 
 export async function resolvePaymentIdsByInvoiceTargets(
   creditNoteId: string,
@@ -513,15 +514,19 @@ export async function repairAccountCreditAllocationBusinessState(
     const expectedDescription = buildBookingAppliedCreditDescription(
       payment.bookingId
     );
-    // Serialize each payment's applied-credit repair on the shared reconcile
-    // advisory lock so the existing-credit read, the create/link, the aggregate,
-    // and the creditAppliedCents write commit atomically. Without the lock two
-    // concurrent credit-note events for one payment can interleave and
-    // transiently under-set creditAppliedCents; the clamp keeps the applied
-    // total within the payment amount (invariant (b),(d), #1234). DB-only work:
-    // no external Xero call runs inside this transaction.
+    // Serialize each payment's applied-credit repair on the PER-MEMBER credit
+    // ledger lock (#1881) so the existing-credit read, the create/link, the
+    // aggregate, and the creditAppliedCents write commit atomically AND mutually
+    // exclude the credit spend engine (applyCreditToBooking / restore, which take
+    // the same lockMemberCreditLedger key). The previous global lock(1) did NOT
+    // exclude those per-member writers, so a BOOKING_APPLIED repair could
+    // interleave with a concurrent spend/restore of the same member's ledger.
+    // Without serialization two concurrent credit-note events for one payment can
+    // also interleave and transiently under-set creditAppliedCents; the clamp
+    // keeps the applied total within the payment amount (invariant (b),(d),
+    // #1234). DB-only work: no external Xero call runs inside this transaction.
     await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await lockMemberCreditLedger(payment.booking.memberId, tx);
 
       const existingAppliedCredits = await tx.memberCredit.findMany({
         where: {
