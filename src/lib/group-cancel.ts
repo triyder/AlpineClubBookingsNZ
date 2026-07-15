@@ -208,10 +208,13 @@ export async function settleGroupBookingOnOrganiserCancel(
     settlement.status === PaymentStatus.PENDING &&
     settlement.stripePaymentIntentId
   ) {
+    // Capture the non-null row in a const so the async closure below keeps the
+    // narrowing (`settlement` is now a `let`, reassigned after the reload).
+    const openSettlement = settlement;
     // The Stripe void is an external provider call — keep it OUTSIDE the DB
     // transaction (the whole point of the lock discipline).
     try {
-      await cancelPaymentIntentIfCancellable(settlement.stripePaymentIntentId);
+      await cancelPaymentIntentIfCancellable(openSettlement.stripePaymentIntentId!);
     } catch (err) {
       logger.error(
         { err, groupBookingId: group.id },
@@ -228,7 +231,7 @@ export async function settleGroupBookingOnOrganiserCancel(
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       await tx.groupBookingSettlement.updateMany({
         where: {
-          id: settlement.id,
+          id: openSettlement.id,
           status: {
             notIn: [
               PaymentStatus.SUCCEEDED,
