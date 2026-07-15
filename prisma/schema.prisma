@@ -2821,6 +2821,25 @@ model ProcessedWebhookEvent {
   eventType   String
   processedAt DateTime @default(now())
 
+  // F16 (issue #1887): the dedup claim is a processing LEASE, not a bare
+  // "seen" marker. `status` is "PROCESSING" (claimed, handler in flight) or
+  // "COMPLETED" (handler finished). `processingStartedAt` stamps when the
+  // current attempt took the lease. A redelivery hitting an existing claim
+  // returns 200 only when COMPLETED; a PROCESSING claim still inside the lease
+  // window forces a provider retry (500), and an expired lease (a crashed
+  // prior attempt) is taken over and reprocessed. This closes the two
+  // lost-event windows: (a) a crash between claim-insert and completion no
+  // longer ACKs every redelivery as a duplicate, and (b) a concurrent
+  // redelivery is no longer ACKed while the in-flight attempt later fails.
+  //
+  // Blue/green-safe: `status` defaults to "PROCESSING" so an old-colour insert
+  // (which omits the column and never marks COMPLETED) is reprocessed by the
+  // new colour on redelivery rather than dropped; the migration backfills the
+  // pre-existing historical rows to "COMPLETED". `processingStartedAt` defaults
+  // to now() so old-colour inserts still carry a lease timestamp.
+  status             String   @default("PROCESSING")
+  processingStartedAt DateTime @default(now())
+
   // Idempotency is scoped per provider (issue #815): provider event IDs are only
   // unique within a provider, so a global unique on eventId could let a Stripe
   // and a Xero/SES event with the same ID collide and silently drop one.

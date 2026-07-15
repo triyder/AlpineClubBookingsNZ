@@ -5,6 +5,8 @@ const {
   mockConstructWebhookEvent,
   mockProcessedWebhookCreate,
   mockProcessedWebhookDeleteMany,
+  mockProcessedWebhookFindFirst,
+  mockProcessedWebhookUpdateMany,
   mockPaymentFindUnique,
   mockPaymentUpdate,
   mockBookingFindUnique,
@@ -42,6 +44,8 @@ const {
   mockConstructWebhookEvent: vi.fn(),
   mockProcessedWebhookCreate: vi.fn(),
   mockProcessedWebhookDeleteMany: vi.fn(),
+  mockProcessedWebhookFindFirst: vi.fn(),
+  mockProcessedWebhookUpdateMany: vi.fn(),
   mockPaymentFindUnique: vi.fn(),
   mockPaymentUpdate: vi.fn(),
   mockBookingFindUnique: vi.fn(),
@@ -156,6 +160,8 @@ vi.mock("@/lib/prisma", () => ({
     processedWebhookEvent: {
       create: (...args: unknown[]) => mockProcessedWebhookCreate(...args),
       deleteMany: (...args: unknown[]) => mockProcessedWebhookDeleteMany(...args),
+      findFirst: (...args: unknown[]) => mockProcessedWebhookFindFirst(...args),
+      updateMany: (...args: unknown[]) => mockProcessedWebhookUpdateMany(...args),
     },
     payment: {
       findUnique: (...args: unknown[]) => mockPaymentFindUnique(...args),
@@ -230,6 +236,14 @@ describe("Stripe webhook Xero alerting", () => {
     process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
     mockProcessedWebhookCreate.mockResolvedValue({});
     mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 0 });
+    // F16 (#1887): the claim is a lease. Default findFirst to a COMPLETED row so
+    // a P2002 duplicate short-circuits as before; updateMany (the COMPLETED
+    // stamp on success, and the lease takeover) defaults to one affected row.
+    mockProcessedWebhookFindFirst.mockResolvedValue({
+      status: "COMPLETED",
+      processingStartedAt: new Date("2020-01-01T00:00:00.000Z"),
+    });
+    mockProcessedWebhookUpdateMany.mockResolvedValue({ count: 1 });
     mockPaymentUpdate.mockResolvedValue({});
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
     mockFindPaymentTransactionByIntentId.mockResolvedValue(null);
@@ -897,6 +911,12 @@ describe("Stripe webhook Xero alerting", () => {
     mockProcessedWebhookCreate.mockRejectedValue(
       Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
     );
+    // F16 (#1887): the existing claim is COMPLETED, so the redelivery is a true
+    // duplicate and short-circuits with 200.
+    mockProcessedWebhookFindFirst.mockResolvedValue({
+      status: "COMPLETED",
+      processingStartedAt: new Date("2020-01-01T00:00:00.000Z"),
+    });
 
     const response = await POST(makeRequest());
 
@@ -906,8 +926,15 @@ describe("Stripe webhook Xero alerting", () => {
     // Issue #815: the claim is scoped to the stripe source so the composite
     // (source, eventId) idempotency key is always fully populated and a Stripe
     // event ID can never collide with a Xero/SES event that shares the same id.
+    // F16 (#1887): the claim now also carries the lease fields.
     expect(mockProcessedWebhookCreate).toHaveBeenCalledWith({
-      data: { eventId: "evt_dup", source: "stripe", eventType: "payment_intent.succeeded" },
+      data: {
+        eventId: "evt_dup",
+        source: "stripe",
+        eventType: "payment_intent.succeeded",
+        status: "PROCESSING",
+        processingStartedAt: expect.any(Date),
+      },
     });
 
     // No downstream payment, booking, Xero, recovery, or email side effects.
@@ -1357,6 +1384,203 @@ describe("Stripe webhook Xero alerting", () => {
       ).toHaveBeenCalledWith("pi_additional_late");
       expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
       expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // F16 (#1887): the ProcessedWebhookEvent claim is a processing lease, closing
+  // two lost-event windows: (a) a crash between claim-insert and completion no
+  // longer ACKs every redelivery as a duplicate; (b) a concurrent redelivery is
+  // no longer ACKed while an in-flight attempt later fails.
+  // ---------------------------------------------------------------------------
+  describe("webhook dedup processing lease (#1887)", () => {
+    function succeededEvent(eventId: string) {
+      return {
+        id: eventId,
+        type: "payment_intent.succeeded",
+        data: {
+          object: {
+            id: "pi_lease",
+            amount: 5000,
+            metadata: { bookingId: "booking-1" },
+            payment_method: "pm_123",
+          },
+        },
+      } as any;
+    }
+
+    function armPaidBooking() {
+      mockFindPaymentTransactionByIntentId.mockResolvedValue({
+        id: "txn-1",
+        paymentId: "payment-1",
+        bookingId: "booking-1",
+        kind: "PRIMARY",
+        amountCents: 5000,
+        status: "PENDING",
+      });
+      mockBookingFindUnique.mockResolvedValue({
+        id: "booking-1",
+        status: "CONFIRMED",
+        checkIn: new Date("2026-07-01"),
+        checkOut: new Date("2026-07-03"),
+        finalPriceCents: 5000,
+        discountCents: 0,
+        guests: [{ id: "g1" }],
+        member: { firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+        promoRedemption: null,
+      });
+    }
+
+    it("claims a fresh event under a PROCESSING lease and marks it COMPLETED on success", async () => {
+      mockConstructWebhookEvent.mockReturnValue(succeededEvent("evt_fresh"));
+      armPaidBooking();
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      // The claim is inserted PROCESSING with a lease stamp.
+      expect(mockProcessedWebhookCreate).toHaveBeenCalledWith({
+        data: {
+          eventId: "evt_fresh",
+          source: "stripe",
+          eventType: "payment_intent.succeeded",
+          status: "PROCESSING",
+          processingStartedAt: expect.any(Date),
+        },
+      });
+      // On success it flips to COMPLETED so a later redelivery is a true dup.
+      expect(mockProcessedWebhookUpdateMany).toHaveBeenCalledWith({
+        where: { source: "stripe", eventId: "evt_fresh" },
+        data: { status: "COMPLETED", processedAt: expect.any(Date) },
+      });
+      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalled();
+    });
+
+    it("ACKs a redelivery of a COMPLETED event without re-running handlers", async () => {
+      mockConstructWebhookEvent.mockReturnValue(succeededEvent("evt_done"));
+      mockProcessedWebhookCreate.mockRejectedValue(
+        Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+      );
+      mockProcessedWebhookFindFirst.mockResolvedValue({
+        status: "COMPLETED",
+        processingStartedAt: new Date("2020-01-01T00:00:00.000Z"),
+      });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ received: true });
+      expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+      // A completed dup neither re-marks nor releases the claim.
+      expect(mockProcessedWebhookUpdateMany).not.toHaveBeenCalled();
+      expect(mockProcessedWebhookDeleteMany).not.toHaveBeenCalled();
+    });
+
+    it("forces a provider retry (500) for a redelivery still inside the lease window (crash-window fix)", async () => {
+      mockConstructWebhookEvent.mockReturnValue(succeededEvent("evt_inflight"));
+      mockProcessedWebhookCreate.mockRejectedValue(
+        Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+      );
+      // A sibling attempt claimed it one minute ago and is still in flight.
+      mockProcessedWebhookFindFirst.mockResolvedValue({
+        status: "PROCESSING",
+        processingStartedAt: new Date(Date.now() - 60 * 1000),
+      });
+
+      const response = await POST(makeRequest());
+
+      // Not ACKed: the in-flight (possibly-doomed) attempt owns it; Stripe
+      // must redeliver rather than drop the event.
+      expect(response.status).toBe(500);
+      expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+      // We never take over a live lease, so no takeover update and no release.
+      expect(mockProcessedWebhookUpdateMany).not.toHaveBeenCalled();
+      expect(mockProcessedWebhookDeleteMany).not.toHaveBeenCalled();
+    });
+
+    it("takes over an expired lease (a crashed prior attempt) and reprocesses", async () => {
+      mockConstructWebhookEvent.mockReturnValue(succeededEvent("evt_expired"));
+      mockProcessedWebhookCreate.mockRejectedValue(
+        Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+      );
+      // Claimed 30 minutes ago and never completed: past the 15-minute lease.
+      mockProcessedWebhookFindFirst.mockResolvedValue({
+        status: "PROCESSING",
+        processingStartedAt: new Date(Date.now() - 30 * 60 * 1000),
+      });
+      // The conditional takeover update wins.
+      mockProcessedWebhookUpdateMany.mockResolvedValue({ count: 1 });
+      armPaidBooking();
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      // First updateMany is the lease takeover on the expired claim.
+      expect(mockProcessedWebhookUpdateMany).toHaveBeenCalledWith({
+        where: {
+          source: "stripe",
+          eventId: "evt_expired",
+          status: "PROCESSING",
+          processingStartedAt: { lt: expect.any(Date) },
+        },
+        data: { processingStartedAt: expect.any(Date), eventType: "payment_intent.succeeded" },
+      });
+      // The handler runs on takeover, then the claim is marked COMPLETED.
+      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalled();
+      expect(mockProcessedWebhookUpdateMany).toHaveBeenCalledWith({
+        where: { source: "stripe", eventId: "evt_expired" },
+        data: { status: "COMPLETED", processedAt: expect.any(Date) },
+      });
+    });
+
+    it("forces a retry (500) when it loses the expired-lease takeover race", async () => {
+      mockConstructWebhookEvent.mockReturnValue(succeededEvent("evt_race"));
+      mockProcessedWebhookCreate.mockRejectedValue(
+        Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+      );
+      mockProcessedWebhookFindFirst.mockResolvedValue({
+        status: "PROCESSING",
+        processingStartedAt: new Date(Date.now() - 30 * 60 * 1000),
+      });
+      // Another racer took the lease first: our conditional update matches 0 rows.
+      mockProcessedWebhookUpdateMany.mockResolvedValue({ count: 0 });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(500);
+      expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+    });
+
+    it("forces a retry (500) when the claim was raced away between insert and read", async () => {
+      mockConstructWebhookEvent.mockReturnValue(succeededEvent("evt_gone"));
+      mockProcessedWebhookCreate.mockRejectedValue(
+        Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+      );
+      // A sibling attempt failed and deleted its claim between our insert and read.
+      mockProcessedWebhookFindFirst.mockResolvedValue(null);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(500);
+      expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+      expect(mockProcessedWebhookUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("releases the claim (delete) and does NOT mark COMPLETED when a handler throws", async () => {
+      mockConstructWebhookEvent.mockReturnValue(succeededEvent("evt_throw"));
+      mockProcessedWebhookCreate.mockResolvedValue({});
+      mockFindPaymentTransactionByIntentId.mockRejectedValue(
+        new Error("database unavailable"),
+      );
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(500);
+      expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith({
+        where: { eventId: "evt_throw", source: "stripe" },
+      });
+      // A failed attempt must never leave a COMPLETED marker behind.
+      expect(mockProcessedWebhookUpdateMany).not.toHaveBeenCalled();
     });
   });
 });

@@ -29,6 +29,8 @@ const mockChoreAssignDeleteMany = vi.fn();
 const mockProcessedWebhookCreate = vi.fn();
 const mockProcessedWebhookDeleteMany = vi.fn();
 const mockProcessedWebhookFindUnique = vi.fn();
+const mockProcessedWebhookFindFirst = vi.fn();
+const mockProcessedWebhookUpdateMany = vi.fn();
 const mockMemberCount = vi.fn();
 const mockMemberFindUnique = vi.fn();
 const mockAuditCreate = vi.fn();
@@ -72,8 +74,10 @@ vi.mock("@/lib/prisma", () => ({
     choreAssignment: { findMany: mockChoreAssignFindMany, deleteMany: mockChoreAssignDeleteMany },
     processedWebhookEvent: {
       findUnique: mockProcessedWebhookFindUnique,
+      findFirst: mockProcessedWebhookFindFirst,
       create: mockProcessedWebhookCreate,
       deleteMany: mockProcessedWebhookDeleteMany,
+      updateMany: mockProcessedWebhookUpdateMany,
     },
     member: { count: mockMemberCount, findUnique: mockMemberFindUnique },
     auditLog: { create: mockAuditCreate },
@@ -1085,6 +1089,11 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
     } as any);
 
     mockProcessedWebhookCreate.mockRejectedValueOnce({ code: "P2002" });
+    // F16 (#1887): the existing claim is COMPLETED, so the redelivery ACKs 200.
+    mockProcessedWebhookFindFirst.mockResolvedValue({
+      status: "COMPLETED",
+      processingStartedAt: new Date("2020-01-01T00:00:00.000Z"),
+    });
 
     const req = makeWebhookRequest();
     const res = await POST(req);

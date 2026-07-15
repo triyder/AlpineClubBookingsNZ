@@ -54,6 +54,103 @@ function isCapturedAdditionalPaymentTransaction(status: PaymentStatus) {
   );
 }
 
+// F16 (#1887): the ProcessedWebhookEvent claim is a processing LEASE. A
+// PROCESSING claim older than this window is treated as a crashed prior
+// attempt and taken over; a fresher one forces a provider retry. Sized well
+// above real handler runtime (seconds) and far below Stripe's redelivery
+// backoff, so a live handler is never pre-empted by a concurrent redelivery.
+export const STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES = 15;
+const PROCESSED_WEBHOOK_STATUS_PROCESSING = "PROCESSING";
+const PROCESSED_WEBHOOK_STATUS_COMPLETED = "COMPLETED";
+
+type WebhookClaimOutcome = "claimed" | "duplicate_completed" | "in_progress";
+
+/**
+ * Claim the event for processing under a lease (F16, #1887).
+ *
+ * - "claimed": we own a fresh claim (insert won) or took over an expired one;
+ *   the caller must process the event and mark it COMPLETED on success.
+ * - "duplicate_completed": a prior delivery already finished this event; ACK
+ *   with 200 and do nothing.
+ * - "in_progress": a sibling attempt holds the lease (or the claim was raced
+ *   away between our failed insert and the read); the caller must return 500 so
+ *   the provider redelivers, because we must never ACK an event we did not
+ *   finish processing.
+ */
+async function claimStripeWebhookEvent(
+  event: Stripe.Event,
+  now: Date,
+): Promise<WebhookClaimOutcome> {
+  try {
+    await prisma.processedWebhookEvent.create({
+      data: {
+        eventId: event.id,
+        source: "stripe",
+        eventType: event.type,
+        status: PROCESSED_WEBHOOK_STATUS_PROCESSING,
+        processingStartedAt: now,
+      },
+    });
+    return "claimed";
+  } catch (err: unknown) {
+    // Anything other than the unique-constraint collision is a real failure.
+    if (
+      !(
+        err &&
+        typeof err === "object" &&
+        "code" in err &&
+        err.code === "P2002"
+      )
+    ) {
+      throw err;
+    }
+  }
+
+  // A claim row already exists; decide on its status and lease age.
+  const existing = await prisma.processedWebhookEvent.findFirst({
+    where: { source: "stripe", eventId: event.id },
+    select: { status: true, processingStartedAt: true },
+  });
+
+  // Raced release between our failed insert and this read (a sibling attempt
+  // failed and deleted its claim): let the provider retry rather than guess.
+  if (!existing) {
+    return "in_progress";
+  }
+
+  if (existing.status === PROCESSED_WEBHOOK_STATUS_COMPLETED) {
+    return "duplicate_completed";
+  }
+
+  const leaseExpiryThreshold = new Date(
+    now.getTime() - STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES * 60_000,
+  );
+  if (existing.processingStartedAt > leaseExpiryThreshold) {
+    // A sibling attempt is still within its lease. Force a provider retry so
+    // the event is never ACKed while an in-flight (possibly-doomed) attempt
+    // owns it — closing the concurrent-redelivery lost-event window.
+    return "in_progress";
+  }
+
+  // The lease expired: a prior attempt crashed without completing or releasing
+  // its claim. Take it over atomically — the conditional guards
+  // (status + processingStartedAt) make exactly one concurrent racer win; the
+  // loser gets an "in_progress" retry.
+  const takeover = await prisma.processedWebhookEvent.updateMany({
+    where: {
+      source: "stripe",
+      eventId: event.id,
+      status: PROCESSED_WEBHOOK_STATUS_PROCESSING,
+      processingStartedAt: { lt: leaseExpiryThreshold },
+    },
+    data: {
+      processingStartedAt: now,
+      eventType: event.type,
+    },
+  });
+  return takeover.count === 1 ? "claimed" : "in_progress";
+}
+
 export async function processStripeWebhookEvent(
   event: Stripe.Event
 ): Promise<JsonRouteResult> {
@@ -61,24 +158,24 @@ export async function processStripeWebhookEvent(
   let claimedEvent = false;
 
   try {
-    // Idempotency: attempt to claim this event atomically
-    try {
-      await prisma.processedWebhookEvent.create({
-        data: { eventId: event.id, source: "stripe", eventType: event.type },
-      });
-      claimedEvent = true;
-    } catch (err: unknown) {
-      // Unique constraint violation (P2002) = already processed
-      if (
-        err &&
-        typeof err === "object" &&
-        "code" in err &&
-        err.code === "P2002"
-      ) {
-        return jsonResult({ received: true });
-      }
-      throw err; // Re-throw unexpected errors
+    // Idempotency: claim this event under a processing lease (F16, #1887).
+    const claimOutcome = await claimStripeWebhookEvent(
+      event,
+      new Date(webhookStart),
+    );
+    if (claimOutcome === "duplicate_completed") {
+      // A prior delivery already finished this event; a bare ACK is safe.
+      return jsonResult({ received: true });
     }
+    if (claimOutcome === "in_progress") {
+      // A sibling attempt holds the lease (or its claim was raced away). Force
+      // the provider to redeliver rather than ACK an unfinished event.
+      return jsonResult(
+        { error: "Webhook processing already in progress" },
+        { status: 500 },
+      );
+    }
+    claimedEvent = true;
 
     switch (event.type) {
       case "payment_intent.succeeded":
@@ -137,6 +234,18 @@ export async function processStripeWebhookEvent(
         // Unhandled event type - log but don't error
         logger.info({ eventType: event.type }, "Unhandled Stripe event type");
     }
+
+    // F16 (#1887): mark the lease COMPLETED so a later redelivery is ACKed as a
+    // true duplicate instead of being reprocessed. Done only after every
+    // handler above returned, so a crash before here leaves the claim
+    // PROCESSING and the event recoverable via lease takeover.
+    await prisma.processedWebhookEvent.updateMany({
+      where: { source: "stripe", eventId: event.id },
+      data: {
+        status: PROCESSED_WEBHOOK_STATUS_COMPLETED,
+        processedAt: new Date(),
+      },
+    });
 
     // OBS-08: Record successful webhook processing
     await recordWebhookLog({
