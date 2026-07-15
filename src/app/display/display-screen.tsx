@@ -700,10 +700,20 @@ class LayoutErrorBoundary extends Component<
  * throw that escapes the React tree entirely). Silent on a real wall by design:
  * an unattended screen shows no error text, just an intentionally-on background. */
 function MinimalDisplayShell() {
+  // The boundary renders this IN PLACE of the display-shell subtree, so no
+  // ancestor supplies positioning or background — inline both, exactly like
+  // the route-segment error.tsx, so the quiet shell holds even without the
+  // `.display-shell` ancestor and even if the route stylesheet has not applied.
   return (
     <div
-      className="display-screen display-loading"
+      className="display-shell display-loading"
       data-display-fallback="minimal"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background:
+          "linear-gradient(160deg, #08171d 0%, #0a1c23 55%, #07141a 100%)",
+      }}
     />
   );
 }

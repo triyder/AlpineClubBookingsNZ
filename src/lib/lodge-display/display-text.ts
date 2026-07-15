@@ -90,14 +90,26 @@ function escapeHtmlValue(value: string): string {
 // stops a value BREAKING OUT of the attribute (quotes/brackets), but a scheme
 // sits happily INSIDE the quotes, so escaping alone does not close this.
 //
-// DESIGN CHOICE — scheme check INSIDE resolution, gated on URL-attribute
-// context (over a post-resolution HTML re-parse): the fix stays entirely on the
-// display token path and touches only RESOLVED TOKEN VALUES. Literal authored
-// URLs keep the sanitiser's own verdict (a re-parse would also have to re-decide
-// them, and would wrongly strip the display's legitimately-allowed `data:` <img>
-// srcs — issue #161); CMS/page-content behaviour is untouched. The check fires
-// only when the token opens a URL attribute value, i.e. the resolved value is
-// what determines the scheme.
+// DESIGN CHOICE — enforce in TWO phases, both scoped to token-bearing URL
+// attributes, never a full post-resolution HTML re-parse: the fix stays on the
+// display token path and touches only attributes whose AUTHORED value carried a
+// token. Literal authored URLs keep the sanitiser's own verdict (a blanket
+// re-parse would re-decide them and wrongly strip the display's legitimately-
+// allowed `data:` <img> srcs — issue #161); CMS/page-content behaviour is
+// untouched.
+//
+//   • Phase 1 (token-level, fast path): while resolving, when a token OPENS a
+//     URL attribute value its resolved value runs through neutraliseUrlScheme,
+//     so a single token bringing its own `javascript:`/`data:` scheme is killed
+//     at injection. This covers the common single-token case cheaply.
+//   • Phase 2 (attribute-level, composition-closing — issue #186): phase 1 only
+//     inspects the OPENING token, so a scheme split across adjacent tokens
+//     (`href="{{a}}{{b}}"`, a=`javascript`, b=`:alert(1)`) reconstitutes
+//     `javascript:` from two individually-innocent halves and slips past it.
+//     After full resolution, re-check the COMPLETE final value of every
+//     token-bearing href/src attribute (only those — literal attributes are left
+//     alone, preserving #161) and collapse the whole value to `#` when its
+//     scheme is disallowed.
 
 /** True when the html up to `offset` ends with a URL-bearing attribute opener
  * (`href="`/`src="`), so the token that follows is the START of that URL and its
@@ -131,6 +143,56 @@ function neutraliseUrlScheme(value: string): string {
   return ALLOWED_URL_SCHEME.test(scheme[1]) ? value : "#";
 }
 
+// Phase 2 — composition-closing attribute scheme pass (issue #186). Matches a
+// URL-bearing attribute and captures its value in double-quoted, single-quoted,
+// or unquoted form. Used twice: once over the AUTHORED template (to record which
+// href/src attributes were token-bearing) and once over the RESOLVED output (to
+// re-check those same attributes' complete values). A fresh RegExp is created
+// per pass so the shared /g `lastIndex` can never leak between the two walks.
+const URL_ATTR_VALUE_SOURCE =
+  "(\\b(?:href|src)\\s*=\\s*)(?:\"([^\"]*)\"|'([^']*)'|([^\\s\"'>]+))";
+const CONTAINS_TOKEN = /\{\{[^}]*\}\}/;
+
+/** Record, in document order, whether each href/src attribute value in the
+ * AUTHORED template contains at least one `{{…}}` token. Resolution only
+ * substitutes tokens for escaped text (it can neither create nor destroy an
+ * attribute), so this sequence maps 1:1 and in order onto the resolved output's
+ * href/src attributes — letting phase 2 re-check the right attributes
+ * positionally without tracking shifting offsets. */
+function tokenBearingUrlAttributeFlags(template: string): boolean[] {
+  const pattern = new RegExp(URL_ATTR_VALUE_SOURCE, "gi");
+  const flags: boolean[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(template)) !== null) {
+    const value = match[2] ?? match[3] ?? match[4] ?? "";
+    flags.push(CONTAINS_TOKEN.test(value));
+  }
+  return flags;
+}
+
+/** Walk the RESOLVED output's href/src attributes in order and, for each one
+ * whose authored counterpart was token-bearing, run the COMPLETE final value
+ * through neutraliseUrlScheme — collapsing the whole value to `#` when its
+ * scheme is disallowed. Literal (no-token) attributes are returned untouched so
+ * the display's allowed `data:` <img> srcs survive (issue #161). */
+function neutraliseTokenBearingUrlAttributes(
+  resolved: string,
+  tokenBearing: boolean[]
+): string {
+  const pattern = new RegExp(URL_ATTR_VALUE_SOURCE, "gi");
+  let attrIndex = 0;
+  return resolved.replace(
+    pattern,
+    (whole, prefix: string, dq?: string, sq?: string, uq?: string) => {
+      const isTokenBearing = tokenBearing[attrIndex++] ?? false;
+      if (!isTokenBearing) return whole;
+      const quote = dq !== undefined ? '"' : sq !== undefined ? "'" : "";
+      const value = dq ?? sq ?? uq ?? "";
+      return `${prefix}${quote}${neutraliseUrlScheme(value)}${quote}`;
+    }
+  );
+}
+
 /**
  * Resolve the display's value tokens inside an authored html surface, with each
  * injected value HTML-escaped. The template's own markup and any non-display
@@ -140,19 +202,35 @@ function neutraliseUrlScheme(value: string): string {
  * layout-render.ts): the sanitiser trusts the authored template, and escaping
  * the injected value is what keeps a config value from being markup.
  *
- * A resolved value that OPENS a URL attribute (`href="{{config:link}}"`) also
- * runs through the URL-scheme guard (issue #176) so it can never smuggle a
- * `javascript:`/`data:` scheme past the sanitiser that ran before it.
+ * URL schemes are guarded in two phases (issue #176, #186): phase 1 neutralises
+ * a resolved value that OPENS a URL attribute (`href="{{config:link}}"`) at
+ * injection time; phase 2 then re-checks the COMPLETE value of every
+ * token-bearing href/src attribute after resolution, closing a scheme split
+ * across adjacent tokens (`href="{{a}}{{b}}"`) that phase 1's opener-only check
+ * would miss. Either way a config value can never smuggle a `javascript:`/`data:`
+ * scheme past the sanitiser that ran before it.
  */
 export function resolveDisplayHtml(template: string, state: DisplayState): string {
-  return template.replace(
+  // Snapshot which href/src attributes were token-bearing BEFORE resolution, so
+  // phase 2 can positionally re-check exactly those (and leave literal `data:`
+  // srcs — issue #161 — untouched).
+  const tokenBearing = tokenBearingUrlAttributeFlags(template);
+
+  // Phase 1 — token-level guard (fast path): neutralise the scheme of a value
+  // that opens a URL attribute as it is injected and escaped.
+  const resolved = template.replace(
     PLACEHOLDER_PATTERN,
     (_whole: string, token: string, configKey: string | undefined, offset: number, full: string) => {
-      const resolved = resolveToken(token, configKey, state);
+      const value = resolveToken(token, configKey, state);
       const guarded = opensUrlAttributeValue(full, offset)
-        ? neutraliseUrlScheme(resolved)
-        : resolved;
+        ? neutraliseUrlScheme(value)
+        : value;
       return escapeHtmlValue(guarded);
     }
   );
+
+  // Phase 2 — composition-closing pass: re-check the complete final value of the
+  // token-bearing href/src attributes, killing a scheme reconstituted across
+  // tokens.
+  return neutraliseTokenBearingUrlAttributes(resolved, tokenBearing);
 }

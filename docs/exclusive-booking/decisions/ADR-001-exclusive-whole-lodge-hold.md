@@ -123,7 +123,12 @@ concept (not display-only); the display reads it.
 - **Capacity integrity:** the two-sided rule must run inside the existing
   `acquireLodgeCapacityLock` so a hold and a concurrent admission cannot race.
   A hold set concurrently with an in-flight admission must resolve
-  deterministically (lock-serialised).
+  deterministically (lock-serialised). *(Residual, #186: cancel paths serialise
+  on the club-wide key, disjoint from the per-lodge hold key, so a cancel can
+  clear the hold without ever contending on that lock; the hold-set write is
+  therefore a compare-and-set — an `updateMany` re-checking `capacityHoldingBookingFilter`
+  at write time — so set-vs-cancel converges in either commit ordering and no
+  stale hold is ever planted on a terminal, non-capacity-holding row.)*
 - **Authorisation:** setting/clearing an exclusive hold is an admin capacity
   action — gate it like the over-capacity override (admin/full-admin), audited.
   A member request only sets `BookingRequest.exclusivityRequested`, never the

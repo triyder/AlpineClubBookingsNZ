@@ -165,6 +165,67 @@ describe("resolveDisplayHtml — URL-scheme guard for resolved tokens (issue #17
   });
 });
 
+// Phase 2 — composition-closing attribute scheme pass (issue #186). The phase-1
+// guard above only inspects the token that OPENS a URL attribute, so a scheme
+// split across adjacent tokens reconstitutes past it. The attribute-level pass
+// re-checks the COMPLETE resolved value of every token-bearing href/src
+// attribute, while leaving literal (no-token) attributes untouched so the
+// display's allowed `data:` <img> srcs (issue #161) survive.
+describe("resolveDisplayHtml — split-token scheme composition (issue #186)", () => {
+  it("neutralises a javascript: scheme reconstituted across two adjacent tokens in an href", () => {
+    // Neither half is a scheme on its own: 'javascript' has no colon, ':alert(1)'
+    // is not at the attribute start. Only the concatenation forms javascript:.
+    const s = state({ config: { a: "javascript", b: ":alert(1)" } });
+    const html = resolveDisplayHtml('<a href="{{config:a}}{{config:b}}">x</a>', s);
+    expect(html).toBe('<a href="#">x</a>');
+    expect(html).not.toMatch(/javascript:/);
+  });
+
+  it("neutralises a data: scheme split across tokens in an <img> src", () => {
+    const s = state({ config: { a: "data", b: ":text/html,evil" } });
+    const html = resolveDisplayHtml('<img src="{{config:a}}{{config:b}}" />', s);
+    expect(html).toContain('src="#"');
+    expect(html).not.toContain("data:");
+  });
+
+  it("neutralises a scheme composed of a literal prefix plus a token tail", () => {
+    // The literal 'javascr' opens the attribute (no scheme yet); the token
+    // completes 'javascript:'. Phase 1 never sees the token as the opener, so
+    // only the phase-2 complete-value check catches it.
+    const s = state({ config: { rest: "ipt:alert(1)" } });
+    const html = resolveDisplayHtml('<a href="javascr{{config:rest}}">x</a>', s);
+    expect(html).toBe('<a href="#">x</a>');
+    expect(html).not.toMatch(/javascript:/);
+  });
+
+  it("preserves a benign https URL whose path segment comes from a token", () => {
+    const s = state({ config: { path: "wing/lodge-3" } });
+    expect(
+      resolveDisplayHtml('<a href="https://x.nz/{{config:path}}">x</a>', s)
+    ).toBe('<a href="https://x.nz/wing/lodge-3">x</a>');
+  });
+
+  it("leaves a literal data: <img> src (no token) untouched — no #161 regression", () => {
+    const dataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB";
+    const s = state({ config: { wifi: "alpine1234" } });
+    const html = resolveDisplayHtml(
+      `<img src="${dataUri}" /><p>Wi-Fi {{config:wifi}}</p>`,
+      s
+    );
+    // The literal src carried no token, so phase 2 skips it: the data: URI is
+    // preserved verbatim while the token-bearing copy still resolves.
+    expect(html).toContain(`src="${dataUri}"`);
+    expect(html).toContain("Wi-Fi alpine1234");
+  });
+
+  it("still neutralises a single-token whole-scheme attack (phase-1 path intact)", () => {
+    const s = state({ config: { link: "javascript:alert(1)" } });
+    expect(resolveDisplayHtml('<a href="{{config:link}}">x</a>', s)).toBe(
+      '<a href="#">x</a>'
+    );
+  });
+});
+
 describe("resolveDisplayText — unchanged text-path behaviour", () => {
   it("still returns raw (unescaped) text for React text nodes", () => {
     const s = state({ config: { note: "<img onerror=x>" } });

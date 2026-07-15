@@ -8,7 +8,10 @@ import {
   findOverlappingCapacityHoldingBookings,
   findOverlappingOverriddenNonHoldingBookings,
 } from "@/lib/capacity";
-import { bookingHoldsCapacity } from "@/lib/booking-status";
+import {
+  bookingHoldsCapacity,
+  capacityHoldingBookingFilter,
+} from "@/lib/booking-status";
 import logger from "@/lib/logger";
 import { z } from "zod";
 
@@ -148,21 +151,52 @@ export async function POST(
       // existing overlapping bookings — the lock above serialises the write, it
       // never refuses. Mirror capacity-hold's clear semantics — null the
       // who/when audit columns when clearing.
-      const updated = await tx.booking.update({
-        where: { id: booking.id },
-        data: hold
-          ? {
+      //
+      // Compare-and-set on SET (issue #186, extends #173/#177): the per-lodge
+      // lock serialises writers on THIS lodge's key, but the status guard above
+      // read the PRE-lock snapshot and a cancel path serialises on the DISJOINT
+      // club-wide key — booking-cancel clears the hold via
+      // RELEASE_WHOLE_LODGE_HOLD_UPDATE while never taking the per-lodge lock. So
+      // a concurrent cancel can move the row to a terminal, non-capacity-holding
+      // status between our guard read and our write; an unconditional update-by-id
+      // would then plant an inert stale hold on a CANCELLED row. Make the SET a
+      // conditional updateMany whose predicate re-checks capacity-holding at write
+      // time (the same filter capacity.ts composes). Either commit ordering then
+      // converges: if the cancel wins the row no longer matches → zero rows → 409
+      // and no audit; if the set wins the cancel's later hold-clear still lands.
+      // CLEAR stays unconditional-by-id: clearing a stale hold on any status must
+      // never be blocked (issue #173, H2).
+      const heldAt = new Date();
+      const writeResult = hold
+        ? await tx.booking.updateMany({
+            where: { id: booking.id, AND: [capacityHoldingBookingFilter()] },
+            data: {
               wholeLodgeHold: true,
-              wholeLodgeHoldAt: new Date(),
+              wholeLodgeHoldAt: heldAt,
               wholeLodgeHoldByMemberId: session.user.id,
-            }
-          : {
+            },
+          })
+        : await tx.booking.updateMany({
+            where: { id: booking.id },
+            data: {
               wholeLodgeHold: false,
               wholeLodgeHoldAt: null,
               wholeLodgeHoldByMemberId: null,
             },
-        select: { wholeLodgeHold: true, wholeLodgeHoldAt: true },
-      });
+          });
+
+      // Zero rows on SET means the CAS predicate no longer matched — a
+      // concurrent writer moved the booking out of the capacity-holding
+      // population after our guard read. Refuse with 409 and write NO audit;
+      // nothing changed. (CLEAR always matches its id-only predicate for an
+      // existing row, so this only trips on SET.)
+      if (writeResult.count === 0) {
+        return {
+          error:
+            "The booking changed while the hold was being set (it no longer holds capacity). Refresh and retry.",
+          status: 409 as const,
+        };
+      }
 
       // ADR-001 decision 1 conflict surfacing (issue #119): when SETTING the
       // hold, list the existing capacity-holding bookings that overlap its
@@ -252,10 +286,12 @@ export async function POST(
         tx,
       );
 
+      // updateMany returns only a count, so build the response from the values
+      // we just wrote: SET stamped `heldAt`, CLEAR nulled the timestamp.
       return {
         success: true as const,
-        wholeLodgeHold: updated.wholeLodgeHold,
-        wholeLodgeHoldAt: updated.wholeLodgeHoldAt,
+        wholeLodgeHold: hold,
+        wholeLodgeHoldAt: hold ? heldAt : null,
         conflicts,
       };
     });

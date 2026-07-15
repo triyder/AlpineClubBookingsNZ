@@ -232,13 +232,21 @@ applied the superseded migrations are reset with a fresh `migrate deploy`.)*
 - **Token scope.** Authored content resolves only the display's own token set,
   never the full site token catalogue — a wall must not surface data beyond the
   privacy-reduced payload the serialiser already guards. *(Value resolution runs
-  AFTER the sanitiser, so issue #176 adds a URL-scheme guard: a resolved token
-  value that OPENS an authored `href`/`src` is scheme-validated — http/https/
-  mailto/tel and relative/anchor pass, anything else (javascript:, data:,
-  protocol-relative) collapses to an inert `#`, so a config value can never
-  smuggle a live scheme past the gate. Only resolved token values are checked;
-  literal authored URLs keep the sanitiser's verdict, and CMS/page-content
-  behaviour is untouched.)*
+  AFTER the sanitiser, so issue #176 adds a URL-scheme guard, hardened against
+  split-token composition in issue #186. Enforcement is **two-phase**, both
+  phases scoped to token-bearing `href`/`src` attributes: (1) a token-level fast
+  path scheme-validates a resolved value that OPENS an authored `href`/`src` as
+  it is injected; (2) a composition-closing pass then re-validates the COMPLETE
+  resolved value of every token-bearing `href`/`src` attribute after resolution,
+  catching a scheme reconstituted across adjacent tokens (`href="{{a}}{{b}}"`)
+  that phase 1's opener-only check would miss. In both phases http/https/mailto/
+  tel and relative/anchor pass and anything else (javascript:, data:, protocol-
+  relative) collapses to an inert `#` — so a config value can never smuggle a
+  live scheme past the gate, whether it carries the scheme whole or splices it
+  together across tokens. Only token-bearing attributes are checked; literal
+  authored URLs keep the sanitiser's verdict (preserving the display's allowed
+  literal `data:` <img> srcs, issue #161), and CMS/page-content behaviour is
+  untouched.)*
 - **Privacy unchanged.** All name reduction / minors / no-sensitive-field rules
   remain solely in `buildDisplayState`; the authoring layer only arranges what
   that serialiser already permits and can never widen it.
