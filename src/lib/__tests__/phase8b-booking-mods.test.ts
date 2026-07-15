@@ -218,6 +218,8 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
 // Create a mock tx that behaves like prisma inside a transaction
 function makeTx(booking: ReturnType<typeof makeBooking>) {
   return {
+    // #1881 — the date/batch service takes the global lock(1) via $executeRaw.
+    $executeRaw: vi.fn().mockResolvedValue(undefined),
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
     lodge: {
       findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),

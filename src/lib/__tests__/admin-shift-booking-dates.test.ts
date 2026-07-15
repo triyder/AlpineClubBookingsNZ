@@ -29,6 +29,8 @@ const h = vi.hoisted(() => ({
 }));
 
 const tx = {
+  // #1881 — the date service takes the global lock(1) via $executeRaw.
+  $executeRaw: vi.fn().mockResolvedValue(undefined),
   booking: { findUnique: h.txBookingFindUnique, update: h.txBookingUpdate },
   bookingGuest: { update: h.txGuestUpdate },
   bookingGuestNight: {

@@ -276,6 +276,8 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
 
 function makeTx(booking: ReturnType<typeof makeBooking>) {
   return {
+    // #1881 — the date/batch service takes the global lock(1) via $executeRaw.
+    $executeRaw: vi.fn().mockResolvedValue(undefined),
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
     // F1 (#1887): the date path now reads the applied-credit ledger for every
     // pre-payment modification (gated on status, not the payment mirror) so the
