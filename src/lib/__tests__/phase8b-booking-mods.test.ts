@@ -132,6 +132,11 @@ vi.mock("@/lib/payment-recovery", () => ({
 }));
 vi.mock("@/lib/member-credit", () => ({
   createBookingModificationCredit: vi.fn().mockResolvedValue({ id: "credit_1" }),
+  deriveBookingAppliedCreditCents: vi.fn().mockResolvedValue(0),
+  clampAppliedCreditToBookingPrice: vi.fn().mockResolvedValue({
+    appliedCreditCents: 0,
+    refundedExcessCents: 0,
+  }),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
