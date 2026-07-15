@@ -39,6 +39,7 @@ import {
 import { formatDate } from "./xero-invoice-helpers";
 import logger from "@/lib/logger";
 import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "./xero-operation-outbox-payload";
+import { XeroAppliedCreditOperationBusyError } from "./xero-applied-credit-operation-serialization";
 
 // XeroObjectLink roles for this engine's artefacts.
 const APPLIED_CREDIT_ALLOCATION_ROLE = "APPLIED_CREDIT_ALLOCATION";
@@ -399,7 +400,7 @@ export async function allocateAppliedCreditForBooking(
       select: { id: true },
     });
     if (deallocationInFlight) {
-      throw new Error(
+      throw new XeroAppliedCreditOperationBusyError(
         `Applied-credit deallocation ${deallocationInFlight.id} is still running for booking ${bookingId}; retrying allocation`
       );
     }

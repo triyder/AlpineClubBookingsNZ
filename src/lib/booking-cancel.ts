@@ -10,7 +10,7 @@ import {
 import { sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { recordBookingEvent } from "./booking-events";
-import { BookingEventType, BookingStatus, CreditType, type Prisma } from "@prisma/client";
+import { BookingEventType, BookingStatus, type Prisma } from "@prisma/client";
 import { createCancellationCredit, restoreCreditFromBooking } from "./member-credit";
 import { processWaitlistForDates } from "./waitlist";
 import {
@@ -838,17 +838,18 @@ async function performBookingCancellation(
       // clearing note below must not re-credit them (Xero rejects
       // over-allocation and the outbox op would poison). Read under lock(1) —
       // the inbound reconcile serializes on the same lock.
-      const xeroAllocated = await tx.memberCredit.aggregate({
+      // Use the precise allocation-slice ledger. The MemberCredit Xero-note
+      // stamp is historical and remains on the original row after a partial
+      // deallocation, so it would understate the invoice clearing amount.
+      const xeroAllocated = await tx.memberCreditNoteAllocation.aggregate({
         where: {
           appliedToBookingId: bookingId,
-          type: CreditType.BOOKING_APPLIED,
-          xeroCreditNoteId: { not: null },
         },
         _sum: { amountCents: true },
       });
       const xeroAllocatedAppliedCreditCents = Math.max(
         0,
-        -(xeroAllocated._sum.amountCents ?? 0)
+        xeroAllocated._sum.amountCents ?? 0
       );
 
       return {

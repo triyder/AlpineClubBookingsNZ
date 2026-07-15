@@ -128,7 +128,7 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
           booking: {
             update: mocks.txBookingUpdate,
           },
-          memberCredit: {
+          memberCreditNoteAllocation: {
             aggregate: mocks.txMemberCreditAggregate,
           },
           paymentTransaction: {
@@ -299,7 +299,7 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
           booking: {
             update: mocks.txBookingUpdate,
           },
-          memberCredit: {
+          memberCreditNoteAllocation: {
             aggregate: mocks.txMemberCreditAggregate,
           },
           paymentTransaction: {
@@ -349,11 +349,11 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
 
   it("subtracts only credit already allocated to the invoice as a Xero credit note", async () => {
     // A NZ$50.00 credit note was allocated to the invoice in Xero (a
-    // BOOKING_APPLIED row carrying xeroCreditNoteId, stored negative), so the
+    // precise MemberCreditNoteAllocation ledger stores positive cents, so the
     // invoice's Xero outstanding is 15000 − 5000; the clearing note must be
     // exactly that remainder to avoid over-allocating.
     mocks.txMemberCreditAggregate.mockResolvedValue({
-      _sum: { amountCents: -5000 },
+      _sum: { amountCents: 5000 },
     });
 
     const result = await releaseExpiredInternetBankingHolds(NOW);
@@ -369,13 +369,13 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
   it("conserves on hold-expiry with #1620-allocated applied credit (reduced clearing + 100% restore)", async () => {
     // #1620 allocate-existing makes xeroAllocatedAppliedCredit non-zero: the
     // applied credit was allocated to the invoice as a Xero note (stamped
-    // BOOKING_APPLIED, -5000) AND is restored 100% at release. Clearing =
+    // MemberCreditNoteAllocation, +5000) AND is restored 100% at release. Clearing =
     // finalPrice − allocated = 10000, and the member's credit is made whole.
     // Together these conserve: the invoice nets to zero (5000 allocated note +
     // 10000 clearing, no cash) and the credit balance is restored — the exact
     // interaction the owner asked to pin now that the term can be non-zero.
     mocks.txMemberCreditAggregate.mockResolvedValue({
-      _sum: { amountCents: -5000 },
+      _sum: { amountCents: 5000 },
     });
     mocks.restoreCreditFromBooking.mockResolvedValue(5000);
 
@@ -419,7 +419,7 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
     // The invoice's entire finalPrice is already covered by allocated Xero
     // credit notes: nothing left to clear, so no note is enqueued.
     mocks.txMemberCreditAggregate.mockResolvedValue({
-      _sum: { amountCents: -15000 },
+      _sum: { amountCents: 15000 },
     });
 
     const result = await releaseExpiredInternetBankingHolds(NOW);

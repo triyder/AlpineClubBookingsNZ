@@ -15,6 +15,11 @@ import {
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
 } from "./xero-operation-outbox-payload";
+import { XeroAppliedCreditOperationBusyError } from "./xero-applied-credit-operation-serialization";
+
+const APPLIED_CREDIT_ALLOCATION_ROLE = "APPLIED_CREDIT_ALLOCATION";
+const APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE =
+  "APPLIED_CREDIT_REMAINDER_ALLOCATION";
 
 interface DeallocationRow {
   id: string;
@@ -65,6 +70,93 @@ export function planAppliedCreditDeallocation(
 
 type ProviderAllocation = { allocationID: string; amountCents: number };
 
+type AllocationLinkSnapshot = {
+  id: string;
+  localModel: string;
+  localId: string;
+  xeroObjectId: string;
+  role: string;
+  metadata: unknown;
+};
+
+function metadataRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function linkMatchesGroup(
+  link: AllocationLinkSnapshot,
+  creditNoteId: string,
+  invoiceId: string
+): boolean {
+  const metadata = metadataRecord(link.metadata);
+  return (
+    metadata?.creditNoteId === creditNoteId && metadata?.invoiceId === invoiceId
+  );
+}
+
+function linkedCurrentCents(links: AllocationLinkSnapshot[]): number | null {
+  if (links.length === 0) return null;
+  const byAnchor = new Map<string, number>();
+  for (const link of links) {
+    const metadata = metadataRecord(link.metadata);
+    const value =
+      typeof metadata?.rowTargetCents === "number"
+        ? metadata.rowTargetCents
+        : typeof metadata?.amountCents === "number"
+          ? metadata.amountCents
+          : null;
+    if (value === null || !Number.isInteger(value) || value < 0) return null;
+    const anchor = `${link.localModel}:${link.localId}:${link.role}`;
+    const existing = byAnchor.get(anchor);
+    if (existing !== undefined && existing !== value) return null;
+    byAnchor.set(anchor, value);
+  }
+  return [...byAnchor.values()].reduce((sum, value) => sum + value, 0);
+}
+
+async function readAffectedLinks(params: {
+  paymentId: string;
+  invoiceId: string;
+  group: PlannedAppliedCreditDeallocationGroup;
+}): Promise<AllocationLinkSnapshot[]> {
+  const rowIds = params.group.rowTargets.map((row) => row.id);
+  const links = await prisma.xeroObjectLink.findMany({
+    where: {
+      active: true,
+      xeroObjectType: "ALLOCATION",
+      OR: [
+        {
+          localModel: "MemberCreditNoteAllocation",
+          localId: { in: rowIds },
+          role: APPLIED_CREDIT_ALLOCATION_ROLE,
+        },
+        {
+          localModel: "Payment",
+          localId: params.paymentId,
+          role: APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE,
+        },
+      ],
+    },
+    select: {
+      id: true,
+      localModel: true,
+      localId: true,
+      xeroObjectId: true,
+      role: true,
+      metadata: true,
+    },
+  });
+  return links.filter((link) =>
+    linkMatchesGroup(
+      link,
+      params.group.xeroCreditNoteId,
+      params.invoiceId
+    )
+  );
+}
+
 function centsFromXeroAmount(amount: unknown): number | null {
   if (typeof amount !== "number" || !Number.isFinite(amount)) return null;
   const cents = Math.round(amount * 100);
@@ -102,20 +194,53 @@ async function checkpoint(params: {
   operationId: string;
   bookingId: string;
   group: PlannedAppliedCreditDeallocationGroup;
-  allocationIds: string[];
+  phase: "BEFORE_DELETE" | "PROVIDER_VERIFIED";
+  providerAllocations: ProviderAllocation[];
+  priorLinks: AllocationLinkSnapshot[];
+  providerMatch: string;
 }) {
+  const current = await prisma.xeroSyncOperation.findUnique({
+    where: { id: params.operationId },
+    select: { requestPayload: true },
+  });
+  const payload = metadataRecord(current?.requestPayload) ?? {};
+  const previousHistory = Array.isArray(payload.history)
+    ? payload.history.filter(
+        (entry): entry is Record<string, unknown> => metadataRecord(entry) !== null
+      )
+    : [];
+  const entry = {
+    creditNoteId: params.group.xeroCreditNoteId,
+    currentCents: params.group.currentCents,
+    targetCents: params.group.targetCents,
+    rowTargets: params.group.rowTargets,
+    phase: params.phase,
+    providerMatch: params.providerMatch,
+    providerAllocations: params.providerAllocations,
+    allocationIds: params.providerAllocations.map(
+      (allocation) => allocation.allocationID
+    ),
+    priorLinks: params.priorLinks.map((link) => ({
+      id: link.id,
+      localModel: link.localModel,
+      localId: link.localId,
+      xeroObjectId: link.xeroObjectId,
+      role: link.role,
+      metadata: link.metadata,
+    })),
+  };
+  // Append rather than replace: BEFORE_DELETE and PROVIDER_VERIFIED are both
+  // durable evidence, including every row's cents and the provider IDs seen at
+  // that phase. This is the recovery/audit trail for multi-note and retry runs.
+  const history = [...previousHistory, entry];
   await prisma.xeroSyncOperation.update({
     where: { id: params.operationId },
     data: {
       requestPayload: sanitizeForJson({
         queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
         bookingId: params.bookingId,
-        checkpoint: {
-          creditNoteId: params.group.xeroCreditNoteId,
-          currentCents: params.group.currentCents,
-          targetCents: params.group.targetCents,
-          allocationIds: params.allocationIds,
-        },
+        checkpoint: entry,
+        history,
       }),
     },
   });
@@ -123,7 +248,11 @@ async function checkpoint(params: {
 
 async function applyLocalGroup(params: {
   memberId: string;
+  paymentId: string;
+  invoiceId: string;
   group: PlannedAppliedCreditDeallocationGroup;
+  providerAllocations: ProviderAllocation[];
+  priorLinks: AllocationLinkSnapshot[];
 }) {
   await prisma.$transaction(async (tx) => {
     await lockMemberCreditLedger(params.memberId, tx);
@@ -152,15 +281,99 @@ async function applyLocalGroup(params: {
         }
       }
     }
+    const rowIds = params.group.rowTargets.map((row) => row.id);
     await tx.xeroObjectLink.updateMany({
       where: {
-        localModel: "MemberCreditNoteAllocation",
-        localId: { in: params.group.rowTargets.map((row) => row.id) },
         xeroObjectType: "ALLOCATION",
         active: true,
+        OR: [
+          {
+            localModel: "MemberCreditNoteAllocation",
+            localId: { in: rowIds },
+            role: APPLIED_CREDIT_ALLOCATION_ROLE,
+          },
+          {
+            id: {
+              in: params.priorLinks
+                .filter(
+                  (link) =>
+                    link.localModel === "Payment" &&
+                    link.role === APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE
+                )
+                .map((link) => link.id),
+            },
+          },
+        ],
       },
       data: { active: false },
     });
+
+    if (params.group.targetCents <= 0) return;
+
+    const hasRemainderAnchor = params.priorLinks.some(
+      (link) =>
+        link.localModel === "Payment" &&
+        link.role === APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE
+    );
+    const positiveRows = params.group.rowTargets.filter(
+      (row) => row.targetCents > 0
+    );
+    const anchors = hasRemainderAnchor
+      ? [
+          {
+            localModel: "Payment",
+            localId: params.paymentId,
+            role: APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE,
+            targetCents: params.group.targetCents,
+          },
+        ]
+      : positiveRows.map((row) => ({
+          localModel: "MemberCreditNoteAllocation",
+          localId: row.id,
+          role: APPLIED_CREDIT_ALLOCATION_ROLE,
+          targetCents: row.targetCents,
+        }));
+
+    for (const anchor of anchors) {
+      for (const allocation of params.providerAllocations) {
+        await tx.xeroObjectLink.upsert({
+          where: {
+            localModel_localId_xeroObjectType_xeroObjectId_role: {
+              localModel: anchor.localModel,
+              localId: anchor.localId,
+              xeroObjectType: "ALLOCATION",
+              xeroObjectId: allocation.allocationID,
+              role: anchor.role,
+            },
+          },
+          create: {
+            localModel: anchor.localModel,
+            localId: anchor.localId,
+            xeroObjectType: "ALLOCATION",
+            xeroObjectId: allocation.allocationID,
+            role: anchor.role,
+            active: true,
+            metadata: sanitizeForJson({
+              creditNoteId: params.group.xeroCreditNoteId,
+              invoiceId: params.invoiceId,
+              amountCents: allocation.amountCents,
+              rowTargetCents: anchor.targetCents,
+              providerAllocationIdVerified: true,
+            }),
+          },
+          update: {
+            active: true,
+            metadata: sanitizeForJson({
+              creditNoteId: params.group.xeroCreditNoteId,
+              invoiceId: params.invoiceId,
+              amountCents: allocation.amountCents,
+              rowTargetCents: anchor.targetCents,
+              providerAllocationIdVerified: true,
+            }),
+          },
+        });
+      }
+    }
   });
 }
 
@@ -204,7 +417,9 @@ export async function deallocateExcessAppliedCreditForBooking(
     select: { id: true },
   });
   if (conflicting) {
-    throw new Error(`Applied-credit operation ${conflicting.id} is still running; retrying deallocation`);
+    throw new XeroAppliedCreditOperationBusyError(
+      `Applied-credit operation ${conflicting.id} is still running; retrying deallocation`
+    );
   }
 
   const desiredAppliedCents = await deriveBookingAppliedCreditCents(bookingId);
@@ -216,6 +431,11 @@ export async function deallocateExcessAppliedCreditForBooking(
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
   for (const group of groups) {
+    const priorLinks = await readAffectedLinks({
+      paymentId: booking.payment.id,
+      invoiceId: booking.payment.xeroInvoiceId,
+      group,
+    });
     let provider = await readInvoiceAllocations(
       group.xeroCreditNoteId,
       booking.payment.xeroInvoiceId
@@ -230,19 +450,26 @@ export async function deallocateExcessAppliedCreditForBooking(
     const savedIds = Array.isArray(saved?.allocationIds)
       ? saved.allocationIds.filter((id): id is string => typeof id === "string")
       : [];
-    const checkpointedPartial =
+    const checkpointMatchesGroup =
       saved?.creditNoteId === group.xeroCreditNoteId &&
       saved?.currentCents === group.currentCents &&
-      saved?.targetCents === group.targetCents &&
+      saved?.targetCents === group.targetCents;
+    const currentTotalHasLocalProvenance =
+      providerTotal === group.currentCents &&
+      linkedCurrentCents(priorLinks) === group.currentCents;
+    const targetTotalHasCheckpointProvenance =
+      providerTotal === group.targetCents && checkpointMatchesGroup;
+    const checkpointedPartial =
+      checkpointMatchesGroup &&
       providerTotal < group.currentCents &&
       provider.every((allocation) => savedIds.includes(allocation.allocationID));
     if (
-      providerTotal !== group.currentCents &&
-      providerTotal !== group.targetCents &&
+      !currentTotalHasLocalProvenance &&
+      !targetTotalHasCheckpointProvenance &&
       !checkpointedPartial
     ) {
       throw new Error(
-        `Ambiguous Xero allocation total for credit note ${group.xeroCreditNoteId}: provider=${providerTotal}c local=${group.currentCents}c target=${group.targetCents}c`
+        `Ambiguous Xero allocation total/provenance for credit note ${group.xeroCreditNoteId}: provider=${providerTotal}c local=${group.currentCents}c target=${group.targetCents}c; no matching active local links or durable checkpoint prove these provider allocation IDs`
       );
     }
 
@@ -251,7 +478,12 @@ export async function deallocateExcessAppliedCreditForBooking(
         operationId: options.syncOperationId,
         bookingId,
         group,
-        allocationIds: provider.map((allocation) => allocation.allocationID),
+        phase: "BEFORE_DELETE",
+        providerAllocations: provider,
+        priorLinks,
+        providerMatch: checkpointedPartial
+          ? "CHECKPOINTED_PARTIAL_PROVIDER_IDS"
+          : "LOCAL_LINK_TOTAL_AND_XERO_NOTE_INVOICE_MATCH",
       });
       for (const allocation of provider) {
         await callXeroApi(
@@ -299,7 +531,26 @@ export async function deallocateExcessAppliedCreditForBooking(
         );
       }
     }
-    await applyLocalGroup({ memberId: booking.memberId, group });
+    await checkpoint({
+      operationId: options.syncOperationId,
+      bookingId,
+      group,
+      phase: "PROVIDER_VERIFIED",
+      providerAllocations: provider,
+      priorLinks,
+      providerMatch:
+        providerTotal === group.targetCents
+          ? "TARGET_TOTAL_WITH_ACTUAL_XERO_ALLOCATION_IDS"
+          : "UNREACHABLE",
+    });
+    await applyLocalGroup({
+      memberId: booking.memberId,
+      paymentId: booking.payment.id,
+      invoiceId: booking.payment.xeroInvoiceId,
+      group,
+      providerAllocations: provider,
+      priorLinks,
+    });
   }
 
   await completeXeroSyncOperation(options.syncOperationId, {

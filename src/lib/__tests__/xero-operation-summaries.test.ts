@@ -110,6 +110,28 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
     expect(factValue(summary!, "Role")).toBe("REPAIR");
   });
 
+  it("summarizes a checkpointed applied-credit deallocation", () => {
+    const summary = summarizeXeroOperation({
+      entityType: "ALLOCATION",
+      operationType: "UPDATE",
+      requestPayload: {
+        queueType: "APPLIED_CREDIT_DEALLOCATION",
+        bookingId: "booking-abcdefghijklmno",
+        checkpoint: {
+          creditNoteId: "credit-note-abcdefghijklmno",
+          currentCents: 4000,
+          targetCents: 2500,
+          phase: "PROVIDER_VERIFIED",
+        },
+      },
+      responsePayload: null,
+    });
+    expect(summary?.title).toBe("Queued: reduce applied credit on Xero invoice");
+    expect(factValue(summary!, "Current allocation")).toBe("$40.00");
+    expect(factValue(summary!, "Target allocation")).toBe("$25.00");
+    expect(factValue(summary!, "Recovery phase")).toBe("PROVIDER_VERIFIED");
+  });
+
   it("summarizes a queued membership-cancellation contact", () => {
     const summary = summarizeXeroOperation({
       entityType: "CONTACT",

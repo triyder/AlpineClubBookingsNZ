@@ -47,6 +47,7 @@ const h = vi.hoisted(() => {
       update: operationUpdate,
     },
     memberCreditNoteAllocation: { findMany: allocationFindMany },
+    xeroObjectLink: { findMany: linkFindMany },
     $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) =>
       callback(tx),
     ),
@@ -131,6 +132,28 @@ function providerNote(amountCents: number, allocationID = "alloc-1") {
   };
 }
 
+function regularAllocationLink() {
+  return {
+    id: "link-row-1",
+    localModel: "MemberCreditNoteAllocation",
+    localId: "row-1",
+    xeroObjectId: "cn-1:inv-1:4000",
+    role: "APPLIED_CREDIT_ALLOCATION",
+    metadata: { creditNoteId: "cn-1", invoiceId: "inv-1", amountCents: 4000 },
+  };
+}
+
+function remainderAllocationLink() {
+  return {
+    id: "link-payment-1",
+    localModel: "Payment",
+    localId: "payment-1",
+    xeroObjectId: "cn-1:inv-1:4000",
+    role: "APPLIED_CREDIT_REMAINDER_ALLOCATION",
+    metadata: { creditNoteId: "cn-1", invoiceId: "inv-1", amountCents: 4000 },
+  };
+}
+
 describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -160,6 +183,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
   });
 
   it("checkpoints the real allocation ID, deletes, recreates the exact target, then reduces local cents", async () => {
+    h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
     h.getCreditNote
       .mockResolvedValueOnce(providerNote(4000))
       .mockResolvedValueOnce(providerNote(2500, "alloc-new"));
@@ -194,6 +218,38 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       where: { id: "row-1" },
       data: { amountCents: 2500 },
     });
+    expect(h.linkUpdateMany).toHaveBeenCalled();
+    expect(h.linkUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          localModel: "MemberCreditNoteAllocation",
+          localId: "row-1",
+          xeroObjectId: "alloc-new",
+          active: true,
+          metadata: expect.objectContaining({
+            providerAllocationIdVerified: true,
+            rowTargetCents: 2500,
+          }),
+        }),
+      })
+    );
+    expect(h.operationUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          requestPayload: expect.objectContaining({
+            checkpoint: expect.objectContaining({
+              rowTargets: [
+                { id: "row-1", currentCents: 4000, targetCents: 2500 },
+              ],
+              providerAllocations: [
+                { allocationID: "alloc-new", amountCents: 2500 },
+              ],
+              phase: "PROVIDER_VERIFIED",
+            }),
+          }),
+        },
+      })
+    );
     expect(h.complete).toHaveBeenCalledWith(
       "op-1",
       expect.objectContaining({
@@ -216,7 +272,24 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     expect(h.allocationUpdate).not.toHaveBeenCalled();
   });
 
+  it("refuses a same-total provider allocation with no local/checkpoint provenance", async () => {
+    h.linkFindMany.mockResolvedValue([]);
+    h.getCreditNote.mockResolvedValue(
+      providerNote(4000, "manual-same-total-allocation")
+    );
+
+    await expect(
+      deallocateExcessAppliedCreditForBooking("booking-1", {
+        syncOperationId: "op-1",
+      })
+    ).rejects.toThrow(/Ambiguous Xero allocation total/);
+
+    expect(h.deleteCreditNoteAllocations).not.toHaveBeenCalled();
+    expect(h.createCreditNoteAllocation).not.toHaveBeenCalled();
+  });
+
   it("resumes a checkpointed partial delete without guessing", async () => {
+    h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
     h.operationFindUnique.mockResolvedValue({
       requestPayload: {
         queueType: "APPLIED_CREDIT_DEALLOCATION",
@@ -244,6 +317,179 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     expect(h.allocationUpdate).toHaveBeenCalledWith({
       where: { id: "row-1" }, data: { amountCents: 2500 },
     });
+  });
+
+  it("heals a crash after recreate by linking the verified actual ID without recreating", async () => {
+    h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
+    h.operationFindUnique.mockResolvedValue({
+      requestPayload: {
+        queueType: "APPLIED_CREDIT_DEALLOCATION",
+        bookingId: "booking-1",
+        checkpoint: {
+          creditNoteId: "cn-1",
+          currentCents: 4000,
+          targetCents: 2500,
+          allocationIds: ["alloc-old"],
+          phase: "BEFORE_DELETE",
+        },
+      },
+    });
+    h.getCreditNote.mockResolvedValue(providerNote(2500, "alloc-recreated"));
+
+    await deallocateExcessAppliedCreditForBooking("booking-1", {
+      syncOperationId: "op-1",
+    });
+
+    expect(h.deleteCreditNoteAllocations).not.toHaveBeenCalled();
+    expect(h.createCreditNoteAllocation).not.toHaveBeenCalled();
+    expect(h.allocationUpdate).toHaveBeenCalledWith({
+      where: { id: "row-1" }, data: { amountCents: 2500 },
+    });
+    expect(h.linkUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ xeroObjectId: "alloc-recreated" }),
+      })
+    );
+  });
+
+  it("reconciles a minted-remainder Payment link to the actual replacement ID", async () => {
+    h.linkFindMany.mockResolvedValue([remainderAllocationLink()]);
+    h.getCreditNote
+      .mockResolvedValueOnce(providerNote(4000))
+      .mockResolvedValueOnce(providerNote(2500, "alloc-remainder-new"));
+
+    await deallocateExcessAppliedCreditForBooking("booking-1", {
+      syncOperationId: "op-1",
+    });
+
+    expect(h.linkUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          localModel: "Payment",
+          localId: "payment-1",
+          role: "APPLIED_CREDIT_REMAINDER_ALLOCATION",
+          xeroObjectId: "alloc-remainder-new",
+        }),
+      })
+    );
+  });
+
+  it("reconciles multiple local rows on one note to the surviving actual allocation", async () => {
+    const rows = [
+      { id: "row-1", xeroCreditNoteId: "cn-1", amountCents: 2000, createdAt: new Date("2026-01-01") },
+      { id: "row-2", xeroCreditNoteId: "cn-1", amountCents: 2000, createdAt: new Date("2026-02-01") },
+    ];
+    h.deriveApplied.mockResolvedValue(1500);
+    h.allocationFindMany.mockResolvedValue(rows);
+    h.linkFindMany.mockResolvedValue([
+      {
+        ...regularAllocationLink(),
+        localId: "row-1",
+        id: "link-row-1",
+        metadata: { creditNoteId: "cn-1", invoiceId: "inv-1", amountCents: 2000 },
+      },
+      {
+        ...regularAllocationLink(),
+        localId: "row-2",
+        id: "link-row-2",
+        metadata: { creditNoteId: "cn-1", invoiceId: "inv-1", amountCents: 2000 },
+      },
+    ]);
+    h.getCreditNote
+      .mockResolvedValueOnce({
+        body: {
+          creditNotes: [{
+            allocations: [
+              { allocationID: "alloc-a", amount: 20, invoice: { invoiceID: "inv-1" } },
+              { allocationID: "alloc-b", amount: 20, invoice: { invoiceID: "inv-1" } },
+            ],
+          }],
+        },
+      })
+      .mockResolvedValueOnce(providerNote(1500, "alloc-survivor"));
+
+    await deallocateExcessAppliedCreditForBooking("booking-1", {
+      syncOperationId: "op-1",
+    });
+
+    expect(h.allocationUpdate).toHaveBeenCalledWith({
+      where: { id: "row-1" }, data: { amountCents: 1500 },
+    });
+    expect(h.allocationDelete).toHaveBeenCalledWith({ where: { id: "row-2" } });
+    expect(h.linkUpsert).toHaveBeenCalledTimes(1);
+    expect(h.linkUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          localId: "row-1",
+          xeroObjectId: "alloc-survivor",
+        }),
+      })
+    );
+  });
+
+  it("deactivates regular links and creates none when the target is zero", async () => {
+    h.deriveApplied.mockResolvedValue(0);
+    h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
+    h.getCreditNote
+      .mockResolvedValueOnce(providerNote(4000))
+      .mockResolvedValueOnce(providerNote(0));
+
+    await deallocateExcessAppliedCreditForBooking("booking-1", {
+      syncOperationId: "op-1",
+    });
+
+    expect(h.allocationDelete).toHaveBeenCalledWith({ where: { id: "row-1" } });
+    expect(h.linkUpdateMany).toHaveBeenCalled();
+    expect(h.linkUpsert).not.toHaveBeenCalled();
+  });
+
+  it("deactivates a minted-remainder Payment link with no replacement at zero", async () => {
+    h.deriveApplied.mockResolvedValue(0);
+    h.linkFindMany.mockResolvedValue([remainderAllocationLink()]);
+    h.getCreditNote
+      .mockResolvedValueOnce(providerNote(4000))
+      .mockResolvedValueOnce(providerNote(0));
+
+    await deallocateExcessAppliedCreditForBooking("booking-1", {
+      syncOperationId: "op-1",
+    });
+
+    expect(h.linkUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([
+            expect.objectContaining({ id: { in: ["link-payment-1"] } }),
+          ]),
+        }),
+      })
+    );
+    expect(h.linkUpsert).not.toHaveBeenCalled();
+  });
+
+  it("persists explicit Xero-read provenance before deleting a same-total legacy/manual ID", async () => {
+    h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
+    h.getCreditNote
+      .mockResolvedValueOnce(providerNote(4000, "actual-id-not-in-legacy-link"))
+      .mockResolvedValueOnce(providerNote(2500, "actual-new"));
+
+    await deallocateExcessAppliedCreditForBooking("booking-1", {
+      syncOperationId: "op-1",
+    });
+
+    expect(h.operationUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          requestPayload: expect.objectContaining({
+            checkpoint: expect.objectContaining({
+              phase: "BEFORE_DELETE",
+              providerMatch: "LOCAL_LINK_TOTAL_AND_XERO_NOTE_INVOICE_MATCH",
+              allocationIds: ["actual-id-not-in-legacy-link"],
+              priorLinks: [expect.objectContaining({ id: "link-row-1" })],
+            }),
+          }),
+        },
+      })
+    );
   });
 });
 

@@ -1,7 +1,6 @@
 import {
   BookingEventType,
   BookingStatus,
-  CreditType,
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
@@ -154,17 +153,17 @@ function releaseOneHold(paymentId: string, now: Date) {
           // Read the Xero-allocated applied credit under the same advisory lock,
           // matching the cancel path's "read allocated credit under lock(1)"
           // requirement so the aggregate is consistent.
-          const xeroAllocated = await tx.memberCredit.aggregate({
+          // Precise post-deallocation truth; the MemberCredit note stamp is a
+          // coarse historical marker and cannot represent a partial target.
+          const xeroAllocated = await tx.memberCreditNoteAllocation.aggregate({
             where: {
               appliedToBookingId: fresh.bookingId,
-              type: CreditType.BOOKING_APPLIED,
-              xeroCreditNoteId: { not: null },
             },
             _sum: { amountCents: true },
           });
           const xeroAllocatedAppliedCreditCents = Math.max(
             0,
-            -(xeroAllocated._sum.amountCents ?? 0),
+            xeroAllocated._sum.amountCents ?? 0,
           );
           xeroClearingAmountCents = Math.max(
             0,

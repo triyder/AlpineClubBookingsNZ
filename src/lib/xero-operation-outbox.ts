@@ -36,6 +36,7 @@ import {
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
+import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import {
@@ -2183,6 +2184,23 @@ export async function processQueuedXeroOutboxOperations(options?: {
 
       result.succeeded += 1;
     } catch (error) {
+      if (isXeroAppliedCreditOperationBusyError(error)) {
+        // Two independent outbox runners can claim allocation and deallocation
+        // for the same Payment before either handler observes the other. That
+        // collision is transient: return this row to PENDING so the next scan
+        // serializes them, rather than stranding both rows as FAILED.
+        await prisma.xeroSyncOperation.updateMany({
+          where: { id: queuedOperation.id, status: "RUNNING" },
+          data: {
+            status: "PENDING",
+            startedAt: null,
+            lastErrorCode: null,
+            lastErrorMessage: null,
+          },
+        });
+        result.skipped += 1;
+        continue;
+      }
       if (payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE) {
         const currentCharge = await prisma.membershipSubscriptionCharge.findUnique({
           where: { id: payload.chargeId },

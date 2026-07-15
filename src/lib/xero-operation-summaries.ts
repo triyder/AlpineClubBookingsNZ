@@ -233,6 +233,22 @@ function summarizeQueuedPayload(
         facts: facts.build(),
       };
 
+    case "APPLIED_CREDIT_DEALLOCATION": {
+      facts.add("Booking", shortId(req.bookingId));
+      const checkpoint = asRecord(req.checkpoint);
+      if (checkpoint) {
+        facts
+          .add("Credit note", shortId(checkpoint.creditNoteId))
+          .add("Current allocation", formatCentsValue(checkpoint.currentCents))
+          .add("Target allocation", formatCentsValue(checkpoint.targetCents))
+          .add("Recovery phase", readString(checkpoint.phase));
+      }
+      return {
+        title: "Queued: reduce applied credit on Xero invoice",
+        facts: facts.build(),
+      };
+    }
+
     case "MEMBERSHIP_CANCELLATION_CREDIT_NOTE":
       facts
         .add("Subscription", shortId(req.subscriptionId))

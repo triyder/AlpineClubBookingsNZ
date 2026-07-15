@@ -252,7 +252,7 @@ describe("cancelBooking credit refunds", () => {
             },
             // #1547: the never-captured claim (A1) reads Xero-linked applied
             // credit under the lock to floor the invoice-clearing amount.
-            memberCredit: {
+            memberCreditNoteAllocation: {
               aggregate: mocks.txMemberCreditAggregate,
             },
           };
@@ -2342,7 +2342,7 @@ describe("cancelBooking credit refunds", () => {
       mocks.bookingFindUnique.mockResolvedValueOnce(bookingB);
       mocks.txBookingFindUnique.mockResolvedValueOnce(bookingB);
       mocks.txMemberCreditAggregate.mockResolvedValueOnce({
-        _sum: { amountCents: -1500 },
+        _sum: { amountCents: 1500 },
       });
 
       const resultB = await cancelBooking(

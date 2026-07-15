@@ -171,6 +171,7 @@ import {
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
 import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
+import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 
 describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
   beforeEach(() => {
@@ -1262,6 +1263,58 @@ describe("processQueuedXeroOutboxOperations", () => {
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
     expect(args.orderBy).toEqual({ createdAt: "asc" });
     expect(args.take).toBe(7);
+  });
+
+  it("returns a simultaneous applied-credit loser to PENDING instead of stranding it FAILED", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_alloc_busy",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: null,
+        requestPayload: {
+          queueType: "APPLIED_CREDIT_ALLOCATION",
+          bookingId: "booking_1",
+        },
+      },
+      {
+        id: "op_dealloc_busy",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: null,
+        requestPayload: {
+          queueType: "APPLIED_CREDIT_DEALLOCATION",
+          bookingId: "booking_1",
+        },
+      },
+    ]);
+    mocks.deallocateExcessAppliedCreditForBooking.mockRejectedValue(
+      new XeroAppliedCreditOperationBusyError("allocation op is already running")
+    );
+    mocks.allocateAppliedCreditForBooking.mockRejectedValue(
+      new XeroAppliedCreditOperationBusyError("deallocation op is already running")
+    );
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual({
+      found: 2,
+      processed: 2,
+      succeeded: 0,
+      failed: 0,
+      skipped: 2,
+    });
+
+    for (const id of ["op_alloc_busy", "op_dealloc_busy"]) {
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+        where: { id, status: "RUNNING" },
+        data: {
+          status: "PENDING",
+          startedAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        },
+      });
+    }
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
   });
 
   it("claims and processes queued entrance fee operations", async () => {

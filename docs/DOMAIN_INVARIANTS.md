@@ -808,12 +808,27 @@ allocation IDs, checkpoints them, deletes the invoice allocations, recreates the
 reduced integer-cent target, verifies it, then reduces the local allocation
 slices. Multiple notes and multiple local lots per note are supported.
 
+After verification, the same local transaction deactivates the superseded
+synthetic/actual `APPLIED_CREDIT_ALLOCATION` row links (or the Payment-scoped
+`APPLIED_CREDIT_REMAINDER_ALLOCATION` link for a minted remainder) and creates
+active replacements keyed by the actual allocation IDs returned by Xero. A zero
+target has no active allocation link. Durable checkpoint history records every
+row's current/target cents, prior links, Xero-read IDs/amounts, and the provenance
+rule used for an equal-total match, so a crash after provider recreate can heal
+local link truth without another create.
+
 Crash/retry contract: partial deletes resume only checkpointed IDs; a crash after
 provider recreate but before the local update verifies the target and completes
-the local reduction. Allocation/deallocation workers for one Payment refuse to
-overlap. A provider total that is neither exact local state nor a checkpointed
+the local reduction. Simultaneously claimed allocation/deallocation workers for
+one Payment return their transient losers to PENDING; a subsequent scan executes
+them without overlap instead of stranding both FAILED. A provider total that is
+neither exact local state nor a checkpointed
 partial/target is ambiguous (for example, a manual Xero edit): the operation
 fails visibly for operator retry/manual review and never guesses an ID or amount.
+Cancellation and Internet-Banking hold expiry derive the invoice's allocated
+credit from the precise positive `MemberCreditNoteAllocation.amountCents`
+aggregate, not the coarse historical `MemberCredit.xeroCreditNoteId` stamp,
+which cannot represent a partial clamp.
 
 Every modification path also applies the same lifecycle transitions: a
 PAYMENT_PENDING booking whose EFFECTIVE (credit-reduced) price drops to zero

@@ -94,6 +94,11 @@ are the literal `1`.
 The F20 clamp inserts any required Xero deallocation outbox row before releasing
 the member-credit lock. Provider GET/delete/recreate calls run later, outside the
 transaction; ambiguous provider state fails to durable retry/manual review.
+Allocation and deallocation handlers detect another RUNNING operation for the
+same Payment. Separate runners can claim both rows before either check, so this
+contention uses a dedicated transient result: each loser returns to PENDING
+(never FAILED), and a later scan runs them without overlap. Provider-verified
+local slice/link reconciliation retakes the member ledger lock.
 | **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`) | — | Archive/delete of one member. |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
