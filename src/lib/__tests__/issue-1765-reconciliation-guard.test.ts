@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   bookingFindMany: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingUpdateMany: vi.fn(),
   paymentUpsert: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
   findPaymentTransactionByIntentId: vi.fn(),
@@ -95,6 +96,7 @@ const tx = {
     findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
     findMany: (...args: unknown[]) => mocks.bookingFindMany(...args),
     update: (...args: unknown[]) => mocks.bookingUpdate(...args),
+    updateMany: (...args: unknown[]) => mocks.bookingUpdateMany(...args),
   },
   payment: {
     upsert: (...args: unknown[]) => mocks.paymentUpsert(...args),
@@ -132,6 +134,7 @@ beforeEach(() => {
   mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
   mocks.findPaymentTransactionByIntentId.mockResolvedValue(null);
   mocks.bookingUpdate.mockResolvedValue({});
+  mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
   mocks.restoreCreditFromBooking.mockResolvedValue(undefined);
   mocks.deriveBookingAppliedCreditCents.mockResolvedValue(0);
@@ -230,8 +233,18 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
         status: PaymentStatus.SUCCEEDED,
       })
     );
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "booking-1" },
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking-1",
+        status: {
+          in: [
+            BookingStatus.PAYMENT_PENDING,
+            BookingStatus.CONFIRMED,
+            BookingStatus.PENDING,
+            BookingStatus.DRAFT,
+          ],
+        },
+      },
       data: { status: BookingStatus.PAID, draftExpiresAt: null },
     });
   });
