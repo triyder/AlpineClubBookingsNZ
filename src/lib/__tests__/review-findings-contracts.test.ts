@@ -579,6 +579,20 @@ describe("review finding source/schema contracts", () => {
     expect(workflow).toContain(
       "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
     );
+    const migrateStep = workflow.indexOf(
+      "name: Migrate dedicated advisory-lock race database"
+    );
+    const raceStep = workflow.indexOf(
+      "name: Test advisory-lock race protocol against dedicated PostgreSQL"
+    );
+    expect(migrateStep).toBeGreaterThan(-1);
+    expect(raceStep).toBeGreaterThan(migrateStep);
+    const migrationBlock = workflow.slice(migrateStep, raceStep);
+    expect(migrationBlock).toContain(
+      "DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
+    );
+    expect(migrationBlock).toContain("run: npx prisma migrate deploy");
+    expect(migrationBlock).not.toContain("drift_main");
     expect(workflow).toContain(
       "npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts"
     );

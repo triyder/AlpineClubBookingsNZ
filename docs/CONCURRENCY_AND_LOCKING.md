@@ -185,6 +185,18 @@ locks or proceeding to either the Stripe or Internet Banking provider path. A
 cancelled group cannot mint a fresh PaymentIntent or enqueue a new combined
 invoice.
 
+Combined Xero invoice cancellation is a durable compensating workflow. Once an
+invoice id is persisted, the same global cancellation fence atomically enqueues
+a `GROUP_SETTLEMENT_INVOICE_VOID` outbox UPDATE with an invoice-specific
+correlation/idempotency key; this remains replayable even when the original
+invoice CREATE operation already succeeded. The create worker does the same if
+cancellation wins while `createInvoices` is in flight. To close the otherwise
+unavoidable last-check-to-email gap, only the single bounded Xero `emailInvoice`
+call spans `lock(1)`: cancellation either commits first (email suppressed, VOID
+queued) or waits until the email call finishes and then commits its VOID debt.
+No invoice construction, contact lookup, create, or VOID provider call is held
+inside that transaction.
+
 The opt-in PostgreSQL race harness is wired into the migration-drift job against
 its own `postgres:16-alpine` service on loopback port `55442`, database
 `concurrency_race_1881`. Its dedicated-URL, loopback, high-port, and name-marker

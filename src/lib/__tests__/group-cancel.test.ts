@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   enqueueGroupSettlementRefundRecovery: vi.fn(),
   markGroupSettlementRefundRecoverySucceeded: vi.fn(),
+  enqueueXeroGroupSettlementVoid: vi.fn(),
 }));
 
 const txClient = {
@@ -107,6 +108,10 @@ vi.mock("@/lib/payment-recovery", () => ({
     mocks.enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded:
     mocks.markGroupSettlementRefundRecoverySucceeded,
+}));
+vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
+  enqueueXeroGroupSettlementInvoiceVoidOperation:
+    mocks.enqueueXeroGroupSettlementVoid,
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: mocks.logAudit }));
 vi.mock("@/lib/logger", () => ({
@@ -183,6 +188,9 @@ beforeEach(() => {
   });
   mocks.markGroupSettlementRefundRecoverySucceeded.mockResolvedValue({
     count: 1,
+  });
+  mocks.enqueueXeroGroupSettlementVoid.mockResolvedValue({
+    queueOperationId: "void-op-1",
   });
 });
 
@@ -694,7 +702,6 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     expect(mocks.settlementUpdateMany).not.toHaveBeenCalled();
     expect(mocks.settlementFindUnique).not.toHaveBeenCalled();
   });
-
   it("voids and fails the intent re-pointed before cancellation acquired lock(1)", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue({
       id: GROUP_ID,
@@ -734,6 +741,32 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       },
       data: { status: PaymentStatus.FAILED },
     });
+  });
+
+  it("atomically queues a durable Xero VOID when an ordinary later cancellation sees a persisted invoice", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: null,
+    });
+    mocks.settlementAtFenceFindUnique.mockResolvedValue({
+      id: "settle-ib",
+      status: PaymentStatus.PENDING,
+      stripePaymentIntentId: null,
+      xeroInvoiceId: "inv-existing",
+      xeroInvoiceNumber: "INV-EXISTING",
+      amountCents: 4500,
+      refundPlan: null,
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    expect(mocks.enqueueXeroGroupSettlementVoid).toHaveBeenCalledWith(
+      "settle-ib",
+      { createdByMemberId: ORGANISER, store: txClient }
+    );
+    expect(mocks.kickXero).toHaveBeenCalledWith({ limit: 1 });
   });
 
   it("enqueues no credit note for a child owed nothing (refundForChild > 0 gating preserved)", async () => {

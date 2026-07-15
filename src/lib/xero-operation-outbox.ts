@@ -37,7 +37,10 @@ import { createXeroCreditNoteForModification } from "@/lib/xero-modification-cre
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { isXeroConnected } from "@/lib/xero-token-store";
-import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
+import {
+  createXeroInvoiceForGroupSettlement,
+  voidXeroInvoiceForCancelledGroupSettlement,
+} from "@/lib/xero-group-settlement-invoices";
 import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
 import {
   getQueuedOutboxExpectedOperation,
@@ -50,6 +53,7 @@ import {
   XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
   XERO_OUTBOX_ENTRANCE_FEE_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
+  XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
@@ -2053,6 +2057,13 @@ export async function processQueuedXeroOutboxOperations(options?: {
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
         });
+      } else if (
+        payload?.queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE
+      ) {
+        await voidXeroInvoiceForCancelledGroupSettlement(
+          payload.settlementId,
+          { syncOperationId: queuedOperation.id }
+        );
       } else if (
         payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
       ) {

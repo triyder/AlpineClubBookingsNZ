@@ -47,6 +47,7 @@ import {
 } from "./xero-contacts";
 import { buildInvoiceLineItems } from "./xero-booking-invoices";
 import { formatDate } from "./xero-invoice-helpers";
+import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 
 export interface CreateXeroGroupSettlementInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -125,6 +126,37 @@ async function voidCancelledGroupSettlementInvoice(params: {
   }
 }
 
+/** Replayable outbox handler for the compensating VOID after group cancel. */
+export async function voidXeroInvoiceForCancelledGroupSettlement(
+  settlementId: string,
+  options: { syncOperationId: string }
+): Promise<void> {
+  const settlement = await prisma.groupBookingSettlement.findUnique({
+    where: { id: settlementId },
+    select: {
+      id: true,
+      xeroInvoiceId: true,
+      xeroInvoiceNumber: true,
+      groupBooking: { select: { status: true } },
+    },
+  });
+  if (!settlement) {
+    throw new Error(`Group settlement not found: ${settlementId}`);
+  }
+  if (settlement.groupBooking.status !== GroupBookingStatus.CANCELLED) {
+    throw new Error(`Cannot VOID an active group settlement: ${settlementId}`);
+  }
+  if (!settlement.xeroInvoiceId) {
+    throw new Error(`Cancelled group settlement has no Xero invoice: ${settlementId}`);
+  }
+  await voidCancelledGroupSettlementInvoice({
+    settlementId: settlement.id,
+    invoiceId: settlement.xeroInvoiceId,
+    invoiceNumber: settlement.xeroInvoiceNumber,
+    syncOperationId: options.syncOperationId,
+  });
+}
+
 /**
  * Raise (or re-link) the single combined Xero invoice for an Internet Banking
  * group settlement and email it to the organiser. Idempotent: an active
@@ -141,9 +173,9 @@ export async function createXeroInvoiceForGroupSettlement(
   // organiser cancellation has already committed. The provider call remains
   // outside the transaction; a second fenced read below decides which side won
   // if cancellation overlaps the in-flight Xero request.
-  const settlement = await prisma.$transaction(async (tx) => {
+  const initialFence = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-    return tx.groupBookingSettlement.findUnique({
+    const settlement = await tx.groupBookingSettlement.findUnique({
       where: { id: settlementId },
       include: {
         groupBooking: {
@@ -157,7 +189,19 @@ export async function createXeroInvoiceForGroupSettlement(
         },
       },
     });
+    const queuedVoid =
+      settlement?.groupBooking.status === GroupBookingStatus.CANCELLED &&
+      settlement.xeroInvoiceId
+        ? await enqueueXeroGroupSettlementInvoiceVoidOperation(settlement.id, {
+            store: tx,
+          })
+        : null;
+    return {
+      settlement,
+      queuedVoidOperationId: queuedVoid?.queueOperationId ?? null,
+    };
   });
+  const settlement = initialFence.settlement;
 
   if (!settlement) throw new Error(`Group settlement not found: ${settlementId}`);
 
@@ -361,7 +405,7 @@ export async function createXeroInvoiceForGroupSettlement(
     // wins: retain the provider id for retryable compensation, void the invoice,
     // and never email it. If this transaction sees OPEN/CLOSED, issuance won the
     // serialization point and a later cancellation is a separate lifecycle.
-    const cancellationWon = await prisma.$transaction(async (tx) => {
+    const cancellationResult = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       const fresh = await tx.groupBookingSettlement.findUnique({
         where: { id: settlement.id },
@@ -377,10 +421,20 @@ export async function createXeroInvoiceForGroupSettlement(
           xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
         },
       });
-      return fresh.groupBooking.status === GroupBookingStatus.CANCELLED;
+      const cancellationWon =
+        fresh.groupBooking.status === GroupBookingStatus.CANCELLED;
+      const queuedVoid = cancellationWon
+        ? await enqueueXeroGroupSettlementInvoiceVoidOperation(settlement.id, {
+            store: tx,
+          })
+        : null;
+      return {
+        cancellationWon,
+        queuedVoidOperationId: queuedVoid?.queueOperationId ?? null,
+      };
     });
 
-    if (cancellationWon) {
+    if (cancellationResult.cancellationWon) {
       await voidCancelledGroupSettlementInvoice({
         settlementId: settlement.id,
         invoiceId: createdInvoice.invoiceID,
@@ -391,34 +445,16 @@ export async function createXeroInvoiceForGroupSettlement(
       return null;
     }
 
-    // Cancellation can commit after the post-create check above but before the
-    // email call. Re-enter the same lifecycle fence immediately before email;
-    // if cancellation won that combined interleaving, the already-persisted
-    // provider identity makes VOID compensation durable/retryable and the
-    // organiser never receives a payable invoice for a cancelled group.
-    const cancelledBeforeEmail = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-      const fresh = await tx.groupBookingSettlement.findUnique({
-        where: { id: settlement.id },
-        select: { groupBooking: { select: { status: true } } },
-      });
-      if (!fresh) {
-        throw new Error(`Group settlement not found: ${settlementId}`);
-      }
-      return fresh.groupBooking.status === GroupBookingStatus.CANCELLED;
-    });
-    if (cancelledBeforeEmail) {
-      await voidCancelledGroupSettlementInvoice({
-        settlementId: settlement.id,
-        invoiceId: createdInvoice.invoiceID,
-        invoiceNumber: createdInvoice.invoiceNumber ?? null,
-        syncOperationId: operationId!,
-        createResponse: response.body,
-      });
-      return null;
-    }
-
-    // Email the invoice so the organiser can pay it by bank transfer.
+    // Email the invoice so the organiser can pay it by bank transfer.  This is
+    // the one deliberately provider-spanning lifecycle fence in this workflow:
+    // the single bounded emailInvoice call runs while lock(1) is held.  Without
+    // that serialization, cancellation could commit after the last DB check but
+    // before the provider accepted the email, producing a payable email after a
+    // durable CANCELLED state.  No other DB work or provider call is included.
+    // If cancellation won first, enqueue the replayable VOID in the same tx and
+    // suppress email.  If email won first, cancellation waits and subsequently
+    // commits its own durable VOID debt; email therefore never occurs AFTER a
+    // cancellation commit.
     let invoiceEmailResponseBody: unknown = null;
     let invoiceEmailError: unknown = null;
     const invoiceEmailIdempotencyKey = buildXeroIdempotencyKey(
@@ -429,22 +465,49 @@ export async function createXeroInvoiceForGroupSettlement(
       "v1"
     );
     try {
-      const emailResponse = await callXeroApi(
-        () =>
-          xero.accountingApi.emailInvoice(
-            tenantId,
-            createdInvoice.invoiceID!,
-            new RequestEmpty(),
-            invoiceEmailIdempotencyKey
-          ),
-        {
-          operation: "emailInvoice",
-          resourceType: "INVOICE",
-          workflow: "createXeroInvoiceForGroupSettlement",
-          context: `emailInvoice(group settlement ${settlementId})`,
+      const emailGate = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        const fresh = await tx.groupBookingSettlement.findUnique({
+          where: { id: settlement.id },
+          select: { groupBooking: { select: { status: true } } },
+        });
+        if (!fresh) {
+          throw new Error(`Group settlement not found: ${settlementId}`);
         }
-      );
-      invoiceEmailResponseBody = emailResponse.body ?? null;
+        if (fresh.groupBooking.status === GroupBookingStatus.CANCELLED) {
+          await enqueueXeroGroupSettlementInvoiceVoidOperation(settlement.id, {
+            store: tx,
+          });
+          return { cancelled: true, responseBody: null };
+        }
+        const emailResponse = await callXeroApi(
+          () =>
+            xero.accountingApi.emailInvoice(
+              tenantId,
+              createdInvoice.invoiceID!,
+              new RequestEmpty(),
+              invoiceEmailIdempotencyKey
+            ),
+          {
+            operation: "emailInvoice",
+            resourceType: "INVOICE",
+            workflow: "createXeroInvoiceForGroupSettlement",
+            context: `emailInvoice(group settlement ${settlementId})`,
+          }
+        );
+        return { cancelled: false, responseBody: emailResponse.body ?? null };
+      });
+      if (emailGate.cancelled) {
+        await voidCancelledGroupSettlementInvoice({
+          settlementId: settlement.id,
+          invoiceId: createdInvoice.invoiceID,
+          invoiceNumber: createdInvoice.invoiceNumber ?? null,
+          syncOperationId: operationId!,
+          createResponse: response.body,
+        });
+        return null;
+      }
+      invoiceEmailResponseBody = emailGate.responseBody;
     } catch (error) {
       invoiceEmailError = error;
       logger.warn(

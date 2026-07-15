@@ -95,6 +95,7 @@ import {
   enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded,
 } from "@/lib/payment-recovery";
+import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";
 
 /** Child booking statuses that an organiser cancel must clean up. */
@@ -192,7 +193,7 @@ export async function settleGroupBookingOnOrganiserCancel(
   // children. If settle won first, the post-fence reads below observe its
   // SUCCEEDED/PAID state and run the refund path. No provider call occurs while
   // this transaction is open.
-  const settlementAtCancellationFence = await prisma.$transaction(async (tx) => {
+  const cancellationFence = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     await tx.groupBooking.update({
       where: { id: group.id },
@@ -202,10 +203,31 @@ export async function settleGroupBookingOnOrganiserCancel(
     // serialization point.  A pre-lock null must stay null (a later creator is
     // fenced by CANCELLED), while a pre-lock re-point to a newer intent must
     // cancel/fail that newer intent rather than the stale route snapshot.
-    return tx.groupBookingSettlement.findUnique({
+    const settlement = await tx.groupBookingSettlement.findUnique({
       where: { groupBookingId: group.id },
     });
+    const queuedVoid = settlement?.xeroInvoiceId
+      ? await enqueueXeroGroupSettlementInvoiceVoidOperation(settlement.id, {
+          createdByMemberId: sessionUserId,
+          store: tx,
+        })
+      : null;
+    return {
+      settlement,
+      queuedVoidOperationId: queuedVoid?.queueOperationId ?? null,
+    };
   });
+
+  // The compensating row committed atomically with CANCELLED.  This kick is
+  // opportunistic only; the normal outbox cron owns durable retry.
+  if (cancellationFence.queuedVoidOperationId) {
+    void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((err) =>
+      logger.error(
+        { err, groupBookingId: group.id },
+        "Failed to kick queued Xero group-invoice VOID after cancellation"
+      )
+    );
+  }
 
   const children = await prisma.booking.findMany({
     where: {
@@ -217,7 +239,7 @@ export async function settleGroupBookingOnOrganiserCancel(
     include: { member: true, payment: true },
   });
 
-  let settlement = settlementAtCancellationFence;
+  let settlement = cancellationFence.settlement;
 
   // Mid-settlement: an open (PENDING) intent with children committed to CONFIRMED
   // but not yet captured. Void the intent and fail the settlement BEFORE
