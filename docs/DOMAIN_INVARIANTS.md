@@ -58,6 +58,30 @@ Future reviews and issues should cite this file when proposing changes.
   conflicts are visible and never trigger a silent provider rewrite. Xero
   delivery resolves the snapshotted recipient member's current contact/email;
   frozen name/email remain audit evidence rather than a stale delivery target.
+- A member has at most one entrance-fee invoice (#1886, F21). The worker mints
+  only after re-checking the durable `ENTRANCE_FEE_INVOICE` link and, failing
+  that, looking the member-unique invoice reference (full member id, not a
+  truncated prefix) up in Xero. A found invoice is adopted only when it is THIS
+  member's own `AUTHORISED` invoice for the expected amount; a voided/deleted/
+  draft invoice is ignored (so it never blocks a legitimate re-issue), a
+  different-contact match is never adopted, and a wrong-amount or >1-match case
+  surfaces a visible `PROVIDER_MISMATCH`/`DUPLICATE_REFERENCE` conflict for
+  human reconciliation rather than a silent adopt-first. The enqueue-time guard
+  and its amount/category-keyed correlation dedupe are not sufficient — a
+  re-enqueue carrying a different amount override or a reclassified category
+  produces a fresh key. Concurrent double-minting is prevented by a member-scoped
+  Xero mint idempotency key (concurrent mints converge on one invoice, the same
+  provider-side convergence pattern as the contact path, F7/#1355) rather than a
+  DB lock held across the provider call; the DB-level backstop is the raw partial
+  unique index `XeroObjectLink_entrance_fee_active_unique` guaranteeing at most
+  one ACTIVE entrance-fee link per member. Residual: a same-day re-issue after a
+  void can be returned the voided invoice by the idempotency key within Xero's
+  key-retention window — acceptable for a one-time charge. Second residual: the
+  member-scoped mint key makes convergence Xero's responsibility, so if Xero ever
+  failed to collapse a concurrent duplicate, a second invoice could mint and its
+  link upsert would then fail on the partial unique index — leaving an orphan
+  invoice in Xero (no local double-link, so no local double-charge) that needs
+  operator reconciliation.
 
 ## Booking Dates And Capacity
 

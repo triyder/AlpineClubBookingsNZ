@@ -2625,6 +2625,16 @@ model XeroSyncOperation {
   @@index([status, manuallyResolvedAt])
 }
 
+// A member has at most one ACTIVE ENTRANCE_FEE_INVOICE link (#1886, F21),
+// backstopped by a raw partial unique index
+// (XeroObjectLink_entrance_fee_active_unique — see
+// prisma/partial-unique-indexes.tsv; Prisma cannot express partial indexes).
+// The composite @@unique below still allows multiple ACTIVE rows with
+// different xeroObjectId, so the partial index closes that gap for the
+// entrance-fee role. The primary concurrency guard is the member-scoped Xero
+// mint idempotency key in xero-entrance-fee-invoices.ts (concurrent mints
+// converge on one invoice, mirroring the F7/#1355 contact pattern); this index
+// is the DB-level last line of defence.
 model XeroObjectLink {
   id               String   @id @default(cuid())
   localModel       String

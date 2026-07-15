@@ -15,6 +15,7 @@ import {
 } from "xero-node";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
+import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   completeXeroSyncOperation,
@@ -28,6 +29,7 @@ import {
 } from "./xero-api-client";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
+  buildEntranceFeeInvoiceMintIdempotencyKey,
   ENTRANCE_FEE_EXEMPT_MESSAGE,
   getEntranceFeeContext,
   getResolvedAccountMapping,
@@ -44,6 +46,75 @@ export interface CreateXeroEntranceFeeInvoiceOptions
   extends FindOrCreateXeroContactOptions {
   syncOperationId?: string;
   precomputedEntranceFee?: EntranceFeeContext;
+}
+
+// F21 (#1886): look an entrance-fee invoice up in Xero by its stable reference
+// so a replay can adopt a prior mint instead of creating a duplicate. Mirrors
+// `findExistingByReference` in the subscription-invoice path.
+async function findEntranceFeeInvoicesByReference(
+  xero: XeroClient,
+  tenantId: string,
+  reference: string,
+) {
+  const response = await callXeroApi(
+    () =>
+      xero.accountingApi.getInvoices(
+        tenantId,
+        undefined,
+        `Reference=="${reference}"`,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        1,
+        false,
+      ),
+    {
+      operation: "getInvoices",
+      resourceType: "INVOICE",
+      workflow: "createXeroEntranceFeeInvoice",
+      context: `find entrance fee invoice ${reference}`,
+    },
+  );
+  return response.body.invoices ?? [];
+}
+
+// Total of a Xero invoice in integer cents. Prefers the provider-computed
+// `total`; falls back to summing line amounts for summary payloads. Mirrors the
+// subscription path's `invoiceCents`.
+function entranceFeeInvoiceCents(invoice: Invoice): number {
+  if (typeof invoice.total === "number") return Math.round(invoice.total * 100);
+  return Math.round(
+    (invoice.lineItems ?? []).reduce(
+      (sum, line) =>
+        sum +
+        (line.lineAmount ?? (line.quantity ?? 1) * (line.unitAmount ?? 0)),
+      0,
+    ) * 100,
+  );
+}
+
+// F21 (#1886): an invoice found by reference is adoptable only if it is this
+// member's own AUTHORISED entrance-fee invoice for the expected amount. This
+// closes three defects the adopt-by-reference path had:
+//   - cross-member adoption: the Reference field alone is not proof of
+//     ownership, so we require the invoice's contact to resolve to THIS
+//     member's contact (guards against any residual reference collision);
+//   - voided/deleted/draft adoption: only AUTHORISED invoices are adoptable,
+//     so a VOIDED invoice never suppresses a legitimate re-issue;
+//   - wrong-amount adoption: the amount must match the expected fee.
+// Mirrors `subscriptionInvoiceMatchesSnapshot`.
+function entranceFeeInvoiceIsAdoptable(
+  invoice: Invoice,
+  expected: { contactId: string; amountCents: number },
+): boolean {
+  return (
+    invoice.status === Invoice.StatusEnum.AUTHORISED &&
+    invoice.type === Invoice.TypeEnum.ACCREC &&
+    invoice.contact?.contactID === expected.contactId &&
+    entranceFeeInvoiceCents(invoice) === expected.amountCents
+  );
 }
 
 // test seam
@@ -127,6 +198,47 @@ export async function createXeroEntranceFeeInvoice(
     return null;
   }
 
+  // Narrowed non-null fee amount (the guard above returned on null/<=0). Held
+  // in a local so it survives the intervening `await`s (which reset TS's
+  // property narrowing) and is reused by the adopt-by-reference checks below.
+  const feeAmountCents: number = feeMapping.amountCents;
+
+  // F21 (#1886): re-check the durable ENTRANCE_FEE_INVOICE link before minting.
+  // The enqueue-time guard only blocks when a link ALREADY exists, and the
+  // PENDING/RUNNING correlation-key dedupe is keyed on amount + category — so a
+  // second enqueue carrying a different amount override (or a reclassified
+  // category) produces a fresh correlation key and a fresh Xero idempotency
+  // key, slipping past both, and two operations can reach this worker before
+  // either writes the link. Adopting the already-linked invoice here stops the
+  // second one minting a duplicate. Mirrors the subscription/supplementary
+  // guards.
+  const existingLink = await prisma.xeroObjectLink.findFirst({
+    where: {
+      localModel: "Member",
+      localId: memberId,
+      xeroObjectType: "INVOICE",
+      role: "ENTRANCE_FEE_INVOICE",
+      active: true,
+    },
+    select: { xeroObjectId: true, xeroObjectNumber: true, xeroObjectUrl: true },
+  });
+  if (existingLink) {
+    if (queuedOperationId) {
+      await completeXeroSyncOperation(queuedOperationId, {
+        responsePayload: {
+          adopted: true,
+          reason: "Entrance fee invoice already linked for this member.",
+          category,
+        },
+        xeroObjectType: "INVOICE",
+        xeroObjectId: existingLink.xeroObjectId,
+        xeroObjectNumber: existingLink.xeroObjectNumber,
+        xeroObjectUrl: existingLink.xeroObjectUrl,
+      });
+    }
+    return existingLink.xeroObjectId;
+  }
+
   // Check Xero connectivity
   let xero: XeroClient | null = null;
   let tenantId: string | null = null;
@@ -140,11 +252,22 @@ export async function createXeroEntranceFeeInvoice(
   }
 
   const categoryLabel = category === "FAMILY" ? "Family" : category === "YOUTH" ? "Youth" : category === "CHILD" ? "Child" : "Adult";
+  // F21 (#1886): the reference embeds the FULL member id, not a truncated
+  // prefix. cuid prefixes collide for members created close in time, and an
+  // 8-char slice let guard 2 adopt a DIFFERENT member's invoice by reference
+  // (victim left unbilled, link cross-wired). Xero's Reference field tolerates
+  // the full length, so the full id makes the reference member-unique.
+  const reference = `Entrance fee (${categoryLabel}) - ${memberId}`;
+  // Outbox correlation/dedupe key (amount + category scoped) — unchanged.
   const idempotencyKey = buildEntranceFeeInvoiceIdempotencyKey(
     memberId,
     category,
     feeMapping.amountCents
   );
+  // Xero mint idempotency key (member scoped) — converges concurrent mints for
+  // one member onto a single invoice regardless of amount/category. See
+  // buildEntranceFeeInvoiceMintIdempotencyKey for the full rationale.
+  const mintIdempotencyKey = buildEntranceFeeInvoiceMintIdempotencyKey(memberId);
   let operationId = queuedOperationId;
 
   try {
@@ -173,7 +296,7 @@ export async function createXeroEntranceFeeInvoice(
       lineItems: [lineItem],
       date: formatDate(new Date()),
       dueDate: formatDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), // Due in 30 days
-      reference: `Entrance fee (${categoryLabel}) - ${memberId.slice(0, 8)}`,
+      reference,
       status: Invoice.StatusEnum.AUTHORISED,
       lineAmountTypes: LineAmountTypes.Inclusive,
     });
@@ -202,6 +325,156 @@ export async function createXeroEntranceFeeInvoice(
       operationId = operation.id;
     }
 
+    // F21 adopt-by-reference: a crash (or a provider-side idempotency replay)
+    // between createInvoices succeeding and the completion/link write below can
+    // leave a minted invoice with no durable link, so a replay would mint
+    // again. Look the reference up in Xero first and adopt a prior mint instead
+    // of creating a second. Mirrors the subscription-invoice path: only THIS
+    // member's own AUTHORISED invoice for the expected amount is adoptable, and
+    // a genuine duplicate surfaces a conflict for a human rather than being
+    // silently adopted-first.
+    const existingByReference = await findEntranceFeeInvoicesByReference(
+      authenticatedXero,
+      authenticatedTenantId,
+      reference,
+    );
+    // Only this member's AUTHORISED invoices are adoption candidates. A VOIDED/
+    // DELETED/DRAFT invoice is ignored (so it can never suppress a legitimate
+    // re-issue), and an invoice on a different contact (a residual reference
+    // collision) is never adopted.
+    const adoptableCandidates = existingByReference.filter((invoice) =>
+      entranceFeeInvoiceIsAdoptable(invoice, {
+        contactId,
+        amountCents: feeAmountCents,
+      }),
+    );
+
+    // >1 adoptable invoice on this member's reference is a real duplicate that
+    // needs human reconciliation. Surface a conflict and mint nothing (mirrors
+    // the subscription DUPLICATE_REFERENCE path) rather than adopt-first.
+    if (adoptableCandidates.length > 1) {
+      // The op completes as SUCCEEDED (it genuinely succeeded at "don't
+      // double-mint"), so the unbilled member is otherwise discoverable only by
+      // querying responsePayload.conflict. Emit a structured ERROR log naming
+      // the member/reference/conflict/invoice ids, and raise the existing
+      // money-anomaly alert primitive (deduped one-per-hour, self-contained) so
+      // an operator can find and reconcile the member. There is no per-member
+      // charge row to flag CONFLICT (unlike the subscription path), so the log +
+      // alert are the signal.
+      const conflictInvoiceIds = adoptableCandidates.map(
+        (invoice) => invoice.invoiceID ?? null,
+      );
+      logger.error(
+        {
+          memberId,
+          category,
+          reference,
+          conflict: "DUPLICATE_REFERENCE",
+          invoiceIds: conflictInvoiceIds,
+          invoiceCount: adoptableCandidates.length,
+        },
+        "Multiple AUTHORISED Xero invoices share this entrance fee reference; member left unbilled, no invoice minted, manual reconciliation required",
+      );
+      await notifyXeroSyncError({
+        errorType: "entrance-fee-duplicate-reference",
+        operation: `createXeroEntranceFeeInvoice:${memberId}`,
+        errorMessage: `Entrance fee for member ${memberId} was NOT billed: ${adoptableCandidates.length} AUTHORISED Xero invoices share reference "${reference}" (invoice ids ${conflictInvoiceIds.join(", ")}). No invoice was minted; manual reconciliation required.`,
+      });
+      await completeXeroSyncOperation(operationId!, {
+        status: "SUCCEEDED",
+        responsePayload: {
+          conflict: "DUPLICATE_REFERENCE",
+          reference,
+          invoiceCount: adoptableCandidates.length,
+        },
+      });
+      return null;
+    }
+
+    // A same-member AUTHORISED invoice whose reference matches but whose amount
+    // does NOT is ambiguous (which figure is correct?). Surface a conflict
+    // rather than silently adopting a wrong-amount invoice or minting a second
+    // (mirrors the subscription PROVIDER_MISMATCH path). Any AUTHORISED
+    // same-member same-reference invoice that failed the amount check appears
+    // here; a different-contact or non-AUTHORISED match falls through to mint.
+    const referenceMatchesWrongAmount = existingByReference.find(
+      (invoice) =>
+        invoice.status === Invoice.StatusEnum.AUTHORISED &&
+        invoice.contact?.contactID === contactId &&
+        entranceFeeInvoiceCents(invoice) !== feeAmountCents,
+    );
+    if (adoptableCandidates.length === 0 && referenceMatchesWrongAmount) {
+      // Same operator-visibility rationale as the DUPLICATE_REFERENCE branch:
+      // the op completes green with nothing minted, so surface the unbilled
+      // member via an ERROR log and the shared money-anomaly alert primitive.
+      const providerAmountCents = entranceFeeInvoiceCents(
+        referenceMatchesWrongAmount,
+      );
+      const conflictInvoiceId = referenceMatchesWrongAmount.invoiceID ?? null;
+      logger.error(
+        {
+          memberId,
+          category,
+          reference,
+          conflict: "PROVIDER_MISMATCH",
+          invoiceId: conflictInvoiceId,
+          expectedAmountCents: feeAmountCents,
+          providerAmountCents,
+        },
+        "Existing Xero entrance fee invoice does not match the expected amount; member left unbilled, no invoice minted, manual reconciliation required",
+      );
+      await notifyXeroSyncError({
+        errorType: "entrance-fee-provider-mismatch",
+        operation: `createXeroEntranceFeeInvoice:${memberId}`,
+        errorMessage: `Entrance fee for member ${memberId} was NOT billed: existing AUTHORISED Xero invoice ${conflictInvoiceId} on reference "${reference}" is ${providerAmountCents}c but the expected fee is ${feeAmountCents}c. No invoice was minted; manual reconciliation required.`,
+      });
+      await completeXeroSyncOperation(operationId!, {
+        status: "SUCCEEDED",
+        responsePayload: {
+          conflict: "PROVIDER_MISMATCH",
+          reference,
+          expectedAmountCents: feeAmountCents,
+          invoice: referenceMatchesWrongAmount,
+        },
+      });
+      return null;
+    }
+
+    const adoptable = adoptableCandidates[0];
+    if (adoptable?.invoiceID) {
+      await completeXeroSyncOperation(operationId!, {
+        responsePayload: { adopted: true, invoice: adoptable },
+        xeroObjectType: "INVOICE",
+        xeroObjectId: adoptable.invoiceID,
+        xeroObjectNumber: adoptable.invoiceNumber ?? null,
+        xeroObjectUrl: buildXeroInvoiceUrl(adoptable.invoiceID),
+        extraLinks: [
+          {
+            localModel: "Member",
+            localId: memberId,
+            xeroObjectType: "INVOICE",
+            xeroObjectId: adoptable.invoiceID,
+            xeroObjectNumber: adoptable.invoiceNumber ?? null,
+            xeroObjectUrl: buildXeroInvoiceUrl(adoptable.invoiceID),
+            role: "ENTRANCE_FEE_INVOICE",
+            metadata: {
+              category,
+              feeAmountCents: feeMapping.amountCents,
+              description: entranceFee.description ?? null,
+              adopted: true,
+            },
+          },
+        ],
+      });
+
+      logger.info(
+        { memberId, category, invoiceId: adoptable.invoiceID },
+        "Adopted existing Xero entrance fee invoice by reference",
+      );
+
+      return adoptable.invoiceID;
+    }
+
     const response = await retryXeroWriteWithContactRepair({
       memberId,
       currentContactId: contactId,
@@ -220,7 +493,7 @@ export async function createXeroEntranceFeeInvoice(
               { invoices: [buildInvoice(resolvedContactId)] },
               undefined,
               undefined,
-              idempotencyKey
+              mintIdempotencyKey
             ),
           {
             operation: "createInvoices",

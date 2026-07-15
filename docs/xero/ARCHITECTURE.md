@@ -35,6 +35,23 @@ that recipient member's current Xero contact identity and Xero contact email.
 Inbound invoice changes are joined back through charge coverage so a shared
 family invoice updates recipient and non-recipient subscriptions together.
 
+## Entrance-fee invoices
+
+`ENTRANCE_FEE_INVOICE` is a one-off per-member charge (#1886, F21). Before
+minting, `createXeroEntranceFeeInvoice` re-checks the durable
+`ENTRANCE_FEE_INVOICE` link and then adopts by reference: it searches Xero by
+the member-unique reference (`Entrance fee (<Tier>) - <full member id>`) and
+adopts only THIS member's own `AUTHORISED` invoice for the expected amount.
+Voided/deleted/draft invoices are ignored (so a re-issue is never suppressed), a
+different-contact match is never adopted, and a wrong-amount or duplicate match
+surfaces a `PROVIDER_MISMATCH`/`DUPLICATE_REFERENCE` conflict instead of a silent
+adopt-first — the same discipline as the subscription path. Concurrent
+double-minting is prevented by a member-scoped Xero mint idempotency key (mints
+converge on one invoice, mirroring the contact path in F7/#1355) rather than a
+DB lock across the provider call, backstopped by the raw partial unique index
+`XeroObjectLink_entrance_fee_active_unique` (at most one ACTIVE entrance-fee link
+per member).
+
 ## Bird's-eye dataflow
 
 ```mermaid
