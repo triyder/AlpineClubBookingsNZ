@@ -115,6 +115,7 @@ async function requireOrganiserPaysGroup(rawCode: string, sessionUserId: string)
           organiserMemberId: true,
           organiserBookingId: true,
           paymentMode: true,
+          status: true,
           organiserMember: {
             select: { id: true, email: true, firstName: true, lastName: true },
           },
@@ -137,6 +138,9 @@ async function requireOrganiserPaysGroup(rawCode: string, sessionUserId: string)
       "This group is each-pays-own; joiners settle their own bookings",
       409
     );
+  }
+  if (group.status === GroupBookingStatus.CANCELLED) {
+    throw new GroupBookingError("This group booking has been cancelled", 409);
   }
   return group;
 }
@@ -244,7 +248,7 @@ export async function createGroupSettlementIntent(
     }
     if (existing.client_secret && existing.status !== "canceled") {
       // Make sure the children are committed even when we reuse the intent.
-      await commitChildrenToConfirmed(children);
+      await commitChildrenToConfirmed(group.id, children);
       return {
         outcome: "ready",
         amountCents,
@@ -256,7 +260,7 @@ export async function createGroupSettlementIntent(
   }
 
   // Commit the beds (all-or-nothing) before charging anything.
-  await commitChildrenToConfirmed(children);
+  await commitChildrenToConfirmed(group.id, children);
 
   const customer = await findOrCreateCustomer({
     email: group.organiserMember.email,
@@ -284,22 +288,42 @@ export async function createGroupSettlementIntent(
     idempotencyKey: `groupsettle_${group.id}_${amountCents}_${group.settlement?.stripePaymentIntentId ?? "initial"}`,
   });
 
-  await prisma.groupBookingSettlement.upsert({
-    where: { groupBookingId: group.id },
-    create: {
-      groupBookingId: group.id,
-      stripePaymentIntentId: paymentIntent.id,
-      stripeCustomerId: customer.id,
-      amountCents,
-      status: PaymentStatus.PENDING,
-    },
-    update: {
-      stripePaymentIntentId: paymentIntent.id,
-      stripeCustomerId: customer.id,
-      amountCents,
-      status: PaymentStatus.PENDING,
-    },
+  const attached = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const currentGroup = await tx.groupBooking.findUnique({
+      where: { id: group.id },
+      select: { status: true },
+    });
+    if (!currentGroup || currentGroup.status === GroupBookingStatus.CANCELLED) {
+      return false;
+    }
+    await tx.groupBookingSettlement.upsert({
+      where: { groupBookingId: group.id },
+      create: {
+        groupBookingId: group.id,
+        stripePaymentIntentId: paymentIntent.id,
+        stripeCustomerId: customer.id,
+        amountCents,
+        status: PaymentStatus.PENDING,
+      },
+      update: {
+        stripePaymentIntentId: paymentIntent.id,
+        stripeCustomerId: customer.id,
+        amountCents,
+        status: PaymentStatus.PENDING,
+      },
+    });
+    return true;
   });
+  if (!attached) {
+    await cancelPaymentIntentIfCancellable(paymentIntent.id).catch((err) =>
+      logger.error(
+        { err, groupBookingId: group.id, paymentIntentId: paymentIntent.id },
+        "Failed to cancel a group settlement intent fenced during creation"
+      )
+    );
+    throw new GroupBookingError("This group booking has been cancelled", 409);
+  }
 
   // The new intent supersedes any prior card attempt (e.g. the total changed).
   // Void the old intent so a retained client_secret in a stale tab can no
@@ -363,24 +387,32 @@ async function createGroupSettlementInvoice(
   }
 
   // Hold the beds (all-or-nothing) before raising any invoice.
-  await commitChildrenToConfirmed(children);
+  await commitChildrenToConfirmed(groupBookingId, children);
 
-  const settlement = await prisma.groupBookingSettlement.upsert({
-    where: { groupBookingId },
-    create: {
-      groupBookingId,
-      source: PaymentSource.INTERNET_BANKING,
-      amountCents,
-      status: PaymentStatus.PENDING,
-    },
-    update: {
-      source: PaymentSource.INTERNET_BANKING,
-      // Drop any stale Stripe intent from a prior card attempt so reconciliation
-      // and the webhook never reuse it for an Internet Banking settlement.
-      stripePaymentIntentId: null,
-      amountCents,
-      status: PaymentStatus.PENDING,
-    },
+  const settlement = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const currentGroup = await tx.groupBooking.findUnique({
+      where: { id: groupBookingId },
+      select: { status: true },
+    });
+    if (!currentGroup || currentGroup.status === GroupBookingStatus.CANCELLED) {
+      throw new GroupBookingError("This group booking has been cancelled", 409);
+    }
+    return tx.groupBookingSettlement.upsert({
+      where: { groupBookingId },
+      create: {
+        groupBookingId,
+        source: PaymentSource.INTERNET_BANKING,
+        amountCents,
+        status: PaymentStatus.PENDING,
+      },
+      update: {
+        source: PaymentSource.INTERNET_BANKING,
+        stripePaymentIntentId: null,
+        amountCents,
+        status: PaymentStatus.PENDING,
+      },
+    });
   });
 
   // Void the dropped card intent in Stripe so a retained client_secret in a
@@ -445,13 +477,25 @@ async function cancelSupersededSettlementIntent(
  * fits, the whole transaction rolls back and a 409 lists the nights that are
  * full.
  */
-async function commitChildrenToConfirmed(children: SettleableChild[]) {
+async function commitChildrenToConfirmed(
+  groupBookingId: string,
+  children: SettleableChild[]
+) {
   const pending = children.filter(
     (c) => c.status === BookingStatus.PAYMENT_PENDING
   );
-  if (pending.length === 0) return;
 
   await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const currentGroup = await tx.groupBooking.findUnique({
+      where: { id: groupBookingId },
+      select: { status: true },
+    });
+    if (!currentGroup || currentGroup.status === GroupBookingStatus.CANCELLED) {
+      throw new GroupBookingError("This group booking has been cancelled", 409);
+    }
+    if (pending.length === 0) return;
+
     // Flipping PAYMENT_PENDING -> CONFIRMED is a net-new capacity claim, so it
     // must serialize under the lodge whose beds are being claimed: the child's
     // lodge, NOT the group's default lodge. Booking creators at that lodge hold

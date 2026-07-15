@@ -171,12 +171,24 @@ switch-to-internet-banking hold, the quote-accept conversion
 composition.
 
 `switch-to-internet-banking` also recomputes both the locked booking price and
-the authoritative `BOOKING_APPLIED` credit aggregate after acquiring `lock(1)`;
+the authoritative `BOOKING_APPLIED` credit aggregate after acquiring global,
+lodge, then `lockMemberCreditLedger(memberId)` locks in that order;
 the IB payment mirror must never mix a pre-lock price with post-lock credit (or
 vice versa). Waitlist offer confirmation resolves only the immutable lodge key
 before locking, then re-reads status and expiry under the lodge lock and fuses
 those checks with its update. The expiry reaper returns side effects only for
 rows whose guarded revert/cancel actually claimed one row.
+
+Group-settlement initiation selects/rejects `GroupBooking.CANCELLED` at entry
+and re-checks the durable fence under global `lock(1)` before taking child-lodge
+locks or proceeding to either the Stripe or Internet Banking provider path. A
+cancelled group cannot mint a fresh PaymentIntent or enqueue a new combined
+invoice.
+
+The opt-in PostgreSQL race harness is wired into the migration-drift job against
+its own `postgres:16-alpine` service on loopback port `55442`, database
+`concurrency_race_1881`. Its dedicated-URL, loopback, high-port, and name-marker
+guards remain mandatory; ordinary application databases are never valid targets.
 
 ### Member-night guard → per-member lock, ACROSS lodges
 

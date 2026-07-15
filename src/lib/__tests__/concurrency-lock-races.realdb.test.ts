@@ -7,17 +7,17 @@
  *
  *   - They run ONLY when `RUN_CONCURRENCY_RACE_TESTS=1`. With the flag unset the
  *     whole suite is `describe.skip`, so `npm test` never needs a live DB.
- *   - They refuse to touch a default/production database: the target URL must be
- *     on a NON-5432 port at or above 55442 (a throwaway local instance). A URL on
- *     5432 (or below 55442) aborts the suite loudly rather than running.
+ *   - They read ONLY `CONCURRENCY_RACE_DATABASE_URL` and require a loopback host,
+ *     explicit port 55442+, and a database name containing the dedicated
+ *     `concurrency_race_1881` marker. Any mismatch aborts before Prisma imports.
  *
  * Run locally against a scratch database, e.g.:
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://user:pass@127.0.0.1:55442/concurrency_race_1881 \
  *   npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts
  *
- * The app's prisma singleton connects via DATABASE_URL (driver adapter), so the
- * target is DATABASE_URL and the safety guard is applied to it.
+ * After validation, the dedicated URL is copied to DATABASE_URL solely for the
+ * app's Prisma singleton/driver adapter used by this isolated test process.
  *
  * The harness validates the MECHANISM the whole fix rests on — advisory-lock
  * mutual exclusion plus status-guarded compare-and-set — against a scratch
@@ -33,8 +33,8 @@ const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 
 /**
- * Guard: never run against a default/production Postgres. Require a non-5432
- * port at or above 55442 (a deliberately unusual throwaway range).
+ * Guard: never run against a default/production Postgres. Require the dedicated
+ * env URL, loopback, an unusual high port, and the test-only database marker.
  */
 export function assertSafeRaceDbUrl(url: string): void {
   let parsed: URL;
@@ -42,7 +42,7 @@ export function assertSafeRaceDbUrl(url: string): void {
     parsed = new URL(url);
   } catch {
     throw new Error(
-      "Concurrency race tests need a valid CONCURRENCY_RACE_DATABASE_URL (or DATABASE_URL)."
+      "Concurrency race tests need a valid CONCURRENCY_RACE_DATABASE_URL."
     );
   }
   const port = Number.parseInt(parsed.port, 10);

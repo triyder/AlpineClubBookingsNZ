@@ -655,6 +655,9 @@ Future reviews and issues should cite this file when proposing changes.
   is left unapplied with an operator alert. Child cancellation is status-guarded.
   The resume cron finds fenced groups by remaining active organiser-settled
   children, not by requiring the group status to remain open.
+  Settlement initiation checks the fence both at entry and again under global
+  `lock(1)` before child-lodge locks; neither Stripe nor Internet Banking may
+  create fresh provider work for a cancelled group.
 - The group-cancel refund credit-note enqueue is **durable** (#1257/#1377).
   Each child's Xero refund credit-note outbox row (integer cents) is enqueued
   **inside the same transaction** as that child's cancel + `refundedAmountCents`

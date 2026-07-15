@@ -570,6 +570,20 @@ describe("review finding source/schema contracts", () => {
     expect(capacityFailure).toContain("status: BookingStatus.PAYMENT_PENDING");
   });
 
+  it("runs the opt-in concurrency race harness against its dedicated CI PostgreSQL service (#1881)", () => {
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    expect(workflow).toContain("concurrency-race-postgres:");
+    expect(workflow).toContain("POSTGRES_DB: concurrency_race_1881");
+    expect(workflow).toContain("55442:5432");
+    expect(workflow).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(workflow).toContain(
+      "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
+    );
+    expect(workflow).toContain(
+      "npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts"
+    );
+  });
+
   it("wraps age-up membership upgrades and token issuance in a transaction", () => {
     const source = readRepoFile("src/lib/cron-age-up.ts");
 

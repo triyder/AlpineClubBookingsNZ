@@ -35,6 +35,7 @@ import {
 import { isXeroConnected } from "@/lib/xero";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
+import { lockMemberCreditLedger } from "@/lib/member-credit";
 
 /**
  * Switch an existing card (Stripe) PAYMENT_PENDING booking to Internet Banking.
@@ -200,9 +201,13 @@ export async function POST(request: NextRequest) {
       return { type: "notSwitchable" as const };
     }
 
-    // Recompute the payment mirror under lock(1): repricing and credit-ledger
-    // writers share this lock, so a pre-lock price/credit pair cannot be
-    // persisted after either side changes while this request waits.
+    // Credit writers serialize on a per-member key, not lock(1). Compose all
+    // three tiers in the global -> lodge -> member order before aggregating so
+    // this read cannot race an applied-credit writer.
+    await lockMemberCreditLedger(locked.memberId, tx);
+
+    // Recompute the payment mirror under the full lock set so a pre-lock
+    // price/credit pair cannot be persisted after either side changes.
     const appliedCreditAgg = await tx.memberCredit.aggregate({
       where: { appliedToBookingId: locked.id, type: CreditType.BOOKING_APPLIED },
       _sum: { amountCents: true },

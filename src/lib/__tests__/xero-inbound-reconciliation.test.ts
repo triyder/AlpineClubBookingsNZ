@@ -3175,6 +3175,91 @@ describe("processStoredXeroInboundEvents", () => {
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
   });
 
+  it("alerts operators when a paid group invoice is fenced by cancellation (#1881)", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_settle_cancelled",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_settle_cancelled",
+        correlationKey: "corr_settle_cancelled",
+        payload: { resourceId: "inv_settle_cancelled" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_settle_cancelled" });
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.groupSettlementFindFirst.mockResolvedValue({
+      id: "settle_cancelled",
+      status: "FAILED",
+    });
+    mocks.applyGroupSettlementFromInvoice.mockResolvedValue({
+      outcome: "cancelled",
+      settledBookingIds: [],
+    });
+    mocks.groupSettlementFindUnique.mockResolvedValue({
+      amountCents: 24690,
+      groupBooking: {
+        organiserMember: { firstName: "Olive", lastName: "Organiser" },
+        organiserBooking: {
+          checkIn: new Date("2026-08-01T00:00:00.000Z"),
+          checkOut: new Date("2026-08-03T00:00:00.000Z"),
+        },
+      },
+    });
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_settle_cancelled",
+              invoiceNumber: "INV-SETTLE-CANCELLED",
+              date: "2026-07-01",
+              status: "PAID",
+              fullyPaidOnDate: "2026-07-02",
+              contact: { contactID: "contact_1" },
+              amountPaid: 246.9,
+              payments: [
+                {
+                  paymentID: "xpay_settle_cancelled",
+                  amount: 246.9,
+                  invoiceNumber: "INV-SETTLE-CANCELLED",
+                  status: "AUTHORISED",
+                },
+              ],
+              lineItems: [{ accountCode: "200" }],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memberName: "Olive Organiser",
+        amountCents: 24690,
+        errorMessage: expect.stringContaining("paid after the organiser cancelled"),
+        paymentIntentId: "inv_settle_cancelled",
+      })
+    );
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+  });
+
   it("does not settle a group when its combined invoice was cleared by credit allocation (#1435)", async () => {
     mocks.inboundFindMany.mockResolvedValue([
       {

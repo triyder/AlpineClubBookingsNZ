@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
   isXeroConnected: vi.fn(),
   creditAggregate: vi.fn(),
+  lockMemberCreditLedger: vi.fn(),
+  acquireLodgeCapacityLock: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -54,6 +56,16 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
     mocks.kickQueuedXeroOutboxOperationsIfConnected,
 }));
 vi.mock("@/lib/xero", () => ({ isXeroConnected: mocks.isXeroConnected }));
+vi.mock("@/lib/member-credit", () => ({
+  lockMemberCreditLedger: mocks.lockMemberCreditLedger,
+}));
+vi.mock("@/lib/capacity", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  return {
+    ...actual,
+    acquireLodgeCapacityLock: mocks.acquireLodgeCapacityLock,
+  };
+});
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }));
@@ -147,6 +159,8 @@ beforeEach(() => {
   });
   // Default booking has no applied credit → effective amount == finalPrice.
   mocks.creditAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+  mocks.lockMemberCreditLedger.mockResolvedValue(undefined);
+  mocks.acquireLodgeCapacityLock.mockResolvedValue(undefined);
   mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(undefined);
   mocks.isXeroConnected.mockResolvedValue(true);
 });
@@ -374,7 +388,7 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     );
   });
 
-  it("uses the repriced booking and credit ledger observed under lock(1) (#1881)", async () => {
+  it("uses the repriced booking and credit ledger under global -> lodge -> member locks (#1881)", async () => {
     // The unlocked request snapshot was $45 with no credit. While it waited for
     // lock(1), a valid reprice raised the booking to $60 and the member applied
     // $20 credit. The persisted IB mirror must use the locked pair: 4000+2000.
@@ -397,6 +411,19 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     );
     expect(mocks.recordInternetBankingPaymentTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ amountCents: 4000 })
+    );
+    expect(mocks.lockMemberCreditLedger).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ memberCredit: expect.any(Object) })
+    );
+    expect(mocks.txExecuteRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]
+    );
+    expect(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.lockMemberCreditLedger.mock.invocationCallOrder[0]
+    );
+    expect(mocks.lockMemberCreditLedger.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.creditAggregate.mock.invocationCallOrder[0]
     );
   });
 
