@@ -558,6 +558,28 @@ Future reviews and issues should cite this file when proposing changes.
   with `syncLinkedPaymentInvoiceMetadata`, which runs before the loop.
 - Payment, refund, and credit operations must be idempotent across retries,
   webhook replays, cron reruns, and partial failure recovery.
+- The Stripe webhook dedup claim (`ProcessedWebhookEvent`) is a processing
+  LEASE, not a bare "seen" marker (F16, #1887). The claim carries `status`
+  (`PROCESSING`/`COMPLETED`) and `processingStartedAt`. A redelivery hitting an
+  existing claim ACKs 200 only when the claim is `COMPLETED`; a `PROCESSING`
+  claim still inside the lease window (15 minutes) forces a provider retry
+  (HTTP 500) rather than a false-duplicate ACK, and an expired lease (a crashed
+  prior attempt) is taken over atomically and reprocessed. A handler failure
+  still releases the claim (delete) so the retry re-claims fresh. This closes
+  two lost-event windows: a crash between claim-insert and completion, and a
+  concurrent redelivery ACKed while the in-flight attempt later fails. Handlers
+  stay idempotent, so a lease takeover reprocessing after a crash is safe.
+- A FAILED Stripe payment does not immediately reap the `WAITING_PAYMENT` Xero
+  outbox op linked to its intent (F19, #1887). A failed PaymentIntent can be
+  retried and SUCCEED on the same intent id, so the reap requires the
+  transaction to have stayed FAILED past a 24h grace window
+  (`FAILED_TRANSACTION_REAP_GRACE_HOURS`) before cancelling — otherwise a not
+  yet-retried failure could be cancelled out from under a same-intent retry that
+  is about to succeed, capturing money with no Xero invoice. A retry that
+  already succeeded flips the same row to SUCCEEDED and is excluded by the status
+  filter; the grace only guards the narrow FAILED→about-to-SUCCEED race. The
+  intent-agnostic 14-day `createdAt` sweep is the separate backstop for ops whose
+  intent never resolved at all.
 - External provider side effects require clear retry and idempotency behavior.
 - An organiser-pays group settlement applies only when the payment matches the
   sum of the settleable children **at apply time**, re-verified under the lock
@@ -698,10 +720,31 @@ that omits the settlement election is rejected rather than defaulted, so a
 body-less self-removal cannot silently settle the booking owner's money; the
 owner or an admin makes the election through the batch edit flow.
 
+A pre-payment reduction can drop `finalPriceCents` BELOW the account credit
+already applied at booking-create (F20, #1887). Every modification apply path
+that reprices (batch modify and single-guest removal via
+`applyLifecycleTransitions`, date change via its own settlement block) re-derives
+the applied credit in-transaction, under the member-credit ledger lock, and
+refunds the over-consumed slice back to the member (an append-only positive
+`BOOKING_APPLIED` offset that nets the applied credit down to the new price and
+returns the excess to the member's balance). The zero-dollar auto-pay decision
+then keys on the EFFECTIVE (credit-reduced) price, not raw `finalPriceCents`,
+mirroring booking-create: a reduction that lands the booking fully
+credit-covered auto-confirms it at $0 instead of dead-ending as unpayable at the
+card-intent guard (which rejects `effectivePriceCents <= 0`) with the member's
+credit over-consumed. The clamp is gated on the payment's `creditAppliedCents`
+mirror so a no-credit modification is byte-for-byte unchanged and never touches
+the ledger; it re-derives the authoritative applied total from the ledger when
+credit is present, and is idempotent under transaction re-drive. (Xero note
+re-allocation for the returned slice on an Internet-Banking booking follows the
+existing IB reconcile path and remains an operator-reconciled residual, in line
+with the documented #1620 divergences; the member's LOCAL credit is conserved.)
+
 Every modification path also applies the same lifecycle transitions: a
-PAYMENT_PENDING booking whose price drops to zero auto-pays with a zero-dollar
-payment (superseding and cancelling any outstanding primary PaymentIntents so a
-stale checkout tab cannot capture the pre-change amount), any *other* price
+PAYMENT_PENDING booking whose EFFECTIVE (credit-reduced) price drops to zero
+auto-pays with a zero-dollar payment (superseding and cancelling any outstanding
+primary PaymentIntents so a stale checkout tab cannot capture the pre-change
+amount), any *other* price
 change supersedes pending primary intents stranded at the old amount (#1161 —
 and belt-and-braces, both intent-issuing endpoints refuse to hand out a
 client_secret whose amount no longer matches `finalPriceCents`, and the

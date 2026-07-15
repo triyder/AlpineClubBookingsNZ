@@ -2029,7 +2029,7 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
     mocks.updateManyOperation.mockResolvedValue({ count: 0 });
   });
 
-  it("reaps WAITING_PAYMENT operations whose linked PaymentTransaction is FAILED", async () => {
+  it("reaps WAITING_PAYMENT operations whose linked PaymentTransaction has been FAILED past the grace window", async () => {
     mocks.findManyOperations.mockResolvedValue([
       {
         id: "op_waiting_1",
@@ -2042,14 +2042,24 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
 
     const result = await reapStaleWaitingPaymentXeroOutboxOperations();
 
+    // F19 (#1887): the FAILED lookup is now floored by a 24h grace on updatedAt
+    // so a not-yet-retried failure cannot be cancelled out from under a
+    // same-intent retry that is about to succeed.
     expect(mocks.findFirstPaymentTransaction).toHaveBeenCalledWith({
       where: {
         source: "STRIPE",
         stripePaymentIntentId: "pi_failed_abc",
         status: "FAILED",
+        updatedAt: { lte: expect.any(Date) },
       },
       select: { id: true },
     });
+    const graceThreshold =
+      mocks.findFirstPaymentTransaction.mock.calls[0][0].where.updatedAt.lte;
+    // ~24h ago (allow a generous window for test execution time).
+    const hoursAgo = (Date.now() - graceThreshold.getTime()) / (60 * 60 * 1000);
+    expect(hoursAgo).toBeGreaterThan(23.9);
+    expect(hoursAgo).toBeLessThan(24.5);
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
       where: {
         id: { in: ["op_waiting_1"] },
@@ -2064,6 +2074,56 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
       reaped: 1,
       queueOperationIds: ["op_waiting_1"],
     });
+  });
+
+  it("does NOT reap a WAITING_PAYMENT op whose linked transaction failed inside the grace window (F19, #1887)", async () => {
+    // A FAILED transaction that is still inside the grace window returns no row
+    // from the floored query (the DB predicate excludes it), so the op survives
+    // for the member's same-intent retry to succeed against.
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_waiting_recent_fail",
+        createdAt: new Date(),
+        requestPayload: { paymentIntentId: "pi_recent_fail" },
+      },
+    ]);
+    mocks.findFirstPaymentTransaction.mockResolvedValue(null);
+
+    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    expect(mocks.findFirstPaymentTransaction).toHaveBeenCalledWith({
+      where: {
+        source: "STRIPE",
+        stripePaymentIntentId: "pi_recent_fail",
+        status: "FAILED",
+        updatedAt: { lte: expect.any(Date) },
+      },
+      select: { id: true },
+    });
+    expect(result.reaped).toBe(0);
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+  });
+
+  it("honours a custom failedTransactionGraceHours override (F19, #1887)", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_waiting_custom",
+        createdAt: new Date(),
+        requestPayload: { paymentIntentId: "pi_custom" },
+      },
+    ]);
+    mocks.findFirstPaymentTransaction.mockResolvedValue({ id: "txn-failed" });
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+    await reapStaleWaitingPaymentXeroOutboxOperations({
+      failedTransactionGraceHours: 1,
+    });
+
+    const graceThreshold =
+      mocks.findFirstPaymentTransaction.mock.calls[0][0].where.updatedAt.lte;
+    const hoursAgo = (Date.now() - graceThreshold.getTime()) / (60 * 60 * 1000);
+    expect(hoursAgo).toBeGreaterThan(0.9);
+    expect(hoursAgo).toBeLessThan(1.5);
   });
 
   it("reaps WAITING_PAYMENT operations older than the staleness threshold", async () => {

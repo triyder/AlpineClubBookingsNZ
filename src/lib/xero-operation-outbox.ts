@@ -1124,14 +1124,35 @@ export async function attachPaymentIntentToWaitingSupplementaryInvoiceOperations
 
 const STALE_WAITING_PAYMENT_AGE_DAYS = 14;
 
+// F19 (#1887): a FAILED Stripe payment does not reap its WAITING_PAYMENT Xero
+// op immediately. A failed PaymentIntent can be retried and SUCCEED on the same
+// intent id, so cancelling the moment the transaction flips FAILED races that
+// retry — the member's card is captured but the Xero invoice op is gone. Only
+// reap a FAILED transaction that has stayed FAILED past this grace window, by
+// which point a retry-success is no longer realistic (Stripe intents do not
+// stay retriable this long). The 14-day createdAt sweep is the separate,
+// intent-agnostic backstop for ops whose intent never resolved at all.
+const FAILED_TRANSACTION_REAP_GRACE_HOURS = 24;
+
 export async function reapStaleWaitingPaymentXeroOutboxOperations(options?: {
   /** Override the staleness threshold in days. Defaults to 14. */
   ageInDays?: number;
+  /**
+   * Override the FAILED-transaction grace window in hours. Defaults to 24. A
+   * FAILED Stripe transaction only reaps its WAITING_PAYMENT op once it has been
+   * FAILED for at least this long (F19, #1887).
+   */
+  failedTransactionGraceHours?: number;
 }): Promise<{ reaped: number; queueOperationIds: string[] }> {
   const ageInDays =
     options?.ageInDays ?? STALE_WAITING_PAYMENT_AGE_DAYS;
   const ageThreshold = new Date(
     Date.now() - ageInDays * 24 * 60 * 60 * 1000,
+  );
+  const failedGraceHours =
+    options?.failedTransactionGraceHours ?? FAILED_TRANSACTION_REAP_GRACE_HOURS;
+  const failedGraceThreshold = new Date(
+    Date.now() - failedGraceHours * 60 * 60 * 1000,
   );
 
   const waitingOperations = await prisma.xeroSyncOperation.findMany({
@@ -1163,11 +1184,18 @@ export async function reapStaleWaitingPaymentXeroOutboxOperations(options?: {
     const paymentIntentId = payload?.paymentIntentId ?? null;
     if (!paymentIntentId) continue;
 
+    // F19 (#1887): require the transaction to have been FAILED past the grace
+    // window (updatedAt is stamped when it flips FAILED and is stable in that
+    // terminal state) so a not-yet-retried failure cannot be cancelled out from
+    // under a same-intent retry that is about to succeed. A retry that already
+    // succeeded flips this same row to SUCCEEDED, so the status filter alone
+    // excludes it; the grace only guards the narrow FAILED→about-to-SUCCEED race.
     const failedTransaction = await prisma.paymentTransaction.findFirst({
       where: {
         source: "STRIPE",
         stripePaymentIntentId: paymentIntentId,
         status: "FAILED",
+        updatedAt: { lte: failedGraceThreshold },
       },
       select: { id: true },
     });
