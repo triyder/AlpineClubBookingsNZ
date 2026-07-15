@@ -26,7 +26,8 @@
  * lock manager and MVCC that the production code depends on.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { prisma } from "@/lib/prisma";
+
+let prisma: typeof import("@/lib/prisma")["prisma"];
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.DATABASE_URL ?? "";
@@ -65,8 +66,11 @@ const PROBE_TABLE = "_concurrency_race_probe_1881";
   () => {
     beforeAll(async () => {
       // Never touch a default/production DB: the singleton connects via
-      // DATABASE_URL, so guard THAT before creating any scratch state.
+      // DATABASE_URL, so guard THAT before importing Prisma or creating any
+      // scratch state. Keeping the import behind the opt-in hook makes the
+      // skipped suite a true no-op when DATABASE_URL is absent.
       assertSafeRaceDbUrl(RACE_DB_URL);
+      ({ prisma } = await import("@/lib/prisma"));
       await prisma.$executeRawUnsafe(
         `CREATE TABLE IF NOT EXISTS "${PROBE_TABLE}" (id text PRIMARY KEY, status text NOT NULL)`
       );
