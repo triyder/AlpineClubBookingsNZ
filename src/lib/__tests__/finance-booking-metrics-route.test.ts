@@ -375,7 +375,7 @@ describe("finance booking metrics route", () => {
 
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({
-      error: "Failed to read finance booking metrics",
+      error: "Failed to load finance booking metrics",
     });
   });
 });
