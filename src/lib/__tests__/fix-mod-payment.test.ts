@@ -277,6 +277,16 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
 function makeTx(booking: ReturnType<typeof makeBooking>) {
   return {
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+    // F1 (#1887): the date path now reads the applied-credit ledger for every
+    // pre-payment modification (gated on status, not the payment mirror) so the
+    // clamp also fires for a card booking with no payment row. These fixtures
+    // carry no applied credit, so the aggregate nets to 0 and the clamp is a
+    // no-op (never taking the ledger lock or writing a row).
+    $executeRaw: vi.fn().mockResolvedValue(undefined),
+    memberCredit: {
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: 0 } }),
+      create: vi.fn().mockResolvedValue({}),
+    },
     lodge: {
       findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
     },

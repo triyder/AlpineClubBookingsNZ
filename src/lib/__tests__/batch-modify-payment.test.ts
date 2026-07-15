@@ -377,6 +377,11 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({ id: "credit_1" }),
       update: vi.fn().mockResolvedValue({ id: "credit_1" }),
+      // F1 (#1887): applyLifecycleTransitions now reads the applied-credit
+      // ledger for every pre-payment modification (status-gated, not the payment
+      // mirror). These fixtures carry no applied credit, so the aggregate nets to
+      // 0 and the clamp stays a no-op.
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: 0 } }),
     },
     paymentTransaction: {
       findMany: vi.fn().mockResolvedValue([]),

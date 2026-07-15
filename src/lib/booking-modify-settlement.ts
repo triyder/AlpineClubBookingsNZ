@@ -33,7 +33,10 @@ import {
 } from "@/lib/booking-modify-validation";
 import { type GuestPlan } from "@/lib/booking-modify-plan";
 import { calculateBookingHoldDecision } from "@/lib/policies/booking-route-decisions";
-import { clampAppliedCreditToBookingPrice } from "@/lib/member-credit";
+import {
+  clampAppliedCreditToBookingPrice,
+  deriveBookingAppliedCreditCents,
+} from "@/lib/member-credit";
 
 export type BookingModificationSettlementOptions = {
   basisAmountCents: number;
@@ -321,20 +324,39 @@ export async function applyLifecycleTransitions(
   // now-fully-credit-covered booking auto-confirms at $0 instead of dead-ending
   // at the card-intent guard (effective <= 0). Skipped when lifecycle rules are
   // skipped (admin date shift freezes money).
-  // Gate on the payment's applied-credit mirror so a no-credit booking keeps
-  // byte-for-byte the pre-#1887 behaviour (effective == newFinalPriceCents) and
-  // never touches the credit ledger. The clamp itself re-derives the
-  // authoritative applied total from the ledger.
-  if (
-    !skipBookingLifecycleRules &&
-    (booking.payment?.creditAppliedCents ?? 0) > 0
-  ) {
-    const clamp = await clampAppliedCreditToBookingPrice(
-      { memberId: booking.memberId, bookingId, newFinalPriceCents },
+  //
+  // F1 (#1887): gate on the LEDGER + a pre-payment status, NOT the payment's
+  // creditAppliedCents mirror. A CARD booking has NO Payment row until it
+  // requests a card intent (booking-create only writes a payment row for the $0
+  // and Internet-Banking paths), so the mirror gate missed exactly the surface
+  // this clamp targets — a card booking editing dates/guests in PAYMENT_PENDING.
+  // Without the clamp that booking would dead-end unpayable at the card-intent
+  // guard (effective <= 0) with its credit over-consumed. A cheap UNLOCKED
+  // ledger read decides whether any credit was applied at all, so a no-credit
+  // modification still never takes the member-credit lock or writes a row and
+  // keeps byte-for-byte the pre-#1887 behaviour (effective == newFinalPriceCents).
+  //
+  // F4 (#1887): only run in PENDING/PAYMENT_PENDING. A modification parked to
+  // AWAITING_REVIEW (above) deliberately does NOT refund credit or auto-$0-pay
+  // before an admin approves it — booking-create likewise blocks the zero-dollar
+  // path while a booking is under review. The release-from-review transition
+  // lands PAYMENT_PENDING, at which point the clamp runs.
+  const isRepriceablePrePayment =
+    newStatus === BookingStatus.PENDING ||
+    newStatus === BookingStatus.PAYMENT_PENDING;
+  if (!skipBookingLifecycleRules && isRepriceablePrePayment) {
+    const appliedBeforeClamp = await deriveBookingAppliedCreditCents(
+      bookingId,
       tx,
     );
-    appliedCreditCents = clamp.appliedCreditCents;
-    refundedExcessCreditCents = clamp.refundedExcessCents;
+    if (appliedBeforeClamp > 0) {
+      const clamp = await clampAppliedCreditToBookingPrice(
+        { memberId: booking.memberId, bookingId, newFinalPriceCents },
+        tx,
+      );
+      appliedCreditCents = clamp.appliedCreditCents;
+      refundedExcessCreditCents = clamp.refundedExcessCents;
+    }
   }
   const effectivePriceCents = newFinalPriceCents - appliedCreditCents;
 

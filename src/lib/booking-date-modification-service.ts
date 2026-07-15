@@ -49,6 +49,7 @@ import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-
 import {
   clampAppliedCreditToBookingPrice,
   createBookingModificationCredit,
+  deriveBookingAppliedCreditCents,
 } from "@/lib/member-credit";
 import {
   daysUntilDate,
@@ -677,13 +678,22 @@ export async function modifyBookingDates({
     // fully-credit-covered booking auto-confirms at $0 (mirroring both the batch
     // modify path and booking-create) instead of dead-ending at the card-intent
     // guard, which rejects effective <= 0.
-    // Gated on the payment's applied-credit mirror so a no-credit date change is
-    // byte-for-byte unchanged (no ledger read, no new $0 path); the clamp
-    // re-derives the authoritative applied total from the ledger when credit is
-    // present. When the reprice lands the booking fully credit-covered it
-    // auto-confirms at $0, matching the batch path and booking-create.
+    // F1 (#1887): gate on the LEDGER + a pre-payment status, NOT the payment's
+    // creditAppliedCents mirror. A CARD booking has no Payment row until it
+    // requests a card intent, so the mirror gate missed the card booking whose
+    // dates are changed in PAYMENT_PENDING — the exact surface that would then
+    // dead-end unpayable at the card-intent guard with credit over-consumed. A
+    // cheap UNLOCKED ledger read keeps a no-credit date change byte-for-byte
+    // unchanged (no lock, no $0 path). Restricted to PENDING/PAYMENT_PENDING so a
+    // date change on a booking under review does not refund credit pre-approval
+    // (F4, #1887); the clamp runs once the booking is released to PAYMENT_PENDING.
     let zeroDollarAutoPaid = false;
-    if ((booking.payment?.creditAppliedCents ?? 0) > 0) {
+    const isRepriceablePrePayment =
+      newStatus === "PENDING" || newStatus === "PAYMENT_PENDING";
+    const appliedBeforeClamp = isRepriceablePrePayment
+      ? await deriveBookingAppliedCreditCents(bookingId, tx)
+      : 0;
+    if (appliedBeforeClamp > 0) {
       const clampedCredit = await clampAppliedCreditToBookingPrice(
         { memberId: booking.memberId, bookingId, newFinalPriceCents },
         tx,
