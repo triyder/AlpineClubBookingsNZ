@@ -1,5 +1,9 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import {
+  findOverlappingCapacityHoldingBookings,
+  findOverlappingOverriddenNonHoldingBookings,
+} from "@/lib/capacity";
 import { notFound, redirect } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -134,6 +138,8 @@ export default async function BookingDetailPage({
       member: { select: { firstName: true, lastName: true } },
       // Admin capacity hold (#1764): who placed it, for the admin tools card.
       adminCapacityHoldBy: { select: { firstName: true, lastName: true } },
+      // Exclusive whole-lodge hold (#121): who set it, for the admin tools card.
+      wholeLodgeHoldBy: { select: { firstName: true, lastName: true } },
       // Request-converted PENDING holds capacity (#1254); the admin hold
       // controls need the natural-holding answer to hide Release correctly.
       originBookingRequest: { select: { id: true } },
@@ -720,6 +726,32 @@ export default async function BookingDetailPage({
     ? await getBookingProviderMismatches(booking.id)
     : [];
 
+  // Admin conflict surfacing (ADR-001 decision 1, issue #119): when this
+  // booking exclusively holds the whole lodge, list the existing
+  // capacity-holding bookings overlapping its nights so the officer can resolve
+  // the clash. Admin-only — never computed or shown for members (decision 6).
+  const exclusiveHoldConflicts =
+    canSeeAdminTools && booking.wholeLodgeHold && booking.lodgeId
+      ? [
+          ...(await findOverlappingCapacityHoldingBookings(prisma, {
+            lodgeId: booking.lodgeId,
+            checkIn: booking.checkIn,
+            checkOut: booking.checkOut,
+            excludeBookingId: booking.id,
+          })),
+          // Override-settle blind spot (ADR-001 decision 1, issue #177): also
+          // list overridden-but-not-yet-holding overlaps (marked `overridden`)
+          // so the officer keeps seeing the future settle onto the held nights,
+          // matching what the exclusive-hold route surfaces at set time.
+          ...(await findOverlappingOverriddenNonHoldingBookings(prisma, {
+            lodgeId: booking.lodgeId,
+            checkIn: booking.checkIn,
+            checkOut: booking.checkOut,
+            excludeBookingId: booking.id,
+          })),
+        ]
+      : [];
+
   // Surface the applicable cancellation refund schedule to the member up front
   // (#1371 F28): the exact per-booking amount already shows inside the cancel
   // flow, but the full tier schedule previously lived only in the admin policy
@@ -799,6 +831,25 @@ export default async function BookingDetailPage({
               isRequestConverted: Boolean(booking.originBookingRequest),
             }),
             canPlaceHold: booking.status === "PAYMENT_PENDING",
+          }}
+          exclusiveHold={{
+            wholeLodgeHold: booking.wholeLodgeHold,
+            wholeLodgeHoldAt: booking.wholeLodgeHoldAt?.toISOString() ?? null,
+            heldByName: booking.wholeLodgeHoldBy
+              ? `${booking.wholeLodgeHoldBy.firstName} ${booking.wholeLodgeHoldBy.lastName}`
+              : null,
+            // Gate the Set control (issue #173): an exclusive hold is only
+            // meaningful on a capacity-holding booking (ADR-001 capacity rule).
+            // Unlike holdsCapacityNaturally above, this includes the #1764
+            // admin-capacity-hold disjunct so a PAYMENT_PENDING booking that
+            // already carries an admin hold can take the exclusive hold too —
+            // matching the route guard exactly.
+            holdsCapacity: bookingHoldsCapacity({
+              status: booking.status,
+              isRequestConverted: Boolean(booking.originBookingRequest),
+              hasAdminCapacityHold: Boolean(booking.adminCapacityHoldAt),
+            }),
+            conflicts: exclusiveHoldConflicts,
           }}
         />
       )}

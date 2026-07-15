@@ -35,6 +35,8 @@ function buildBooking(
     memberName: "Example Member",
     requestedRoom: null,
     parentBookingId: null,
+    wholeLodgeHold: false,
+    overlapsExclusiveHold: false,
     ...overrides,
   };
 }

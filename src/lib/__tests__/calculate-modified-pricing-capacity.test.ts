@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api-error";
-import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
+import {
+  OverCapacityConfirmationRequiredError,
+  WholeLodgeHoldBlockedError,
+} from "@/lib/over-capacity-confirmation";
 
 const h = vi.hoisted(() => ({
   checkCapacityForGuestRanges: vi.fn(),
@@ -90,6 +93,22 @@ const OVER_CAPACITY = {
   nightDetails: [{ date: D("2026-09-11"), occupiedBeds: 30, availableBeds: -1 }],
 };
 
+// A whole-lodge-held night (ADR-001, issue #118): unavailable, but availableBeds
+// is pinned to 0 (never negative) and flagged wholeLodgeHeld — exactly what
+// checkCapacityForGuestRanges now returns for a night held by another booking.
+const WHOLE_LODGE_HELD = {
+  available: false,
+  minAvailable: 0,
+  nightDetails: [
+    {
+      date: D("2026-09-11"),
+      occupiedBeds: 5,
+      availableBeds: 0,
+      wholeLodgeHeld: true,
+    },
+  ],
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -123,6 +142,53 @@ describe("calculateModifiedPricing capacity (issue #1668)", () => {
         confirmOverCapacity: false,
       }),
     ).rejects.toBeInstanceOf(OverCapacityConfirmationRequiredError);
+  });
+
+  it("member parity: a held night throws the SAME 400 as a full lodge for a non-admin edit (no exclusive signal)", async () => {
+    h.checkCapacityForGuestRanges.mockResolvedValue(WHOLE_LODGE_HELD);
+
+    await expect(
+      calculateModifiedPricing({} as never, {
+        ...baseArgs(),
+        adminOverride: false,
+      }),
+    ).rejects.toMatchObject({
+      constructor: ApiError,
+      status: 400,
+      message: "Not enough beds available for these changes",
+    });
+  });
+
+  it("held night unconfirmed admin override still routes through OverCapacityConfirmationRequiredError (member-parity confirm prompt, empty confirmable list)", async () => {
+    h.checkCapacityForGuestRanges.mockResolvedValue(WHOLE_LODGE_HELD);
+
+    await expect(
+      calculateModifiedPricing({} as never, {
+        ...baseArgs(),
+        adminOverride: true,
+        confirmOverCapacity: false,
+      }),
+    ).rejects.toBeInstanceOf(OverCapacityConfirmationRequiredError);
+  });
+
+  it("override NON-BYPASS: a CONFIRMED admin over-capacity override onto a held night throws WholeLodgeHoldBlockedError and does not proceed (decision 5)", async () => {
+    h.checkCapacityForGuestRanges.mockResolvedValue(WHOLE_LODGE_HELD);
+
+    let thrown: unknown;
+    try {
+      await calculateModifiedPricing({} as never, {
+        ...baseArgs(),
+        adminOverride: true,
+        confirmOverCapacity: true,
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(WholeLodgeHoldBlockedError);
+    expect((thrown as WholeLodgeHoldBlockedError).blockedNights).toEqual([
+      "2026-09-11",
+    ]);
   });
 
   it("proceeds with capacityOverridden: true for a confirmed admin override", async () => {

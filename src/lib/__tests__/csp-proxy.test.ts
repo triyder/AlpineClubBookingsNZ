@@ -67,6 +67,58 @@ describe("CSP policy", () => {
     expect(directive(policy, "object-src")).toBe("object-src 'none'");
     expect(directive(policy, "frame-ancestors")).toBe("frame-ancestors 'none'");
   });
+
+  // Issue #161 (ADR-003 residual): admin-authored display HTML/CSS can embed an
+  // <img>, and the global img-src otherwise allows any https host — tighten
+  // img-src to 'self' data: on /display and the sandboxed preview host only.
+  it("tightens img-src to 'self' data: on /display and the sandboxed preview host", () => {
+    const displayPolicy = buildContentSecurityPolicy("unit-test-nonce", {
+      pathname: "/display",
+    });
+    const previewHostPolicy = buildContentSecurityPolicy("unit-test-nonce", {
+      pathname: "/admin/display/preview",
+    });
+
+    expect(directive(displayPolicy, "img-src")).toBe("img-src 'self' data:");
+    expect(directive(previewHostPolicy, "img-src")).toBe(
+      "img-src 'self' data:",
+    );
+    // The other /display-only relaxations (frame-ancestors, frame-src) are
+    // untouched by this change.
+    expect(directive(displayPolicy, "frame-ancestors")).toBe(
+      "frame-ancestors 'self'",
+    );
+    expect(directive(previewHostPolicy, "frame-src")).toContain("'self'");
+  });
+
+  it("leaves every non-display route's CSP byte-identical to the pre-#161 policy", () => {
+    // A pinned expected policy string — any accidental change to a non-display
+    // route's CSP (not just img-src) fails this test, not just a directive-by-
+    // directive check.
+    const expected =
+      "default-src 'self'; " +
+      "script-src 'self' 'nonce-unit-test-nonce' https://js.stripe.com https://www.googletagmanager.com; " +
+      "style-src 'self' 'unsafe-inline'; " +
+      "img-src 'self' data: https: https://www.google-analytics.com https://*.google-analytics.com; " +
+      "font-src 'self' data:; " +
+      "connect-src 'self' https://api.stripe.com https://js.stripe.com https://*.ingest.sentry.io https://www.google-analytics.com https://*.google-analytics.com; " +
+      "frame-src https://js.stripe.com https://hooks.stripe.com; " +
+      "worker-src 'self' blob:; " +
+      "object-src 'none'; " +
+      "frame-ancestors 'none'; " +
+      "base-uri 'self'; " +
+      "form-action 'self'";
+
+    expect(buildContentSecurityPolicy("unit-test-nonce")).toBe(expected);
+    expect(
+      buildContentSecurityPolicy("unit-test-nonce", { pathname: "/dashboard" }),
+    ).toBe(expected);
+    expect(
+      buildContentSecurityPolicy("unit-test-nonce", {
+        pathname: "/admin/display/templates",
+      }),
+    ).toBe(expected);
+  });
 });
 
 describe("CSP proxy", () => {
@@ -129,6 +181,30 @@ describe("CSP proxy", () => {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
       expect(response.headers.get(name)).toBe(value);
     }
+  });
+
+  it("serves the tightened img-src on real /display and preview-host requests (issue #161)", async () => {
+    const displayResponse = await proxy(
+      new NextRequest("https://example.org/display"),
+    );
+    const previewResponse = await proxy(
+      new NextRequest("https://example.org/admin/display/preview"),
+    );
+    const dashboardResponse = await proxy(
+      new NextRequest("https://example.org/dashboard"),
+    );
+
+    expect(directive(displayResponse.headers.get(CSP_HEADER) as string, "img-src")).toBe(
+      "img-src 'self' data:",
+    );
+    expect(
+      directive(previewResponse.headers.get(CSP_HEADER) as string, "img-src"),
+    ).toBe("img-src 'self' data:");
+    expect(
+      directive(dashboardResponse.headers.get(CSP_HEADER) as string, "img-src"),
+    ).toBe(
+      "img-src 'self' data: https: https://www.google-analytics.com https://*.google-analytics.com",
+    );
   });
 
   it("exposes the requested path to server components via a request header", async () => {

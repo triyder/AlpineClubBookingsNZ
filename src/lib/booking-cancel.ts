@@ -36,7 +36,10 @@ import {
   recordBookingCancellationRefundRecoveryInlineError,
 } from "@/lib/payment-recovery";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
-import { RELEASE_ADMIN_CAPACITY_HOLD_UPDATE } from "@/lib/booking-status";
+import {
+  RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+  RELEASE_WHOLE_LODGE_HOLD_UPDATE,
+} from "@/lib/booking-status";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
@@ -235,7 +238,11 @@ async function cancelLinkedProvisionalChildBookings(
     await prisma.$transaction(async (tx) => {
       await tx.booking.update({
         where: { id: child.id },
-        data: { status: "CANCELLED", ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE },
+        data: {
+          status: "CANCELLED",
+          ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+          ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
+        },
       });
       await reconcileCancelledBookingBedAllocations(child, tx);
       await revokePaymentLinksForBooking(child.id, tx);
@@ -434,6 +441,7 @@ async function performBookingCancellation(
         data: {
           status: "CANCELLED",
           ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+          ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
           waitlistOfferedAt: null,
           waitlistOfferExpiresAt: null,
           waitlistPosition: null,
@@ -603,7 +611,11 @@ async function performBookingCancellation(
       }
       await tx.booking.update({
         where: { id: bookingId },
-        data: { status: "CANCELLED", ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE },
+        data: {
+          status: "CANCELLED",
+          ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+          ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
+        },
       });
       await reconcileCancelledBookingBedAllocations(fresh, tx);
       await revokePaymentLinksForBooking(bookingId, tx);
@@ -774,7 +786,11 @@ async function performBookingCancellation(
       }
       await tx.booking.update({
         where: { id: bookingId },
-        data: { status: "CANCELLED", ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE },
+        data: {
+          status: "CANCELLED",
+          ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+          ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
+        },
       });
       await reconcileCancelledBookingBedAllocations(fresh, tx);
 
@@ -1144,7 +1160,11 @@ async function performBookingCancellation(
     // CLAIM: the atomic single-flight commit.
     await tx.booking.update({
       where: { id: bookingId },
-      data: { status: "CANCELLED", ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE },
+      data: {
+        status: "CANCELLED",
+        ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+        ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
+      },
     });
 
     // Fail the additional-payment DB state in-tx; the Stripe cancellation of
@@ -1663,6 +1683,15 @@ type CancellationAuditBooking = {
   status: string;
   checkIn: Date;
   checkOut: Date;
+  // Pre-cancel exclusive whole-lodge hold state (#177). The cancellation audit
+  // funnel reads these from the pre-update snapshot so it can emit a
+  // `booking.exclusiveHold.released` entry when the terminal transition
+  // auto-released a hold. Optional: not every snapshot handed to this helper
+  // carries them (e.g. provisional child bookings never hold), and a bare
+  // `false`/undefined simply means "no hold to release".
+  wholeLodgeHold?: boolean | null;
+  wholeLodgeHoldAt?: Date | null;
+  wholeLodgeHoldByMemberId?: string | null;
   payment?: {
     id?: string | null;
     status?: string | null;
@@ -1713,6 +1742,38 @@ function logBookingCancellationAudit({
     },
     ipAddress,
   });
+
+  // Exclusive whole-lodge hold auto-release (ADR-001, issue #177). Terminal
+  // transitions spread RELEASE_WHOLE_LODGE_HOLD_UPDATE, clearing the hold in the
+  // same update as the status flip. When the pre-cancel snapshot shows a hold
+  // was actually present, record a distinct `booking.exclusiveHold.released`
+  // entry (sibling to `booking.exclusiveHold.set`/`.cleared` on the admin route)
+  // so the trail says the cancel released it — not that an officer cleared it —
+  // and a later reinstatement cannot be mistaken for a still-armed hold. This is
+  // the audited half of the release; the cron/group-cancel bulk transitions
+  // clear the field best-effort without this context (see the fragment's doc).
+  if (booking.wholeLodgeHold) {
+    logAudit({
+      action: "booking.exclusiveHold.released",
+      memberId: sessionUserId,
+      targetId: bookingId,
+      subjectMemberId: booking.memberId,
+      entityType: "Booking",
+      entityId: bookingId,
+      category: "booking",
+      severity: "important",
+      outcome: "success",
+      summary: "Exclusive whole-lodge hold auto-released on cancellation",
+      details:
+        "A booking carrying an exclusive whole-lodge hold reached a terminal state; the hold was auto-released so the cancelled booking cannot re-arm it if reinstated.",
+      metadata: {
+        statusBefore: booking.status,
+        previouslyHeldAt: booking.wholeLodgeHoldAt?.toISOString() ?? null,
+        previouslyHeldByMemberId: booking.wholeLodgeHoldByMemberId ?? null,
+      },
+      ipAddress,
+    });
+  }
 }
 
 /**

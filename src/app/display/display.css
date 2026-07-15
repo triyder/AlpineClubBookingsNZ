@@ -1,0 +1,1046 @@
+/* Lobby TV display stylesheet (fork issues #32/#56). Dedicated to the
+ * /display surface: designed for a 16:9 screen read across a room, dark by
+ * default, sized with viewport units so a TV, a Pi, or a browser window all
+ * render sensibly. Palette and treatments ported from the approved mockup
+ * (docs/lobby-display/mockups/everyday-bar-board.html). */
+
+.display-shell {
+  /* Mock design tokens (.screen custom properties). */
+  --display-panel: rgba(255, 255, 255, 0.05);
+  --display-line: rgba(255, 255, 255, 0.12);
+  --display-muted: #8fb2ba;
+  --display-accent: #43c2d4;
+  --display-arriving: #4bc48d;
+  --display-departing: #e6a84f;
+  --display-group: #b79bff;
+  --display-ink: #eef8fa;
+
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(120% 90% at 88% -10%, rgba(63, 185, 203, 0.13), transparent 55%),
+    radial-gradient(90% 80% at -5% 115%, rgba(75, 196, 141, 0.06), transparent 50%),
+    linear-gradient(160deg, #08171d 0%, #0a1c23 55%, #07141a 100%);
+  color: var(--display-ink);
+  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- pairing / loading ------------------------------------------------- */
+
+.display-pairing,
+.display-loading {
+  align-items: center;
+  justify-content: center;
+  gap: 2vh;
+  text-align: center;
+  padding: 6vmin;
+}
+
+.display-pairing-kicker {
+  font-size: 3vmin;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--display-muted);
+}
+
+.display-pairing-code {
+  font-size: 14vmin;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: #ffffff;
+}
+
+.display-pairing-help {
+  font-size: 2.4vmin;
+  color: var(--display-muted);
+  max-width: 60vmin;
+}
+
+/* --- active screen ----------------------------------------------------- */
+
+.display-screen {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "header"
+    "main"
+    "footer";
+  grid-template-rows: auto 1fr auto;
+  padding: 3.4vmin 3.6vmin 2.4vmin;
+  column-gap: 2.6vmin;
+  row-gap: 2.2vmin;
+  position: relative;
+  min-height: 0;
+}
+
+/* Two-column layout when the template declares a side rail (issue #56).
+ * Browsers without :has() degrade to the rail below the board. */
+.display-screen:has(.display-region-side) {
+  grid-template-columns: 1fr 27vw;
+  grid-template-areas:
+    "header header"
+    "main   side"
+    "footer footer";
+}
+
+.display-region-header { grid-area: header; display: flex; }
+.display-region-main { grid-area: main; overflow: hidden; min-width: 0; }
+.display-region-side { grid-area: side; overflow: hidden; }
+.display-region-footer { grid-area: footer; display: flex; }
+
+.display-region-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.8vmin;
+}
+
+/* --- authored template scope (issue #75, LTV-029) ----------------------- */
+
+/* Authored template CSS is server-prefixed with `.display-authored-root ` so it
+ * only styles the editable body/footer, never the fixed header clock/brand.
+ * `display: contents` keeps this wrapper out of the layout so the body and
+ * authored footer place into the `.display-screen` grid exactly as before — the
+ * wrapper is a CSS-scoping anchor only, with no box of its own. */
+.display-authored-root { display: contents; }
+
+/* --- header ------------------------------------------------------------- */
+
+.display-lodge-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 2vmin;
+  width: 100%;
+}
+
+.display-header-brand { display: flex; align-items: center; gap: 1.6vmin; }
+
+.display-header-logo {
+  height: 6.8vmin;
+  width: auto;
+  max-width: 14vmin;
+  object-fit: contain;
+}
+
+.display-lodge-name {
+  font-size: 3.6vmin;
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+}
+
+.display-club-name {
+  font-size: 2vmin;
+  color: var(--display-muted);
+  margin-top: 0.6vmin;
+}
+
+/* position:relative anchors the visually-hidden simulate <input>, now a SIBLING
+ * of the picker button (#65 fix), and the absolutely-positioned "previewing
+ * against" line — neither shifts the header layout. */
+.display-header-clock { position: relative; text-align: right; min-height: 6vmin; }
+
+.display-clock-time {
+  display: block;
+  font-size: 3.8vmin;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.display-clock-date { font-size: 2vmin; color: var(--display-muted); }
+.display-clock-date b { font-weight: 700; }
+
+/* --- admin preview date simulation (issue #60) -------------------------- */
+
+/* The date line becomes a clickable affordance only in preview mode: a
+ * dotted underline hints it is editable; the hidden date input drives the
+ * native picker. Real (device) screens never render this. */
+.display-clock-date-picker {
+  position: relative;
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--display-muted);
+  font: inherit;
+  font-size: 2vmin;
+  text-align: right;
+  cursor: pointer;
+  text-decoration: underline dotted var(--display-departing);
+  text-underline-offset: 0.4vmin;
+}
+
+.display-simulate-input {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* A live simulated date recolours the existing clock text amber in place — no
+ * extra elements, so the header layout never shifts. */
+.display-header-clock[data-simulated] .display-clock-time,
+.display-header-clock[data-simulated] .display-clock-date,
+.display-header-clock[data-simulated] .display-clock-date b {
+  color: var(--display-departing);
+}
+
+.display-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- arrivals bar board ------------------------------------------------- */
+
+.display-arrivals-board {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+
+.display-board-head {
+  display: grid;
+  grid-template-columns: 17vmin repeat(var(--display-days, 3), 1fr);
+  font-size: 2vmin;
+  font-weight: 700;
+  color: var(--display-muted);
+  border-bottom: 0.22vmin solid var(--display-line);
+  padding-bottom: 1vmin;
+}
+
+.display-board-day { padding-left: 1.2vmin; }
+.display-board-day[data-today] { color: var(--display-accent); }
+
+.display-board-row {
+  display: grid;
+  grid-template-columns: 17vmin 1fr;
+  align-items: stretch;
+  border-bottom: 1px solid var(--display-line);
+  min-height: 7vmin;
+}
+
+.display-board-room {
+  display: flex;
+  align-items: center;
+  gap: 0.8vmin;
+  font-size: 2.2vmin;
+  font-weight: 750;
+  padding-right: 1vmin;
+}
+
+.display-board-room-tag {
+  color: var(--display-muted);
+  font-weight: 600;
+  font-size: 1.7vmin;
+}
+
+.display-board-lanes {
+  display: grid;
+  grid-template-columns: repeat(var(--display-days, 3), 1fr);
+  grid-auto-rows: minmax(6.4vmin, max-content);
+  align-content: center;
+  /* Day-column separators, one per column edge (mock .cbg border-left). */
+  background-image: linear-gradient(
+    to right,
+    var(--display-line) 0,
+    var(--display-line) 1px,
+    transparent 1px
+  );
+  background-size: calc(100% / var(--display-days, 3)) 100%;
+  min-width: 0;
+}
+
+.display-bar {
+  z-index: 1;
+  margin: 0.55vmin 0.6vmin;
+  border-radius: 1.3vmin;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.3vmin;
+  padding: 0.8vmin 1.6vmin;
+  overflow: hidden;
+  min-width: 0;
+  background: color-mix(in srgb, var(--display-arriving) 24%, var(--display-panel));
+  box-shadow: inset 0.55vmin 0 0 var(--display-arriving);
+}
+
+.display-bar[data-group],
+.display-bar[data-whole-lodge] {
+  background: color-mix(in srgb, var(--display-group) 26%, var(--display-panel));
+  box-shadow: inset 0.55vmin 0 0 var(--display-group);
+}
+
+.display-bar[data-departing] {
+  background: color-mix(in srgb, var(--display-departing) 24%, var(--display-panel));
+  box-shadow: inset -0.55vmin 0 0 var(--display-departing);
+}
+
+.display-bar-names {
+  font-weight: 700;
+  font-size: 1.7vmin;
+  line-height: 1.2;
+  color: var(--display-ink);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.display-bar-overflow { color: var(--display-muted); font-weight: 600; }
+
+.display-bar-out {
+  font-size: 1.4vmin;
+  font-weight: 600;
+  color: var(--display-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* --- side rail cards (issue #56) ----------------------------------------- */
+
+.display-card {
+  background: var(--display-panel);
+  border: 1px solid var(--display-line);
+  border-radius: 1.4vmin;
+  padding: 1.7vmin;
+}
+
+.display-card-title {
+  margin: 0 0 1.1vmin;
+  font-size: 2.3vmin;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 1vmin;
+}
+
+.display-card-icon { color: var(--display-accent); }
+
+.display-card-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1vmin;
+}
+
+.display-card-list li,
+.display-rules-body li {
+  font-size: 2vmin;
+  color: var(--display-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1vmin;
+}
+
+.display-card-list li::before,
+.display-rules-body li::before {
+  content: "›";
+  color: var(--display-accent);
+  font-weight: 800;
+}
+
+.display-card-list b,
+.display-rules-body strong,
+.display-rules-body b {
+  color: var(--display-ink);
+  font-weight: 600;
+}
+
+/* --- whole-lodge blockout (issue #58; mocks whole-lodge.html A/B/C) ------- */
+
+/* Board variant: grid chrome stays, the block panel spans the booked nights. */
+.display-blockout-board {
+  display: grid;
+  grid-template-columns: 17vmin repeat(var(--display-days, 3), 1fr);
+  grid-template-rows: auto repeat(var(--display-block-rooms, 8), minmax(0, 1fr));
+  height: 100%;
+  min-width: 0;
+}
+
+.display-blockout-head {
+  grid-row: 1;
+  font-size: 2vmin;
+  font-weight: 700;
+  color: var(--display-muted);
+  border-bottom: 0.22vmin solid var(--display-line);
+  padding: 0 0 1vmin 1.2vmin;
+  display: flex;
+  align-items: flex-end;
+}
+
+.display-blockout-head.display-board-corner { padding-left: 0; }
+
+.display-blockout-board .display-board-room {
+  grid-column: 1;
+  border-bottom: 1px solid var(--display-line);
+  color: var(--display-muted);
+  opacity: 0.7;
+}
+
+.display-blockout-board .display-board-room[data-live] {
+  color: var(--display-ink);
+  opacity: 1;
+}
+
+.display-blockout-cells {
+  border-bottom: 1px solid var(--display-line);
+  background-image: linear-gradient(
+    to right,
+    var(--display-line) 0,
+    var(--display-line) 1px,
+    transparent 1px
+  );
+  background-size: calc(100% / var(--display-days, 3)) 100%;
+}
+
+.display-blockout-board .display-bar { z-index: 1; }
+
+.display-blockout-panel {
+  z-index: 2;
+  margin: 0.7vmin 0.6vmin;
+  border-radius: 1.6vmin;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2vmin 1.4vmin;
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--display-group) 30%, var(--display-panel)),
+    color-mix(in srgb, var(--display-group) 15%, var(--display-panel))
+  );
+  box-shadow: inset 0 0 0 0.22vmin color-mix(in srgb, var(--display-group) 55%, transparent);
+  overflow: hidden;
+}
+
+.display-blockout-kicker {
+  font-size: 1.9vmin;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: var(--display-group);
+}
+
+.display-blockout-label {
+  font-size: 5.6vmin;
+  font-weight: 850;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  margin: 1vmin 0 0.5vmin;
+}
+
+.display-blockout-sub { font-size: 2.4vmin; font-weight: 600; }
+
+.display-blockout-dates {
+  font-size: 2vmin;
+  color: var(--display-muted);
+  margin-top: 0.7vmin;
+  font-variant-numeric: tabular-nums;
+}
+
+.display-blockout-note {
+  margin-top: 1.5vmin;
+  font-size: 1.75vmin;
+  color: var(--display-muted);
+  background: var(--display-panel);
+  border: 1px solid var(--display-line);
+  border-radius: 1vmin;
+  padding: 0.8vmin 1.4vmin;
+}
+
+/* Statement variant: no rooms — a clean full-width block + week strip. */
+.display-blockout-statement {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.display-blockout-statement .display-blockout-kicker { font-size: 2.2vmin; letter-spacing: 0.16em; }
+.display-blockout-statement .display-blockout-label { font-size: 9vmin; margin: 1.2vmin 0 0.6vmin; }
+.display-blockout-statement .display-blockout-sub { font-size: 3.2vmin; }
+.display-blockout-statement .display-blockout-dates { font-size: 2.6vmin; margin-top: 1.2vmin; }
+.display-blockout-statement .display-blockout-note {
+  margin-top: 2vmin;
+  font-size: 2.1vmin;
+  padding: 1.1vmin 2vmin;
+}
+
+.display-week-strip {
+  display: flex;
+  gap: 1.4vmin;
+  margin-top: 3vmin;
+  width: 80%;
+}
+
+.display-week-day { flex: 1; text-align: center; }
+.display-week-name { font-size: 1.9vmin; color: var(--display-muted); }
+.display-week-day[data-today] .display-week-name { color: var(--display-accent); font-weight: 700; }
+
+.display-week-bar {
+  display: block;
+  height: 2vmin;
+  border-radius: 1vmin;
+  background: var(--display-line);
+  margin-top: 0.9vmin;
+  overflow: hidden;
+}
+
+.display-week-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 1vmin;
+  background: var(--display-accent);
+}
+
+.display-week-bar span[data-blocked] { background: var(--display-group); }
+
+.display-week-count {
+  display: block;
+  font-size: 2.2vmin;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0.7vmin;
+}
+
+/* --- welcome panel (issue #58; mock whole-lodge-rotating.html B) ---------- */
+
+.display-welcome {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2vmin;
+  text-align: center;
+}
+
+.display-welcome-kicker {
+  font-size: 2.6vmin;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--display-muted);
+}
+
+.display-welcome-group { font-size: 8vmin; font-weight: 850; letter-spacing: -0.02em; }
+
+.display-welcome-note { font-size: 3vmin; font-weight: 600; }
+
+.display-welcome-tiles {
+  display: flex;
+  gap: 1.8vmin;
+  margin-top: 3.2vmin;
+  width: 82%;
+}
+
+.display-welcome-tile {
+  flex: 1;
+  background: var(--display-panel);
+  border: 1px solid var(--display-line);
+  border-radius: 1.4vmin;
+  padding: 1.6vmin 1.2vmin;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6vmin;
+}
+
+.display-tile-key {
+  color: var(--display-muted);
+  font-size: 1.7vmin;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.display-tile-value { font-size: 2.7vmin; font-weight: 750; }
+.display-tile-value small { font-weight: 600; color: var(--display-muted); font-size: 1.9vmin; }
+
+/* --- singles by-booking board (issue #58; mock singles-by-booking.html) --- */
+
+.display-singles-board {
+  display: grid;
+  grid-template-columns: 14vmin 22vmin repeat(var(--display-days, 3), 1fr);
+  /* Mock sizing: a full house of 32 rows must fit one 16:9 screen. */
+  grid-auto-rows: minmax(2.15vmin, auto);
+  align-content: start;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.display-singles-board:not([data-has-rooms]) {
+  grid-template-columns: 26vmin repeat(var(--display-days, 3), 1fr);
+}
+
+.display-singles-head {
+  grid-row: 1;
+  font-size: 1.7vmin;
+  font-weight: 700;
+  color: var(--display-muted);
+  border-bottom: 0.22vmin solid var(--display-line);
+  padding: 0 0 0.8vmin 0.8vmin;
+  display: flex;
+  align-items: flex-end;
+}
+
+.display-singles-head[data-today] { color: var(--display-accent); }
+
+.display-singles-room {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.7vmin;
+  font-size: 1.85vmin;
+  font-weight: 750;
+  border-bottom: 1px solid var(--display-line);
+  border-right: 1px solid var(--display-line);
+  padding: 0 1vmin;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.display-singles-guest {
+  display: flex;
+  align-items: center;
+  font-size: 1.7vmin;
+  font-weight: 600;
+  border-bottom: 1px solid var(--display-line);
+  padding: 0 1vmin;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.display-singles-track {
+  border-bottom: 1px solid var(--display-line);
+  background-image: linear-gradient(
+    to right,
+    var(--display-line) 0,
+    var(--display-line) 1px,
+    transparent 1px
+  );
+  background-size: calc(100% / var(--display-days, 3)) 100%;
+}
+
+.display-singles-bar {
+  z-index: 1;
+  margin: 0.25vmin 0.4vmin;
+  border-radius: 0.8vmin;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 1vmin;
+  overflow: hidden;
+  font-size: 1.35vmin;
+  font-weight: 700;
+  color: var(--display-muted);
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--display-arriving) 26%, var(--display-panel));
+  box-shadow: inset 0.4vmin 0 0 var(--display-arriving);
+}
+
+.display-singles-bar[data-departing] {
+  background: color-mix(in srgb, var(--display-departing) 26%, var(--display-panel));
+  box-shadow: inset -0.4vmin 0 0 var(--display-departing);
+}
+
+/* --- chores / rules ------------------------------------------------------ */
+
+.display-chores-board { font-size: 2vmin; }
+.display-chores-day + .display-chores-day { margin-top: 1.2vmin; }
+.display-chores-date {
+  display: block;
+  color: var(--display-accent);
+  font-weight: 700;
+  font-size: 1.7vmin;
+  margin-bottom: 0.6vmin;
+}
+.display-chore-title { color: var(--display-muted); }
+.display-chore-assignees { color: var(--display-muted); }
+.display-chore-assignees b { color: var(--display-ink); font-weight: 600; }
+
+.display-lodge-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 1.8vmin;
+  overflow: hidden;
+}
+.display-rules-body { font-size: 2vmin; color: var(--display-muted); }
+.display-rules-body p { margin: 0 0 1vmin; }
+.display-rules-body ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1vmin;
+}
+
+.display-module-placeholder { min-height: 4vmin; }
+
+/* --- committee notice board (#36) ---------------------------------------- */
+
+.display-notice-board {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1.5vh;
+  text-align: center;
+  padding: 0 8vmin;
+}
+
+.display-notice-kicker {
+  font-size: 2.4vmin;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--display-departing);
+}
+
+.display-notice-text { font-size: 3.2vmin; margin: 0; }
+
+/* Compact card treatment when the notice sits in a stacked side rail. */
+.display-region-stack .display-notice-board {
+  height: auto;
+  padding: 1.7vmin;
+  text-align: left;
+  gap: 1.1vmin;
+  background: color-mix(in srgb, var(--display-departing) 10%, var(--display-panel));
+  border: 1px solid color-mix(in srgb, var(--display-departing) 40%, transparent);
+  border-radius: 1.4vmin;
+}
+.display-region-stack .display-notice-kicker { font-size: 1.7vmin; letter-spacing: 0.18em; }
+.display-region-stack .display-notice-text { font-size: 2vmin; }
+
+/* --- footer --------------------------------------------------------------- */
+
+.display-info-footer {
+  display: flex;
+  align-items: center;
+  gap: 2.6vmin;
+  font-size: 2vmin;
+  color: var(--display-muted);
+  border-top: 1px solid var(--display-line);
+  padding-top: 1.6vmin;
+  width: 100%;
+}
+
+.display-footer-item { display: flex; align-items: center; gap: 0.9vmin; }
+.display-footer-item b { color: var(--display-ink); font-weight: 650; }
+.display-footer-icon { color: var(--display-accent); }
+
+.display-footer-note {
+  margin-left: auto;
+  color: var(--display-accent);
+  font-weight: 700;
+}
+
+/* --- stale badge ----------------------------------------------------------- */
+
+.display-stale-badge {
+  position: absolute;
+  top: 2vmin;
+  right: 3vmin;
+  font-size: 1.8vmin;
+  color: #0b1b1e;
+  background: var(--display-departing);
+  border-radius: 0.6vmin;
+  padding: 0.4vmin 1.2vmin;
+  font-weight: 700;
+}
+
+/* --- fallback board marker (LTV-030) --------------------------------------- */
+
+/* Shown ONLY in an admin preview (readPreviewState().isPreview) when the layout
+   engine has dropped to the known-good FallbackBoard. A real, unattended wall
+   never renders this element, so the board looks intact to a passer-by. */
+.display-fallback-marker {
+  position: absolute;
+  bottom: 2vmin;
+  left: 3vmin;
+  font-size: 1.6vmin;
+  color: var(--display-muted);
+  background: var(--display-panel);
+  border: 1px solid var(--display-line);
+  border-radius: 0.6vmin;
+  padding: 0.4vmin 1.2vmin;
+  font-weight: 600;
+}
+
+/* --- shared status dot (issue #115) --------------------------------------- */
+
+/* A status dot for the tonight / look-ahead boards, coloured by data-status.
+ * Green arriving, muted staying, amber departing — the same semantic tokens
+ * the bar boards use, so the whole surface reads as one palette. */
+.display-room-dot,
+.display-night-dot,
+.display-status-dot {
+  width: 1.4vmin;
+  height: 1.4vmin;
+  border-radius: 50%;
+  flex: none;
+  background: var(--display-muted);
+}
+.display-room-dot[data-status="arriving"],
+.display-night-dot[data-status="arriving"],
+.display-status-dot[data-status="arriving"] {
+  background: var(--display-arriving);
+}
+.display-room-dot[data-status="departing"],
+.display-night-dot[data-status="departing"],
+.display-status-dot[data-status="departing"] {
+  background: var(--display-departing);
+}
+
+/* --- tonight's rooms (issue #115; mock O2) -------------------------------- */
+
+.display-room-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2vmin;
+  height: 100%;
+  min-height: 0;
+  align-content: start;
+}
+
+.display-room-card {
+  background: var(--display-panel);
+  border: 1px solid var(--display-line);
+  border-radius: 1.6vmin;
+  padding: 1.8vmin;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.display-room-card-empty {
+  border-style: dashed;
+  opacity: 0.6;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--display-muted);
+  font-size: 2vmin;
+}
+
+.display-room-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1vmin;
+  margin-bottom: 1.2vmin;
+}
+
+.display-room-name { font-size: 2.4vmin; font-weight: 750; }
+
+.display-room-card-count {
+  color: var(--display-muted);
+  font-size: 1.9vmin;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.display-room-people {
+  display: flex;
+  flex-direction: column;
+  gap: 1vmin;
+  min-height: 0;
+}
+
+.display-room-person {
+  display: flex;
+  align-items: center;
+  gap: 1.1vmin;
+  font-size: 2.1vmin;
+}
+
+.display-room-person-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.display-room-person[data-group] .display-room-person-name { color: var(--display-group); }
+
+.display-room-span {
+  color: var(--display-muted);
+  font-size: 1.7vmin;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- next nights look-ahead (issue #115; mocks O3 / C1a) ------------------ */
+
+.display-night-columns {
+  display: grid;
+  grid-template-columns: repeat(var(--display-days, 3), 1fr);
+  gap: 2.2vmin;
+  height: 100%;
+  min-height: 0;
+  align-content: start;
+}
+
+.display-night-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.display-night-col-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1vmin;
+  padding-bottom: 1.2vmin;
+  border-bottom: 0.24vmin solid var(--display-line);
+  margin-bottom: 1.4vmin;
+}
+
+.display-night-col-today .display-night-col-head { border-color: var(--display-accent); }
+
+.display-night-col-date { font-size: 2.4vmin; font-weight: 750; }
+
+.display-night-col-count {
+  color: var(--display-muted);
+  font-size: 1.8vmin;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.display-night-col-today .display-night-col-count { color: var(--display-accent); font-weight: 700; }
+
+.display-night-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2vmin;
+  min-height: 0;
+}
+
+.display-night-row {
+  display: flex;
+  align-items: center;
+  gap: 1.1vmin;
+  font-size: 2vmin;
+}
+
+.display-night-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.display-night-row[data-group] .display-night-name { color: var(--display-group); }
+
+.display-night-room {
+  color: var(--display-ink);
+  font-weight: 700;
+  font-size: 1.7vmin;
+  background: var(--display-panel);
+  border: 1px solid var(--display-line);
+  border-radius: 0.8vmin;
+  padding: 0.2vmin 0.9vmin;
+  white-space: nowrap;
+}
+
+.display-night-span {
+  color: var(--display-muted);
+  font-size: 1.7vmin;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.display-night-empty {
+  color: var(--display-muted);
+  font-size: 1.9vmin;
+  font-style: italic;
+}
+
+/* --- status board, allocation off (issue #115; mock O4) ------------------- */
+
+.display-status-board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2.4vmin;
+  height: 100%;
+  min-height: 0;
+  align-content: start;
+}
+
+.display-status-group {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.display-status-group-head {
+  display: flex;
+  align-items: center;
+  gap: 1vmin;
+  margin-bottom: 1.4vmin;
+}
+
+.display-status-title {
+  font-size: 2.2vmin;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.display-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1vmin;
+  min-height: 0;
+}
+
+.display-status-row {
+  display: flex;
+  align-items: center;
+  gap: 1.1vmin;
+  font-size: 2.1vmin;
+}
+
+.display-status-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.display-status-row[data-group] .display-status-name { color: var(--display-group); }
+
+.display-status-span {
+  color: var(--display-muted);
+  font-size: 1.7vmin;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.display-status-empty {
+  color: var(--display-muted);
+  font-size: 1.9vmin;
+  font-style: italic;
+}
+
+/* --- room-cards allocation-off fallback (issue #115) ---------------------- */
+
+.display-room-cards-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.display-room-cards-note {
+  color: var(--display-muted);
+  font-size: 2.2vmin;
+  font-style: italic;
+}

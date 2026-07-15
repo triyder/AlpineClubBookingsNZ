@@ -41,6 +41,7 @@ interface ProfileDetailsCardProps {
     postalPostalCode: string;
     postalCountry: string;
     occupation?: string;
+    lodgeScreenPhoneOptIn?: boolean;
   };
   returnTo?: string | null;
   ageTier?: string;

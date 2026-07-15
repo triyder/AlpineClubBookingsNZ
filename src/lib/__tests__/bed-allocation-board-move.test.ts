@@ -231,6 +231,7 @@ describe("applyOptimisticAllocationBedMove", () => {
       bookings: [],
       allocations: [affectedFirst, affectedSecond, unaffected],
       unallocatedGuestNights: [],
+      exclusiveHolds: [],
       suggestedAllocations: [],
       suggestedUnallocatedGuestNights: [],
       warnings: [],

@@ -56,7 +56,12 @@ import {
   type OwnerSubstitution,
 } from "@/lib/booking-request-shared";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
-import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  acquireLodgeCapacityLock,
+  checkCapacityForGuestRanges,
+  findOverlappingCapacityHoldingBookings,
+  type HoldConflictBooking,
+} from "@/lib/capacity";
 import {
   sendAdminSchoolManualInvoiceEmail,
   sendBookingRequestVerificationEmail,
@@ -123,6 +128,14 @@ interface CreateSchoolBookingRequestInput {
   childCounts: SchoolChildCounts;
   cateringPreference: SchoolCateringPreference;
   message?: string | null;
+  /**
+   * The requester asked for sole (whole-lodge) occupancy for their group
+   * (issue #121, ADR-001). Persisted to BookingRequest.exclusivityRequested;
+   * an admin approving the request may set Booking.wholeLodgeHold from it. It
+   * is a request, not a guarantee — the school booking-request path is the only
+   * requester front-door for exclusivity (owner decision, 2026-07-14).
+   */
+  exclusivityRequested?: boolean;
   /**
    * Lodge the stay is requested at. Callers must validate it names an ACTIVE
    * lodge (assertRequestedLodgeActive). Null/omitted means the club's default
@@ -332,6 +345,9 @@ export async function createSchoolBookingRequest(
       message: cleanNullableString(input.message),
       indicativePriceCents,
       lodgeId: requestedLodgeId,
+      // Whole-lodge exclusivity request (issue #121). Only ever set on the
+      // school front-door; approval may translate it into a Booking.wholeLodgeHold.
+      exclusivityRequested: Boolean(input.exclusivityRequested),
       verificationTokenHash: tokenHash,
       verificationTokenExpiresAt,
     },
@@ -371,6 +387,7 @@ export async function createSchoolBookingRequest(
       teacherCount: teachers.length,
       indicativePriceCents,
       lodgeId: requestedLodgeId,
+      exclusivityRequested: Boolean(input.exclusivityRequested),
     },
   });
 
@@ -390,6 +407,14 @@ type ApproveSchoolBookingRequestOutcome =
       priceCents: number;
       invoiceMode: "xero" | "manual";
       teacherCount: number;
+      /**
+       * Existing capacity-holding bookings that overlap the approved booking's
+       * nights when an exclusive whole-lodge hold was set at approval
+       * (exclusivityRequested; issue #119). Informational — decision 1 never
+       * refuses or displaces; the officer resolves them. Empty when no hold was
+       * set or the nights are clear.
+       */
+      exclusiveHoldConflicts: HoldConflictBooking[];
     }
   | { type: "capacityExceeded"; fullNights: string[] };
 
@@ -524,6 +549,22 @@ export async function approveSchoolBookingRequest(input: {
   );
 
   const reviewedAt = new Date();
+
+  // Whole-lodge exclusivity (issue #121, ADR-001): when the request asked for
+  // sole occupancy, stamp the resulting booking's authoritative hold flag at
+  // approval. Stamped by the approving admin, since the admin is the actor who
+  // grants exclusivity (a member request only records the ASK). ADR-001
+  // decision 1: NO empty-lodge precondition — the hold is set regardless of any
+  // existing overlapping bookings; conflicts are surfaced/resolved by the
+  // officer, not auto-displaced. Spread into both the fresh-create and
+  // held-booking conversion branches below.
+  const exclusiveHoldData = request.exclusivityRequested
+    ? {
+        wholeLodgeHold: true,
+        wholeLodgeHoldAt: reviewedAt,
+        wholeLodgeHoldByMemberId: input.adminMemberId,
+      }
+    : {};
 
   let capacityFullNights: string[] | null = null;
   let conversion: {
@@ -704,6 +745,8 @@ export async function approveSchoolBookingRequest(input: {
             // no-substitution path this rewrites the same id (a no-op); bed
             // allocations live on guest rows and are unaffected by ownership.
             memberId: ownerId,
+            // Exclusive whole-lodge hold when the request asked for it (#121).
+            ...exclusiveHoldData,
           },
           select: { id: true },
         });
@@ -772,6 +815,8 @@ export async function approveSchoolBookingRequest(input: {
             hasNonMembers: true,
             notes: request.message,
             createdById: input.adminMemberId,
+            // Exclusive whole-lodge hold when the request asked for it (#121).
+            ...exclusiveHoldData,
             guests: {
               create: guestCreates,
             },
@@ -875,6 +920,9 @@ export async function approveSchoolBookingRequest(input: {
   // !alreadyConverted so the money-critical Xero invoice (or manual-invoice
   // email) is NOT raised a second time and no teacher PIN is re-sent (#1232).
   let invoiceMode: "xero" | "manual" = "manual";
+  // Conflict surfacing for the school entry point (issue #119): populated below
+  // when a hold was set at approval. Informational only (decision 1).
+  let exclusiveHoldConflicts: HoldConflictBooking[] = [];
   if (!conversion.alreadyConverted) {
     // Teacher PIN emails (after commit; failures are logged, not fatal).
     for (const assignment of conversion.teacherAssignments) {
@@ -960,10 +1008,65 @@ export async function approveSchoolBookingRequest(input: {
         guestCount: guests.length,
         teacherCount: conversion.teacherAssignments.length,
         invoiceMode,
+        exclusivityRequested: Boolean(request.exclusivityRequested),
+        wholeLodgeHold: Boolean(request.exclusivityRequested),
         checkIn: request.checkIn.toISOString(),
         checkOut: request.checkOut.toISOString(),
       },
     });
+
+    // Exclusive whole-lodge hold set at approval (issue #121, ADR-001): record
+    // a dedicated, durable audit row for the capacity-affecting flag, mirroring
+    // the admin exclusive-hold route's action name so both entry points share
+    // one audit vocabulary. Only fires when the request asked for exclusivity
+    // and the conversion actually ran (not on the idempotent replay path).
+    if (request.exclusivityRequested) {
+      // Conflict surfacing (ADR-001 decision 1, issue #119): read-only list of
+      // existing capacity-holding bookings overlapping the held nights, so the
+      // officer sees the clash. Runs post-commit (outside the advisory lock),
+      // never refuses/displaces. Best-effort — a failure here must not undo the
+      // already-committed approval.
+      const bookingLodgeId = request.lodgeId ?? (await getDefaultLodgeId(prisma));
+      try {
+        exclusiveHoldConflicts = await findOverlappingCapacityHoldingBookings(
+          prisma,
+          {
+            lodgeId: bookingLodgeId,
+            checkIn: request.checkIn,
+            checkOut: request.checkOut,
+            excludeBookingId: conversion.bookingId,
+          },
+        );
+      } catch (err) {
+        logger.error(
+          { err, bookingId: conversion.bookingId },
+          "Failed to compute exclusive-hold conflicts for approved school request",
+        );
+      }
+
+      logAudit({
+        action: "booking.exclusiveHold.set",
+        memberId: input.adminMemberId,
+        actorMemberId: input.adminMemberId,
+        subjectMemberId: conversion.schoolMemberId,
+        targetId: conversion.bookingId,
+        entityType: "Booking",
+        entityId: conversion.bookingId,
+        category: "booking",
+        severity: "important",
+        outcome: "success",
+        summary: "Exclusive whole-lodge hold set from an approved school request",
+        metadata: {
+          bookingId: conversion.bookingId,
+          requestId: request.id,
+          source: "school_request_approval",
+          setByMemberId: input.adminMemberId,
+          // Overlapping bookings the officer must resolve (issue #119).
+          overlappingConflictCount: exclusiveHoldConflicts.length,
+          overlappingConflictBookingIds: exclusiveHoldConflicts.map((c) => c.id),
+        },
+      });
+    }
 
     // The held school owner failed re-validation and a fresh contact was
     // substituted (issue #1255 residual-risk decision 1). Surface it for admin
@@ -1046,5 +1149,6 @@ export async function approveSchoolBookingRequest(input: {
     priceCents: totalPriceCents,
     invoiceMode,
     teacherCount: conversion.teacherAssignments.length,
+    exclusiveHoldConflicts,
   };
 }

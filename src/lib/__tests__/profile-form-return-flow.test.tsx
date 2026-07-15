@@ -92,6 +92,7 @@ const member = {
   postalRegion: "Waikato",
   postalPostalCode: "3420",
   postalCountry: "NZ",
+  lodgeScreenPhoneOptIn: false,
 };
 
 function mockSuccessfulSave() {

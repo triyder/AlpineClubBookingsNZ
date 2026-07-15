@@ -49,11 +49,13 @@ not to a lodge.
 
 ### Clubs with one lodge
 
-Nothing changes. The `multiLodge` module ships disabled; the club's
-single lodge exists in the data model but never appears in the UI. No
-selector, no lodge names in emails or screens, no new admin pages. This
-is the permanent default for upstream and every single-lodge fork, not
-a transition state.
+Nothing changes for the member. Multi-lodge is core (ADR-005 — no module
+flag), but with a single lodge no lodge dimension appears in the
+member-facing UI: no selector, no lodge names in emails or screens. The
+Lodges admin page exists (a one-item list with **Add lodge**), but until a
+second active lodge exists members see exactly what a single-lodge club
+always saw. This is the permanent default for upstream and every
+single-lodge fork, not a transition state.
 
 ### Members (once a second lodge exists)
 
@@ -73,7 +75,7 @@ a transition state.
 
 ### Admins
 
-- A new Lodges page (visible only with the `multiLodge` module enabled)
+- The Lodges page (always available — multi-lodge is core, ADR-005)
   manages lodge identity: name, active state, door code, travel notes.
 - Rooms/beds, lockers, seasons/rates, chores, and bed allocation are
   managed per lodge — the existing pages gain a lodge context selector

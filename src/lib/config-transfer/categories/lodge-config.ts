@@ -47,7 +47,24 @@ const BEDS_CSV = "beds.csv";
 const SEASONS_CSV = "seasons.csv";
 const RATES_CSV = "season-rates.csv";
 
-const LODGE_FIELDS = ["slug", "name", "active", "travelNote", "doorCode", "isDefault"] as const;
+const LODGE_FIELDS = [
+  "slug", "name", "active", "travelNote", "doorCode", "isDefault",
+  // Lobby display settings (fork epic #25 / issue #50): the per-lodge
+  // {{config:<key>}} glob, the name-granularity override, and the committee
+  // notice travel with the lodge descriptor.
+  "displayConfig", "displayNameGranularity", "displayNotice",
+  // Whether opted-in adult guest phone numbers may show on the public lobby
+  // display (#137 / #37). Travels with the lodge descriptor like the other
+  // per-lodge display settings.
+  "showGuestPhonesOnScreens",
+] as const;
+
+const DISPLAY_GRANULARITIES = [
+  "FULL_NAME", "FIRST_NAME_SURNAME_INITIAL", "FIRST_NAME_ONLY", "COUNTS_ONLY",
+] as const;
+const DISPLAY_CONFIG_KEY_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const DISPLAY_CONFIG_VALUE_MAX = 500;
+const DISPLAY_NOTICE_MAX = 2000;
 const ROOM_FIELDS = ["name", "sortOrder", "active", "notes"] as const;
 const BED_FIELDS = ["roomName", "name", "sortOrder", "active", "bedType", "bunkGroup"] as const;
 const SEASON_FIELDS = ["name", "type", "startDate", "endDate", "active"] as const;
@@ -185,6 +202,24 @@ function buildLodgeData(descriptor: Record<string, unknown>, slug: string): Reco
     travelNote: asNullableStr(descriptor.travelNote),
   };
   if ("doorCode" in descriptor) data.doorCode = asNullableStr(descriptor.doorCode);
+  // Display settings: written only when the descriptor carries the key (hand
+  // authors omit a key to leave the value alone in merge mode). A null
+  // displayConfig writes the empty glob — Prisma Json columns reject JS null.
+  if ("displayNameGranularity" in descriptor) {
+    data.displayNameGranularity = asNullableStr(descriptor.displayNameGranularity);
+  }
+  if ("displayConfig" in descriptor) {
+    data.displayConfig =
+      descriptor.displayConfig && typeof descriptor.displayConfig === "object"
+        ? descriptor.displayConfig
+        : {};
+  }
+  if ("displayNotice" in descriptor) {
+    data.displayNotice = asNullableStr(descriptor.displayNotice);
+  }
+  if ("showGuestPhonesOnScreens" in descriptor) {
+    data.showGuestPhonesOnScreens = coerceBool(descriptor.showGuestPhonesOnScreens);
+  }
   return data;
 }
 
@@ -196,6 +231,10 @@ interface LodgeCurrent {
   travelNote: string | null;
   doorCode: string | null;
   isDefault: boolean;
+  displayConfig: unknown;
+  displayNameGranularity: string | null;
+  displayNotice: string | null;
+  showGuestPhonesOnScreens: boolean;
 }
 interface SeasonCurrent {
   id: string;
@@ -221,7 +260,12 @@ interface LodgeBatch {
 async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> {
   const lodgeRows = await db.lodge.findMany({
     where: { slug: { in: slugs } },
-    select: { id: true, slug: true, name: true, active: true, travelNote: true, doorCode: true, isDefault: true },
+    select: {
+      id: true, slug: true, name: true, active: true, travelNote: true,
+      doorCode: true, isDefault: true,
+      displayConfig: true, displayNameGranularity: true, displayNotice: true,
+      showGuestPhonesOnScreens: true,
+    },
   });
   const lodges = new Map(lodgeRows.map((l) => [l.slug, l]));
   const lodgeIds = lodgeRows.map((l) => l.id);
@@ -300,7 +344,12 @@ export const lodgeConfigExporter: CategoryExporter = {
   async export(ctx: ExportContext): Promise<BundleEntry[]> {
     const lodges = await ctx.db.lodge.findMany({
       orderBy: { slug: "asc" },
-      select: { slug: true, name: true, active: true, travelNote: true, doorCode: true, isDefault: true },
+      select: {
+        slug: true, name: true, active: true, travelNote: true,
+        doorCode: true, isDefault: true,
+        displayConfig: true, displayNameGranularity: true, displayNotice: true,
+      showGuestPhonesOnScreens: true,
+      },
     });
     const rooms = await ctx.db.lodgeRoom.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -343,6 +392,10 @@ export const lodgeConfigExporter: CategoryExporter = {
         active: lodge.active,
         travelNote: lodge.travelNote,
         isDefault: lodge.isDefault,
+        displayConfig: lodge.displayConfig ?? null,
+        displayNameGranularity: lodge.displayNameGranularity,
+        displayNotice: lodge.displayNotice,
+        showGuestPhonesOnScreens: lodge.showGuestPhonesOnScreens,
       };
       if (ctx.includeDoorCodes) descriptor.doorCode = lodge.doorCode;
       entries.push({
@@ -363,6 +416,7 @@ export const lodgeConfigExporter: CategoryExporter = {
       emit(paths.seasons, SEASON_FIELDS, seasonsBy.get(lodge.slug) ?? []);
       emit(paths.rates, RATE_FIELDS, ratesBy.get(lodge.slug) ?? []);
     }
+
     return entries;
   },
 };
@@ -403,6 +457,54 @@ function parseLodgeFolder(
   const slug = asStr(descriptor.slug);
   const lodge = batch.lodges.get(slug) ?? null;
   const lodgeId = lodge?.id ?? null;
+
+  // Display settings validation (issue #50): invalid values are errors (which
+  // block apply) and the offending key is dropped so no partial write occurs.
+  if ("displayNameGranularity" in descriptor && descriptor.displayNameGranularity !== null) {
+    const value = asStr(descriptor.displayNameGranularity);
+    if (!(DISPLAY_GRANULARITIES as readonly string[]).includes(value)) {
+      errors.push(
+        `${paths.lodge}: displayNameGranularity must be one of ${DISPLAY_GRANULARITIES.join(", ")} or null`,
+      );
+      delete descriptor.displayNameGranularity;
+    }
+  }
+  if ("displayConfig" in descriptor && descriptor.displayConfig !== null) {
+    const config = descriptor.displayConfig;
+    if (!config || typeof config !== "object" || Array.isArray(config)) {
+      errors.push(`${paths.lodge}: displayConfig must be an object of string values or null`);
+      delete descriptor.displayConfig;
+    } else {
+      for (const [key, value] of Object.entries(config as Record<string, unknown>)) {
+        if (!DISPLAY_CONFIG_KEY_PATTERN.test(key)) {
+          errors.push(`${paths.lodge}: displayConfig key "${key}" must be a lower-case slug (max 64 chars)`);
+          delete descriptor.displayConfig;
+          break;
+        }
+        if (typeof value !== "string" || value.length > DISPLAY_CONFIG_VALUE_MAX) {
+          errors.push(
+            `${paths.lodge}: displayConfig value for "${key}" must be text of at most ${DISPLAY_CONFIG_VALUE_MAX} characters`,
+          );
+          delete descriptor.displayConfig;
+          break;
+        }
+      }
+    }
+  }
+  if ("displayNotice" in descriptor && descriptor.displayNotice !== null) {
+    const notice = descriptor.displayNotice;
+    if (typeof notice !== "string" || notice.length > DISPLAY_NOTICE_MAX) {
+      errors.push(`${paths.lodge}: displayNotice must be text of at most ${DISPLAY_NOTICE_MAX} characters or null`);
+      delete descriptor.displayNotice;
+    }
+  }
+  if (
+    "showGuestPhonesOnScreens" in descriptor &&
+    typeof descriptor.showGuestPhonesOnScreens !== "boolean"
+  ) {
+    errors.push(`${paths.lodge}: showGuestPhonesOnScreens must be true or false`);
+    delete descriptor.showGuestPhonesOnScreens;
+  }
 
   const out: ParsedLodgeRows = { slug, descriptor, rooms: [], beds: [], seasons: [], rates: [] };
 

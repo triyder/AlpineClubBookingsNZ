@@ -1,0 +1,116 @@
+<meta charset="utf-8">
+<title>Silverpeak lobby — whole-lodge, rotating</title>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="peak" viewBox="0 0 100 100"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"><path d="M8 78 L38 30 L54 55 L66 38 L92 78 Z"/><path d="M31 41 L38 48 L45 41"/></g></symbol>
+</svg>
+<style>
+  :root { --bg:#e8eef1; --panel:#fff; --ink:#10242a; --muted:#4f6670; --line:#d2dde1; --accent:#0e6e78; --accent-ink:#0a545c; --radius:14px; --maxw:1120px; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#081a1f; --panel:#0f242b; --ink:#e8f4f6; --muted:#8fb0b8; --line:#20343b; --accent:#3fb9cb; --accent-ink:#6fd2e0; } }
+  :root[data-theme="light"]{ --bg:#e8eef1; --panel:#fff; --ink:#10242a; --muted:#4f6670; --line:#d2dde1; --accent:#0e6e78; --accent-ink:#0a545c; }
+  :root[data-theme="dark"]{ --bg:#081a1f; --panel:#0f242b; --ink:#e8f4f6; --muted:#8fb0b8; --line:#20343b; --accent:#3fb9cb; --accent-ink:#6fd2e0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:var(--maxw); margin:0 auto; padding: clamp(20px,4vw,52px) clamp(16px,4vw,40px) 70px; }
+  .eyebrow { font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent-ink); font-weight:700; margin:0 0 10px; display:flex; align-items:center; gap:9px; } .eyebrow .badge { width:20px; height:20px; color:var(--accent); }
+  h1 { font-size:clamp(26px,5vw,42px); line-height:1.05; margin:0 0 14px; letter-spacing:-.02em; font-weight:800; }
+  .lede { font-size:clamp(15px,2.2vw,18px); color:var(--muted); max-width:66ch; margin:0 0 22px; }
+
+  .tv { border-radius:var(--radius); padding: clamp(5px,.8vw,9px); background:linear-gradient(180deg,#04070c,#0a1016); box-shadow:0 22px 55px -30px rgba(0,0,0,.7); }
+  .screen { position:relative; aspect-ratio:16/9; width:100%; container-type:size; border-radius:7px; overflow:hidden; font-size:2.5cqh; color:#eef8fa;
+    background: radial-gradient(120% 90% at 88% -10%, rgba(63,185,203,.13), transparent 55%), radial-gradient(90% 80% at -5% 115%, rgba(75,196,141,.06), transparent 50%), linear-gradient(160deg,#08171d 0%,#0a1c23 55%,#07141a 100%);
+    --p:rgba(255,255,255,.05); --ln:rgba(255,255,255,.12); --mu:#8fb2ba; --ac:#43c2d4; --grp:#b79bff; --inkc:#eef8fa; }
+  .rot { position:absolute; inset:0; opacity:0; animation: rot 16s infinite; }
+  .rot.b { animation-delay:8s; }
+  @keyframes rot { 0%{opacity:0} 3%{opacity:1} 47%{opacity:1} 50%{opacity:0} 100%{opacity:0} }
+  @media (prefers-reduced-motion: reduce){ .rot{ animation:none; opacity:0 } .rot.a{ opacity:1 } }
+  .scr { position:absolute; inset:0; display:flex; flex-direction:column; padding:3.6cqh 3.4cqw; }
+  .head { display:flex; justify-content:space-between; align-items:flex-start; gap:2cqw; }
+  .brand { display:flex; align-items:center; gap:1.5cqw; } .brand .lg { width:6.8cqh; height:6.8cqh; color:var(--ac); } .brand .nm { font-weight:800; font-size:3.6cqh; line-height:1; } .brand .sb { color:var(--mu); font-size:2cqh; margin-top:.7cqh; }
+  .upd { text-align:right; color:var(--mu); font-size:2cqh; } .upd .big { font-size:3.8cqh; font-weight:800; color:var(--inkc); font-variant-numeric:tabular-nums; } .upd b { font-weight:700; }
+  .body { display:flex; gap:2.4cqw; flex:1; min-height:0; margin-top:2.6cqh; } .maincol { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; }
+
+  .board { position:relative; display:grid; grid-template-columns:23% repeat(3,1fr); grid-template-rows:auto repeat(8, minmax(0,1fr)); flex:1; min-height:0; }
+  .nhead { grid-row:1; font-size:2cqh; color:var(--mu); font-weight:700; display:flex; align-items:flex-end; padding:0 0 1cqh 1cqw; border-bottom:1.5px solid var(--ln); } .nhead.today { color:var(--ac); }
+  .rlab { grid-column:1; display:flex; align-items:center; gap:.6cqw; font-size:2.2cqh; font-weight:750; color:var(--mu); opacity:.7; border-bottom:1px solid var(--ln); padding-right:1cqw; } .rlab .rk { font-size:1.7cqh; }
+  .cbg { border-bottom:1px solid var(--ln); border-left:1px solid var(--ln); }
+  .colblock { z-index:3; margin:.7cqh .5cqw; border-radius:1.6cqh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:2cqh 1.2cqw;
+    background: linear-gradient(160deg, color-mix(in srgb,var(--grp) 30%, var(--p)), color-mix(in srgb,var(--grp) 15%, var(--p))); box-shadow: inset 0 0 0 1.5px color-mix(in srgb,var(--grp) 55%, transparent); }
+  .colblock .ey { color:var(--grp); font-size:1.9cqh; letter-spacing:.15em; text-transform:uppercase; font-weight:800; }
+  .colblock .bg2 { font-size:5.6cqh; font-weight:850; color:var(--inkc); letter-spacing:-.02em; margin:1cqh 0 .5cqh; line-height:1.02; }
+  .colblock .sub { font-size:2.4cqh; color:var(--inkc); font-weight:600; } .colblock .dts { font-size:2cqh; color:var(--mu); margin-top:.7cqh; font-variant-numeric:tabular-nums; }
+  .colblock .note { margin-top:1.5cqh; font-size:1.75cqh; color:var(--mu); background:var(--p); border:1px solid var(--ln); border-radius:1cqh; padding:.8cqh 1.4cqw; }
+
+  .rail { width:29%; flex:none; display:flex; flex-direction:column; gap:1.8cqh; }
+  .card2 { background:var(--p); border:1px solid var(--ln); border-radius:1.4cqh; padding:1.7cqh; }
+  .card2 h4 { margin:0 0 1.1cqh; font-size:2.3cqh; display:flex; align-items:center; gap:1cqw; } .card2 h4 .i { color:var(--ac); }
+  .card2 ul { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:1cqh; }
+  .card2 li { font-size:2cqh; color:var(--mu); display:flex; gap:1cqw; } .card2 li::before { content:"›"; color:var(--ac); font-weight:800; } .card2 li b { color:var(--inkc); font-weight:600; }
+  .foot { display:flex; align-items:center; gap:2.2cqw; margin-top:2cqh; padding-top:1.8cqh; border-top:1px solid var(--ln); font-size:2cqh; }
+  .foot .item { display:flex; align-items:center; gap:1cqw; color:var(--mu); } .foot .item .i { color:var(--ac); } .foot .item b { color:var(--inkc); font-weight:650; } .foot .cust .i { color:var(--grp); } .foot .camera { margin-left:auto; color:var(--ac); font-weight:700; }
+
+  /* welcome panel (B) */
+  .welcome { text-align:center; align-items:center; justify-content:center; }
+  .welcome .hi { color:var(--grp); font-size:2.4cqh; letter-spacing:.16em; text-transform:uppercase; font-weight:800; }
+  .welcome .who { font-size:9cqh; font-weight:850; letter-spacing:-.025em; margin:1cqh 0 .4cqh; line-height:1; color:var(--inkc); text-wrap:balance; }
+  .welcome .msg { font-size:3cqh; color:var(--inkc); font-weight:600; }
+  .ginfo { display:flex; gap:1.8cqw; margin-top:3.2cqh; }
+  .gi { flex:1; background:var(--p); border:1px solid var(--ln); border-radius:1.4cqh; padding:1.6cqh 1cqw; }
+  .gi .k { color:var(--mu); font-size:1.7cqh; text-transform:uppercase; letter-spacing:.08em; } .gi .v { font-size:2.7cqh; font-weight:750; color:var(--inkc); margin-top:.6cqh; } .gi .v small { font-weight:600; color:var(--mu); font-size:1.9cqh; }
+
+  .rind { position:absolute; right:3.4cqw; bottom:2.4cqh; z-index:5; display:flex; align-items:center; gap:1cqw; color:var(--mu); font-size:1.7cqh; }
+  .rind .dot { width:1.2cqh; height:1.2cqh; border-radius:50%; background:var(--ln); }
+  .rind .dot.on { background:var(--ac); }
+
+  .note { display:flex; gap:12px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-top:16px; font-size:14.5px; color:var(--muted); } .note b { color:var(--ink); font-weight:650; }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow"><svg class="badge"><use href="#peak"/></svg> Silverpeak lobby display · whole-lodge, rotating</p>
+  <h1>Whole lodge — block board, rotating with a welcome</h1>
+  <p class="lede">When the lodge is fully out to one group, the screen alternates between the <b>blockout board</b> (clear to any member walking past) and a warmer <b>welcome</b> panel with the group's details. It cross-fades live below (~8s each).</p>
+
+  <div class="tv"><div class="screen">
+    <!-- A: blockout board -->
+    <div class="rot a"><div class="scr">
+      <div class="head"><div class="brand"><svg class="lg"><use href="#peak"/></svg><div><div class="nm">Silverpeak Lodge</div><div class="sb">Alpine Sports Club</div></div></div><div class="upd"><div class="big">4:32 PM</div>Fri 3 Jul · <b>updated 4:30</b></div></div>
+      <div class="body">
+        <div class="maincol"><div class="board">
+          <div class="nhead" style="grid-column:1">Room</div><div class="nhead today">Tonight · Fri 3</div><div class="nhead">Sat 4</div><div class="nhead">Sun 5</div>
+          <div class="cbg" style="grid-column:2;grid-row:2"></div><div class="cbg" style="grid-column:3;grid-row:2"></div><div class="cbg" style="grid-column:4;grid-row:2"></div>
+          <div class="cbg" style="grid-column:2;grid-row:3"></div><div class="cbg" style="grid-column:3;grid-row:3"></div><div class="cbg" style="grid-column:4;grid-row:3"></div>
+          <div class="cbg" style="grid-column:2;grid-row:4"></div><div class="cbg" style="grid-column:3;grid-row:4"></div><div class="cbg" style="grid-column:4;grid-row:4"></div>
+          <div class="cbg" style="grid-column:2;grid-row:5"></div><div class="cbg" style="grid-column:3;grid-row:5"></div><div class="cbg" style="grid-column:4;grid-row:5"></div>
+          <div class="cbg" style="grid-column:2;grid-row:6"></div><div class="cbg" style="grid-column:3;grid-row:6"></div><div class="cbg" style="grid-column:4;grid-row:6"></div>
+          <div class="cbg" style="grid-column:2;grid-row:7"></div><div class="cbg" style="grid-column:3;grid-row:7"></div><div class="cbg" style="grid-column:4;grid-row:7"></div>
+          <div class="cbg" style="grid-column:2;grid-row:8"></div><div class="cbg" style="grid-column:3;grid-row:8"></div><div class="cbg" style="grid-column:4;grid-row:8"></div>
+          <div class="cbg" style="grid-column:2;grid-row:9"></div><div class="cbg" style="grid-column:3;grid-row:9"></div><div class="cbg" style="grid-column:4;grid-row:9"></div>
+          <div class="rlab" style="grid-row:2"><span class="rk">A</span>Kea</div><div class="rlab" style="grid-row:3"><span class="rk">B</span>Tui</div><div class="rlab" style="grid-row:4"><span class="rk">C</span>Ruru</div><div class="rlab" style="grid-row:5"><span class="rk">D</span>Weka</div><div class="rlab" style="grid-row:6"><span class="rk">E</span>Takahe</div><div class="rlab" style="grid-row:7"><span class="rk">F</span>Kaka</div><div class="rlab" style="grid-row:8"><span class="rk">G</span>Kereru</div><div class="rlab" style="grid-row:9"><span class="rk">H</span>Pukeko</div>
+          <div class="colblock" style="grid-column:2/-1;grid-row:2/-1"><div class="ey">Whole lodge booked</div><div class="bg2">Harakeke College</div><div class="sub">Snow Camp · 42 guests · Mr Whittaker</div><div class="dts">Fri 3 Jul → Mon 6 Jul · reopens Mon</div><div class="note">Bunks aren't pre-assigned — see your group leader</div></div>
+        </div></div>
+        <div class="rail"><div class="card2"><h4><span class="i">✔</span>Housekeeping</h4><ul><li><b>Sign in</b> with your leader</li><li>Complete <b>Daily Compliance</b></li></ul></div><div class="card2"><h4><span class="i">⎋</span>On checkout</h4><ul><li>Clean up · strip beds</li><li>Check <b>gas bottles</b></li></ul></div></div>
+      </div>
+      <div class="foot"><span class="item"><span class="i">📶</span>Wi-Fi <b>LodgeGuest</b> · <b>alpine1234</b></span><span class="item"><span class="i">✉</span><b>bookings@example.org</b></span><span class="camera">😊 Smile — you're on camera</span></div>
+    </div></div>
+
+    <!-- B: welcome the group -->
+    <div class="rot b"><div class="scr welcome">
+      <div class="head" style="width:100%"><div class="brand"><svg class="lg"><use href="#peak"/></svg><div><div class="nm">Silverpeak Lodge</div><div class="sb">Alpine Sports Club</div></div></div><div class="upd"><div class="big">4:32 PM</div>Fri 3 Jul</div></div>
+      <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%;">
+        <div class="hi">Welcome to Silverpeak</div>
+        <div class="who">Harakeke College</div>
+        <div class="msg">Snow Camp · make yourselves at home for the weekend</div>
+        <div class="ginfo" style="width:82%">
+          <div class="gi"><div class="k">Group</div><div class="v">42 <small>· 34 students, 8 staff</small></div></div>
+          <div class="gi"><div class="k">Leader</div><div class="v">Mr Whittaker</div></div>
+          <div class="gi"><div class="k">Staying</div><div class="v">Fri 3 → Mon 6 <small>· 3 nights</small></div></div>
+          <div class="gi"><div class="k">Bunks</div><div class="v">See your leader</div></div>
+        </div>
+      </div>
+      <div class="foot" style="width:100%"><span class="item"><span class="i">📶</span>Wi-Fi <b>LodgeGuest</b> · <b>alpine1234</b></span><span class="item"><span class="i">✔</span>Sign in with your leader on arrival</span><span class="camera">😊 Smile — you're on camera</span></div>
+    </div></div>
+
+    <div class="rind">rotating · block ⇄ welcome <span class="dot on"></span><span class="dot"></span></div>
+  </div></div>
+
+  <div class="note"><span>💡</span><span>Only triggers when the lodge is <b>fully</b> out to one group. A normal night stays on the everyday board; a part-week group uses column-blocking. The welcome panel is where the <b>extra group info</b> lives — headcount split, leader, nights, bunk note — kept off the operational board.</span></div>
+</div>

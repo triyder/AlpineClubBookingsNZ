@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdminCapacityHoldControls } from "@/components/admin/admin-capacity-hold-controls";
+import {
+  AdminExclusiveHoldControls,
+  type ExclusiveHoldConflict,
+} from "@/components/admin/admin-exclusive-hold-controls";
 import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
 import { CopyBookingButton } from "@/components/admin/copy-booking-button";
 import type { BookingProviderMismatch } from "@/lib/booking-provider-mismatches";
@@ -30,6 +34,7 @@ export function AdminBookingToolsCard({
   providerMismatches = [],
   features,
   capacityHold,
+  exclusiveHold,
 }: {
   bookingId: string;
   memberId: string;
@@ -51,6 +56,20 @@ export function AdminBookingToolsCard({
     heldByName: string | null;
     holdsCapacityNaturally: boolean;
     canPlaceHold: boolean;
+  };
+  /** Exclusive whole-lodge hold state (#121); omitted for deleted bookings. */
+  exclusiveHold?: {
+    wholeLodgeHold: boolean;
+    wholeLodgeHoldAt: string | null;
+    heldByName: string | null;
+    /**
+     * Whether the booking holds lodge capacity (#173). The Set control is
+     * gated on this — an exclusive hold on a non-holding booking blocks
+     * nothing (ADR-001 capacity rule).
+     */
+    holdsCapacity: boolean;
+    /** Overlapping bookings to resolve when the hold is set (issue #119). */
+    conflicts?: ExclusiveHoldConflict[];
   };
 }) {
   const returnTo = `/bookings/${bookingId}`;
@@ -96,6 +115,16 @@ export function AdminBookingToolsCard({
               heldByName={capacityHold.heldByName}
               holdsCapacityNaturally={capacityHold.holdsCapacityNaturally}
               canPlaceHold={capacityHold.canPlaceHold}
+            />
+          )}
+          {!isDeleted && exclusiveHold && (
+            <AdminExclusiveHoldControls
+              bookingId={bookingId}
+              wholeLodgeHold={exclusiveHold.wholeLodgeHold}
+              wholeLodgeHoldAt={exclusiveHold.wholeLodgeHoldAt}
+              heldByName={exclusiveHold.heldByName}
+              holdsCapacity={exclusiveHold.holdsCapacity}
+              conflicts={exclusiveHold.conflicts}
             />
           )}
           {!isDeleted && (

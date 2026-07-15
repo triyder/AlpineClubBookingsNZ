@@ -17,6 +17,7 @@ import { siteContentImporter } from "./categories/site-content";
 import { clubSettingsImporter } from "./categories/club-settings";
 import { lodgeConfigImporter } from "./categories/lodge-config";
 import { lodgeOpsImporter } from "./categories/lodge-ops";
+import { displayImporter } from "./categories/display";
 import { committeeImporter } from "./categories/committee";
 import { inductionImporter } from "./categories/induction";
 import { xeroConfigImporter, connectedXeroTenantId, readXeroSourceTenantId } from "./categories/xero-config";
@@ -33,6 +34,7 @@ export const CATEGORY_IMPORTERS: CategoryImporter[] = [
   clubSettingsImporter,
   lodgeConfigImporter,
   lodgeOpsImporter,
+  displayImporter,
   committeeImporter,
   inductionImporter,
   xeroConfigImporter,

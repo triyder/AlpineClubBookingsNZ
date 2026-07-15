@@ -417,6 +417,25 @@ describe("createBookingRequest", () => {
     const createArgs = mockedCreate.mock.calls[0][0].data as Record<string, unknown>;
     expect(createArgs.lodgeId).toBe("lodge-2");
   });
+
+  it("never sets exclusivityRequested: the whole-lodge request front-door is school-only (#121)", async () => {
+    // Owner decision (ADR-001, 2026-07-14): exclusivity may only be REQUESTED via
+    // the school booking-request path. The general path must not write the flag,
+    // so it defaults to false in the DB. The input type has no such field, so an
+    // attempt to pass it would not even typecheck; here we assert the persisted
+    // create payload carries no exclusivityRequested key at all.
+    await createBookingRequest({
+      contactFirstName: "Tara",
+      contactLastName: "Tester",
+      contactEmail: "tara@example.com",
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      checkOut: new Date("2026-08-03T00:00:00.000Z"),
+      guests: GUESTS,
+    });
+
+    const createArgs = mockedCreate.mock.calls[0][0].data as Record<string, unknown>;
+    expect(createArgs).not.toHaveProperty("exclusivityRequested");
+  });
 });
 
 describe("assertRequestedLodgeActive", () => {

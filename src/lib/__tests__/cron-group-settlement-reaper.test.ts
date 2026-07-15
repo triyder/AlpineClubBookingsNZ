@@ -393,6 +393,9 @@ describe("expiry of reaped organiser-pays children (#1094)", () => {
         status: BookingStatus.CANCELLED,
         adminCapacityHoldAt: null,
         adminCapacityHoldByMemberId: null,
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+        wholeLodgeHoldByMemberId: null,
       },
     });
     // Terminal event and joiner notification, exactly once per child.

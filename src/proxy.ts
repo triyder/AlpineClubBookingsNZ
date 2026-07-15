@@ -43,18 +43,19 @@ async function getEffectiveModuleBlockResponse(pathname: string) {
 
 export async function proxy(request: NextRequest) {
   const nonce = createCspNonce();
-  const csp = buildContentSecurityPolicy(nonce);
-  const pageSlug =
-    request.nextUrl.pathname === "/"
-      ? "home"
-      : request.nextUrl.pathname.replace(/^\//, "");
+  const pathname = request.nextUrl.pathname;
+  const csp = buildContentSecurityPolicy(nonce, {
+    pathname,
+    selfOrigin: request.nextUrl.origin,
+  });
+  const pageSlug = pathname === "/" ? "home" : pathname.replace(/^\//, "");
   const featureFlagBlockResponse = await getEffectiveModuleBlockResponse(
     request.nextUrl.pathname,
   );
 
   if (featureFlagBlockResponse) {
     featureFlagBlockResponse.headers.set(CSP_HEADER, csp);
-    setSecurityHeaders(featureFlagBlockResponse.headers);
+    setSecurityHeaders(featureFlagBlockResponse.headers, pathname);
     return featureFlagBlockResponse;
   }
 
@@ -76,7 +77,7 @@ export async function proxy(request: NextRequest) {
   });
 
   response.headers.set(CSP_HEADER, csp);
-  setSecurityHeaders(response.headers);
+  setSecurityHeaders(response.headers, pathname);
 
   return response;
 }
@@ -119,6 +120,7 @@ export const config = {
     "/api/admin/bookings/:id/force-confirm",
     "/api/chores/:path*",
     "/api/cron/xero",
+    "/api/display/:path*",
     "/api/finance/:path*",
     "/api/group-bookings/:path*",
     "/api/inductions/:path*",

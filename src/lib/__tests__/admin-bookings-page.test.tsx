@@ -82,7 +82,7 @@ const effectiveModulesOn = {
   skifieldConditions: false,
   twoFactor: false,
   analytics: false,
-  multiLodge: false,
+  lobbyDisplay: false,
 };
 
 describe("AdminBookingsPage", () => {

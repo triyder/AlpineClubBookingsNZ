@@ -5,7 +5,6 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
-import { countActiveLodges } from "@/lib/lodges";
 import {
   CLUB_MODULE_SETTINGS_ID,
   buildClubModuleSettingsPayload,
@@ -14,6 +13,7 @@ import {
 } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import {
+  CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   MODULE_KEYS,
   type ModuleKey,
   type ModuleSettingsValues,
@@ -78,25 +78,12 @@ export async function PUT(request: Request) {
 
   const existing = await prisma.clubModuleSettings.findUnique({
     where: { id: CLUB_MODULE_SETTINGS_ID },
+    select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   });
   const before = normalizeClubModuleSettings(existing);
   const after = parsed.data.settings;
   const changes = getChanges(before, after);
 
-  // A multi-lodge club must keep the lodge-management surface reachable
-  // (docs/multi-lodge/decisions/ADR-002-core-data-model-not-a-module.md).
-  if (before.multiLodge && !after.multiLodge) {
-    const activeLodges = await countActiveLodges(prisma);
-    if (activeLodges > 1) {
-      return NextResponse.json(
-        {
-          error:
-            "Multiple lodges cannot be turned off while more than one active lodge exists. Deactivate the extra lodges first.",
-        },
-        { status: 409 },
-      );
-    }
-  }
   const write = prisma.clubModuleSettings.upsert({
     where: { id: CLUB_MODULE_SETTINGS_ID },
     create: {
@@ -108,6 +95,7 @@ export async function PUT(request: Request) {
       ...after,
       updatedByMemberId: session.user.id,
     },
+    select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   });
 
   const record =

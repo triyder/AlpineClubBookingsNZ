@@ -62,6 +62,12 @@ export async function GET(
     throw err;
   }
 
+  // #125 / #37: the kiosk is the authenticated staff check-in surface, so the
+  // member phone-display OPT-IN gate does NOT apply here — leaders keep the
+  // contact use case (owner decision on #37 AC5; the opt-in gate governs the
+  // PUBLIC lobby wall in lodge-display-state.ts instead). Adults-only and the
+  // staying-guest redaction below still hold.
+
   // Default scope is stay-night compatible for roster allocation.
   // Lodge-list scope also includes guests on their checkout/departure date.
   const bookings = await prisma.booking.findMany({

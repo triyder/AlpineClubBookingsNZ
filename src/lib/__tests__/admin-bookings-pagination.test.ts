@@ -94,8 +94,9 @@ describe("listAdminBookings pagination (#1738)", () => {
     expect(result.bookings.map((b) => b.id)).toEqual([`b${ADMIN_BOOKINGS_PAGE_SIZE}`]);
 
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;
-    expect(calls).toHaveLength(2);
-    // The page window is applied in SQL (#1884), not by slicing a full load.
+    // The page window is applied in SQL (#1884), not by slicing a full load;
+    // a third findMany is the exclusive-hold overlap query for the page (#119).
+    expect(calls).toHaveLength(3);
     expect(calls[0][0]?.orderBy).toEqual([{ checkIn: "asc" }, { id: "asc" }]);
     expect(calls[0][0]?.skip).toBe(ADMIN_BOOKINGS_PAGE_SIZE);
     expect(calls[0][0]?.take).toBe(ADMIN_BOOKINGS_PAGE_SIZE);
@@ -132,9 +133,10 @@ describe("listAdminBookings pagination (#1738)", () => {
       })
     );
 
-    // One bounded scan chunk (101 < chunk size) + one page hydration (#1884).
+    // One bounded scan chunk (101 < chunk size) + one page hydration (#1884)
+    // + the exclusive-hold overlap query for the page (#119).
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(calls[0][0]).toHaveProperty("include");
     expect(calls[0][0]?.take).toBe(ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE);
     expect(result.page).toBe(2);
@@ -159,7 +161,9 @@ describe("listAdminBookings pagination (#1738)", () => {
     );
 
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;
-    expect(calls).toHaveLength(2);
+    // Derived path: scan + page hydration + the exclusive-hold overlap query
+    // for the page (#119).
+    expect(calls).toHaveLength(3);
     expect(calls[0][0]).not.toHaveProperty("include");
     expect(calls[0][0]?.where?.payment).toEqual({ is: null });
     expect(calls[0][0]?.take).toBe(ADMIN_BOOKINGS_PAGE_SIZE);

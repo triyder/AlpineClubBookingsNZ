@@ -34,6 +34,7 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import {
   bookingHasCapacityOverride,
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+  RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
@@ -254,6 +255,19 @@ export async function markBookingPaymentSucceeded({
       // Persisted capacity override (#1771): this booking was deliberately
       // admitted above the ceiling by an admin. Settle it instead of cancelling
       // — fall through to the PAID update below.
+      //
+      // Whole-lodge hold (ADR-001, issue #118) is DELIBERATELY not enforced on
+      // this settle path (and the other persisted-override settlements: cron-
+      // confirm-pending, switch-to-internet-banking, charge-saved-method,
+      // payment-link, xero-inbound invoice-paid-effects, group-settlement).
+      // Those settle a PRE-EXISTING overridden booking; a hold may have been
+      // placed over it AFTERWARDS. Per ADR-001 decision 1 (conflicts are
+      // allowed, surfaced, and manually resolved — no auto-displacement/refusal)
+      // an already-admitted booking is not a "new admission", so auto-refusing
+      // it here would contradict decision 1. The hold blocks only NEW admissions
+      // (decision 5), enforced at the admission choke points (booking-create,
+      // date/modify-plan, and the admin allowOverbook routes force-confirm /
+      // confirm-pending-guests / capacity-hold).
       logger.info(
         { bookingId: booking.id },
         "Settling an over-capacity booking with a persisted capacity override (#1771); skipping the capacity cancel"
@@ -266,6 +280,12 @@ export async function markBookingPaymentSucceeded({
           status: BookingStatus.CANCELLED,
           draftExpiresAt: null,
           ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+          // Best-effort field clearing (#177): this settlement capacity-cancel
+          // has no per-booking audit context, so it mirrors the capacity-hold
+          // sibling — clear the stale hold, no released audit. NB this is the
+          // NON-override branch; the documented decision-1 carve-out settlement
+          // (the override branch above) is untouched.
+          ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
         },
       });
       await reconcileBedAllocationsForBooking({

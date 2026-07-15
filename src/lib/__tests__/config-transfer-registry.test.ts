@@ -84,7 +84,7 @@ describe("config-transfer registry — assertDescriptorValid", () => {
           format: "json",
           singleton: true,
           naturalKey: [],
-          fields: ["bedAllocation", "multiLodge"],
+          fields: ["bedAllocation", "twoFactor"],
         }),
       ),
     ).not.toThrow();

@@ -3,7 +3,10 @@ import { readFileSync } from "fs";
 import path from "path";
 import { BookingStatus } from "@prisma/client";
 import { parseDateOnly } from "@/lib/date-only";
-import { capacityHoldingBookingFilter } from "@/lib/booking-status";
+import {
+  capacityHoldingBookingFilter,
+  CAPACITY_HOLDING_BOOKING_STATUSES,
+} from "@/lib/booking-status";
 
 const mocks = vi.hoisted(() => ({
   bookingFindMany: vi.fn(),
@@ -27,13 +30,20 @@ vi.mock("@/lib/prisma", () => ({
 
 import {
   acquireLodgeCapacityLock,
+  bookingsOverlap,
   checkCapacity,
   checkCapacityForGuestRanges,
+  findOverlappingCapacityHoldingBookings,
+  findOverlappingOverriddenNonHoldingBookings,
+  getLodgeHeldNights,
   getMonthAvailability,
+  sameLodgeNullTolerant,
 } from "@/lib/capacity";
 import {
   overCapacityNights,
   OverCapacityConfirmationRequiredError,
+  wholeLodgeBlockedNights,
+  WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
 import {
   FALLBACK_LODGE_CAPACITY,
@@ -662,5 +672,449 @@ describe("OverCapacityConfirmationRequiredError (issue #1668)", () => {
     expect(err.status).toBe(409);
     expect(err.code).toBe("OVER_CAPACITY_CONFIRM_REQUIRED");
     expect(err.nightDetails).toEqual(nightDetails);
+  });
+});
+
+// ADR-001 exclusive whole-lodge hold (issue #118). A capacity-holding booking
+// with wholeLodgeHold=true hard-blocks its nights: to members the night is
+// indistinguishable from a full lodge (decision 6), and an admin over-capacity
+// override cannot punch into it (decision 5).
+describe("whole-lodge exclusive hold — capacity engine (issue #118)", () => {
+  const HELD_IN = parseDateOnly("2026-08-10");
+  const HELD_OUT = parseDateOnly("2026-08-12");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.bookingFindMany.mockResolvedValue([]);
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue(null);
+    mocks.lodgeBedCount.mockResolvedValue(0);
+  });
+
+  function heldBooking(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "held-booking",
+      status: BookingStatus.CONFIRMED,
+      checkIn: HELD_IN,
+      checkOut: HELD_OUT,
+      wholeLodgeHold: true,
+      // A single guest: numeric beds (19 of 20 free) would easily fit a new
+      // small booking. The hold — not the arithmetic — is what must block.
+      guests: [{ id: "school-1" }],
+      ...overrides,
+    };
+  }
+
+  it("blocks a NEW admission on overlapping nights even though numeric beds fit (checkCapacityForGuestRanges)", async () => {
+    mocks.bookingFindMany.mockResolvedValue([heldBooking()]);
+
+    const result = await checkCapacityForGuestRanges(
+      LODGE_A,
+      HELD_IN,
+      HELD_OUT,
+      [{ stayStart: HELD_IN, stayEnd: HELD_OUT }],
+    );
+
+    expect(result.available).toBe(false);
+    expect(result.nightDetails.map((n) => n.wholeLodgeHeld)).toEqual([true, true]);
+    // Pinned to 0, never negative — so it can never enter the confirmable set.
+    expect(result.nightDetails.map((n) => n.availableBeds)).toEqual([0, 0]);
+  });
+
+  it("blocks a NEW admission in checkCapacity as well (available forced false, beds pinned to 0)", async () => {
+    mocks.bookingFindMany.mockResolvedValue([heldBooking()]);
+
+    const result = await checkCapacity(LODGE_A, HELD_IN, HELD_OUT, 1);
+
+    expect(result.available).toBe(false);
+    expect(result.nightDetails.map((n) => n.wholeLodgeHeld)).toEqual([true, true]);
+    expect(result.nightDetails.map((n) => n.availableBeds)).toEqual([0, 0]);
+  });
+
+  it("issue #155: checkCapacity pins occupiedBeds to lodgeCapacity on a held-but-not-full night, so occupiedBeds + availableBeds === lodgeCapacity", async () => {
+    // Only one guest occupies the held nights — numerically 19 of 20 beds are
+    // free — but the real headcount must not leak through occupiedBeds either
+    // (mirrors getMonthAvailability's pin, ADR-001 decision 6).
+    mocks.bookingFindMany.mockResolvedValue([heldBooking()]);
+
+    const result = await checkCapacity(LODGE_A, HELD_IN, HELD_OUT, 1);
+
+    expect(result.nightDetails.map((n) => n.occupiedBeds)).toEqual([
+      TEST_LODGE_CAPACITY,
+      TEST_LODGE_CAPACITY,
+    ]);
+    expect(result.nightDetails.map((n) => n.availableBeds)).toEqual([0, 0]);
+    for (const night of result.nightDetails) {
+      expect(night.occupiedBeds + night.availableBeds).toBe(TEST_LODGE_CAPACITY);
+    }
+  });
+
+  it("issue #155: an unheld night's occupiedBeds is unchanged (real headcount, not pinned)", async () => {
+    // Two guests, no hold: occupiedBeds must stay the real count, not capacity.
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        status: BookingStatus.CONFIRMED,
+        checkIn: HELD_IN,
+        checkOut: HELD_OUT,
+        wholeLodgeHold: false,
+        guests: [{ id: "g1" }, { id: "g2" }],
+      },
+    ]);
+
+    const result = await checkCapacity(LODGE_A, HELD_IN, HELD_OUT, 1);
+
+    expect(result.nightDetails.every((n) => !n.wholeLodgeHeld)).toBe(true);
+    expect(result.nightDetails.map((n) => n.occupiedBeds)).toEqual([2, 2]);
+    expect(result.nightDetails.map((n) => n.availableBeds)).toEqual([
+      TEST_LODGE_CAPACITY - 2,
+      TEST_LODGE_CAPACITY - 2,
+    ]);
+  });
+
+  it("member parity: held nights are NOT in overCapacityNights, so members get the ordinary no-space path", async () => {
+    mocks.bookingFindMany.mockResolvedValue([heldBooking()]);
+
+    const result = await checkCapacityForGuestRanges(
+      LODGE_A,
+      HELD_IN,
+      HELD_OUT,
+      [{ stayStart: HELD_IN, stayEnd: HELD_OUT }],
+    );
+
+    // Unavailable exactly like a full lodge, but with NO confirmable night —
+    // the hold is never surfaced as a bypassable over-capacity signal.
+    expect(result.available).toBe(false);
+    expect(overCapacityNights(result)).toEqual([]);
+    expect(wholeLodgeBlockedNights(result)).toEqual(["2026-08-10", "2026-08-11"]);
+  });
+
+  it("edge-night handover: a hold departing on day D does NOT block a booking arriving night D ([checkIn, checkOut))", async () => {
+    // Held booking runs 08-08 → 08-10 (checkout day 08-10). A new booking
+    // arriving the night of 08-10 must NOT be blocked: the hold spans only
+    // 08-08 and 08-09.
+    mocks.bookingFindMany.mockResolvedValue([
+      heldBooking({
+        checkIn: parseDateOnly("2026-08-08"),
+        checkOut: parseDateOnly("2026-08-10"),
+      }),
+    ]);
+
+    const result = await checkCapacityForGuestRanges(
+      LODGE_A,
+      parseDateOnly("2026-08-10"),
+      parseDateOnly("2026-08-12"),
+      [{ stayStart: parseDateOnly("2026-08-10"), stayEnd: parseDateOnly("2026-08-12") }],
+    );
+
+    expect(result.available).toBe(true);
+    expect(result.nightDetails.some((n) => n.wholeLodgeHeld)).toBe(false);
+  });
+
+  it("editing the hold's OWN dates: excludeBookingId removes it from the overlap query so its nights are not blocked against itself", async () => {
+    // Prisma applies the exclude; the mock returns the post-exclusion set.
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    const result = await checkCapacityForGuestRanges(
+      LODGE_A,
+      HELD_IN,
+      HELD_OUT,
+      [{ stayStart: HELD_IN, stayEnd: HELD_OUT }],
+      "held-booking",
+    );
+
+    expect(result.available).toBe(true);
+    expect(result.nightDetails.some((n) => n.wholeLodgeHeld)).toBe(false);
+    // The held booking's own id is excluded from the overlap query.
+    expect(mocks.bookingFindMany.mock.calls[0][0].where).toMatchObject({
+      id: { not: "held-booking" },
+    });
+  });
+
+  it("regression: a genuinely full (numeric) lodge with NO hold still yields overCapacityNights and stays override-confirmable", async () => {
+    // 20 guests fill a 20-bed lodge; a proposed 21st goes to -1. No hold.
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        status: BookingStatus.PAID,
+        checkIn: HELD_IN,
+        checkOut: HELD_OUT,
+        wholeLodgeHold: false,
+        guests: Array.from({ length: TEST_LODGE_CAPACITY }, (_, i) => ({ id: `g${i}` })),
+      },
+    ]);
+
+    const result = await checkCapacityForGuestRanges(
+      LODGE_A,
+      HELD_IN,
+      HELD_OUT,
+      [{ stayStart: HELD_IN, stayEnd: HELD_OUT }],
+    );
+
+    expect(result.available).toBe(false);
+    expect(result.nightDetails.every((n) => !n.wholeLodgeHeld)).toBe(true);
+    // Negative, so it IS confirmable — the ordinary #1668 override still works.
+    expect(overCapacityNights(result)).toEqual([
+      { date: "2026-08-10", availableBeds: -1 },
+      { date: "2026-08-11", availableBeds: -1 },
+    ]);
+    expect(wholeLodgeBlockedNights(result)).toEqual([]);
+  });
+
+  it("month calendar parity (getMonthAvailability): a held-but-not-full night reports as FULL, indistinguishable from a genuinely full lodge (decision 6)", async () => {
+    // A single guest holds the whole lodge for 08-10 → 08-12. Numerically 19 of
+    // 20 beds are free, but the public calendar must show ZERO availability.
+    mocks.bookingFindMany.mockResolvedValue([heldBooking()]);
+
+    const availability = await getMonthAvailability(LODGE_A, 2026, 7); // August
+
+    // Held nights report full occupancy (= capacity), so the frontend's
+    // capacity - occupied yields no free beds.
+    expect(availability.get("2026-08-10")).toBe(TEST_LODGE_CAPACITY);
+    expect(availability.get("2026-08-11")).toBe(TEST_LODGE_CAPACITY);
+    // The checkout day (08-12) is outside [checkIn, checkOut): not held, and no
+    // guest occupies it, so it stays free.
+    expect(availability.get("2026-08-12")).toBe(0);
+  });
+
+  it("a CANCELLED whole-lodge-hold booking cannot block: the capacity query filters to holding statuses only (CANCELLED excluded)", async () => {
+    await checkCapacityForGuestRanges(
+      LODGE_A,
+      HELD_IN,
+      HELD_OUT,
+      [{ stayStart: HELD_IN, stayEnd: HELD_OUT }],
+    );
+
+    // The overlap query is scoped by capacityHoldingBookingFilter(), whose
+    // status set never includes CANCELLED — a cancelled hold is never even
+    // fetched, so its wholeLodgeHold flag is irrelevant.
+    const where = mocks.bookingFindMany.mock.calls[0][0].where;
+    expect(where.OR).toEqual(capacityHoldingBookingFilter().OR);
+    expect(CAPACITY_HOLDING_BOOKING_STATUSES).not.toContain(BookingStatus.CANCELLED);
+  });
+});
+
+describe("wholeLodgeBlockedNights + WholeLodgeHoldBlockedError (issue #118)", () => {
+  it("wholeLodgeBlockedNights returns only the held nights as YYYY-MM-DD", () => {
+    expect(
+      wholeLodgeBlockedNights({
+        nightDetails: [
+          { date: parseDateOnly("2026-09-01"), occupiedBeds: 5, availableBeds: 15 },
+          {
+            date: parseDateOnly("2026-09-02"),
+            occupiedBeds: 3,
+            availableBeds: 0,
+            wholeLodgeHeld: true,
+          },
+          {
+            date: parseDateOnly("2026-09-03"),
+            occupiedBeds: 31,
+            availableBeds: -1,
+          },
+        ],
+      }),
+    ).toEqual(["2026-09-02"]);
+  });
+
+  it("is a non-confirmable 409 carrying the WHOLE_LODGE_HOLD_BLOCKED code and the blocked nights", () => {
+    const err = new WholeLodgeHoldBlockedError(["2026-09-02", "2026-09-03"]);
+
+    expect(err.status).toBe(409);
+    expect(err.code).toBe("WHOLE_LODGE_HOLD_BLOCKED");
+    expect(err.blockedNights).toEqual(["2026-09-02", "2026-09-03"]);
+  });
+});
+
+// Admin conflict-surfacing helpers (issue #119). Shared by the exclusive-hold
+// route, the school approval, the booking detail page, and the admin bookings
+// list — reusing the capacity engine's overlap window / hold population.
+describe("bookingsOverlap + sameLodgeNullTolerant (issue #119)", () => {
+  it("uses the half-open span: a back-to-back handover does NOT overlap", () => {
+    const a = {
+      checkIn: parseDateOnly("2026-08-08"),
+      checkOut: parseDateOnly("2026-08-10"),
+    };
+    const backToBack = {
+      checkIn: parseDateOnly("2026-08-10"),
+      checkOut: parseDateOnly("2026-08-12"),
+    };
+    const overlapping = {
+      checkIn: parseDateOnly("2026-08-09"),
+      checkOut: parseDateOnly("2026-08-11"),
+    };
+    expect(bookingsOverlap(a, backToBack)).toBe(false);
+    expect(bookingsOverlap(a, overlapping)).toBe(true);
+  });
+
+  it("tolerates a null lodgeId on either side (expand-release)", () => {
+    expect(sameLodgeNullTolerant(null, "lodge-a")).toBe(true);
+    expect(sameLodgeNullTolerant("lodge-a", undefined)).toBe(true);
+    expect(sameLodgeNullTolerant("lodge-a", "lodge-a")).toBe(true);
+    expect(sameLodgeNullTolerant("lodge-a", "lodge-b")).toBe(false);
+  });
+});
+
+describe("findOverlappingCapacityHoldingBookings (issue #119)", () => {
+  const db = { booking: { findMany: mocks.bookingFindMany } } as never;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the overlapping capacity-holding bookings, excluding the held booking", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        id: "booking-2",
+        checkIn: parseDateOnly("2026-08-10"),
+        checkOut: parseDateOnly("2026-08-12"),
+        status: "CONFIRMED",
+        member: { firstName: "Jane", lastName: "Doe", email: "j@x.nz" },
+        _count: { guests: 3 },
+      },
+    ]);
+
+    const result = await findOverlappingCapacityHoldingBookings(db, {
+      lodgeId: "lodge-a",
+      checkIn: parseDateOnly("2026-08-10"),
+      checkOut: parseDateOnly("2026-08-12"),
+      excludeBookingId: "held-1",
+    });
+
+    expect(result).toEqual([
+      {
+        id: "booking-2",
+        memberName: "Jane Doe",
+        checkIn: "2026-08-10",
+        checkOut: "2026-08-12",
+        guestCount: 3,
+        status: "CONFIRMED",
+      },
+    ]);
+    const where = mocks.bookingFindMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({
+      lodgeId: "lodge-a",
+      id: { not: "held-1" },
+      deletedAt: null,
+    });
+    // Reuses the capacity-holding population filter, not a bespoke status list.
+    expect(where.OR).toEqual(capacityHoldingBookingFilter().OR);
+  });
+
+  it("returns [] when nothing overlaps", async () => {
+    mocks.bookingFindMany.mockResolvedValue([]);
+    expect(
+      await findOverlappingCapacityHoldingBookings(db, {
+        lodgeId: "lodge-a",
+        checkIn: parseDateOnly("2026-08-10"),
+        checkOut: parseDateOnly("2026-08-12"),
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("findOverlappingOverriddenNonHoldingBookings (issue #177)", () => {
+  const db = { booking: { findMany: mocks.bookingFindMany } } as never;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("surfaces an overridden PAYMENT_PENDING overlap, marked overridden", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        id: "booking-9",
+        checkIn: parseDateOnly("2026-08-10"),
+        checkOut: parseDateOnly("2026-08-12"),
+        status: "PAYMENT_PENDING",
+        member: { firstName: "Sam", lastName: "Over", email: "s@x.nz" },
+        _count: { guests: 2 },
+      },
+    ]);
+
+    const result = await findOverlappingOverriddenNonHoldingBookings(db, {
+      lodgeId: "lodge-a",
+      checkIn: parseDateOnly("2026-08-10"),
+      checkOut: parseDateOnly("2026-08-12"),
+      excludeBookingId: "held-1",
+    });
+
+    expect(result).toEqual([
+      {
+        id: "booking-9",
+        memberName: "Sam Over",
+        checkIn: "2026-08-10",
+        checkOut: "2026-08-12",
+        guestCount: 2,
+        status: "PAYMENT_PENDING",
+        overridden: true,
+      },
+    ]);
+  });
+
+  it("scopes to overridden + active + NOT capacity-holding (no double-count, no terminal noise)", async () => {
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    await findOverlappingOverriddenNonHoldingBookings(db, {
+      lodgeId: "lodge-a",
+      checkIn: parseDateOnly("2026-08-10"),
+      checkOut: parseDateOnly("2026-08-12"),
+      excludeBookingId: "held-1",
+    });
+
+    const where = mocks.bookingFindMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({
+      lodgeId: "lodge-a",
+      id: { not: "held-1" },
+      deletedAt: null,
+      capacityOverriddenAt: { not: null },
+    });
+    // Excludes the capacity-holding population so it never double-lists a
+    // booking already surfaced by findOverlappingCapacityHoldingBookings.
+    expect(where.NOT).toEqual(capacityHoldingBookingFilter());
+    // Only active statuses — a cancelled/bumped overridden row can never settle
+    // onto the held nights, so it must not be surfaced.
+    expect(Array.isArray(where.status.in)).toBe(true);
+    expect(where.status.in).not.toContain("CANCELLED");
+    expect(where.status.in).not.toContain("BUMPED");
+  });
+});
+
+describe("getLodgeHeldNights — admin companion to getLodgeCapacityStatus (issue #119)", () => {
+  const db = { booking: { findMany: mocks.bookingFindMany } } as never;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("reports the whole-lodge-held nights within the range (half-open span)", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        checkIn: parseDateOnly("2026-08-10"),
+        checkOut: parseDateOnly("2026-08-12"),
+        wholeLodgeHold: true,
+      },
+    ]);
+
+    const nights = await getLodgeHeldNights(
+      "lodge-a",
+      parseDateOnly("2026-08-09"),
+      parseDateOnly("2026-08-13"),
+      db,
+    );
+
+    // Held 08-10 and 08-11; the checkout day 08-12 is outside [checkIn, checkOut).
+    expect(nights).toEqual(["2026-08-10", "2026-08-11"]);
+    const where = mocks.bookingFindMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ lodgeId: "lodge-a", wholeLodgeHold: true });
+    expect(where.OR).toEqual(capacityHoldingBookingFilter().OR);
+  });
+
+  it("returns [] when no hold overlaps the range", async () => {
+    mocks.bookingFindMany.mockResolvedValue([]);
+    expect(
+      await getLodgeHeldNights(
+        "lodge-a",
+        parseDateOnly("2026-08-09"),
+        parseDateOnly("2026-08-13"),
+        db,
+      ),
+    ).toEqual([]);
   });
 });

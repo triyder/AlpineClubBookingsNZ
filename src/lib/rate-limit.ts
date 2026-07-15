@@ -299,6 +299,10 @@ export const rateLimiters = {
   contact: { id: "contact", limit: 10, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Lodge hut leader PIN login: 5 attempts per minute */
   lodgePinLogin: { id: "lodge-pin-login", limit: 5, windowSeconds: 60, authSensitive: true } as RateLimitConfig,
+  /** Lobby display pairing start + admin code bind: 10 per 15 minutes */
+  displayPairing: { id: "display-pairing", limit: 10, windowSeconds: 15 * 60, authSensitive: true } as RateLimitConfig,
+  /** Lobby display claim poll (signed-blob-bound, not guessable): 30 per minute */
+  displayClaim: { id: "display-claim", limit: 30, windowSeconds: 60 } as RateLimitConfig,
   /** Resend verification email: 3 per hour */
   resendVerification: { id: "resend-verification", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Request email change: 3 per hour */

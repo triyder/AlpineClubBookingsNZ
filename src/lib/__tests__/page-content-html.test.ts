@@ -114,6 +114,66 @@ describe("sanitizePageContentHtml", () => {
   });
 });
 
+// Issue #161 (ADR-003 residual): the lobby display's img-src CSP is tightened
+// to 'self' data:, so its authoring/render path opts into a stricter <img> src
+// constraint via { restrictImgSrc: true }. The CMS's own default (this option
+// omitted) is the public-site page-content trust model and MUST stay exactly
+// as covered by the describe block above — these tests only exercise the flag.
+describe("sanitizePageContentHtml — display img-src restriction (issue #161)", () => {
+  it("keeps the CMS default unaffected when the option is omitted (regression guard)", () => {
+    // Mirrors the "keeps uploaded image library URLs but strips data: URIs"
+    // case above: an absolute https image is still allowed by default.
+    expect(
+      sanitizePageContentHtml(
+        '<img src="https://example.nz/api/images/abc123" alt="Hut" />',
+      ),
+    ).toBe('<img src="https://example.nz/api/images/abc123" alt="Hut" />');
+  });
+
+  it("blocks an absolute https <img> src (the ADR-003 exfiltration vector)", () => {
+    expect(
+      sanitizePageContentHtml(
+        '<img src="https://evil.example/beacon.gif" alt="x" />',
+        { restrictImgSrc: true },
+      ),
+    ).toBe('<img alt="x" />');
+  });
+
+  it("blocks a protocol-relative <img> src", () => {
+    expect(
+      sanitizePageContentHtml('<img src="//evil.example/beacon.gif" />', {
+        restrictImgSrc: true,
+      }),
+    ).toBe("<img />");
+  });
+
+  it("keeps a relative / root-absolute <img> src (matches img-src 'self')", () => {
+    expect(
+      sanitizePageContentHtml('<img src="/api/images/abc123" alt="Hut" />', {
+        restrictImgSrc: true,
+      }),
+    ).toBe('<img src="/api/images/abc123" alt="Hut" />');
+  });
+
+  it("keeps a data: <img> src (the CMS default strips it; the display variant keeps it)", () => {
+    expect(
+      sanitizePageContentHtml(
+        '<img src="data:image/png;base64,aGVsbG8=" alt="Hut" />',
+        { restrictImgSrc: true },
+      ),
+    ).toBe('<img src="data:image/png;base64,aGVsbG8=" alt="Hut" />');
+  });
+
+  it("still strips <script> and event handlers (CMS trust model unchanged by the flag)", () => {
+    expect(
+      sanitizePageContentHtml(
+        '<p onclick="alert(1)">ok</p><script>alert(1)</script>',
+        { restrictImgSrc: true },
+      ),
+    ).toBe("<p>ok</p>");
+  });
+});
+
 describe("pageContentHtmlToPlainText", () => {
   it("strips markup and collapses whitespace", () => {
     expect(

@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import type { FeatureFlags } from "./schema";
 
 export const MODULE_KEYS = [
@@ -17,13 +18,33 @@ export const MODULE_KEYS = [
   "hutLeaders",
   "communications",
   "skifieldConditions",
-  "multiLodge",
   "twoFactor",
   "analytics",
+  "lobbyDisplay",
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];
 export type ModuleSettingsValues = Record<ModuleKey, boolean>;
+
+/**
+ * Prisma `select` for every read of the ClubModuleSettings singleton — the live
+ * module columns (derived from MODULE_KEYS) plus the two audit fields. Deriving
+ * it from MODULE_KEYS matters for blue/green safety: a bare
+ * `findUnique({ where })` has no `select`, so Prisma names EVERY column in its
+ * schema — including retired-but-not-yet-dropped columns like the former
+ * `multiLodge` flag. Selecting only the live module columns means the generated
+ * SQL never references such a column, so a later contract migration that DROPs
+ * it (#139) is safe from this release onward: this release's client does not
+ * read it. Any read of ClubModuleSettings must use this select.
+ */
+export const CLUB_MODULE_SETTINGS_COLUMN_SELECT = {
+  ...(Object.fromEntries(MODULE_KEYS.map((key) => [key, true])) as Record<
+    ModuleKey,
+    true
+  >),
+  updatedAt: true,
+  updatedByMemberId: true,
+} satisfies Prisma.ClubModuleSettingsSelect;
 
 // Default activation for a club that has not saved its Modules page yet. The
 // optional "capability" modules (which require deploy-time setup such as Xero
@@ -48,9 +69,9 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   hutLeaders: true,
   communications: true,
   skifieldConditions: true,
-  multiLodge: false,
   twoFactor: false,
   analytics: false,
+  lobbyDisplay: false,
 };
 
 export interface ModuleDefinition {
@@ -181,15 +202,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "Live mountain/road status panel and widgets, plus the admin conditions cache.",
     dependencies: [],
   },
-  multiLodge: {
-    key: "multiLodge",
-    label: "Multiple lodges",
-    description:
-      "Manage more than one lodge property. Enables the Lodges admin page; member-facing screens only change once a second active lodge exists.",
-    dependencies: [
-      "Cannot be turned off while more than one active lodge exists.",
-    ],
-  },
   twoFactor: {
     key: "twoFactor",
     label: "Two-factor authentication",
@@ -206,6 +218,15 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "Consent-gated GA4 tracking on public website and public account pages.",
     dependencies: [
       "NEXT_PUBLIC_GA_MEASUREMENT_ID must be configured before visitors can opt in.",
+    ],
+  },
+  lobbyDisplay: {
+    key: "lobbyDisplay",
+    label: "Lobby TV display",
+    description:
+      "Read-only paired lobby screens showing per-lodge arrivals, departures, chores, and lodge information.",
+    dependencies: [
+      "Display devices are paired from the lodge admin pages once the module is on.",
     ],
   },
 };

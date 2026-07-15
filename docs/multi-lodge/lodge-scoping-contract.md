@@ -267,7 +267,7 @@ lodge selectors, lodge columns, or lodge names in flows where they would
 be redundant (ADR-002). APIs still require and return `lodgeId`; the rule
 is presentation-only.
 
-The `multiLodge` Admin Module flag gates only the lodge-management
-configuration routes (ADR-002). Runtime booking, capacity, and pricing
-logic must never branch on the flag — lodge count and `lodgeId` are the
-only lodge signals service code reads.
+Lodge management is core and always available (ADR-005 removed the former
+`multiLodge` Admin Module flag; the lodge routes are ungated). Runtime
+booking, capacity, and pricing logic never branch on any lodge flag —
+lodge count and `lodgeId` are the only lodge signals service code reads.

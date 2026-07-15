@@ -104,8 +104,10 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
     expect(vi.mocked(prisma.booking.count)).toHaveBeenCalledTimes(1);
 
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;
-    expect(calls).toHaveLength(2);
-    // First pass: id-only page query — ordering and windowing happen in SQL.
+    // First pass: id-only page query — ordering and windowing happen in SQL
+    // (#1884). A third findMany is the exclusive-hold overlap query for the
+    // page (#119).
+    expect(calls).toHaveLength(3);
     expect(calls[0][0]).not.toHaveProperty("include");
     expect(calls[0][0]?.select).toEqual({ id: true });
     expect(calls[0][0]?.orderBy).toEqual([{ updatedAt: "desc" }, { id: "asc" }]);
@@ -114,6 +116,8 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
     // Second pass: heavy include restricted to the page ids.
     expect(calls[1][0]).toHaveProperty("include");
     expect(calls[1][0]?.where).toEqual({ id: { in: ["b1", "b3", "b2"] } });
+    // Third pass: the exclusive-hold overlap query for the page.
+    expect(calls[2][0]?.where).toMatchObject({ wholeLodgeHold: true });
   });
 
   it("orders every sort key identically to the legacy comparator", async () => {
@@ -266,8 +270,9 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
     expect(result.bookings.at(-1)?.id).toBe("b0099");
 
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;
-    // Two bounded scan chunks (500 + 1) then one page hydration.
-    expect(calls).toHaveLength(3);
+    // Two bounded scan chunks (500 + 1), one page hydration, then the
+    // exclusive-hold overlap query for the page (#119).
+    expect(calls).toHaveLength(4);
     expect(calls[0][0]?.take).toBe(ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE);
     expect(calls[0][0]?.orderBy).toEqual({ id: "asc" });
     expect(calls[0][0]?.cursor).toBeUndefined();
@@ -321,17 +326,19 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
     const fastResult = await listAdminBookings(
       adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc" })
     );
-    // Fast path: projection pass + page load = two findMany calls.
-    expect(vi.mocked(prisma.booking.findMany).mock.calls).toHaveLength(2);
+    // Fast path: projection pass + page load + exclusive-hold overlap query
+    // (issue #119) = three findMany calls.
+    expect(vi.mocked(prisma.booking.findMany).mock.calls).toHaveLength(3);
 
     vi.mocked(prisma.booking.findMany).mockClear();
     installAdminBookingsDbMock(makeFixtures());
     const fullResult = await listAdminBookings(
       adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc", bedState: "complete" })
     );
-    // Derived path: one bounded scan chunk + one page hydration.
+    // Derived path: one bounded scan chunk + one page hydration + the
+    // exclusive-hold overlap query for the page (#119).
     const fullCalls = vi.mocked(prisma.booking.findMany).mock.calls;
-    expect(fullCalls).toHaveLength(2);
+    expect(fullCalls).toHaveLength(3);
     expect(fullCalls[0][0]).toHaveProperty("include");
     expect(fullCalls[0][0]?.take).toBe(ADMIN_BOOKINGS_DERIVED_SCAN_CHUNK_SIZE);
 

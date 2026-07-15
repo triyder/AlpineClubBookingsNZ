@@ -8,6 +8,7 @@ import {
   checkCapacityForGuestRanges,
   type NightAvailability,
 } from "@/lib/capacity";
+import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { getTodayDateOnly } from "@/lib/date-only";
@@ -88,6 +89,21 @@ export async function POST(
       );
       const overbookedNights = getOverbookedNights(nightDetails);
       const overbookDates = overbookedNights.map((night) => night.date);
+
+      // Exclusive whole-lodge hold (ADR-001 decision 5, issue #118): a held
+      // night is NOT bypassable — refuse even when the admin set allowOverbook,
+      // and BEFORE any status advance. Held nights never appear in overbookDates
+      // (they are pinned to 0, not negative), so this is the only guard that
+      // catches them.
+      const blockedNights = wholeLodgeBlockedNights({ nightDetails });
+      if (blockedNights.length > 0) {
+        return {
+          error: "WHOLE_LODGE_HOLD_BLOCKED",
+          code: "WHOLE_LODGE_HOLD_BLOCKED",
+          blockedNights,
+          status: 409,
+        };
+      }
 
       if (!available && !allowOverbook) {
         return {
@@ -258,7 +274,12 @@ export async function POST(
 
     if ("error" in result) {
       return NextResponse.json(
-        { error: result.error, ...("overbookDates" in result ? { overbookDates: result.overbookDates } : {}) },
+        {
+          error: result.error,
+          ...("code" in result ? { code: result.code } : {}),
+          ...("overbookDates" in result ? { overbookDates: result.overbookDates } : {}),
+          ...("blockedNights" in result ? { blockedNights: result.blockedNights } : {}),
+        },
         { status: result.status as number }
       );
     }

@@ -71,9 +71,34 @@ describe("feature route map", () => {
     expect(getRequiredFeaturesForPath("/api/skifield-whakapapa")).toEqual([
       "skifieldConditions",
     ]);
-    expect(getRequiredFeaturesForPath("/admin/lodges")).toEqual([
-      "multiLodge",
-    ]);
+  });
+
+  it("never gates the lodge admin surface behind a feature flag", () => {
+    // Multi-lodge is core (ADR-005): the lodge admin page and its API are
+    // always reachable (still admin-gated by the layout), so no feature flag
+    // maps to them and they never appear as a required feature.
+    expect(getRequiredFeaturesForPath("/admin/lodges")).toEqual([]);
+    expect(getRequiredFeaturesForPath("/api/admin/lodges")).toEqual([]);
+    expect(getRequiredFeaturesForPath("/api/admin/lodges/lodge-1")).toEqual([]);
+    // With every flag on there is still nothing to disable on these paths.
+    expect(getDisabledFeatureForPath("/admin/lodges", allOn)).toBeNull();
+    expect(getDisabledFeatureForPath("/api/admin/lodges", allOn)).toBeNull();
+    expect(
+      getDisabledFeatureForPath("/api/admin/lodges/lodge-1", allOn)
+    ).toBeNull();
+  });
+
+  it("keeps lodge management reachable for a bare single-lodge install (#132 backward-compat)", () => {
+    // A single-lodge club with every optional module OFF must still reach the
+    // Lodges admin surface — the whole point of promoting multi-lodge to core
+    // (ADR-005). Gating it on a now-removed flag would have hidden it here.
+    const allOff = Object.fromEntries(
+      MODULE_KEYS.map((key) => [key, false])
+    ) as FeatureFlags;
+    for (const href of ["/admin/lodges", "/api/admin/lodges"]) {
+      expect(getDisabledFeatureForPath(href, allOff)).toBeNull();
+      expect(isFeatureHrefVisible(href, allOff)).toBe(true);
+    }
   });
 
   it("blocks each new module's pages AND api routes when it is off", () => {
@@ -100,25 +125,6 @@ describe("feature route map", () => {
         promoCodes: false,
       })
     ).toBe("promoCodes");
-    // Multi-lodge: the lodge admin page and its API both 404 when off.
-    expect(
-      getDisabledFeatureForPath("/admin/lodges", {
-        ...allOn,
-        multiLodge: false,
-      })
-    ).toBe("multiLodge");
-    expect(
-      getDisabledFeatureForPath("/api/admin/lodges", {
-        ...allOn,
-        multiLodge: false,
-      })
-    ).toBe("multiLodge");
-    expect(
-      getDisabledFeatureForPath("/api/admin/lodges/lodge-1", {
-        ...allOn,
-        multiLodge: false,
-      })
-    ).toBe("multiLodge");
     expect(
       getDisabledFeatureForPath("/api/address-autocomplete/search", {
         ...allOn,
@@ -194,33 +200,17 @@ describe("feature route map", () => {
     expect(getRequiredFeaturesForPath("/financex")).toEqual([]);
   });
 
-  it("never gates booking creation on the multiLodge flag", () => {
-    // multiLodge only guards the admin lodges surface. Core booking creation
-    // (and reads) must work whether or not the club runs multiple lodges, so
-    // no booking route requires the flag and disabling it never 404s a
-    // booking. A `/admin/lodges`-lookalike prefix must not catch bookings.
-    expect(getRequiredFeaturesForPath("/api/bookings")).not.toContain(
-      "multiLodge"
-    );
-    expect(getRequiredFeaturesForPath("/api/bookings/booking-1")).not.toContain(
-      "multiLodge"
-    );
+  it("does not gate core booking routes on any lodge feature", () => {
+    // Core booking creation and reads must work whether or not the club runs
+    // multiple lodges. No booking route requires a lodge-related flag, and an
+    // `/admin/lodges`-lookalike prefix must not catch bookings.
+    expect(getRequiredFeaturesForPath("/api/bookings")).toEqual([]);
+    expect(getRequiredFeaturesForPath("/api/bookings/booking-1")).toEqual([]);
+    expect(getDisabledFeatureForPath("/api/bookings", allOn)).toBeNull();
     expect(
-      getDisabledFeatureForPath("/api/bookings", { ...allOn, multiLodge: false })
+      getDisabledFeatureForPath("/api/bookings/booking-1", allOn)
     ).toBeNull();
-    expect(
-      getDisabledFeatureForPath("/api/bookings/booking-1", {
-        ...allOn,
-        multiLodge: false,
-      })
-    ).toBeNull();
-    // The admin bookings surface is likewise never behind multiLodge.
-    expect(
-      getDisabledFeatureForPath("/admin/bookings", {
-        ...allOn,
-        multiLodge: false,
-      })
-    ).toBeNull();
+    expect(getDisabledFeatureForPath("/admin/bookings", allOn)).toBeNull();
   });
 
   it("supports nav filtering with query strings", () => {

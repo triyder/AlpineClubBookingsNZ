@@ -41,6 +41,8 @@ import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/cap
 import {
   OverCapacityConfirmationRequiredError,
   overCapacityNights,
+  wholeLodgeBlockedNights,
+  WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
 import { ApiError } from "@/lib/api-error";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
@@ -810,9 +812,20 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           // lodge capacity lock is still held, only the availability decision
           // defers to the admin's explicit confirmation.
           if (input.confirmOverCapacity !== true) {
+            // Unconfirmed: member-parity path. A held night is unavailable
+            // exactly like a full lodge (decision 6); it never appears in the
+            // confirmable night list, so the admin sees the ordinary confirm
+            // prompt, never an exclusive-specific signal.
             throw new OverCapacityConfirmationRequiredError(
               overCapacityNights(capacityCheck),
             );
+          }
+          // Confirmed override: an exclusive hold is NOT bypassable (decision
+          // 5). Refuse before stamping capacityOverridden so no guest is ever
+          // admitted onto a held night.
+          const blocked = wholeLodgeBlockedNights(capacityCheck);
+          if (blocked.length > 0) {
+            throw new WholeLodgeHoldBlockedError(blocked);
           }
           capacityOverridden = true;
         } else {
@@ -920,6 +933,11 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
               throw new OverCapacityConfirmationRequiredError(
                 overCapacityNights(finalCapacityCheck),
               );
+            }
+            // Confirmed override cannot punch into an exclusive hold (decision 5).
+            const blocked = wholeLodgeBlockedNights(finalCapacityCheck);
+            if (blocked.length > 0) {
+              throw new WholeLodgeHoldBlockedError(blocked);
             }
             capacityOverridden = true;
           } else {

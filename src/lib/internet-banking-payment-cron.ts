@@ -14,7 +14,10 @@ import logger from "@/lib/logger";
 import { restoreCreditFromBooking } from "@/lib/member-credit";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
-import { RELEASE_ADMIN_CAPACITY_HOLD_UPDATE } from "@/lib/booking-status";
+import {
+  RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+  RELEASE_WHOLE_LODGE_HOLD_UPDATE,
+} from "@/lib/booking-status";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import {
   enqueueXeroRefundCreditNoteOperation,
@@ -66,6 +69,10 @@ function releaseOneHold(paymentId: string, now: Date) {
           status: BookingStatus.CANCELLED,
           draftExpiresAt: null,
           ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
+          // Best-effort field clearing (#177): this IB-expiry cron transition
+          // has no per-booking audit context, so it mirrors the capacity-hold
+          // sibling — clear the stale hold, no released audit.
+          ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
         },
       });
       await tx.payment.update({

@@ -1,5 +1,6 @@
 import { clubConfig } from "@/config/club";
 import {
+  CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   DEFAULT_MODULE_SETTINGS,
   MODULE_KEYS,
   getEffectiveModuleFlags,
@@ -29,6 +30,7 @@ interface LodgeCapacityDb {
   clubModuleSettings?: {
     findUnique: (args: {
       where: { id: string };
+      select?: Record<string, boolean>;
     }) => Promise<ModuleSettingsRecord>;
   };
   lodgeSettings?: {
@@ -89,6 +91,7 @@ async function loadCapacityModuleState(
   try {
     const record = await db.clubModuleSettings.findUnique({
       where: { id: "default" },
+      select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     });
     return getEffectiveModuleFlags(normalizeModuleSettings(record));
   } catch {

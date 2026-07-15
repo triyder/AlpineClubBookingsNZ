@@ -13,9 +13,11 @@ import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import {
+  acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
   type NightAvailability,
 } from "@/lib/capacity";
+import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -173,11 +175,15 @@ export async function POST(
     // Zero-dollar booking: confirm without Stripe. Because a generic
     // non-member-hold PENDING booking does NOT hold capacity (#737), the beds
     // may already be taken by the time an admin confirms it. Re-check capacity
-    // under the same advisory lock the cron/force-confirm paths use and only
-    // flip PENDING -> PAID (a capacity-holding status) inside that lock.
+    // under the per-lodge capacity lock (acquireLodgeCapacityLock — the same
+    // hashtextextended(lodgeId) key every admission, the cron/force-confirm
+    // paths, and the exclusive-hold route take, #172) and only flip
+    // PENDING -> PAID (a capacity-holding status) inside that lock. The lodgeId
+    // comes from the pre-lock booking snapshot; a booking never changes lodge,
+    // so the lock key is stable.
     if (booking.finalPriceCents === 0) {
       const zeroResult = await prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        await acquireLodgeCapacityLock(tx, booking.lodgeId);
 
         // Re-read this booking's own capacity inputs INSIDE the lock (mirroring
         // cron-confirm-pending / force-confirm). Using the pre-lock findUnique
@@ -200,6 +206,20 @@ export async function POST(
           bookingId,
           tx
         );
+
+        // Exclusive whole-lodge hold (ADR-001 decision 5, issue #118): refuse
+        // even under allowOverbook, before any status advance. Held nights are
+        // pinned to 0 so they never appear in overbookDates — this is the only
+        // guard that catches them.
+        const blockedNights = wholeLodgeBlockedNights({ nightDetails });
+        if (blockedNights.length > 0) {
+          return {
+            error: "WHOLE_LODGE_HOLD_BLOCKED" as const,
+            code: "WHOLE_LODGE_HOLD_BLOCKED" as const,
+            blockedNights,
+            status: 409,
+          };
+        }
 
         if (!available && !allowOverbook) {
           return {
@@ -236,8 +256,12 @@ export async function POST(
         return NextResponse.json(
           {
             error: zeroResult.error,
+            ...("code" in zeroResult ? { code: zeroResult.code } : {}),
             ...("overbookDates" in zeroResult
               ? { overbookDates: zeroResult.overbookDates }
+              : {}),
+            ...("blockedNights" in zeroResult
+              ? { blockedNights: zeroResult.blockedNights }
               : {}),
           },
           { status: zeroResult.status }
@@ -301,7 +325,7 @@ export async function POST(
     // charge-then-refund churn window is gone. The lock is released before
     // Stripe — never hold a DB lock across a payment-provider network call.
     const claim = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await acquireLodgeCapacityLock(tx, booking.lodgeId);
       // Re-read this booking's own capacity inputs INSIDE the lock (see the
       // zero-dollar branch) so a concurrent guest-count change can't gate the
       // charge on a stale, smaller party.
@@ -320,6 +344,17 @@ export async function POST(
         bookingId,
         tx
       );
+      // Exclusive whole-lodge hold (ADR-001 decision 5, issue #118): refuse even
+      // under allowOverbook, before the CONFIRMED claim and any Stripe charge.
+      const blockedNights = wholeLodgeBlockedNights({ nightDetails });
+      if (blockedNights.length > 0) {
+        return {
+          error: "WHOLE_LODGE_HOLD_BLOCKED" as const,
+          code: "WHOLE_LODGE_HOLD_BLOCKED" as const,
+          blockedNights,
+          status: 409,
+        };
+      }
       if (!available && !allowOverbook) {
         return {
           error: "CAPACITY_EXCEEDED" as const,
@@ -377,8 +412,12 @@ export async function POST(
       return NextResponse.json(
         {
           error: claim.error,
+          ...("code" in claim ? { code: claim.code } : {}),
           ...("overbookDates" in claim
             ? { overbookDates: claim.overbookDates }
+            : {}),
+          ...("blockedNights" in claim
+            ? { blockedNights: claim.blockedNights }
             : {}),
         },
         { status: claim.status }
@@ -390,7 +429,7 @@ export async function POST(
     // CONFIRMED keeps holding the beds the member just paid for.
     const releaseChargeClaim = async () => {
       await prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        await acquireLodgeCapacityLock(tx, booking.lodgeId);
         const released = await tx.booking.updateMany({
           where: { id: bookingId, status: BookingStatus.CONFIRMED },
           data: {

@@ -120,23 +120,26 @@ describe("AdminSidebar", () => {
       "Bookings Setup",
       "Integrations",
       "Notifications & Email",
-      "Chores",
       "Access Roles",
       "Export & Import",
       "Committee",
     ]);
   });
 
-  it("moves Chores out of Lodge Operations and removes standalone Booking Messages", () => {
+  it("retires lodge-scoped Chores/Lockers/Seasons from the sidebar — reached via the lodge hub (#130)", () => {
     const sections = getVisibleAdminNavSections(allOn);
-    const lodge = sections.find((item) => item.label === "Lodge Operations");
-    const setup = sections.find((item) => item.label === "Setup & Configuration");
-
-    expect(lodge?.items.map((item) => item.label)).not.toContain("Chores");
-    expect(setup?.items.map((item) => item.label)).toContain("Chores");
-    expect(
-      sections.flatMap((section) => section.items.map((item) => item.label)),
-    ).not.toContain("Booking Messages");
+    const allLabels = sections.flatMap((section) =>
+      section.items.map((item) => item.label),
+    );
+    // Multi-lodge core (ADR-005): these are lodge-scoped editors, reached as
+    // Configure cards under /admin/lodges/[id], not standalone sidebar entries.
+    expect(allLabels).not.toContain("Chores");
+    expect(allLabels).not.toContain("Lockers");
+    expect(allLabels).not.toContain("Hut Fees & Seasons");
+    // The single Lodges entry remains the way in.
+    expect(allLabels).toContain("Lodges");
+    // Unrelated retirement still holds.
+    expect(allLabels).not.toContain("Booking Messages");
   });
 
   it("keeps pending family group requests visible while Members is collapsed", async () => {

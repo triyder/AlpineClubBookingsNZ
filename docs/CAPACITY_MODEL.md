@@ -224,6 +224,87 @@ The **explicit-overbook-flag contract** (409 `CAPACITY_EXCEEDED` +
 Partner-shared admissions (#1745/#1746) are *not* overrides — they consume
 reserved headroom and reject rather than falling back into a confirm.
 
+### Exclusive whole-lodge hold — a non-bypassable block (ADR-001, #118)
+
+A capacity-holding booking with `Booking.wholeLodgeHold = true` reserves the
+whole lodge for the nights it spans (`[checkIn, checkOut)` — the checkout day is
+excluded, so back-to-back handovers stay correct). This is the capacity engine's
+first non-arithmetic rule and it sits *above* both override contracts:
+
+- **Member parity (ADR-001 decision 6):** a held night is reported exactly like
+  a genuinely full lodge. `checkCapacity` / `checkCapacityForGuestRanges` flag
+  the night `wholeLodgeHeld` and pin its `availableBeds` to **0** (never
+  negative), and force the result's `available` to `false`. Members and the
+  public never see an exclusive-specific message — same no-space / waitlist path
+  as a full lodge.
+- **Not override-bypassable (ADR-001 decision 5):** because held nights are
+  pinned to 0 they never enter `overCapacityNights()`, so the warn-and-confirm
+  override cannot list them as confirmable. An admin who *does* confirm the
+  over-capacity override onto a held night is refused with the non-confirmable
+  `WholeLodgeHoldBlockedError` (409 `WHOLE_LODGE_HOLD_BLOCKED`, carrying the
+  blocked nights). To add anyone, the admin must first remove or adjust the hold.
+  The same block applies to the partner-shared admission path.
+
+Enforcement lives in `capacity.ts` (the `wholeLodgeHeld` flag) and
+`over-capacity-confirmation.ts` (`wholeLodgeBlockedNights`,
+`WholeLodgeHoldBlockedError`). It covers **every NEW-admission path**:
+
+- **Member create / self-serve** — refused via `available === false` (the held
+  night presents as full: booking-create's member branch, the modify services'
+  non-override branch, waitlist offer + accept, booking-request /
+  school-booking-request accept).
+- **Admin over-capacity confirm** — `booking-create` (both branches), the date
+  modification service (date-change + shift), and `booking-modify-plan` (batch +
+  modify) throw `WholeLodgeHoldBlockedError` on a confirmed override.
+- **Admin `allowOverbook` routes** — `force-confirm`,
+  `confirm-pending-guests` (both the $0 and charge branches), and `capacity-hold`
+  return a 409 `WHOLE_LODGE_HOLD_BLOCKED` (with `blockedNights`) **regardless of
+  `allowOverbook`**, before any status advance or charge.
+- **Partner-shared admission** (`checkCapacityForPartnerSharedAdmission`) rejects
+  held nights.
+- **Availability calendars** — `checkCapacityForGuestRanges` (day view) and
+  `getMonthAvailability` (month calendar, `/api/availability`) both report a held
+  night as full, so a held-but-not-full night is indistinguishable from a
+  genuinely full lodge on public surfaces (decision 6).
+
+**Pre-existing overridden settlements are NOT refused.** A booking deliberately
+admitted above the ceiling (`bookingHasCapacityOverride`) may later have a hold
+placed over its nights; its settlement paths (payment-reconciliation,
+cron-confirm-pending, switch-to-internet-banking, charge-saved-method,
+payment-link, xero-inbound invoice-paid-effects, group-settlement) still settle
+it. Per ADR-001 decision 1 (conflicts allowed, surfaced, manually resolved — no
+auto-displacement) an already-admitted booking is not a new admission, so the
+hold does not retroactively block it; the booking officer resolves the conflict.
+
+Setting a hold (#121) has no empty-lodge precondition — conflicts are allowed,
+surfaced, and resolved manually (ADR-001 decision 1).
+
+**Conflict surfacing (#119, admin-only).** Because conflicts are resolved by
+hand, they must be obvious to the officer — in both directions, and never to
+members/public (decision 6):
+
+- `findOverlappingCapacityHoldingBookings(db, { lodgeId, checkIn, checkOut,
+  excludeBookingId })` (`capacity.ts`) reuses the overlap window +
+  `capacityHoldingBookingFilter` to list the existing capacity-holding bookings
+  overlapping a hold. The admin exclusive-hold route and the school approval
+  return these `conflicts` (and audit the count/ids); the booking detail page's
+  Admin-tools control lists them. Setting/approving still succeeds.
+- The admin bookings list and the bed-allocation board badge any ordinary
+  booking that overlaps a hold (`overlapsExclusiveHold`), via the pure
+  `bookingsOverlap` / `sameLodgeNullTolerant` helpers.
+- `getLodgeHeldNights(lodgeId, checkIn, checkOut)` (`capacity.ts`) is the admin
+  companion to `getLodgeCapacityStatus` (which takes no date range) for
+  reporting which nights in a range are whole-lodge-held.
+
+**Bed-allocation short-circuit (#120, admin-only).** A held booking implicitly
+occupies the whole lodge, so it needs no per-bed allocation. The bed-allocation
+dashboard excludes a held booking's guest-nights from the awaiting-allocation
+set and from the planner (so a hold never reads as an allocation gap / stuck
+state), and surfaces it via the `exclusiveHolds` payload as a distinct board
+banner instead. The admin bookings list reports a held booking's bed-state as
+`complete`. No `BedAllocation` rows are generated or demanded for a held
+booking.
+
 ### Persisted capacity override (#1771)
 
 Every over-capacity admission above **persists** the decision on the booking:

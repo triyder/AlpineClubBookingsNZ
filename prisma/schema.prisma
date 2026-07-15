@@ -448,6 +448,11 @@ model Member {
   phoneCountryCode String? // e.g. "64"
   phoneAreaCode    String? // e.g. "27"
   phoneNumber      String? // e.g. "4224115"
+  // Per-member opt-in to show this member's phone number on lodge screens
+  // (kiosk + lobby display), default OFF (#37/#124). Only ever surfaced when the
+  // lodge also enables it (Lodge.showGuestPhonesOnScreens) AND the member is an
+  // adult — enforced in the serving serialisers, never in templates.
+  lodgeScreenPhoneOptIn Boolean @default(false)
 
   // Physical address (Xero STREET type)
   streetAddressLine1 String?
@@ -569,6 +574,7 @@ model Member {
   bookingsAdminReviewed                      Booking[]                                  @relation("BookingsAdminReviewed")
   bookingsAdminCapacityHeld                  Booking[]                                  @relation("BookingsAdminCapacityHeld")
   bookingsCapacityOverridden                 Booking[]                                  @relation("BookingsCapacityOverridden")
+  bookingsWholeLodgeHeld                     Booking[]                                  @relation("BookingsWholeLodgeHeld")
   approvedBedAllocations                     BedAllocation[]                            @relation("BedAllocationApprover")
   refundRequests                             RefundRequest[]
   issueReports                               IssueReport[]
@@ -1287,6 +1293,17 @@ model Booking {
   // cancelled booking never re-enters a re-check, so the audit fact is kept.
   capacityOverriddenAt         DateTime?
   capacityOverriddenByMemberId String?
+  // Exclusive whole-lodge hold (#117 / epic #116, ADR-001): when true this
+  // booking reserves SOLE OCCUPANCY of the lodge for its nights. The capacity
+  // engine (#118) hard-blocks any other admission on a held night — independent
+  // of headcount and bed allocation, and NOT bypassable by the admin
+  // over-capacity override. Set by an admin (audited via the two fields below,
+  // mirroring the capacity-override audit pattern) or by approving a
+  // BookingRequest whose exclusivityRequested is set. Additive/expand-only;
+  // default false keeps every existing booking non-exclusive.
+  wholeLodgeHold               Boolean            @default(false)
+  wholeLodgeHoldAt             DateTime?
+  wholeLodgeHoldByMemberId     String?
   createdAt                 DateTime           @default(now())
   updatedAt                 DateTime           @updatedAt
 
@@ -1299,6 +1316,7 @@ model Booking {
   adminReviewedBy             Member?                         @relation("BookingsAdminReviewed", fields: [adminReviewedById], references: [id], onDelete: SetNull)
   adminCapacityHoldBy         Member?                         @relation("BookingsAdminCapacityHeld", fields: [adminCapacityHoldByMemberId], references: [id], onDelete: SetNull)
   capacityOverriddenBy        Member?                         @relation("BookingsCapacityOverridden", fields: [capacityOverriddenByMemberId], references: [id], onDelete: SetNull)
+  wholeLodgeHoldBy            Member?                         @relation("BookingsWholeLodgeHeld", fields: [wholeLodgeHoldByMemberId], references: [id], onDelete: SetNull)
   requestedRoom               LodgeRoom?                      @relation("BookingRequestedRoom", fields: [requestedRoomId], references: [id], onDelete: SetNull)
   parentBooking               Booking?                        @relation("BookingGroup", fields: [parentBookingId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   linkedBookings              Booking[]                       @relation("BookingGroup")
@@ -1347,6 +1365,7 @@ model Booking {
   @@index([adminReviewedById])
   @@index([adminCapacityHoldByMemberId])
   @@index([capacityOverriddenByMemberId])
+  @@index([wholeLodgeHoldByMemberId])
   @@index([requestedRoomId])
   @@index([parentBookingId])
   @@index([lodgeId])
@@ -1575,6 +1594,14 @@ model BookingRequest {
   // named ADULT guests plus "School Child 1..N" rows at the requested tiers.
   guests           Json
   message          String?              @db.VarChar(1000)
+
+  // Exclusive whole-lodge hold — request path (#117 / epic #116, ADR-001). A
+  // requester (school/group front-door) can ask for sole occupancy of the
+  // lodge. This is only the REQUEST signal; an admin approving the request may
+  // set Booking.wholeLodgeHold on the resulting booking (the flag itself is the
+  // admin capacity action). Booking-generic; "school" is just the wording.
+  // Additive/expand-only; default false.
+  exclusivityRequested Boolean            @default(false)
 
   // SCHOOL variant only. The school is the invoiced party / Xero contact.
   schoolName         String?                   @db.VarChar(200)
@@ -2907,6 +2934,7 @@ model ClubModuleSettings {
   multiLodge              Boolean  @default(false)
   twoFactor               Boolean  @default(false)
   analytics               Boolean  @default(false)
+  lobbyDisplay            Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
@@ -2915,10 +2943,11 @@ model ClubModuleSettings {
 }
 
 // A physical lodge property. Every deployment has at least one row (seeded by
-// migration/seed). Lodge management UI is gated by the multiLodge Admin Module,
-// but this table is core: booking data will scope to it from phase 2 of
-// docs/multi-lodge/implementation-plan.md onward. While exactly one active
-// lodge exists the UI shows no lodge concept (ADR-002 presentation rule).
+// migration/seed). Multi-lodge is core (ADR-005): the Lodges admin UI is always
+// available (no module flag), and booking data scopes to this table. While
+// exactly one active lodge exists the per-page lodge selectors auto-resolve to
+// it (ADR-002 presentation rule); the vestigial ClubModuleSettings.multiLodge
+// column is retired in a follow-up (#129).
 model Lodge {
   id         String   @id @default(cuid())
   name       String
@@ -2935,6 +2964,24 @@ model Lodge {
   isDefault  Boolean  @default(false)
   doorCode   String?  @db.VarChar(80)
   travelNote String?
+  // Per-lodge config glob for the lobby display's {{config:<key>}}
+  // placeholders (docs/lobby-display/design.md §3, fork issue #26): free-form
+  // string key/value pairs, validated at the admin edit surface. Null = none.
+  displayConfig Json?
+  // Per-lodge override of the lobby display name granularity (fork issue
+  // #28, design.md §10). Null = the club-wide code default
+  // (FIRST_NAME_SURNAME_INITIAL). Enum defined with the lobby-display
+  // models at the end of this file.
+  displayNameGranularity DisplayNameGranularity?
+  // Committee notice board for the lobby display (fork issue #36): the one
+  // deliberately AUTHORED display surface — free text, admin-edited,
+  // rendered as text nodes only ({{config:<key>}} placeholders resolve
+  // inside it). Null = no notice.
+  displayNotice          String?  @db.VarChar(2000)
+  // Per-lodge toggle: show guest phone numbers on this lodge's screens (kiosk +
+  // lobby display), default OFF (#37/#124). Combined with the per-member opt-in
+  // and an adults-only rule, enforced in the serving serialisers.
+  showGuestPhonesOnScreens Boolean @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -2959,6 +3006,7 @@ model Lodge {
   workPartyEvents          WorkPartyEvent[]
   instructions             LodgeInstruction[]
   bookingRequests          BookingRequest[]
+  displayDevices           LodgeDisplayDevice[]
 }
 
 model LodgeSettings {
@@ -3012,6 +3060,7 @@ model EmailTemplateOverride {
 
   @@index([updatedByMemberId])
 }
+
 
 model BookingMessageOverride {
   id                String   @id @default(cuid())
@@ -4159,4 +4208,94 @@ model MembershipLockoutSettings {
   updatedByMemberId             String?
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Lobby TV Display (docs/lobby-display/design.md, fork epic #25)
+// ---------------------------------------------------------------------------
+
+// A page layout (ADR-003 §1, LTV-024): the structural HTML body with named
+// areas/slots, a default CSS block, and per-slot metadata. All layouts share a
+// fixed header and an editable footer (page furniture, not part of the body).
+// `areas` is an ordered list of slot descriptors
+// ({ key, description, kind: static|conditional|rotator, condition?,
+// rotateSeconds?, children?, defaultContent }) validated app-side (LTV-027/030),
+// exactly as the retired definition Json was.
+model DisplayLayout {
+  id          String   @id @default(cuid())
+  key         String   @unique @db.VarChar(80)
+  name        String   @db.VarChar(120)
+  description String?
+  bodyHtml    String   @db.Text
+  defaultCss  String   @db.Text
+  areas       Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  templates DisplayTemplate[]
+}
+
+// A selectable display design (ADR-003 §1, LTV-024): built on a DisplayLayout,
+// it fills each declared slot with content or an embedded module, layers CSS
+// overrides on the layout default, and carries the footer content. It renders
+// dynamically against whichever lodge its display is bound to; `slotContent`
+// maps areaKey -> { html } or { module, options? }. A layout still referenced
+// by a template cannot be deleted (Restrict).
+model DisplayTemplate {
+  id           String   @id @default(cuid())
+  key          String   @unique @db.VarChar(80)
+  name         String   @db.VarChar(120)
+  layoutId     String
+  slotContent  Json
+  cssOverrides String   @db.Text
+  footerHtml   String   @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  layout  DisplayLayout        @relation(fields: [layoutId], references: [id], onDelete: Restrict)
+  devices LodgeDisplayDevice[]
+
+  @@index([layoutId])
+}
+
+// A physical lobby display (TV/browser) paired to exactly one lodge. The raw
+// display credential is never stored — only its hash (docs/TOKEN_HASHING.md);
+// pairing codes are short-lived and single-use. Lifecycle: created → pairing
+// (code active) → paired → revoked (docs/lobby-display/design.md §4).
+// Deleting a bound template falls the device back to the club default
+// (SetNull) rather than breaking the device.
+model LodgeDisplayDevice {
+  id                   String    @id @default(cuid())
+  lodgeId              String
+  name                 String    @db.VarChar(120)
+  pairingCode          String?   @db.VarChar(16)
+  pairingCodeExpiresAt DateTime?
+  tokenHash            String?   @unique
+  templateId           String?
+  // Per-device state-poll cadence in seconds (LTV-039, issue #85; consolidates
+  // #66). null = the client default (~60s). Clamped server-side to 15–600 on
+  // read and write. The poll doubles as the device heartbeat, so this also
+  // governs how often lastSeenAt refreshes.
+  pollSeconds          Int?
+  lastSeenAt           DateTime?
+  revokedAt            DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  lodge    Lodge            @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  template DisplayTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@index([lodgeId])
+  @@index([templateId])
+}
+
+// How guest names are reduced by the lobby display's privacy serialiser
+// (fork issue #28, docs/lobby-display/design.md §10). Enforcement lives in
+// src/lib/lodge-display-state.ts — the single choke point for what a public
+// screen may show. Minors are never individually named at ANY level.
+enum DisplayNameGranularity {
+  FULL_NAME
+  FIRST_NAME_SURNAME_INITIAL
+  FIRST_NAME_ONLY
+  COUNTS_ONLY
 }
