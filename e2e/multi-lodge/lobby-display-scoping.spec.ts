@@ -43,8 +43,13 @@ test("a device bound to lodge B renders lodge B's board and never lodge A's cont
   await page.locator("#device-name").fill(deviceName);
   await page.locator("#device-lodge").selectOption({ label: SECOND_LODGE.name });
   await page.getByRole("button", { name: "Create device" }).click();
+  // Assert on the created device's row (device name + bound lodge name), not a
+  // bare page-wide text match: the create form's lodge <select> sits above the
+  // list, so an unscoped `.first()` resolves to its hidden <option> and can
+  // never be visible. The row nests the two <p>s (name, lodge) in one wrapper,
+  // so scope to the device name's parent element.
   await expect(
-    page.getByText(SECOND_LODGE.name).first()
+    page.getByText(deviceName, { exact: true }).locator("..").getByText(SECOND_LODGE.name)
   ).toBeVisible();
 
   // Pair an unauthenticated TV against it.
