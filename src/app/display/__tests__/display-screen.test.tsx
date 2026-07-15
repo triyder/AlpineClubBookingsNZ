@@ -787,10 +787,21 @@ describe("DisplayScreen render-branch error boundaries (issue #176)", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
-    const shell = container.querySelector('[data-display-fallback="minimal"]');
+    const shell = container.querySelector<HTMLElement>(
+      '[data-display-fallback="minimal"]'
+    );
     expect(shell).not.toBeNull();
     // Not blank: the shell element is actually mounted as the render root.
     expect(container.firstElementChild).toBe(shell);
+    // jsdom computes no CSS, so we cannot assert the painted pixels — instead
+    // assert the properties that make the shell non-blank in a real browser:
+    // the branded `.display-shell` class and the inlined background gradient
+    // pinned full-viewport (position:fixed + inset:0). Without these the
+    // boundary would mount an unstyled, effectively blank div (issue #186 F1).
+    expect(shell!.className).toContain("display-shell");
+    expect(shell!.style.background).toContain("linear-gradient");
+    expect(shell!.style.position).toBe("fixed");
+    expect(shell!.style.inset).toBe("0px");
   });
 
   it("fallback branch: a FallbackBoard that itself throws drops to the minimal shell, never blank", async () => {

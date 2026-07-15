@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => {
   const tx = {
     booking: {
       findUnique: vi.fn(),
-      update: vi.fn(),
+      updateMany: vi.fn(),
     },
     auditLog: {
       create: vi.fn(),
@@ -113,10 +113,9 @@ beforeEach(() => {
   });
   mocks.transaction.mockImplementation(async (fn) => fn(mocks.tx));
   mocks.tx.booking.findUnique.mockResolvedValue(booking());
-  mocks.tx.booking.update.mockResolvedValue({
-    wholeLodgeHold: true,
-    wholeLodgeHoldAt: new Date("2026-07-14T00:00:00.000Z"),
-  });
+  // CAS write (issue #186): updateMany returns only a row count. The happy path
+  // matches one row; the race regression below overrides this to { count: 0 }.
+  mocks.tx.booking.updateMany.mockResolvedValue({ count: 1 });
   mocks.tx.auditLog.create.mockResolvedValue({});
   mocks.findOverlappingCapacityHoldingBookings.mockResolvedValue([]);
   mocks.findOverlappingOverriddenNonHoldingBookings.mockResolvedValue([]);
@@ -129,9 +128,17 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ success: true, wholeLodgeHold: true });
-    expect(mocks.tx.booking.update).toHaveBeenCalledWith(
+    // CAS on SET (issue #186): the write is a conditional updateMany whose
+    // predicate re-checks capacity-holding at write time — id PLUS the
+    // capacity-holding filter (an AND-wrapped OR fragment). An unconditional
+    // update-by-id could plant an inert hold on a row a concurrent cancel just
+    // moved to a terminal status.
+    expect(mocks.tx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "booking-1" },
+        where: expect.objectContaining({
+          id: "booking-1",
+          AND: expect.any(Array),
+        }),
         data: expect.objectContaining({
           wholeLodgeHold: true,
           wholeLodgeHoldAt: expect.any(Date),
@@ -166,7 +173,7 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
       mocks.tx,
       "lodge-1",
     );
-    expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.booking.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it("lock-serialises the hold set: lock acquired BEFORE the conflict read, on the same tx client as the read and write (issue #154)", async () => {
@@ -192,7 +199,7 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
       mocks.tx,
       expect.objectContaining({ lodgeId: "lodge-1", excludeBookingId: "booking-1" }),
     );
-    expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.booking.updateMany).toHaveBeenCalledTimes(1);
 
     // Ordering: the lock is acquired strictly before the conflict read (and
     // therefore before the flag write). invocationCallOrder is a monotonic
@@ -201,9 +208,34 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
       mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0];
     const conflictReadOrder =
       mocks.findOverlappingCapacityHoldingBookings.mock.invocationCallOrder[0];
-    const writeOrder = mocks.tx.booking.update.mock.invocationCallOrder[0];
+    const writeOrder = mocks.tx.booking.updateMany.mock.invocationCallOrder[0];
     expect(lockOrder).toBeLessThan(conflictReadOrder);
     expect(lockOrder).toBeLessThan(writeOrder);
+  });
+
+  it("CAS regression (issue #186): guard passes on the pre-lock snapshot but the conditional write matches zero rows → 409, no fields, no audit", async () => {
+    // The pre-lock findUnique returns a healthy CONFIRMED booking, so the
+    // status guard passes and the route reaches the write. But between the
+    // snapshot and the write a concurrent cancel (serialised on the DISJOINT
+    // club-wide key, not the per-lodge lock this route holds) moved the row to
+    // a terminal, non-capacity-holding status — so the CAS updateMany predicate
+    // (id + capacityHoldingBookingFilter) matches nothing and resolves { count:
+    // 0 }. The route must refuse rather than plant an inert stale hold on the
+    // cancelled row: 409, no booking fields echoed, and NO audit written.
+    mocks.tx.booking.findUnique.mockResolvedValue(booking({ status: "CONFIRMED" }));
+    mocks.tx.booking.updateMany.mockResolvedValue({ count: 0 });
+
+    const response = await POST(holdRequest({ hold: true }), routeParams());
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/changed while the hold was being set/i);
+    // No hold state echoed back — nothing was written.
+    expect(body).not.toHaveProperty("wholeLodgeHold");
+    expect(body).not.toHaveProperty("wholeLodgeHoldAt");
+    // The write was attempted (the guard passed) but no audit follows a no-op.
+    expect(mocks.tx.booking.updateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("surfaces overlapping conflicts on set without refusing (issue #119): still 200, conflicts returned", async () => {
@@ -234,7 +266,7 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
       }),
     );
     // Decision 1: the set still succeeded even with conflicts present.
-    expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.booking.updateMany).toHaveBeenCalledTimes(1);
     const audit = mocks.tx.auditLog.create.mock.calls[0][0].data;
     expect(audit.metadata).toMatchObject({ overlappingConflictCount: 1 });
   });
@@ -293,10 +325,6 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
     mocks.tx.booking.findUnique.mockResolvedValue(
       booking({ wholeLodgeHold: true }),
     );
-    mocks.tx.booking.update.mockResolvedValue({
-      wholeLodgeHold: false,
-      wholeLodgeHoldAt: null,
-    });
 
     const response = await POST(holdRequest({ hold: false }), routeParams());
     const body = await response.json();
@@ -317,17 +345,15 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
         wholeLodgeHoldByMemberId: "admin-2",
       }),
     );
-    mocks.tx.booking.update.mockResolvedValue({
-      wholeLodgeHold: false,
-      wholeLodgeHoldAt: null,
-    });
 
     const response = await POST(holdRequest({ hold: false }), routeParams());
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ success: true, wholeLodgeHold: false });
-    expect(mocks.tx.booking.update).toHaveBeenCalledWith(
+    // CLEAR stays unconditional-by-id (issue #186): clearing a stale hold on
+    // any status must never be blocked, so no capacity-holding predicate.
+    expect(mocks.tx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "booking-1" },
         data: {
@@ -362,7 +388,7 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
 
         expect(response.status).toBe(409);
         expect(body.error).toMatch(/does not hold lodge capacity/i);
-        expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+        expect(mocks.tx.booking.updateMany).not.toHaveBeenCalled();
         expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
       },
     );
@@ -377,7 +403,7 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
 
       expect(response.status).toBe(409);
       expect(body.error).toMatch(/apply an admin capacity hold first/i);
-      expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+      expect(mocks.tx.booking.updateMany).not.toHaveBeenCalled();
       expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
     });
 
@@ -389,7 +415,7 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
       const response = await POST(holdRequest({ hold: true }), routeParams());
 
       expect(response.status).toBe(200);
-      expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+      expect(mocks.tx.booking.updateMany).toHaveBeenCalledTimes(1);
       expect(mocks.tx.auditLog.create).toHaveBeenCalledTimes(1);
     });
 
@@ -401,7 +427,7 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
       const response = await POST(holdRequest({ hold: true }), routeParams());
 
       expect(response.status).toBe(200);
-      expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+      expect(mocks.tx.booking.updateMany).toHaveBeenCalledTimes(1);
     });
 
     it("allows set on a PAYMENT_PENDING booking carrying an admin capacity hold (#1764): 200, writes", async () => {
@@ -415,24 +441,20 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
       const response = await POST(holdRequest({ hold: true }), routeParams());
 
       expect(response.status).toBe(200);
-      expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+      expect(mocks.tx.booking.updateMany).toHaveBeenCalledTimes(1);
     });
 
     it("allows clearing a hold on a non-capacity-holding booking (cleanup never blocked)", async () => {
       mocks.tx.booking.findUnique.mockResolvedValue(
         booking({ status: "WAITLISTED", wholeLodgeHold: true }),
       );
-      mocks.tx.booking.update.mockResolvedValue({
-        wholeLodgeHold: false,
-        wholeLodgeHoldAt: null,
-      });
 
       const response = await POST(holdRequest({ hold: false }), routeParams());
       const body = await response.json();
 
       expect(response.status).toBe(200);
       expect(body).toMatchObject({ success: true, wholeLodgeHold: false });
-      expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+      expect(mocks.tx.booking.updateMany).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -446,7 +468,7 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
 
     expect(response.status).toBe(409);
     expect(body.error).toMatch(/already has an exclusive/i);
-    expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+    expect(mocks.tx.booking.updateMany).not.toHaveBeenCalled();
     expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
   });
 
@@ -456,7 +478,7 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
 
     expect(response.status).toBe(409);
     expect(body.error).toMatch(/no exclusive whole-lodge hold to clear/i);
-    expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+    expect(mocks.tx.booking.updateMany).not.toHaveBeenCalled();
   });
 
   it("422s an invalid body (missing hold)", async () => {
