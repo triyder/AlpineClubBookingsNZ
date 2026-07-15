@@ -204,9 +204,8 @@ export async function POST(
           { err: xeroErr, memberId: id },
           "Failed to queue entrance fee invoice after contact creation"
         );
-        const entranceFeeWarning = `Xero contact created, but entrance fee invoice could not be queued: ${
-          xeroErr instanceof Error ? xeroErr.message : String(xeroErr)
-        }`;
+        const entranceFeeWarning =
+          "Xero contact created, but entrance fee invoice could not be queued. Retry from the member's Xero actions.";
         warning = warning ? `${warning} ${entranceFeeWarning}` : entranceFeeWarning;
       }
     } else if (entranceFeeSkipReason) {

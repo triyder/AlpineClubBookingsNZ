@@ -166,6 +166,16 @@ shape, `member-lifecycle-actions` owns archive/delete request handling, and
 `membership-cancellation-*` owns the cancellation request, confirmation,
 approval, Xero, settings, and status-label flow.
 
+Browser-facing API routes treat an unexpected exception as operator-only
+diagnostic data: the complete error is sent to the structured logger, while the
+JSON response uses a fixed route-specific message. Validation and domain
+guidance may reach the browser only through an explicit error type (for example
+`ApiError` or a domain service error), so a new Prisma/provider/runtime message
+cannot become public merely because it was thrown inside a route. Authenticated
+cron/webhook clients and the explicit Admin provider-test / finance-sync
+diagnostic endpoints retain their separate machine/diagnostic response
+contracts.
+
 ## Core Data Model
 
 The source of truth is `prisma/schema.prisma`. Key domains are:

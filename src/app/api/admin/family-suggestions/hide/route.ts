@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
-import { hideFamilySuggestion } from "@/lib/family-suggestions";
+import {
+  FamilySuggestionError,
+  hideFamilySuggestion,
+} from "@/lib/family-suggestions";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 
@@ -59,12 +62,16 @@ export async function POST(req: NextRequest) {
       signature: result.signature,
     });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Failed to hide family suggestion";
     logger.error(
       { err, memberIds: parsed.data.memberIds },
       "Failed to hide family suggestion"
     );
-    return NextResponse.json({ error: message }, { status: 422 });
+    if (err instanceof FamilySuggestionError) {
+      return NextResponse.json({ error: err.message }, { status: 422 });
+    }
+    return NextResponse.json(
+      { error: "Failed to hide family suggestion" },
+      { status: 500 }
+    );
   }
 }

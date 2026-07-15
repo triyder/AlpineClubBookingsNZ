@@ -6,6 +6,7 @@ import {
   getXeroOAuthStateCookieOptions,
   XERO_OAUTH_STATE_COOKIE,
 } from "@/lib/xero-oauth-state";
+import logger from "@/lib/logger";
 
 /**
  * GET /api/admin/xero/connect
@@ -25,7 +26,7 @@ export async function GET(request: Request) {
     );
     return response;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to generate Xero consent URL";
-    return NextResponse.json({ error: message }, { status: 500 });
+    logger.error({ err: error }, "Failed to generate Xero consent URL");
+    return NextResponse.json({ error: "Failed to generate Xero consent URL" }, { status: 500 });
   }
 }

@@ -58,8 +58,6 @@ export async function POST(req: NextRequest) {
       );
     }
     logger.error({ err: error }, "Member import from Xero failed");
-    const message =
-      error instanceof Error ? error.message : "Member import failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "Member import failed" }, { status: 500 });
   }
 }

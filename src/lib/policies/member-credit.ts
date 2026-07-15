@@ -2,6 +2,13 @@
 export const ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT =
   "This idempotency key was already used for a different adjustment request";
 
+export class MemberCreditValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MemberCreditValidationError";
+  }
+}
+
 export interface AdminAdjustmentRequestComparison {
   memberId: string;
   amountCents: number;
@@ -19,7 +26,7 @@ export function formatAdjustmentAmount(amountCents: number): string {
 
 export function validateAdjustmentAmount(amountCents: number): void {
   if (amountCents === 0) {
-    throw new Error("Adjustment amount cannot be zero");
+    throw new MemberCreditValidationError("Adjustment amount cannot be zero");
   }
 }
 
@@ -28,7 +35,7 @@ export function validateNegativeAdjustmentAgainstBalance(
   balanceCents: number
 ): void {
   if (amountCents < 0 && balanceCents + amountCents < 0) {
-    throw new Error(
+    throw new MemberCreditValidationError(
       `Cannot deduct ${Math.abs(amountCents)} cents: only ${balanceCents} cents available`
     );
   }
@@ -36,7 +43,7 @@ export function validateNegativeAdjustmentAgainstBalance(
 
 export function validateCreditApplicationAmount(amountCents: number): void {
   if (amountCents <= 0) {
-    throw new Error("Credit amount must be positive");
+    throw new MemberCreditValidationError("Credit amount must be positive");
   }
 }
 
@@ -47,7 +54,7 @@ export function validateCreditApplicationAgainstBalance(
   validateCreditApplicationAmount(amountCents);
 
   if (balanceCents < amountCents) {
-    throw new Error(
+    throw new MemberCreditValidationError(
       `Insufficient credit balance: ${balanceCents} cents available, ${amountCents} cents requested`
     );
   }
@@ -87,6 +94,6 @@ export function assertMatchingIdempotentAdjustmentRequest(
     request.description !== expected.description ||
     request.requestedById !== expected.requestedById
   ) {
-    throw new Error(ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT);
+    throw new MemberCreditValidationError(ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT);
   }
 }

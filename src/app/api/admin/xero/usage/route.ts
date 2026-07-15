@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
+import logger from "@/lib/logger";
 
 export async function GET() {
   const guard = await requireAdmin();
@@ -9,7 +10,7 @@ export async function GET() {
     const summary = await getTodaysXeroUsageSummary();
     return NextResponse.json(summary);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load Xero API usage";
-    return NextResponse.json({ error: message }, { status: 500 });
+    logger.error({ err: error }, "Failed to load Xero API usage");
+    return NextResponse.json({ error: "Failed to load Xero API usage" }, { status: 500 });
   }
 }

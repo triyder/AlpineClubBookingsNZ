@@ -9,6 +9,10 @@ import {
 } from "@/lib/member-credit";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import {
+  ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT,
+  MemberCreditValidationError,
+} from "@/lib/policies/member-credit";
 
 /**
  * GET /api/admin/members/[id]/credits
@@ -85,17 +89,21 @@ export async function POST(
       message: `Adjustment of ${parsed.data.amountCents > 0 ? "+" : ""}${(parsed.data.amountCents / 100).toFixed(2)} submitted for approval`,
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to create adjustment";
     logger.error({ err: error }, "Error creating credit adjustment");
 
-    if (
-      message ===
-      "This idempotency key was already used for a different adjustment request"
-    ) {
-      return NextResponse.json({ error: message }, { status: 409 });
+    if (error instanceof MemberCreditValidationError) {
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status:
+            error.message === ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT ? 409 : 400,
+        }
+      );
     }
 
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json(
+      { error: "Failed to create adjustment" },
+      { status: 500 }
+    );
   }
 }

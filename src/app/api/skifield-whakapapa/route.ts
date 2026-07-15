@@ -7,6 +7,7 @@ import {
 } from "@/lib/whakapapa-report";
 import { fetchWhakapapaCurlData } from "@/lib/whakapapa-report.server";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import logger from "@/lib/logger";
 
 export const runtime = "nodejs";
 
@@ -109,14 +110,12 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
+    logger.error({ err: error }, "Failed to refresh Whakapapa report data");
     if (cachedData) {
       return NextResponse.json(
         {
           ...cachedData,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to refresh Whakapapa report data.",
+          error: "Unable to refresh Whakapapa report data.",
           stale: true,
         },
         {
@@ -134,10 +133,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         ...empty,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unable to fetch Whakapapa report data.",
+        error: "Unable to fetch Whakapapa report data.",
       },
       {
         status: 502,

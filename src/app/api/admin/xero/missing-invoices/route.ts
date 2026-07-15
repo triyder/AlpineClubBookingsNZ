@@ -75,8 +75,12 @@ export async function POST() {
         skipped += 1;
         skippedBookings.push({
           bookingId: booking.bookingId,
-          reason: error instanceof Error ? error.message : "Failed to queue invoice",
+          reason: "Failed to queue invoice",
         });
+        logger.error(
+          { err: error, bookingId: booking.bookingId },
+          "Failed to queue missing Xero invoice"
+        );
       }
     }
 

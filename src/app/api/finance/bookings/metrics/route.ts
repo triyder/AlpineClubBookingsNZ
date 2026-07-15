@@ -6,6 +6,7 @@ import {
   getFinanceBookingMetricsWindowDayCount,
   MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS,
 } from "@/lib/finance-booking-metrics";
+import logger from "@/lib/logger";
 
 const isoDateParam = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -141,11 +142,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(metrics);
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Failed to load finance booking metrics";
-
-    return NextResponse.json({ error: message }, { status: 500 });
+    logger.error({ err: error }, "Failed to load finance booking metrics");
+    return NextResponse.json(
+      { error: "Failed to load finance booking metrics" },
+      { status: 500 }
+    );
   }
 }

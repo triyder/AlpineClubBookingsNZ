@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { getXeroConnectionStatus } from "@/lib/xero";
 import { getXeroFeatureFlags } from "@/lib/xero-feature-flags";
+import logger from "@/lib/logger";
 
 /**
  * GET /api/admin/xero/status
@@ -17,7 +18,7 @@ export async function GET() {
       features: getXeroFeatureFlags(),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to check Xero status";
-    return NextResponse.json({ error: message }, { status: 500 });
+    logger.error({ err: error }, "Failed to check Xero status");
+    return NextResponse.json({ error: "Failed to check Xero status" }, { status: 500 });
   }
 }

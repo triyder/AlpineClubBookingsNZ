@@ -15,6 +15,13 @@ import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import { XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 
+export class SubscriptionBillingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SubscriptionBillingError";
+  }
+}
+
 export type SubscriptionBillingExceptionCode =
   | "MISSING_MEMBERSHIP_ASSIGNMENT"
   | "MISSING_FEE_SCHEDULE"
@@ -90,7 +97,7 @@ export function calculateMembershipCharge(input: {
   decisionDate: Date;
 }) {
   if (!Number.isSafeInteger(input.annualAmountCents) || input.annualAmountCents < 0) {
-    throw new Error("Annual membership fee must be a non-negative integer number of cents.");
+    throw new SubscriptionBillingError("Annual membership fee must be a non-negative integer number of cents.");
   }
   const { start, end } = seasonBounds(input.seasonYear);
   const decision = new Date(Date.UTC(
@@ -99,7 +106,7 @@ export function calculateMembershipCharge(input: {
     input.decisionDate.getUTCDate(),
   ));
   if (decision < start || decision > end) {
-    throw new Error(`Decision date must fall within membership year ${input.seasonYear}.`);
+    throw new SubscriptionBillingError(`Decision date must fall within membership year ${input.seasonYear}.`);
   }
   if (input.prorationRule === "NONE") {
     return {
@@ -146,7 +153,7 @@ export async function buildSubscriptionBillingPreview(input: {
   // including an otherwise-empty preview.
   const bounds = seasonBounds(input.seasonYear);
   if (decisionDate < bounds.start || decisionDate > bounds.end) {
-    throw new Error(`Decision date must fall within membership year ${input.seasonYear}.`);
+    throw new SubscriptionBillingError(`Decision date must fall within membership year ${input.seasonYear}.`);
   }
   const [dueDays, familyBillingMode, alreadyCovered, existingFamilyCharges, members] = await Promise.all([
     getSubscriptionBillingDueDays(db),
@@ -471,7 +478,7 @@ export async function confirmSubscriptionBillingPreview(input: {
   confirmedByMemberId?: string;
 }) {
   if (input.preview.confirmationToken !== input.expectedConfirmationToken) {
-    throw new Error("Billing preview changed; refresh and confirm the current preview.");
+    throw new SubscriptionBillingError("Billing preview changed; refresh and confirm the current preview.");
   }
   const chargeIds: string[] = [];
   await prisma.$transaction(async (tx) => {
@@ -497,7 +504,7 @@ export async function confirmSubscriptionBillingPreview(input: {
         chargeIds.push(...existing.map((row) => row.chargeId));
         return;
       }
-      throw new Error("Billing preview changed; refresh and confirm the current preview.");
+      throw new SubscriptionBillingError("Billing preview changed; refresh and confirm the current preview.");
     }
     const currentFingerprints = preview.exceptions.map((item) => item.fingerprint);
     const scopedMemberIds = [...new Set([

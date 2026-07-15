@@ -310,7 +310,7 @@ export async function POST(request: NextRequest) {
 
     logger.error({ err: error, syncType, query }, "Failed targeted Xero sync");
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed targeted Xero sync" },
+      { error: "Failed targeted Xero sync" },
       { status: 500 }
     );
   }

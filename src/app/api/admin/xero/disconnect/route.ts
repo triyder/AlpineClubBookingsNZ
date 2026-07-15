@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
+import logger from "@/lib/logger";
 import { disconnectXero } from "@/lib/xero";
 
 /**
@@ -13,7 +14,7 @@ export async function POST() {
     await disconnectXero();
     return NextResponse.json({ success: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to disconnect Xero";
-    return NextResponse.json({ error: message }, { status: 500 });
+    logger.error({ err: error }, "Failed to disconnect Xero");
+    return NextResponse.json({ error: "Failed to disconnect Xero" }, { status: 500 });
   }
 }

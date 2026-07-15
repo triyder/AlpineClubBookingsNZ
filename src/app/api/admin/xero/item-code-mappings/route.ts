@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
+import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 
@@ -43,8 +44,8 @@ export async function GET() {
 
     return NextResponse.json({ hutFees, entranceFees });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to fetch item code mappings";
-    return NextResponse.json({ error: message }, { status: 500 });
+    logger.error({ err: error }, "Failed to fetch item code mappings");
+    return NextResponse.json({ error: "Failed to fetch item code mappings" }, { status: 500 });
   }
 }
 
@@ -216,7 +217,7 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ hutFees: resultHutFees, entranceFees: resultEntranceFees });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to update item code mappings";
-    return NextResponse.json({ error: message }, { status: 500 });
+    logger.error({ err: error }, "Failed to update item code mappings");
+    return NextResponse.json({ error: "Failed to update item code mappings" }, { status: 500 });
   }
 }

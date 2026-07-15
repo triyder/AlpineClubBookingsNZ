@@ -81,6 +81,7 @@ import {
   findBookingMemberNightConflicts,
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
+import logger from "@/lib/logger";
 
 const modifyQuoteSchema = z.object({
   checkIn: z.string().optional(),
@@ -882,13 +883,9 @@ export async function POST(
         })
         : null;
   } catch (error) {
+    logger.error({ err: error, bookingId }, "Failed to price booking modification quote");
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unable to price the requested future-night changes",
-      },
+      { error: "Unable to price the requested future-night changes" },
       { status: 400 }
     );
   }

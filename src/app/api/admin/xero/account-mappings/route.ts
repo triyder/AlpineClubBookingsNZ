@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
+import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 
@@ -32,8 +33,8 @@ export async function GET() {
 
     return NextResponse.json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to fetch account mappings";
-    return NextResponse.json({ error: message }, { status: 500 });
+    logger.error({ err: error }, "Failed to fetch account mappings");
+    return NextResponse.json({ error: "Failed to fetch account mappings" }, { status: 500 });
   }
 }
 
@@ -114,7 +115,7 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to update account mappings";
-    return NextResponse.json({ error: message }, { status: 500 });
+    logger.error({ err: error }, "Failed to update account mappings");
+    return NextResponse.json({ error: "Failed to update account mappings" }, { status: 500 });
   }
 }

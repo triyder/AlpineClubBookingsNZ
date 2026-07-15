@@ -7,6 +7,7 @@ import {
 } from "@/lib/member-credit";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import { MemberCreditValidationError } from "@/lib/policies/member-credit";
 
 const reviewSchema = z.object({
   decision: z.enum(["APPROVE", "REJECT"]),
@@ -59,25 +60,23 @@ export async function PATCH(
       message,
     });
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Failed to review adjustment request";
-
     logger.error({ err: error }, "Error reviewing credit adjustment");
 
-    if (message === "Adjustment request not found") {
-      return NextResponse.json({ error: message }, { status: 404 });
+    if (error instanceof MemberCreditValidationError) {
+      const status =
+        error.message === "Adjustment request not found"
+          ? 404
+          : error.message === "This adjustment request has already been reviewed"
+            ? 409
+            : error.message === "A different admin must approve this adjustment"
+              ? 403
+              : 400;
+      return NextResponse.json({ error: error.message }, { status });
     }
 
-    if (message === "This adjustment request has already been reviewed") {
-      return NextResponse.json({ error: message }, { status: 409 });
-    }
-
-    if (message === "A different admin must approve this adjustment") {
-      return NextResponse.json({ error: message }, { status: 403 });
-    }
-
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json(
+      { error: "Failed to review adjustment request" },
+      { status: 500 }
+    );
   }
 }

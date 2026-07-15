@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
+import logger from "@/lib/logger";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero";
 import {
   type XeroItem,
@@ -54,7 +55,7 @@ export async function GET(request?: NextRequest) {
 
     return NextResponse.json({ items, cache });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to fetch Xero items";
-    return NextResponse.json({ error: message }, { status: 500 });
+    logger.error({ err: error }, "Failed to fetch Xero items");
+    return NextResponse.json({ error: "Failed to fetch Xero items" }, { status: 500 });
   }
 }

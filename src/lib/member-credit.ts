@@ -15,6 +15,7 @@ import {
   calculateAppliedCreditAmount,
   calculateRestoredCreditAmount,
   formatAdjustmentAmount,
+  MemberCreditValidationError,
   validateAdjustmentAmount,
   validateCreditApplicationAmount,
   validateCreditApplicationAgainstBalance,
@@ -773,15 +774,15 @@ export async function reviewAdminAdjustmentRequest(
     });
 
     if (!request || request.memberId !== memberId) {
-      throw new Error("Adjustment request not found");
+      throw new MemberCreditValidationError("Adjustment request not found");
     }
 
     if (request.status !== AdminCreditAdjustmentRequestStatus.PENDING) {
-      throw new Error("This adjustment request has already been reviewed");
+      throw new MemberCreditValidationError("This adjustment request has already been reviewed");
     }
 
     if (request.requestedById === adminId) {
-      throw new Error("A different admin must approve this adjustment");
+      throw new MemberCreditValidationError("A different admin must approve this adjustment");
     }
 
     if (decision === "APPROVE") {
@@ -811,7 +812,7 @@ export async function reviewAdminAdjustmentRequest(
     });
 
     if (updated.count !== 1) {
-      throw new Error("This adjustment request has already been reviewed");
+      throw new MemberCreditValidationError("This adjustment request has already been reviewed");
     }
 
     if (decision === "REJECT") {

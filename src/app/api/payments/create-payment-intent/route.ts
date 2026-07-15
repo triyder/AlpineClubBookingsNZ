@@ -25,6 +25,13 @@ import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue
 import { hasAdminAccess } from "@/lib/access-roles";
 import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 
+class PaymentIntentCapacityError extends Error {
+  constructor() {
+    super("Not enough beds available for your dates. Please choose different dates.");
+    this.name = "PaymentIntentCapacityError";
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
@@ -287,7 +294,7 @@ export async function POST(request: NextRequest) {
         // bookingHasCapacityOverride would always be false here — honouring it
         // would be dead code. See docs/CAPACITY_MODEL.md.
         if (!capacity.available) {
-          throw new Error("Not enough beds available for your dates. Please choose different dates.");
+          throw new PaymentIntentCapacityError();
         }
 
         // Transition DRAFT -> PAYMENT_PENDING
@@ -381,15 +388,12 @@ export async function POST(request: NextRequest) {
     // unexpected error gets the fixed generic message so internal detail
     // (Prisma constraint names, connection strings, ...) never reaches the
     // client (#1888).
-    const isCapacityConflict =
-      error instanceof Error && error.message.includes("Not enough beds");
+    if (error instanceof PaymentIntentCapacityError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     return NextResponse.json(
-      {
-        error: isCapacityConflict
-          ? error.message
-          : "Failed to create payment intent",
-      },
-      { status: isCapacityConflict ? 409 : 500 }
+      { error: "Failed to create payment intent" },
+      { status: 500 }
     );
   }
 }

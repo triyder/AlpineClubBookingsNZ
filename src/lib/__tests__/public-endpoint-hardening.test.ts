@@ -214,4 +214,21 @@ describe("public endpoint abuse hardening", () => {
     expect(mocks.applyRateLimit).toHaveBeenCalled();
     expect(mocks.fetchWhakapapaCurlData).not.toHaveBeenCalled();
   });
+
+  it("does not expose upstream Whakapapa failure details", async () => {
+    mocks.whakapapaReportCacheFindUnique.mockResolvedValue(null);
+    mocks.fetchWhakapapaCurlData.mockRejectedValue(
+      new Error("upstream request included private proxy token secret-proxy-token")
+    );
+
+    const { GET } = await import("@/app/api/skifield-whakapapa/route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/skifield-whakapapa")
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Unable to fetch Whakapapa report data.",
+    });
+  });
 });

@@ -7,7 +7,9 @@ import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-on
 import {
   buildSubscriptionBillingPreview,
   confirmSubscriptionBillingPreview,
+  SubscriptionBillingError,
 } from "@/lib/membership-subscription-billing";
+import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { getSeasonYear } from "@/lib/utils";
@@ -81,7 +83,14 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Could not build subscription billing preview." }, { status: 409 });
+    if (error instanceof SubscriptionBillingError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    logger.error({ err: error }, "Could not build subscription billing preview");
+    return NextResponse.json(
+      { error: "Could not build subscription billing preview." },
+      { status: 500 }
+    );
   }
 }
 
@@ -162,6 +171,13 @@ export async function POST(request: Request) {
       queued,
     });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Subscription billing action failed." }, { status: 409 });
+    if (error instanceof SubscriptionBillingError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    logger.error({ err: error }, "Subscription billing action failed");
+    return NextResponse.json(
+      { error: "Subscription billing action failed." },
+      { status: 500 }
+    );
   }
 }

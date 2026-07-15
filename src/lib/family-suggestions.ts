@@ -17,6 +17,13 @@ export interface SuggestedFamilyGroup {
   }>;
 }
 
+export class FamilySuggestionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FamilySuggestionError";
+  }
+}
+
 function normalizeFamilySuggestionMemberIds(memberIds: string[]): string[] {
   return [...new Set(memberIds.map((id) => id.trim()).filter(Boolean))].sort();
 }
@@ -24,7 +31,7 @@ function normalizeFamilySuggestionMemberIds(memberIds: string[]): string[] {
 export function buildFamilySuggestionSignature(memberIds: string[]): string {
   const sortedMemberIds = normalizeFamilySuggestionMemberIds(memberIds);
   if (sortedMemberIds.length < 2) {
-    throw new Error("A family suggestion must include at least 2 unique members");
+    throw new FamilySuggestionError("A family suggestion must include at least 2 unique members");
   }
   return sortedMemberIds.join("|");
 }
@@ -214,7 +221,7 @@ export async function hideFamilySuggestion(
     select: { id: true },
   });
   if (activeMembers.length !== sortedMemberIds.length) {
-    throw new Error("Some members not found or inactive");
+    throw new FamilySuggestionError("Some members not found or inactive");
   }
 
   await prisma.hiddenFamilySuggestion.upsert({
@@ -249,7 +256,7 @@ export async function createFamilyGroupFromSuggestion(
   memberIds: string[]
 ): Promise<{ groupId: string; memberCount: number }> {
   if (memberIds.length < 2) {
-    throw new Error("A family group must have at least 2 members");
+    throw new FamilySuggestionError("A family group must have at least 2 members");
   }
 
   // Verify all members exist and are active
@@ -259,7 +266,7 @@ export async function createFamilyGroupFromSuggestion(
   });
 
   if (members.length !== memberIds.length) {
-    throw new Error("Some members not found or inactive");
+    throw new FamilySuggestionError("Some members not found or inactive");
   }
 
   // Pick the lead: first canLogin adult, else first canLogin member, else first member

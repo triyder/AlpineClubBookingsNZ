@@ -15,6 +15,13 @@ interface BackfillRequestBody {
   maxChunks?: unknown;
 }
 
+class FinanceBackfillRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FinanceBackfillRequestError";
+  }
+}
+
 function parseBody(body: BackfillRequestBody): {
   fromMonth: string | null;
   maxChunks: number;
@@ -24,7 +31,7 @@ function parseBody(body: BackfillRequestBody): {
       ? body.fromMonth.trim()
       : null;
   if (fromMonth && !isMonthKey(fromMonth)) {
-    throw new Error("fromMonth must be a YYYY-MM month key");
+    throw new FinanceBackfillRequestError("fromMonth must be a YYYY-MM month key");
   }
 
   const maxChunks =
@@ -32,7 +39,7 @@ function parseBody(body: BackfillRequestBody): {
       ? DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS
       : Number(body.maxChunks);
   if (!Number.isInteger(maxChunks) || maxChunks < 1) {
-    throw new Error("maxChunks must be a positive integer");
+    throw new FinanceBackfillRequestError("maxChunks must be a positive integer");
   }
 
   return { fromMonth, maxChunks };
@@ -51,8 +58,11 @@ export async function POST(request: NextRequest) {
       : {};
     options = parseBody(body ?? {});
   } catch (error) {
+    if (error instanceof FinanceBackfillRequestError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Invalid request body" },
+      { error: "Invalid request body" },
       { status: 400 }
     );
   }
@@ -116,12 +126,7 @@ export async function POST(request: NextRequest) {
     logger.error({ err: error }, "Finance monthly fact backfill failed");
 
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Finance monthly fact backfill failed",
-      },
+      { error: "Finance monthly fact backfill failed" },
       { status: 500 }
     );
   }

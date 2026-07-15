@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 
 const mocks = vi.hoisted(() => ({
+  SubscriptionBillingError: class SubscriptionBillingError extends Error {},
   requireAdmin: vi.fn(),
   buildPreview: vi.fn(),
   confirmPreview: vi.fn(),
@@ -19,6 +20,10 @@ vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("@/lib/membership-subscription-billing", () => ({
   buildSubscriptionBillingPreview: mocks.buildPreview,
   confirmSubscriptionBillingPreview: mocks.confirmPreview,
+  SubscriptionBillingError: mocks.SubscriptionBillingError,
+}));
+vi.mock("@/lib/logger", () => ({
+  default: { error: vi.fn() },
 }));
 vi.mock("@/lib/xero-subscription-invoices", () => ({ enqueueMembershipSubscriptionChargeOperation: mocks.enqueue }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
@@ -76,6 +81,36 @@ describe("admin subscription billing route", () => {
   it("returns the default 30 due days with preview and visible queues", async () => {
     const response = await GET(new NextRequest("http://localhost/api/admin/subscription-billing?seasonYear=2026&decisionDate=2026-07-13"));
     await expect(response.json()).resolves.toMatchObject({ preview, charges: [], exceptions: [], settings: { invoiceDueDays: 30 } });
+  });
+
+  it("preserves typed billing guidance but hides unexpected preview errors", async () => {
+    mocks.buildPreview.mockRejectedValueOnce(
+      new mocks.SubscriptionBillingError(
+        "Decision date must fall within membership year 2026."
+      )
+    );
+    const domainResponse = await GET(
+      new NextRequest(
+        "http://localhost/api/admin/subscription-billing?seasonYear=2026&decisionDate=2026-07-13"
+      )
+    );
+    expect(domainResponse.status).toBe(409);
+    await expect(domainResponse.json()).resolves.toEqual({
+      error: "Decision date must fall within membership year 2026.",
+    });
+
+    mocks.buildPreview.mockRejectedValueOnce(
+      new Error('password authentication failed for user "app_rw"')
+    );
+    const unexpectedResponse = await GET(
+      new NextRequest(
+        "http://localhost/api/admin/subscription-billing?seasonYear=2026&decisionDate=2026-07-13"
+      )
+    );
+    expect(unexpectedResponse.status).toBe(500);
+    await expect(unexpectedResponse.json()).resolves.toEqual({
+      error: "Could not build subscription billing preview.",
+    });
   });
 
   it("deduplicates a persisted exception already present in the current preview", async () => {
@@ -161,6 +196,19 @@ describe("admin subscription billing route", () => {
     const response = await POST(request({ action: "RETRY_CHARGE", chargeId: "charge-1" }));
     expect(response.status).toBe(200);
     expect(mocks.enqueue).toHaveBeenCalledWith("charge-1", { createdByMemberId: "admin-1" });
+  });
+
+  it("does not return unexpected provider queue details from a billing action", async () => {
+    mocks.enqueue.mockRejectedValueOnce(
+      new Error("Xero tenant secret-tenant-id rejected the invoice")
+    );
+    const response = await POST(
+      request({ action: "RETRY_CHARGE", chargeId: "charge-1" })
+    );
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "Subscription billing action failed.",
+    });
   });
 
   it("returns the guard response before reading any billing data", async () => {
