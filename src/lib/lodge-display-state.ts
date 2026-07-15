@@ -134,6 +134,29 @@ interface OrganiserShape {
 }
 
 /**
+ * Whether a booking's guests may be individually named anywhere on the wall
+ * (design.md §10 settled rules; issue #174): a whole-lodge blockout, any
+ * minor in the booking, an organisation organiser, or counts-only
+ * granularity all suppress individual names in favour of the booking's
+ * reduced group label. This is the SINGLE definition of that condition —
+ * every board that might name an individual (booking rows, chore assignees)
+ * calls this instead of re-deriving the condition list.
+ */
+export function namesAllowedForBooking(options: {
+  wholeLodge: boolean;
+  containsMinors: boolean;
+  organiserAgeTier: AgeTier;
+  granularity: DisplayNameGranularity;
+}): boolean {
+  return (
+    !options.wholeLodge &&
+    !options.containsMinors &&
+    options.organiserAgeTier !== "NOT_APPLICABLE" &&
+    options.granularity !== "COUNTS_ONLY"
+  );
+}
+
+/**
  * The booking-level label (design.md §10 settled rules):
  * - organisation organiser (schools, clubs): the organisation's full name at
  *   EVERY granularity — organisations are not people;
@@ -317,6 +340,9 @@ export async function buildDisplayState(
             },
             booking: {
               select: {
+                // `id` looks the booking up in `wholeLodgeBookingIds` below —
+                // the same whole-lodge decision the booking rows use (#174).
+                id: true,
                 member: {
                   select: { firstName: true, lastName: true, ageTier: true },
                 },
@@ -419,11 +445,12 @@ export async function buildDisplayState(
       guestCount: booking.guests.length,
     });
     // Individual names appear only when every privacy condition allows it.
-    const namesAllowed =
-      !wholeLodge &&
-      !containsMinors &&
-      booking.member.ageTier !== "NOT_APPLICABLE" &&
-      granularity !== "COUNTS_ONLY";
+    const namesAllowed = namesAllowedForBooking({
+      wholeLodge,
+      containsMinors,
+      organiserAgeTier: booking.member.ageTier,
+      granularity,
+    });
 
     const byRoom = new Map<string | null, typeof booking.guests>();
     for (const guest of booking.guests) {
@@ -478,7 +505,9 @@ export async function buildDisplayState(
     }
   }
 
-  // --- chores: assignee labels obey the same privacy rules -----------------
+  // --- chores: assignee labels obey the SAME namesAllowed decision as the
+  // booking rows (#174) — a chore assignee is never named more precisely
+  // than that booking's own row on the wall.
   const chores = choreRows.map((assignment) => {
     const assignee = assignment.bookingGuest;
     let assigneeLabels: string[] = [];
@@ -486,9 +515,23 @@ export async function buildDisplayState(
       const bookingContainsMinors = assignment.booking.guests.some((guest) =>
         isMinor(guest.ageTier)
       );
-      if (isMinor(assignee.ageTier) || granularity === "COUNTS_ONLY") {
-        // A minor is never individually named: fall back to the booking's
-        // reduced label (family/group) rather than the child's name.
+      const namesAllowed = namesAllowedForBooking({
+        wholeLodge: wholeLodgeBookingIds.has(assignment.booking.id),
+        containsMinors: bookingContainsMinors,
+        organiserAgeTier: assignment.booking.member.ageTier,
+        granularity,
+      });
+      if (namesAllowed) {
+        const label = reduceName(
+          assignee.firstName,
+          assignee.lastName,
+          granularity
+        );
+        assigneeLabels = label ? [label] : [];
+      } else {
+        // Names are withheld for this booking (minor present, whole-lodge,
+        // organisation organiser, or counts-only): fall back to the
+        // booking's reduced group label rather than the assignee's name.
         assigneeLabels = [
           bookingLabel(assignment.booking.member, {
             granularity,
@@ -496,13 +539,6 @@ export async function buildDisplayState(
             guestCount: assignment.booking.guests.length,
           }),
         ];
-      } else {
-        const label = reduceName(
-          assignee.firstName,
-          assignee.lastName,
-          granularity
-        );
-        assigneeLabels = label ? [label] : [];
       }
     }
     return {

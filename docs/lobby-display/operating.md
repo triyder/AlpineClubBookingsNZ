@@ -84,6 +84,19 @@ controls. It edits **the lodge you are viewing**:
 > single-lodge installs too. The values are per-lodge by construction and a
 > single-lodge club is its own default lodge.
 
+> **Privacy model, plainly stated:** minors are never individually named on
+> any board, at any granularity level — that is a hard rule with no override.
+> Group-label collapse — a family label for a booking containing minors, the
+> organisation's name for a school/club organiser, or the booking's own label
+> for a whole-lodge blockout — applies consistently across every board,
+> including the **chores** board: an adult chore assignee in one of these
+> bookings is never named more precisely than that booking's row already is
+> elsewhere on the wall. This is a **presentation default that protects
+> group privacy day to day, not a certified anonymisation boundary** — treat
+> it as good practice, not as a compliance guarantee. The **hut-leader
+> kiosk** is the deliberate operational exception: it shows full names,
+> because staff checking guests in and out need them.
+
 ---
 
 ## For developers — extending
