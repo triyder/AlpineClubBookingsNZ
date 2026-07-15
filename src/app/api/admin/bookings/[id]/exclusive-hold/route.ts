@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BookingStatus } from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
@@ -6,6 +7,7 @@ import {
   acquireLodgeCapacityLock,
   findOverlappingCapacityHoldingBookings,
 } from "@/lib/capacity";
+import { bookingHoldsCapacity } from "@/lib/booking-status";
 import logger from "@/lib/logger";
 import { z } from "zod";
 
@@ -68,6 +70,12 @@ export async function POST(
           wholeLodgeHold: true,
           wholeLodgeHoldAt: true,
           wholeLodgeHoldByMemberId: true,
+          // Inputs to bookingHoldsCapacity() (issue #173): the relation-based
+          // #1254 PENDING-with-originBookingRequest rule and the #1764
+          // PAYMENT_PENDING-with-adminCapacityHoldAt rule both live outside the
+          // pure status check, so the guard below needs both signals.
+          adminCapacityHoldAt: true,
+          originBookingRequest: { select: { id: true } },
         },
       });
       if (!booking || booking.deletedAt) {
@@ -98,6 +106,37 @@ export async function POST(
       if (!hold && !booking.wholeLodgeHold) {
         return {
           error: "This booking has no exclusive whole-lodge hold to clear.",
+          status: 409 as const,
+        };
+      }
+
+      // Status guard (issue #173, H2): only SETTING is gated — clearing must
+      // never be blocked, so a stale hold on any status can always be cleaned
+      // up. ADR-001's capacity rule (§ "Capacity rule", decision 1) hard-blocks
+      // new admissions only where a *capacity-holding* booking overlapping a
+      // night has wholeLodgeHold = true; every enforcement/masking index is
+      // built from the capacity-holding population (capacityHoldingBookingFilter).
+      // So a hold set on a non-capacity-holding booking (WAITLISTED / DRAFT /
+      // generic PENDING / PAYMENT_PENDING without an admin hold) is never
+      // consulted by enforcement: it blocks nothing while the route would return
+      // success and the UI would show sole occupancy — false assurance. Reject
+      // with 409 and no write/audit; the caller must first put the booking into a
+      // capacity-holding state (bookingHoldsCapacity semantics: a holding status,
+      // an accepted-quote PENDING with originBookingRequest #1254, or a
+      // PAYMENT_PENDING with an admin capacity hold #1764).
+      if (
+        hold &&
+        !bookingHoldsCapacity({
+          status: booking.status,
+          isRequestConverted: booking.originBookingRequest != null,
+          hasAdminCapacityHold: booking.adminCapacityHoldAt != null,
+        })
+      ) {
+        return {
+          error:
+            booking.status === BookingStatus.PAYMENT_PENDING
+              ? "This booking is payment-pending and holds no lodge capacity, so an exclusive whole-lodge hold would block nothing. Apply an admin capacity hold first (Hold capacity), then set the exclusive hold."
+              : "This booking does not hold lodge capacity, so an exclusive whole-lodge hold would block nothing while the calendar stays bookable. Only capacity-holding bookings (paid/confirmed, an accepted quote, or a payment-pending booking with an admin capacity hold) can take an exclusive hold.",
           status: 409 as const,
         };
       }

@@ -287,6 +287,97 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
     });
   });
 
+  // Status guard (issue #173, H2): SETTING an exclusive hold is only allowed on
+  // a capacity-holding booking. A hold on a non-holding booking is invisible to
+  // enforcement (every masking index is built from the capacity-holding
+  // population — ADR-001 capacity rule), so it blocks nothing while returning
+  // success. Setting on such a booking must 409 with no write and no audit;
+  // clearing must stay allowed on any status.
+  describe("set is gated on capacity-holding status (issue #173)", () => {
+    it.each(["WAITLISTED", "DRAFT", "PENDING"] as const)(
+      "rejects set on non-capacity-holding %s (409, no write, no audit)",
+      async (status) => {
+        mocks.tx.booking.findUnique.mockResolvedValue(booking({ status }));
+
+        const response = await POST(holdRequest({ hold: true }), routeParams());
+        const body = await response.json();
+
+        expect(response.status).toBe(409);
+        expect(body.error).toMatch(/does not hold lodge capacity/i);
+        expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+        expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it("rejects set on PAYMENT_PENDING without an admin capacity hold, pointing at the capacity hold (409, no write, no audit)", async () => {
+      mocks.tx.booking.findUnique.mockResolvedValue(
+        booking({ status: "PAYMENT_PENDING", adminCapacityHoldAt: null }),
+      );
+
+      const response = await POST(holdRequest({ hold: true }), routeParams());
+      const body = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(body.error).toMatch(/apply an admin capacity hold first/i);
+      expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+      expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("allows set on a naturally capacity-holding PAID booking (200, writes + audits)", async () => {
+      mocks.tx.booking.findUnique.mockResolvedValue(
+        booking({ status: "PAID" }),
+      );
+
+      const response = await POST(holdRequest({ hold: true }), routeParams());
+
+      expect(response.status).toBe(200);
+      expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+      expect(mocks.tx.auditLog.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows set on a PENDING booking converted from a BookingRequest (#1254 relation hold): 200, writes", async () => {
+      mocks.tx.booking.findUnique.mockResolvedValue(
+        booking({ status: "PENDING", originBookingRequest: { id: "req-1" } }),
+      );
+
+      const response = await POST(holdRequest({ hold: true }), routeParams());
+
+      expect(response.status).toBe(200);
+      expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows set on a PAYMENT_PENDING booking carrying an admin capacity hold (#1764): 200, writes", async () => {
+      mocks.tx.booking.findUnique.mockResolvedValue(
+        booking({
+          status: "PAYMENT_PENDING",
+          adminCapacityHoldAt: new Date("2026-07-10T00:00:00.000Z"),
+        }),
+      );
+
+      const response = await POST(holdRequest({ hold: true }), routeParams());
+
+      expect(response.status).toBe(200);
+      expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows clearing a hold on a non-capacity-holding booking (cleanup never blocked)", async () => {
+      mocks.tx.booking.findUnique.mockResolvedValue(
+        booking({ status: "WAITLISTED", wholeLodgeHold: true }),
+      );
+      mocks.tx.booking.update.mockResolvedValue({
+        wholeLodgeHold: false,
+        wholeLodgeHoldAt: null,
+      });
+
+      const response = await POST(holdRequest({ hold: false }), routeParams());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({ success: true, wholeLodgeHold: false });
+      expect(mocks.tx.booking.update).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("rejects a double set with 409 and no write", async () => {
     mocks.tx.booking.findUnique.mockResolvedValue(
       booking({ wholeLodgeHold: true }),

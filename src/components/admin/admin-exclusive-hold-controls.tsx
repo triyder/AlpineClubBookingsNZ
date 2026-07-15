@@ -25,6 +25,16 @@ interface AdminExclusiveHoldControlsProps {
   /** Name of the admin who set the hold, when known. */
   heldByName: string | null;
   /**
+   * Whether this booking holds lodge capacity (bookingHoldsCapacity semantics,
+   * issue #173). Setting an exclusive hold is only meaningful on a
+   * capacity-holding booking — the enforcement/masking indexes are built from
+   * the capacity-holding population (ADR-001 capacity rule), so a hold on a
+   * non-holding booking blocks nothing. The Set control is disabled with a hint
+   * when this is false, mirroring how AdminCapacityHoldControls scopes to
+   * PAYMENT_PENDING. Clearing an existing hold is always allowed.
+   */
+  holdsCapacity: boolean;
+  /**
    * Existing capacity-holding bookings that overlap this hold's nights
    * (ADR-001 decision 1, issue #119). Admin-only; surfaced so the officer can
    * resolve the clash manually. Server-computed for the current hold state.
@@ -44,6 +54,7 @@ export function AdminExclusiveHoldControls({
   wholeLodgeHold,
   wholeLodgeHoldAt,
   heldByName,
+  holdsCapacity,
   conflicts = [],
 }: AdminExclusiveHoldControlsProps) {
   const router = useRouter();
@@ -172,13 +183,31 @@ export function AdminExclusiveHoldControls({
         </div>
       )}
       {wholeLodgeHold ? (
+        // Clearing is always allowed, regardless of status — a stale hold must
+        // never be un-clearable (issue #173).
         <Button variant="outline" onClick={handleClear} disabled={busy}>
           {busy ? "Clearing..." : "Clear exclusive hold"}
         </Button>
-      ) : (
+      ) : holdsCapacity ? (
         <Button variant="outline" onClick={handleSet} disabled={busy}>
           {busy ? "Setting..." : "Set exclusive hold"}
         </Button>
+      ) : (
+        // Non-capacity-holding booking (issue #173): setting a hold here would
+        // block nothing (ADR-001 capacity rule — enforcement reads only the
+        // capacity-holding population), so the control is disabled with a hint
+        // pointing at the admin capacity hold, mirroring how
+        // AdminCapacityHoldControls scopes its own action.
+        <div className="space-y-1">
+          <Button variant="outline" onClick={handleSet} disabled>
+            Set exclusive hold
+          </Button>
+          <p className="text-sm text-slate-600">
+            This booking does not hold lodge capacity, so an exclusive hold
+            would block nothing. Apply an admin capacity hold first, then set the
+            exclusive hold.
+          </p>
+        </div>
       )}
     </div>
   );
