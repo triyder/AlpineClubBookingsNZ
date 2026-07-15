@@ -387,6 +387,28 @@ describe("member-credit helpers", () => {
       });
     });
 
+    it("restores the SIGNED net (not the abs-sum) when the ledger carries an F20 clamp offset (#1887 F2)", async () => {
+      // A card booking applied 4000 then repriced down: the F20 clamp appended a
+      // POSITIVE +1000 BOOKING_APPLIED offset, netting applied to 3000. The
+      // DEFAULT (no-override) restore MUST return the net 3000, not Σ|amount|
+      // (5000) — over-restoring by 2×excess would mint credit from nothing.
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
+        { id: "c1", amountCents: -4000, type: "BOOKING_APPLIED" },
+        { id: "c2", amountCents: 1000, type: "BOOKING_APPLIED" },
+      ] as any);
+      vi.mocked(prisma.memberCredit.createMany).mockResolvedValue({ count: 1 });
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      const restored = await restoreCreditFromBooking("member-1", "booking-clamped");
+
+      expect(restored).toBe(3000);
+      expect(prisma.memberCredit.createMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ amountCents: 3000 })],
+        skipDuplicates: true,
+      });
+    });
+
     it("restores exactly the tiered override when one is passed (#1164)", async () => {
       const { prisma } = await import("@/lib/prisma");
       vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([

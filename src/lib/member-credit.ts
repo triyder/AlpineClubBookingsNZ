@@ -440,13 +440,17 @@ export async function restoreCreditFromBooking(
     return 0;
   }
 
+  // The credit still applied = the SIGNED net of the BOOKING_APPLIED rows, not
+  // Σ|amount| (F20 F2, #1887): the clamp appends a positive offset row, so the
+  // abs-sum would over-restore by 2×excess. calculateRestoredCreditAmount nets.
   const totalApplied = calculateRestoredCreditAmount(appliedCredits);
 
   // Cap the override at what was actually applied. INVARIANT the cap relies on:
-  // payment.creditAppliedCents (the mirror the cancel path tiers) == Σ
-  // BOOKING_APPLIED (this ledger sum). If the mirror ever exceeds the ledger,
-  // the cap makes actual < preview — the SAFE direction (never over-restore).
-  // Do NOT remove the cap as "dead code".
+  // payment.creditAppliedCents (the mirror the cancel path tiers) == the SIGNED
+  // net of BOOKING_APPLIED (this ledger total, post-clamp). The clamp updates the
+  // mirror to the clamped net whenever it fires, so mirror == net still holds; if
+  // the mirror ever exceeds the ledger net, the cap makes actual < preview — the
+  // SAFE direction (never over-restore). Do NOT remove the cap as "dead code".
   const amount =
     restoreAmountCentsOverride === undefined
       ? totalApplied

@@ -49,6 +49,27 @@ describe("member credit policy rules", () => {
     expect(calculateRestoredCreditAmount([])).toBe(0);
   });
 
+  // F20 F2 (#1887): the clamp appends a POSITIVE BOOKING_APPLIED offset row to
+  // return the over-consumed slice, so BOOKING_APPLIED rows are no longer all
+  // negative. The restored amount must be the SIGNED net (what is still
+  // applied), not Σ|amount| — otherwise a default restore over-restores by
+  // 2×excess. Clamped [-4000, +1000] nets to 3000 applied, so 3000 restores.
+  it("restores the SIGNED net, not the abs-sum, when a clamp offset is present (#1887 F2)", () => {
+    expect(
+      calculateRestoredCreditAmount([
+        { amountCents: -4000 },
+        { amountCents: 1000 },
+      ])
+    ).toBe(3000);
+    // A fully-clamped ledger (net 0) restores nothing rather than 2×|rows|.
+    expect(
+      calculateRestoredCreditAmount([
+        { amountCents: -1000 },
+        { amountCents: 1000 },
+      ])
+    ).toBe(0);
+  });
+
   it("compares idempotent adjustment replays and detects conflicts", () => {
     const original = {
       memberId: "member-1",

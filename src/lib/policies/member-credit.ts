@@ -58,10 +58,23 @@ export function calculateAppliedCreditAmount(amountCents: number): number {
   return -amountCents;
 }
 
+/**
+ * Credit still applied to a booking, as a positive cents amount — the correct
+ * default restore total.
+ *
+ * This is the SIGNED net of the BOOKING_APPLIED rows (`max(0, -Σ amount)`), NOT
+ * `Σ|amount|`. Before F20 (#1887) every BOOKING_APPLIED row was negative, so the
+ * two were equal. The F20 clamp appends a POSITIVE BOOKING_APPLIED offset row to
+ * return an over-consumed slice on a pre-payment reprice, so `Σ|amount|` now
+ * over-counts by 2×excess; a default (no-override) restore keyed on the abs-sum
+ * would mint credit from nothing. Netting is exact for any mix of signs and
+ * identical to the old abs-sum when all rows are negative.
+ */
 export function calculateRestoredCreditAmount(
   appliedCredits: CreditAmountEntry[]
 ): number {
-  return appliedCredits.reduce((sum, credit) => sum + Math.abs(credit.amountCents), 0);
+  const net = appliedCredits.reduce((sum, credit) => sum + credit.amountCents, 0);
+  return Math.max(0, -net);
 }
 
 export function assertMatchingIdempotentAdjustmentRequest(

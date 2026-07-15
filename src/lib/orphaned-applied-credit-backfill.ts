@@ -46,6 +46,7 @@ import {
   lockMemberCreditLedger,
   restoreCreditFromBooking,
 } from "@/lib/member-credit";
+import { calculateRestoredCreditAmount } from "@/lib/policies/member-credit";
 import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
 
 // The full client, not a nested TransactionClient: the heal path opens its own
@@ -55,7 +56,7 @@ type BackfillStore = typeof prisma;
 export interface OrphanedAppliedCreditFinding {
   bookingId: string;
   memberId: string;
-  appliedCreditCents: number; // positive Σ|amountCents| over BOOKING_APPLIED rows
+  appliedCreditCents: number; // positive SIGNED net of BOOKING_APPLIED rows (post-clamp, #1887 F2)
   appliedRowCount: number;
   paymentId: string | null;
   paymentSource: string | null;
@@ -131,12 +132,12 @@ export function deriveOrphanedAppliedCreditFinding(
     return null;
   }
 
-  // 100% restore mirrors restoreCreditFromBooking with no override:
-  // Σ|amountCents| over the BOOKING_APPLIED rows (calculateRestoredCreditAmount).
-  const appliedCreditCents = booking.creditsApplied.reduce(
-    (sum, row) => sum + Math.abs(row.amountCents),
-    0
-  );
+  // 100% restore mirrors restoreCreditFromBooking with no override: the SIGNED
+  // net of the BOOKING_APPLIED rows (calculateRestoredCreditAmount), NOT
+  // Σ|amountCents|. An F20 (#1887) clamp offset makes a row positive, so the
+  // abs-sum would over-report (and over-heal) by 2×excess; the net is the credit
+  // that is actually still applied and unrestored.
+  const appliedCreditCents = calculateRestoredCreditAmount(booking.creditsApplied);
   if (appliedCreditCents <= 0) {
     return null;
   }
