@@ -687,10 +687,7 @@ export async function expireStaleOffers(): Promise<{
   reofferedCount: number;
 }> {
   const { staleOffers, affectedRanges } = await prisma.$transaction(async (tx) => {
-    const defaultLodgeId = await getDefaultLodgeId(tx);
-    await acquireLodgeCapacityLock(tx, defaultLodgeId);
-
-    const offers = await tx.booking.findMany({
+    const candidates = await tx.booking.findMany({
       where: {
         status: BookingStatus.WAITLIST_OFFERED,
         waitlistOfferExpiresAt: { lt: new Date() },
@@ -700,9 +697,30 @@ export async function expireStaleOffers(): Promise<{
       },
     });
 
-    for (const offer of offers) {
-      await tx.booking.update({
-        where: { id: offer.id },
+    // #1881 — the revert (WAITLIST_OFFERED -> WAITLISTED) must serialise against
+    // the member's own confirm of the same offer, which locks the offer's OWN
+    // lodge (confirmWaitlistOffer: acquireLodgeCapacityLock(booking.lodgeId)).
+    // The pre-#1881 code locked only the DEFAULT lodge, so for a non-default-
+    // lodge offer it held a DIFFERENT key than that offer's confirm and could
+    // clobber a just-confirmed offer back to WAITLISTED. Lock EACH offer's own
+    // lodge, acquired in sorted lodgeId order so composing multiple per-lodge
+    // locks in one transaction can never deadlock (the same discipline the
+    // reconcile processor uses). lodgeId is immutable, so keying from this read
+    // is safe.
+    const defaultLodgeId = await getDefaultLodgeId(tx);
+    const lockLodgeIds = Array.from(
+      new Set(candidates.map((c) => c.lodgeId ?? defaultLodgeId))
+    ).sort();
+    for (const lodgeId of lockLodgeIds) {
+      await acquireLodgeCapacityLock(tx, lodgeId);
+    }
+
+    // Status-guarded revert under the locks: skip any offer a concurrent confirm
+    // already moved out of WAITLIST_OFFERED while we waited on its lodge lock.
+    const offers: typeof candidates = [];
+    for (const candidate of candidates) {
+      const releasedRows = await tx.booking.updateMany({
+        where: { id: candidate.id, status: BookingStatus.WAITLIST_OFFERED },
         data: {
           status: BookingStatus.WAITLISTED,
           waitlistOfferedAt: null,
@@ -711,14 +729,16 @@ export async function expireStaleOffers(): Promise<{
           waitlistOfferedPriceCents: null,
         },
       });
+      if (releasedRows.count === 0) continue;
       await reconcileBedAllocationsForBooking({
-        bookingId: offer.id,
+        bookingId: candidate.id,
         db: tx,
         previousRange: {
-          checkIn: offer.checkIn,
-          checkOut: offer.checkOut,
+          checkIn: candidate.checkIn,
+          checkOut: candidate.checkOut,
         },
       });
+      offers.push(candidate);
     }
 
     return {

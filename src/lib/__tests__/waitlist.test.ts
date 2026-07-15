@@ -38,6 +38,7 @@ const mockTx = {
     findMany: vi.fn(),
     findUnique: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
     count: vi.fn(),
   },
   bookingGuest: {
@@ -130,7 +131,13 @@ beforeEach(() => {
   mockTx.booking.findMany.mockReset();
   mockTx.booking.findUnique.mockReset();
   mockTx.booking.update.mockReset();
+  mockTx.booking.updateMany.mockReset();
+  mockTx.booking.updateMany.mockResolvedValue({ count: 1 });
   mockTx.booking.count.mockReset();
+  // #1881 — expireStaleOffers now enumerates candidates lock-free via the
+  // top-level prisma.booking.findMany, then reverts each under its own lodge
+  // lock. Default the enumeration to empty so unrelated suites see no offers.
+  mockBookingFindMany.mockResolvedValue([]);
   mockTx.lodge.findFirst.mockReset();
   mockTx.lodge.findFirst.mockResolvedValue({ id: "lodge-1" });
   mockTx.lodge.findMany.mockReset();
@@ -806,31 +813,63 @@ describe("confirmWaitlistOffer", () => {
 });
 
 describe("expireStaleOffers", () => {
-  it("reverts expired offers to WAITLISTED", async () => {
+  it("reverts expired offers to WAITLISTED under the offer's own lodge lock (#1881)", async () => {
     const { expireStaleOffers } = await import("@/lib/waitlist");
 
     mockTx.booking.findMany
       .mockResolvedValueOnce([
         {
           id: "booking1",
+          lodgeId: "lodge-1",
+          waitlistOfferedLodgeId: null,
           checkIn: new Date("2026-07-01"),
           checkOut: new Date("2026-07-03"),
           createdAt: new Date("2026-04-01"),
           member: { email: "test@test.com", firstName: "John" },
         },
       ])
-      .mockResolvedValueOnce([]);
-    mockTx.booking.update.mockResolvedValue({});
+      .mockResolvedValue([]);
 
     const result = await expireStaleOffers();
 
     expect(result.expiredCount).toBe(1);
-    expect(mockTx.booking.update).toHaveBeenCalledWith(
+    // The offer's own lodge is locked (not just the default lodge).
+    const { acquireLodgeCapacityLock } = await import("@/lib/capacity");
+    expect(acquireLodgeCapacityLock).toHaveBeenCalledWith(mockTx, "lodge-1");
+    // #1881 — status-guarded revert, not a bare update.
+    expect(mockTx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "booking1" },
+        where: { id: "booking1", status: "WAITLIST_OFFERED" },
         data: expect.objectContaining({ status: "WAITLISTED" }),
       })
     );
+  });
+
+  it("skips the revert when a concurrent confirm moved the offer out of WAITLIST_OFFERED under the lock (#1881)", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+
+    mockTx.booking.findMany
+      .mockResolvedValueOnce([
+        {
+          id: "booking1",
+          lodgeId: "lodge-1",
+          waitlistOfferedLodgeId: null,
+          checkIn: new Date("2026-07-01"),
+          checkOut: new Date("2026-07-03"),
+          createdAt: new Date("2026-04-01"),
+          member: { email: "test@test.com", firstName: "John" },
+        },
+      ])
+      .mockResolvedValue([]);
+    // The status-guarded revert claims nothing: a concurrent confirm already
+    // moved the offer out of WAITLIST_OFFERED while the cron waited on the lock.
+    mockTx.booking.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await expireStaleOffers();
+
+    // The guarded updateMany claimed nothing, so the offer is not counted as
+    // expired and no expiry email/reprocess is queued for it.
+    expect(result.expiredCount).toBe(0);
   });
 
   it("does nothing when no stale offers exist", async () => {
@@ -852,13 +891,16 @@ describe("expireStaleOffers", () => {
       .mockResolvedValueOnce([
         {
           id: "expired-offer-1",
+          lodgeId: "lodge-1",
+          waitlistOfferedLodgeId: null,
           checkIn: new Date("2026-08-01"),
           checkOut: new Date("2026-08-03"),
           createdAt: new Date("2026-05-01"),
           member: { email: "alice@test.com", firstName: "Alice" },
         },
       ])
-      .mockResolvedValueOnce([
+      // processWaitlistForDates finds a next candidate, but capacity is gone.
+      .mockResolvedValue([
         {
           id: "next-candidate",
           checkIn: new Date("2026-08-01"),
@@ -879,9 +921,9 @@ describe("expireStaleOffers", () => {
 
     expect(result.expiredCount).toBe(1);
     expect(result.reofferedCount).toBe(0);
-    expect(mockTx.booking.update).toHaveBeenCalledWith(
+    expect(mockTx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "expired-offer-1" },
+        where: { id: "expired-offer-1", status: "WAITLIST_OFFERED" },
         data: expect.objectContaining({ status: "WAITLISTED" }),
       })
     );
