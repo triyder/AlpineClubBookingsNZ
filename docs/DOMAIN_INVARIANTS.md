@@ -58,6 +58,13 @@ Future reviews and issues should cite this file when proposing changes.
   conflicts are visible and never trigger a silent provider rewrite. Xero
   delivery resolves the snapshotted recipient member's current contact/email;
   frozen name/email remain audit evidence rather than a stale delivery target.
+- A member has at most one entrance-fee invoice (#1886, F21). The worker mints
+  only after re-checking the durable `ENTRANCE_FEE_INVOICE` link and, failing
+  that, looking the stable invoice reference up in Xero: an existing link or a
+  prior mint is adopted rather than duplicated. The enqueue-time guard and its
+  amount/category-keyed correlation dedupe are not sufficient — a re-enqueue
+  carrying a different amount override or a reclassified category produces a
+  fresh key, so the worker-side re-check is the authoritative single-mint guard.
 
 ## Booking Dates And Capacity
 

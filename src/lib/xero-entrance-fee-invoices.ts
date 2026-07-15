@@ -46,6 +46,38 @@ export interface CreateXeroEntranceFeeInvoiceOptions
   precomputedEntranceFee?: EntranceFeeContext;
 }
 
+// F21 (#1886): look an entrance-fee invoice up in Xero by its stable reference
+// so a replay can adopt a prior mint instead of creating a duplicate. Mirrors
+// `findExistingByReference` in the subscription-invoice path.
+async function findEntranceFeeInvoicesByReference(
+  xero: XeroClient,
+  tenantId: string,
+  reference: string,
+) {
+  const response = await callXeroApi(
+    () =>
+      xero.accountingApi.getInvoices(
+        tenantId,
+        undefined,
+        `Reference=="${reference}"`,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        1,
+        false,
+      ),
+    {
+      operation: "getInvoices",
+      resourceType: "INVOICE",
+      workflow: "createXeroEntranceFeeInvoice",
+      context: `find entrance fee invoice ${reference}`,
+    },
+  );
+  return response.body.invoices ?? [];
+}
+
 // test seam
 export function buildEntranceFeeLineItem(
   categoryLabel: string,
@@ -127,6 +159,42 @@ export async function createXeroEntranceFeeInvoice(
     return null;
   }
 
+  // F21 (#1886): re-check the durable ENTRANCE_FEE_INVOICE link before minting.
+  // The enqueue-time guard only blocks when a link ALREADY exists, and the
+  // PENDING/RUNNING correlation-key dedupe is keyed on amount + category — so a
+  // second enqueue carrying a different amount override (or a reclassified
+  // category) produces a fresh correlation key and a fresh Xero idempotency
+  // key, slipping past both, and two operations can reach this worker before
+  // either writes the link. Adopting the already-linked invoice here stops the
+  // second one minting a duplicate. Mirrors the subscription/supplementary
+  // guards.
+  const existingLink = await prisma.xeroObjectLink.findFirst({
+    where: {
+      localModel: "Member",
+      localId: memberId,
+      xeroObjectType: "INVOICE",
+      role: "ENTRANCE_FEE_INVOICE",
+      active: true,
+    },
+    select: { xeroObjectId: true, xeroObjectNumber: true, xeroObjectUrl: true },
+  });
+  if (existingLink) {
+    if (queuedOperationId) {
+      await completeXeroSyncOperation(queuedOperationId, {
+        responsePayload: {
+          adopted: true,
+          reason: "Entrance fee invoice already linked for this member.",
+          category,
+        },
+        xeroObjectType: "INVOICE",
+        xeroObjectId: existingLink.xeroObjectId,
+        xeroObjectNumber: existingLink.xeroObjectNumber,
+        xeroObjectUrl: existingLink.xeroObjectUrl,
+      });
+    }
+    return existingLink.xeroObjectId;
+  }
+
   // Check Xero connectivity
   let xero: XeroClient | null = null;
   let tenantId: string | null = null;
@@ -140,6 +208,7 @@ export async function createXeroEntranceFeeInvoice(
   }
 
   const categoryLabel = category === "FAMILY" ? "Family" : category === "YOUTH" ? "Youth" : category === "CHILD" ? "Child" : "Adult";
+  const reference = `Entrance fee (${categoryLabel}) - ${memberId.slice(0, 8)}`;
   const idempotencyKey = buildEntranceFeeInvoiceIdempotencyKey(
     memberId,
     category,
@@ -173,7 +242,7 @@ export async function createXeroEntranceFeeInvoice(
       lineItems: [lineItem],
       date: formatDate(new Date()),
       dueDate: formatDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), // Due in 30 days
-      reference: `Entrance fee (${categoryLabel}) - ${memberId.slice(0, 8)}`,
+      reference,
       status: Invoice.StatusEnum.AUTHORISED,
       lineAmountTypes: LineAmountTypes.Inclusive,
     });
@@ -200,6 +269,62 @@ export async function createXeroEntranceFeeInvoice(
         createdByMemberId: options?.createdByMemberId ?? null,
       });
       operationId = operation.id;
+    }
+
+    // F21 adopt-by-reference: a crash (or a provider-side idempotency replay)
+    // between createInvoices succeeding and the completion/link write below can
+    // leave a minted invoice with no durable link, so a replay would mint
+    // again. Look the reference up in Xero first and adopt any prior mint
+    // instead of creating a second. Mirrors the subscription-invoice path.
+    const existingByReference = await findEntranceFeeInvoicesByReference(
+      authenticatedXero,
+      authenticatedTenantId,
+      reference,
+    );
+    const adoptable = existingByReference[0];
+    if (adoptable?.invoiceID) {
+      if (existingByReference.length > 1) {
+        logger.warn(
+          {
+            memberId,
+            category,
+            reference,
+            invoiceCount: existingByReference.length,
+          },
+          "Multiple Xero invoices share this entrance fee reference; adopting the first and minting none",
+        );
+      }
+      await completeXeroSyncOperation(operationId!, {
+        responsePayload: { adopted: true, invoice: adoptable },
+        xeroObjectType: "INVOICE",
+        xeroObjectId: adoptable.invoiceID,
+        xeroObjectNumber: adoptable.invoiceNumber ?? null,
+        xeroObjectUrl: buildXeroInvoiceUrl(adoptable.invoiceID),
+        extraLinks: [
+          {
+            localModel: "Member",
+            localId: memberId,
+            xeroObjectType: "INVOICE",
+            xeroObjectId: adoptable.invoiceID,
+            xeroObjectNumber: adoptable.invoiceNumber ?? null,
+            xeroObjectUrl: buildXeroInvoiceUrl(adoptable.invoiceID),
+            role: "ENTRANCE_FEE_INVOICE",
+            metadata: {
+              category,
+              feeAmountCents: feeMapping.amountCents,
+              description: entranceFee.description ?? null,
+              adopted: true,
+            },
+          },
+        ],
+      });
+
+      logger.info(
+        { memberId, category, invoiceId: adoptable.invoiceID },
+        "Adopted existing Xero entrance fee invoice by reference",
+      );
+
+      return adoptable.invoiceID;
     }
 
     const response = await retryXeroWriteWithContactRepair({
