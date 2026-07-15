@@ -207,6 +207,19 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      concurrency-race-postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: concurrency_race_1881
+        ports:
+          - 55442:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d concurrency_race_1881"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/drift_main
       # Prisma replays prisma/migrations into this shadow database to derive the
@@ -238,6 +251,20 @@ jobs:
 
       - name: Generate Prisma client
         run: npm run db:generate
+
+      # #1881: never let the opt-in real-Postgres lock harness silently skip in
+      # CI. It uses a separate loopback-only service/database and the harness's
+      # high-port + dedicated-name guard remains enforced.
+      - name: Migrate dedicated advisory-lock race database
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
+        run: npx prisma migrate deploy
+
+      - name: Test advisory-lock race protocol against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+          CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
+        run: npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts
 
       - name: Test guarded ClubTheme corrective migration against PostgreSQL
         env:

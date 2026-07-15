@@ -239,9 +239,19 @@ export async function modifyBookingBatch({
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    // Pre-lock read: only the lock key. lodgeId is immutable, so keying the
-    // lock from this read is safe; the eligibility checks, pricing, capacity
-    // check and claim below all run against the post-lock re-read.
+    // Two-tier lock protocol (#1881). A batch modification moves money (reduction
+    // refunds / additional charges, credit allocation) AND re-checks/claims
+    // capacity, so it takes BOTH locks: the global lock(1) FIRST so it mutually
+    // excludes cancel / settlement / hold-release (which serialise on lock(1)),
+    // then the per-lodge lock for the capacity check. Before #1881 this took only
+    // the per-lodge lock, so a concurrent cancel of the same booking (on lock(1))
+    // could interleave and both paths compute a refund against the same captured
+    // payment, or the modify's status commit could clobber a just-cancelled
+    // booking.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    // Pre-lock read: only the lodge lock key. lodgeId is immutable, so keying the
+    // per-lodge lock from this read is safe; the eligibility checks, pricing,
+    // capacity check and claim below all run against the post-lock re-read.
     const lockTarget = await tx.booking.findUnique({
       where: { id: bookingId },
       select: { lodgeId: true },

@@ -27,6 +27,8 @@ export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE =
   "MEMBERSHIP_CANCELLATION_CONTACT";
 export const XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE =
   "GROUP_SETTLEMENT_INVOICE";
+export const XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE =
+  "GROUP_SETTLEMENT_INVOICE_VOID";
 export const XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE =
   "MEMBERSHIP_SUBSCRIPTION_INVOICE";
 
@@ -53,6 +55,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
+  XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
 ] as const;
 
@@ -146,6 +149,11 @@ interface QueuedGroupSettlementInvoiceOutboxPayload {
   settlementId: string;
 }
 
+interface QueuedGroupSettlementInvoiceVoidOutboxPayload {
+  queueType: typeof XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE;
+  settlementId: string;
+}
+
 interface QueuedSubscriptionInvoiceOutboxPayload {
   queueType: typeof XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE;
   chargeId: string;
@@ -165,6 +173,7 @@ export type QueuedOutboxPayload =
   | QueuedMembershipCancellationCreditNoteOutboxPayload
   | QueuedMembershipCancellationContactOutboxPayload
   | QueuedGroupSettlementInvoiceOutboxPayload
+  | QueuedGroupSettlementInvoiceVoidOutboxPayload
   | QueuedSubscriptionInvoiceOutboxPayload;
 
 export interface QueuedOutboxExpectedOperation {
@@ -392,7 +401,10 @@ export function readQueuedOutboxPayload(
     };
   }
 
-  if (queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE) {
+  if (
+    queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE ||
+    queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE
+  ) {
     const settlementId = readString(payload.settlementId);
     if (!settlementId) {
       return null;
@@ -443,6 +455,14 @@ export function getQueuedOutboxExpectedOperation(
       entityType: "INVOICE",
       operationType: "UPDATE",
       localModels: ["Payment"],
+    };
+  }
+
+  if (queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE) {
+    return {
+      entityType: "INVOICE",
+      operationType: "UPDATE",
+      localModels: ["GroupBookingSettlement"],
     };
   }
 

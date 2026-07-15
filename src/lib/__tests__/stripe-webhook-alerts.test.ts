@@ -1076,6 +1076,32 @@ describe("Stripe webhook Xero alerting", () => {
     expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
   });
 
+  it("auto-refunds a late capture rejected by the durable group-cancel fence (#1881)", async () => {
+    mockConstructWebhookEvent.mockReturnValue(
+      groupSettlementSucceededEvent("evt_group_cancelled", "pi_group_cancelled"),
+    );
+    mockApplyGroupSettlementSucceeded.mockResolvedValue({
+      outcome: "cancelled",
+      settledBookingIds: [],
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockProcessRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentIntentId: "pi_group_cancelled",
+        amountCents: 50000,
+        idempotencyKey:
+          "group_settlement_superseded_refund_pi_group_cancelled",
+      }),
+    );
+    expect(mockMarkGroupSettlementIntentRefunded).toHaveBeenCalledWith(
+      "pi_group_cancelled"
+    );
+    expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+  });
+
   it("does not refund or alert when the group settlement applies cleanly", async () => {
     mockConstructWebhookEvent.mockReturnValue(
       groupSettlementSucceededEvent("evt_group_ok", "pi_group_ok"),

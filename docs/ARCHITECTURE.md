@@ -726,6 +726,15 @@ superseded intent in Stripe, and if a stale intent still captures, the webhook
 handler refunds it in full (with a deterministic idempotency key) and alerts
 admins instead of settling anything.
 
+Internet Banking group settlement uses a transactional outbox: the settlement
+row and queued Xero invoice operation commit together. The worker fences invoice
+issuance against organiser cancellation with global `lock(1)` while keeping the
+Xero request outside the transaction. Cancellation that wins before the request
+suppresses it; cancellation that wins while `createInvoices` is in flight causes
+the worker to persist the provider identity, void the invoice idempotently, and
+skip the invoice email. A failed void fails the outbox operation so its normal
+retry path re-drives compensation.
+
 ### Operational Xero
 
 Operational Xero handles member/contact sync, booking invoices, payments,

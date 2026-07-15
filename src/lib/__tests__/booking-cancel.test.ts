@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => {
   txExecuteRaw: vi.fn(),
   paymentUpdate: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingUpdateMany: vi.fn(),
   bookingRequestUpdateMany: vi.fn(),
   promoRedemptionFindUnique: vi.fn(),
   prismaTransaction: vi.fn(),
@@ -77,6 +78,7 @@ vi.mock("@/lib/prisma", () => ({
     booking: {
       findUnique: mocks.bookingFindUnique,
       update: mocks.bookingUpdate,
+      updateMany: mocks.bookingUpdateMany,
       // Split-booking cascade (#738) looks for linked provisional children
       // after a successful cancel; none here.
       findMany: vi.fn().mockResolvedValue([]),
@@ -238,6 +240,7 @@ describe("cancelBooking credit refunds", () => {
             booking: {
               findUnique: mocks.txBookingFindUnique,
               update: mocks.bookingUpdate,
+              updateMany: mocks.bookingUpdateMany,
             },
             payment: {
               update: mocks.paymentUpdate,
@@ -261,6 +264,7 @@ describe("cancelBooking credit refunds", () => {
     );
     mocks.paymentUpdate.mockResolvedValue({});
     mocks.bookingUpdate.mockResolvedValue({});
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     // #1473: default = no captured transaction rows on the ledger.
     mocks.paymentTransactionFindFirst.mockResolvedValue(null);
     // #1547: default = no Xero-linked applied-credit allocations under the lock.
@@ -825,8 +829,11 @@ describe("cancelBooking credit refunds", () => {
 
     // The booking is cancelled, but the payment row is untouched — no status
     // write of any kind.
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "booking_fr" },
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking_fr",
+        status: { in: ["PAYMENT_PENDING", "CONFIRMED", "PAID"] },
+      },
       data: {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
@@ -2099,8 +2106,11 @@ describe("cancelBooking credit refunds", () => {
       );
       expect(mocks.restoreCreditFromBooking.mock.calls[0]).toHaveLength(3);
       // Booking flipped + payment flattened inside the claim.
-      expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-        where: { id: "bk_nc" },
+      expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+        where: {
+          id: "bk_nc",
+          status: { in: ["PAYMENT_PENDING", "CONFIRMED", "PAID"] },
+        },
         data: {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
@@ -2454,6 +2464,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
             booking: {
               findUnique: mocks.txBookingFindUnique,
               update: mocks.bookingUpdate,
+              updateMany: mocks.bookingUpdateMany,
             },
             bookingRequest: {
               updateMany: mocks.bookingRequestUpdateMany,
@@ -2468,6 +2479,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
       },
     );
     mocks.bookingUpdate.mockResolvedValue({});
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
     mocks.promoRedemptionFindUnique.mockResolvedValue(null);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
@@ -2596,6 +2608,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
             booking: {
               findUnique: mocks.txBookingFindUnique,
               update: mocks.bookingUpdate,
+              updateMany: mocks.bookingUpdateMany,
             },
             bookingRequest: { updateMany: mocks.bookingRequestUpdateMany },
             payment: { update: mocks.paymentUpdate },
@@ -2606,6 +2619,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
       },
     );
     mocks.bookingUpdate.mockResolvedValue({});
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
     mocks.promoRedemptionFindUnique.mockResolvedValue(null);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
@@ -2630,9 +2644,12 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
     expect(lockWasAcquired()).toBe(true);
     // The status is re-read under the lock and then flipped exactly once.
     expect(mocks.txBookingFindUnique).toHaveBeenCalled();
-    expect(mocks.bookingUpdate).toHaveBeenCalledTimes(1);
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "held-1" },
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "held-1",
+        status: { in: ["WAITLISTED", "WAITLIST_OFFERED", "AWAITING_REVIEW"] },
+      },
       data: {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
@@ -2799,8 +2816,11 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
     const result = await cancelBooking("held-1", "owner-1", "USER", "127.0.0.1");
 
     expect(result.status).toBe(200);
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "held-1" },
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "held-1",
+        status: { in: ["WAITLISTED", "WAITLIST_OFFERED", "AWAITING_REVIEW"] },
+      },
       data: {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
@@ -2859,6 +2879,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
             booking: {
               findUnique: mocks.txBookingFindUnique,
               update: mocks.bookingUpdate,
+              updateMany: mocks.bookingUpdateMany,
             },
             bookingRequest: { updateMany: mocks.bookingRequestUpdateMany },
             payment: { update: mocks.paymentUpdate },
@@ -2869,6 +2890,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
       },
     );
     mocks.bookingUpdate.mockResolvedValue({});
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
     mocks.promoRedemptionFindUnique.mockResolvedValue(null);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
@@ -2924,8 +2946,11 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
     );
 
     expect(result.status).toBe(200);
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "held-1" },
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "held-1",
+        status: { in: ["WAITLISTED", "WAITLIST_OFFERED", "AWAITING_REVIEW"] },
+      },
       data: {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
@@ -2997,8 +3022,8 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
     const result = await cancelBooking("pending-1", "owner-1", "USER", "127.0.0.1");
 
     expect(result.status).toBe(200);
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "pending-1" },
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "pending-1", status: "PENDING" },
       data: {
         status: "CANCELLED",
         adminCapacityHoldAt: null,

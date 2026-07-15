@@ -17,6 +17,14 @@ WAITLISTED -> WAITLIST_OFFERED -> CONFIRMED/PAID or WAITLISTED/CANCELLED
 AWAITING_REVIEW -> PENDING (quote accepted, #1254) or CONFIRMED/PAID or CANCELLED
 ```
 
+Waitlist confirmation and expiry serialize on the offered booking's lodge lock.
+Confirmation re-reads `WAITLIST_OFFERED` and the deadline after acquiring the
+lock and uses a status/deadline-guarded claim, so an expiry that wins first
+cannot be resurrected. The route's separate zero-dollar `PAYMENT_PENDING ->
+PAID` capacity claim takes global then lodge locks; if capacity disappeared,
+it restores `WAITLISTED` in that transaction so normal re-offering can retry.
+Generic `PAYMENT_PENDING` does not hold a bed.
+
 Capacity-holding is not a pure function of status (#1254, refining #737). A
 booking holds beds when its status is capacity-holding (PAID, COMPLETED,
 CONFIRMED, AWAITING_REVIEW), **or** it is PENDING and is the converted booking
@@ -98,9 +106,12 @@ FAILED after a second full window — a settlement retry always wins.
 
 The same cron also resumes an organiser-cancel group cleanup interrupted by a
 crash (#1236). Cancelling the organiser booking is single-flight, so a
-re-invoked cancel 409s and never re-enters the joiner cleanup; a third reaper
-phase re-drives it, keying on an ORGANISER_PAYS group still not `CANCELLED`
-under a `CANCELLED` organiser booking older than a short grace. The re-drive is
+re-invoked cancel 409s and never re-enters the joiner cleanup. Group cleanup now
+persists `GroupBooking.CANCELLED` first under the settlement lock as its durable
+settlement fence, then performs provider work outside the transaction; a third
+reaper phase therefore re-drives any ORGANISER_PAYS group under a `CANCELLED`
+organiser booking that still has active organiser-settled children after the
+short grace (regardless of the already-fenced group status). The re-drive is
 idempotent because the first run persists the per-child refund plan
 (`{childId: cents}`) on the settlement **before** the Stripe refund and
 **before** the settlement flips to `REFUNDED`/`PARTIALLY_REFUNDED`: a re-drive
@@ -113,6 +124,14 @@ refund at most once. Each child's Xero refund credit-note outbox row is enqueued
 written but no credit-note operation queued — durable for every source,
 including Internet-Banking children the #1354 self-heal cannot recover. Only the
 outbox worker kick stays best-effort and post-commit.
+
+Internet Banking settlement initiation writes `GroupBookingSettlement.PENDING`
+and its Xero invoice outbox operation in the same transaction. The worker checks
+the group fence under `lock(1)` before calling Xero. If cancellation is already
+durable it completes without creating an invoice; if cancellation commits while
+`createInvoices` is in flight, the worker persists the returned Xero identity,
+voids it under a stable idempotency key, suppresses invoice email, and leaves a
+failed compensation retryable through the same outbox row.
 
 A transient Stripe failure during that settlement refund no longer abandons it
 (#1351, owner-decided durable auto-retry). A recovery operation is persisted

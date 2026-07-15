@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   bookingFindMany: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingUpdateMany: vi.fn(),
   paymentUpsert: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
   findPaymentTransactionByIntentId: vi.fn(),
@@ -89,6 +90,7 @@ const tx = {
     findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
     findMany: (...args: unknown[]) => mocks.bookingFindMany(...args),
     update: (...args: unknown[]) => mocks.bookingUpdate(...args),
+    updateMany: (...args: unknown[]) => mocks.bookingUpdateMany(...args),
   },
   payment: {
     upsert: (...args: unknown[]) => mocks.paymentUpsert(...args),
@@ -139,6 +141,7 @@ describe("markBookingPaymentSucceeded", () => {
     // #1765 — default: no prior transaction for the intent (fresh capture).
     mocks.findPaymentTransactionByIntentId.mockResolvedValue(null);
     mocks.bookingUpdate.mockResolvedValue({});
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
     mocks.restoreCreditFromBooking.mockResolvedValue(undefined);
     mocks.deriveBookingAppliedCreditCents.mockResolvedValue(0);
@@ -187,18 +190,55 @@ describe("markBookingPaymentSucceeded", () => {
       bookingId: "booking-1",
       bumpedBookingIds: [],
     });
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "booking-1" },
+    // #1881 — the PAID claim is a status-guarded updateMany, not a bare update.
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking-1",
+        status: { in: expect.arrayContaining([BookingStatus.PAYMENT_PENDING]) },
+      },
       data: {
         status: BookingStatus.PAID,
         draftExpiresAt: null,
       },
     });
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
-    expect(mocks.bookingUpdate).not.toHaveBeenCalledWith({
-      where: { id: "booking-1" },
-      data: expect.objectContaining({ status: BookingStatus.CANCELLED }),
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: BookingStatus.CANCELLED }),
+      })
+    );
+  });
+
+  // #1881 — a Stripe capture does both tiers of work (status/money + capacity
+  // claim), so it must take BOTH locks, global lock(1) FIRST then the per-lodge
+  // capacity lock. Without lock(1) the capture no longer mutually excluded the
+  // cancel/hold-release/settlement paths that serialise on lock(1).
+  it("takes the global lock(1) before the per-lodge capacity lock (#1881)", async () => {
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    await markBookingPaymentSucceeded({
+      bookingId: "booking-1",
+      paymentIntentId: "pi_lockorder",
+      amountCents: 10000,
+      paymentMethodId: "pm_1",
     });
+
+    const rawCalls = mocks.executeRaw.mock.calls.map((call) => {
+      const first = call[0] as unknown;
+      return Array.isArray(first) ? (first as string[]).join("|") : String(first);
+    });
+    const globalIdx = rawCalls.findIndex((sql) =>
+      sql.includes("pg_advisory_xact_lock(1)")
+    );
+    const lodgeIdx = rawCalls.findIndex((sql) =>
+      sql.includes("hashtextextended")
+    );
+    expect(globalIdx, "global lock(1) present").toBeGreaterThanOrEqual(0);
+    expect(lodgeIdx, "per-lodge lock present").toBeGreaterThanOrEqual(0);
+    expect(
+      globalIdx,
+      "global lock(1) acquired before the per-lodge lock"
+    ).toBeLessThan(lodgeIdx);
   });
 
   // #1764 — pay-while-held. An admin capacity hold makes the booking part of
@@ -250,8 +290,11 @@ describe("markBookingPaymentSucceeded", () => {
     });
     // The PAID flip must not clear (or otherwise write) the hold fields:
     // unhold-after-paid is refused at the API and the record stays inert.
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "booking-1" },
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking-1",
+        status: { in: expect.arrayContaining([BookingStatus.PAYMENT_PENDING]) },
+      },
       data: {
         status: BookingStatus.PAID,
         draftExpiresAt: null,
@@ -429,8 +472,12 @@ describe("markBookingPaymentSucceeded", () => {
     expect(result.outcome).toBe("cancelled_refunded");
     expect(result.bumpedBookingIds).toEqual([]);
     // The booking is cancelled and the payment refunded — never marked PAID.
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "booking-1" },
+    // #1881 — status-guarded updateMany void, not a bare update.
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking-1",
+        status: { in: expect.arrayContaining([BookingStatus.PAYMENT_PENDING]) },
+      },
       data: {
         status: BookingStatus.CANCELLED,
         draftExpiresAt: null,
@@ -441,7 +488,7 @@ describe("markBookingPaymentSucceeded", () => {
         wholeLodgeHoldByMemberId: null,
       },
     });
-    expect(mocks.bookingUpdate).not.toHaveBeenCalledWith(
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: BookingStatus.PAID }) })
     );
     expect(mocks.refundPaymentTransactions).toHaveBeenCalled();
@@ -654,15 +701,18 @@ describe("markBookingPaymentSucceeded", () => {
     });
 
     expect(result.outcome).toBe("paid");
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "booking-1" },
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "booking-1",
+        status: { in: expect.arrayContaining([BookingStatus.PAYMENT_PENDING]) },
+      },
       data: {
         status: BookingStatus.PAID,
         draftExpiresAt: null,
       },
     });
     // Never cancelled, never refunded.
-    expect(mocks.bookingUpdate).not.toHaveBeenCalledWith(
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: BookingStatus.CANCELLED }),
       })

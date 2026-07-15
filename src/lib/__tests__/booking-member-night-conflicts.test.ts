@@ -2,6 +2,7 @@ import { BookingStatus } from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseDateOnly } from "@/lib/date-only";
 import {
+  assertNoBookingMemberNightConflicts,
   findBookingMemberNightConflicts,
   MEMBER_NIGHT_CONFLICT_BOOKING_STATUSES,
 } from "@/lib/booking-member-night-conflicts";
@@ -170,5 +171,47 @@ describe("findBookingMemberNightConflicts", () => {
         }),
       }),
     );
+  });
+
+  // #1881 — the authoritative assert takes a per-member advisory lock (sorted,
+  // in its own namespace) BEFORE reading, so the cross-lodge person-night
+  // invariant is serialised even though capacity locks are per-lodge only.
+  it("locks every member-linked guest's per-member key (sorted) before reading, then throws on a conflict", async () => {
+    const executeRawCalls: string[] = [];
+    const lockValues: unknown[][] = [];
+    const db = {
+      $executeRaw: vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
+        executeRawCalls.push(strings.join("|"));
+        lockValues.push(values);
+        return Promise.resolve(1);
+      }),
+      bookingGuest: {
+        findMany: vi.fn().mockImplementation(async () => {
+          // Reads must happen AFTER both per-member locks are taken.
+          expect(executeRawCalls).toHaveLength(2);
+          return [];
+        }),
+      },
+    };
+
+    await assertNoBookingMemberNightConflicts(db as never, {
+      actorMemberId: "member-2",
+      actorRole: "USER",
+      checkIn: parseDateOnly("2026-06-01"),
+      checkOut: parseDateOnly("2026-06-03"),
+      // Deliberately out of order to prove sorted acquisition.
+      guests: [{ memberId: "member-2" }, { memberId: "member-1" }],
+    });
+
+    // Two per-member advisory locks were taken before the read.
+    expect(db.$executeRaw).toHaveBeenCalledTimes(2);
+    for (const call of executeRawCalls) {
+      expect(call).toContain("pg_advisory_xact_lock");
+      expect(call).toContain("hashtext");
+    }
+    // Sorted memberId order: each lock's bind params are [namespace, memberId],
+    // and the sorted acquisition puts member-1 before member-2.
+    const lockOrder = lockValues.map((values) => values[1]);
+    expect(lockOrder).toEqual(["member-1", "member-2"]);
   });
 });

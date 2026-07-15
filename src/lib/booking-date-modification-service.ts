@@ -272,9 +272,14 @@ export async function modifyBookingDates({
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    // Pre-lock read: only the lock key. lodgeId is immutable, so keying the
-    // lock from this read is safe; every capacity- and price-relevant field
-    // below is taken from the post-lock re-read.
+    // Two-tier lock protocol (#1881): a date change moves money (reduction
+    // refund / additional charge) AND claims capacity for the new range, so it
+    // takes BOTH locks — global lock(1) FIRST (mutual exclusion with cancel /
+    // settlement / hold-release), then the per-lodge lock.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    // Pre-lock read: only the lodge lock key. lodgeId is immutable, so keying the
+    // per-lodge lock from this read is safe; every capacity- and price-relevant
+    // field below is taken from the post-lock re-read.
     const lockTarget = await tx.booking.findUnique({
       where: { id: bookingId },
       select: { lodgeId: true },
@@ -1157,7 +1162,14 @@ export async function adminShiftBookingDates({
   const notifyMember = input.notifyMember !== false;
 
   const result = await prisma.$transaction(async (tx) => {
-    // Pre-lock read of only the lock key; lodgeId is immutable.
+    // Two-tier lock protocol (#1881): this admin date move claims capacity for
+    // the new range and can move money (recalculate mode), so it takes BOTH
+    // locks — global lock(1) FIRST (mutual exclusion with cancel / settlement),
+    // then the per-lodge lock. Even a frozen-cent shift takes lock(1) so its
+    // status/date commit can never clobber a booking a concurrent cancel just
+    // terminated.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    // Pre-lock read of only the lodge lock key; lodgeId is immutable.
     const lockTarget = await tx.booking.findUnique({
       where: { id: bookingId },
       select: { lodgeId: true },

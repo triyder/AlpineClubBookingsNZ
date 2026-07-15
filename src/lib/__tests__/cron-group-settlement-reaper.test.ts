@@ -3,7 +3,6 @@ import {
   BookingEventType,
   BookingStatus,
   GroupBookingPaymentMode,
-  GroupBookingStatus,
   PaymentStatus,
 } from "@prisma/client";
 
@@ -13,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   settlementUpdate: vi.fn(),
   bookingFindMany: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingUpdateMany: vi.fn(),
+  settlementUpdateMany: vi.fn(),
   groupBookingFindMany: vi.fn(),
   txExecuteRaw: vi.fn(),
   transaction: vi.fn(),
@@ -31,10 +32,12 @@ const txClient = {
   booking: {
     findMany: mocks.bookingFindMany,
     update: mocks.bookingUpdate,
+    updateMany: mocks.bookingUpdateMany,
   },
   groupBookingSettlement: {
     findUnique: mocks.settlementFindUnique,
     update: mocks.settlementUpdate,
+    updateMany: mocks.settlementUpdateMany,
   },
 };
 
@@ -124,6 +127,8 @@ beforeEach(() => {
   mocks.settlementFindUnique.mockResolvedValue({ status: PaymentStatus.PENDING });
   mocks.settlementUpdate.mockResolvedValue({});
   mocks.bookingUpdate.mockResolvedValue({});
+  mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.settlementUpdateMany.mockResolvedValue({ count: 1 });
   mocks.reconcileBedAllocations.mockResolvedValue(undefined);
   mocks.recordBookingEvent.mockResolvedValue(undefined);
   mocks.processWaitlistForDates.mockResolvedValue(undefined);
@@ -181,14 +186,24 @@ describe("reapStaleGroupSettlements", () => {
       resumedInterruptedCancels: 0,
     });
     // Children revert to their pre-commit, non-capacity-holding state.
-    expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "child-1" },
+    // #1881 — status-guarded updateMany (CONFIRMED -> PAYMENT_PENDING).
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "child-1", status: BookingStatus.CONFIRMED },
       data: { status: BookingStatus.PAYMENT_PENDING },
     });
     expect(mocks.reconcileBedAllocations).toHaveBeenCalledTimes(2);
-    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
-      where: { id: "settle-1" },
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "settle-1",
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
+      },
       data: { status: PaymentStatus.FAILED },
     });
     // The abandoned intent is voided so a stale tab cannot capture.
@@ -227,8 +242,17 @@ describe("reapStaleGroupSettlements", () => {
 
     expect(result.reaped).toBe(1);
     expect(mocks.cancelPaymentIntent).not.toHaveBeenCalled();
-    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
-      where: { id: "settle-1" },
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "settle-1",
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
+      },
       data: { status: PaymentStatus.FAILED },
     });
     expect(mocks.sendSettlementExpired).toHaveBeenCalledTimes(1);
@@ -337,6 +361,24 @@ describe("reapStaleGroupSettlements", () => {
     expect(mocks.sendJoinCancelled).not.toHaveBeenCalled();
   });
 
+  it("does not emit release side effects for a child whose status CAS lost (#1881)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([staleSettlement()]);
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.PENDING,
+      updatedAt: new Date(NOW.getTime() - 49 * HOUR),
+    });
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+    mocks.bookingUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.releasedChildBookings).toBe(0);
+    expect(result.reaped).toBe(0);
+    expect(mocks.reconcileBedAllocations).not.toHaveBeenCalled();
+    expect(mocks.sendJoinReleased).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+  });
+
   it("keeps reaping the rest when one settlement fails", async () => {
     mocks.settlementFindMany.mockResolvedValue([
       staleSettlement({ id: "settle-bad" }),
@@ -386,9 +428,10 @@ describe("expiry of reaped organiser-pays children (#1094)", () => {
 
     expect(result.expiredSettlements).toBe(1);
     expect(result.cancelledChildBookings).toBe(2);
-    expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "child-1" },
+    // #1881 — status-guarded child cancel (PAYMENT_PENDING -> CANCELLED).
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "child-1", status: BookingStatus.PAYMENT_PENDING },
       data: {
         status: BookingStatus.CANCELLED,
         adminCapacityHoldAt: null,
@@ -512,23 +555,34 @@ describe("resume of interrupted organiser-cancel cleanups (#1236)", () => {
     expect(result.resumedInterruptedCancels).toBe(1);
   });
 
-  it("scans only ORGANISER_PAYS groups still open under a cancelled organiser booking older than the grace window", async () => {
+  it("scans fenced ORGANISER_PAYS groups only when active cleanup children remain past grace", async () => {
     mocks.settlementFindMany.mockResolvedValue([]);
 
     await reapStaleGroupSettlements(NOW);
 
-    // The DB query is the whole filter: EACH_PAYS_OWN (paymentMode),
-    // already-CANCELLED groups (status), and just-started/within-grace cleanups
-    // (organiser booking updatedAt < now - 15m default) are all excluded here.
+    // Group status is deliberately not a filter: CANCELLED is now the durable
+    // fence written first. Remaining active children identify interrupted work.
     expect(mocks.groupBookingFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
-          status: { not: GroupBookingStatus.CANCELLED },
           organiserBooking: {
             status: BookingStatus.CANCELLED,
             deletedAt: null,
             updatedAt: { lt: new Date(NOW.getTime() - 15 * 60 * 1000) },
+            linkedBookings: {
+              some: {
+                organiserSettled: true,
+                deletedAt: null,
+                status: {
+                  in: [
+                    BookingStatus.PAYMENT_PENDING,
+                    BookingStatus.CONFIRMED,
+                    BookingStatus.PAID,
+                  ],
+                },
+              },
+            },
           },
         },
         select: { organiserBookingId: true, organiserMemberId: true },

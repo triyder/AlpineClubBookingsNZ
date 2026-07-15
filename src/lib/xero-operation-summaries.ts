@@ -169,6 +169,13 @@ function summarizeQueuedPayload(
         facts: facts.build(),
       };
 
+    case "GROUP_SETTLEMENT_INVOICE_VOID":
+      facts.add("Settlement", shortId(req.settlementId));
+      return {
+        title: "Queued: void cancelled group-settlement invoice",
+        facts: facts.build(),
+      };
+
     case "BOOKING_INVOICE_UPDATE":
       facts
         .add("Booking", shortId(req.bookingId))

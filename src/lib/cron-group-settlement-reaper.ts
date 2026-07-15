@@ -38,9 +38,10 @@
  *
  * Third phase (#1236): resume an organiser-cancel group cleanup that a crash
  * interrupted. A re-invoked cancel 409s upstream (#1160) and never re-enters
- * the cleanup, so this phase re-drives it: an ORGANISER_PAYS group still not
- * CANCELLED under a CANCELLED organiser booking (older than a short grace) is an
- * unfinished cleanup. It re-invokes the same idempotent
+ * the cleanup, so this phase re-drives it: an ORGANISER_PAYS group under a
+ * CANCELLED organiser booking that still has active organiser-settled children
+ * (older than a short grace) is unfinished even though the group fence is
+ * already CANCELLED. It re-invokes the same idempotent
  * settleGroupBookingOnOrganiserCancel, whose persisted refund plan reconstructs
  * (never recomputes) the per-child refund mirror. This completes the local
  * booking/capacity/refund-mirror cleanup but does NOT heal the Xero mirror (see
@@ -50,7 +51,6 @@ import {
   BookingEventType,
   BookingStatus,
   GroupBookingPaymentMode,
-  GroupBookingStatus,
   PaymentStatus,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -116,6 +116,12 @@ export function groupSettlementReapDeadline(
 const REAPABLE_SETTLEMENT_STATUSES = [
   PaymentStatus.PENDING,
   PaymentStatus.FAILED,
+] as const;
+
+const ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES = [
+  BookingStatus.PAYMENT_PENDING,
+  BookingStatus.CONFIRMED,
+  BookingStatus.PAID,
 ] as const;
 
 export async function reapStaleGroupSettlements(
@@ -201,11 +207,12 @@ export async function reapStaleGroupSettlements(
  * crash mid-cleanup leaves ORGANISER_PAYS joiner children holding beds / PAID
  * under a CANCELLED organiser booking with nothing to re-drive them.
  *
- * markGroupCancelled is the LAST cleanup step, so an ORGANISER_PAYS group whose
- * status is not yet CANCELLED under a CANCELLED organiser booking is exactly an
- * unfinished cleanup. The organiser Booking's `updatedAt` is untouched by the
- * cleanup, so `updatedAt < now - grace` excludes a cleanup that has only just
- * started. Each match re-invokes the same idempotent cleanup — the persisted
+ * GroupBooking.CANCELLED is now the FIRST, durable settlement fence (#1881), so
+ * interrupted work is detected by remaining active organiser-settled children
+ * under a CANCELLED organiser booking, regardless of the already-fenced group
+ * status. The organiser Booking's `updatedAt` is untouched by the cleanup, so
+ * `updatedAt < now - grace` excludes a cleanup that has only just started. Each
+ * match re-invokes the same idempotent cleanup — the persisted
  * refund plan makes it reconstruct (never recompute) the per-child refund mirror
  * and the SUCCEEDED guard fires the Stripe refund at most once across re-drives.
  *
@@ -228,11 +235,17 @@ async function resumeInterruptedOrganiserCancels(
   const interrupted = await prisma.groupBooking.findMany({
     where: {
       paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
-      status: { not: GroupBookingStatus.CANCELLED },
       organiserBooking: {
         status: BookingStatus.CANCELLED,
         deletedAt: null,
         updatedAt: { lt: cutoff },
+        linkedBookings: {
+          some: {
+            organiserSettled: true,
+            deletedAt: null,
+            status: { in: [...ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES] },
+          },
+        },
       },
     },
     select: { organiserBookingId: true, organiserMemberId: true },
@@ -374,11 +387,17 @@ async function releaseSettlementChildren(
       },
     });
 
+    const claimedChildren: typeof children = [];
     for (const child of children) {
-      await tx.booking.update({
-        where: { id: child.id },
+      // Status-guarded revert (#1881): CONFIRMED -> PAYMENT_PENDING only. Under
+      // the shared lock(1) a concurrent settle (which now also takes lock(1))
+      // cannot interleave; the guard makes the no-clobber guarantee structural.
+      const reverted = await tx.booking.updateMany({
+        where: { id: child.id, status: BookingStatus.CONFIRMED },
         data: { status: BookingStatus.PAYMENT_PENDING },
       });
+      if (reverted.count === 0) continue;
+      claimedChildren.push(child);
       // PAYMENT_PENDING does not hold capacity: drop the bed allocations.
       await reconcileBedAllocationsForBooking({
         bookingId: child.id,
@@ -393,14 +412,25 @@ async function releaseSettlementChildren(
     // window from, so re-writing it on every no-op pass over an already
     // FAILED settlement would keep reverted children in PAYMENT_PENDING
     // forever.
-    if (children.length > 0 || current.status !== PaymentStatus.FAILED) {
-      await tx.groupBookingSettlement.update({
-        where: { id: settlementId },
+    if (claimedChildren.length > 0 || current.status !== PaymentStatus.FAILED) {
+      // Status-guarded FAILED claim (#1881): never overwrite a settlement a
+      // concurrent settle already moved to SUCCEEDED/REFUNDED under lock(1).
+      await tx.groupBookingSettlement.updateMany({
+        where: {
+          id: settlementId,
+          status: {
+            notIn: [
+              PaymentStatus.SUCCEEDED,
+              PaymentStatus.REFUNDED,
+              PaymentStatus.PARTIALLY_REFUNDED,
+            ],
+          },
+        },
         data: { status: PaymentStatus.FAILED },
       });
     }
 
-    return children.map((child) => ({
+    return claimedChildren.map((child) => ({
       id: child.id,
       checkIn: child.checkIn,
       checkOut: child.checkOut,
@@ -457,9 +487,12 @@ async function cancelReapedChildren(
       },
     });
 
+    const claimedChildren: typeof children = [];
     for (const child of children) {
-      await tx.booking.update({
-        where: { id: child.id },
+      // Status-guarded cancel (#1881): PAYMENT_PENDING -> CANCELLED only, so a
+      // concurrent settle retry that moved a child on cannot be clobbered.
+      const cancelled = await tx.booking.updateMany({
+        where: { id: child.id, status: BookingStatus.PAYMENT_PENDING },
         data: {
           status: BookingStatus.CANCELLED,
           ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
@@ -469,9 +502,11 @@ async function cancelReapedChildren(
           ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
         },
       });
+      if (cancelled.count === 0) continue;
+      claimedChildren.push(child);
     }
 
-    return children.map((child) => ({
+    return claimedChildren.map((child) => ({
       id: child.id,
       checkIn: child.checkIn,
       checkOut: child.checkOut,

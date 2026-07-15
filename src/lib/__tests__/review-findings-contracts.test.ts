@@ -10,6 +10,81 @@ function readRepoFile(relativePath: string) {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
+// #1881 — the lock/key assertions below scan raw source with indexOf/toContain.
+// The literal `pg_advisory_xact_lock(1)` also appears in CODE COMMENTS (e.g.
+// booking-cancel.ts, cron-quote-expiry-reminders.ts), so a regression that
+// deleted the executable `$executeRaw...pg_advisory_xact_lock(1)` line but left
+// a comment mentioning it would still pass — the exact laxity class that let the
+// original lock-drift regression through. Strip line + block comments (outside
+// string/template literals) BEFORE those assertions so only EXECUTABLE lock text
+// counts. The executable lock lives inside a template literal
+// (`$executeRaw\`SELECT pg_advisory_xact_lock(1)\``), so string literals are
+// preserved verbatim — only comments are removed.
+function stripComments(source: string): string {
+  let out = "";
+  let state:
+    | "code"
+    | "line"
+    | "block"
+    | "single"
+    | "double"
+    | "template" = "code";
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    const next = source[i + 1];
+    switch (state) {
+      case "code":
+        if (c === "/" && next === "/") {
+          state = "line";
+          i++;
+        } else if (c === "/" && next === "*") {
+          state = "block";
+          i++;
+        } else if (c === "'") {
+          state = "single";
+          out += c;
+        } else if (c === '"') {
+          state = "double";
+          out += c;
+        } else if (c === "`") {
+          state = "template";
+          out += c;
+        } else {
+          out += c;
+        }
+        break;
+      case "line":
+        // Keep the newline so line numbers / ordering are unperturbed.
+        if (c === "\n") {
+          state = "code";
+          out += c;
+        }
+        break;
+      case "block":
+        if (c === "*" && next === "/") {
+          state = "code";
+          i++;
+        }
+        break;
+      case "single":
+      case "double":
+      case "template": {
+        out += c;
+        const quote = state === "single" ? "'" : state === "double" ? '"' : "`";
+        if (c === "\\") {
+          // Preserve the escaped char verbatim.
+          out += source[i + 1] ?? "";
+          i++;
+        } else if (c === quote) {
+          state = "code";
+        }
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 function sliceFrom(source: string, startMarker: string, endMarker?: string) {
   const start = source.indexOf(startMarker);
   if (start === -1) {
@@ -35,20 +110,22 @@ function sliceFrom(source: string, startMarker: string, endMarker?: string) {
 // the source ordering (lock text precedes guard text inside the function body);
 // each writer was separately confirmed to run both markers under one
 // prisma.$transaction, so source order reflects execution order.
-function assertLockBeforeGuard(block: string, label: string) {
-  // The lock is either the per-lodge capacity lock (multi-lodge:
-  // acquireLodgeCapacityLock, which runs pg_advisory_xact_lock on a per-lodge
-  // key) or a raw advisory lock. Either satisfies the lock-before-guard
-  // contract; take whichever appears first.
-  const lockMarkers = ["acquireLodgeCapacityLock", "pg_advisory_xact_lock"]
-    .map((marker) => block.indexOf(marker))
-    .filter((idx) => idx >= 0);
-  const lockIdx = lockMarkers.length > 0 ? Math.min(...lockMarkers) : -1;
+function assertLockBeforeGuard(rawBlock: string, label: string) {
+  // #1881 — tightened from "either lock marker" to the SPECIFIC per-lodge
+  // capacity lock. Every member-linked guest writer claims beds for a lodge, so
+  // it must hold `acquireLodgeCapacityLock` before the guard. (The cross-lodge
+  // half of the person-night invariant is enforced separately: the guard itself
+  // self-takes the per-member `booking-member-night` lock — pinned by the
+  // two-tier-protocol test. Accepting a bare `pg_advisory_xact_lock` here was
+  // the laxity that masked money/status writers drifting off the shared key.)
+  // Strip comments first so a commented-out lock/guard can't satisfy indexOf.
+  const block = stripComments(rawBlock);
+  const lockIdx = block.indexOf("acquireLodgeCapacityLock");
   const guardIdx = block.indexOf("assertNoBookingMemberNightConflicts");
-  expect(lockIdx, `${label}: advisory lock present`).toBeGreaterThanOrEqual(0);
+  expect(lockIdx, `${label}: per-lodge capacity lock present`).toBeGreaterThanOrEqual(0);
   expect(
     guardIdx,
-    `${label}: person-night guard runs after the advisory lock`
+    `${label}: person-night guard runs after the per-lodge lock`
   ).toBeGreaterThan(lockIdx);
 }
 
@@ -57,16 +134,16 @@ function assertLockBeforeGuard(block: string, label: string) {
 // the caller's tx — lock-first stays the caller's responsibility, same
 // two-half idiom as the modify pipeline's delegated-guard test below.
 function assertLockBeforeDelegatedGuard(
-  block: string,
+  rawBlock: string,
   delegateMarker: string,
   label: string
 ) {
-  const lockMarkers = ["acquireLodgeCapacityLock", "pg_advisory_xact_lock"]
-    .map((marker) => block.indexOf(marker))
-    .filter((idx) => idx >= 0);
-  const lockIdx = lockMarkers.length > 0 ? Math.min(...lockMarkers) : -1;
+  // #1881 — require the specific per-lodge capacity lock (see assertLockBeforeGuard).
+  // Strip comments first so a commented-out lock/delegation can't satisfy indexOf.
+  const block = stripComments(rawBlock);
+  const lockIdx = block.indexOf("acquireLodgeCapacityLock");
   const delegateIdx = block.indexOf(delegateMarker);
-  expect(lockIdx, `${label}: advisory lock present`).toBeGreaterThanOrEqual(0);
+  expect(lockIdx, `${label}: per-lodge capacity lock present`).toBeGreaterThanOrEqual(0);
   expect(
     delegateIdx,
     `${label}: ${delegateMarker} delegated after the advisory lock`
@@ -291,9 +368,8 @@ describe("review finding source/schema contracts", () => {
     const batchService = readRepoFile(
       "src/lib/booking-batch-modification-service.ts"
     );
-    const modifyBlock = sliceFrom(
-      batchService,
-      "export async function modifyBookingBatch"
+    const modifyBlock = stripComments(
+      sliceFrom(batchService, "export async function modifyBookingBatch")
     );
     const lockMarkers = ["acquireLodgeCapacityLock", "pg_advisory_xact_lock"]
       .map((marker) => modifyBlock.indexOf(marker))
@@ -307,12 +383,219 @@ describe("review finding source/schema contracts", () => {
     ).toBeGreaterThan(lockIdx);
 
     const plan = readRepoFile("src/lib/booking-modify-plan.ts");
-    const prepareBlock = sliceFrom(
-      plan,
-      "export async function prepareGuestPlan",
-      "export async function loadActiveSeasonRates"
+    const prepareBlock = stripComments(
+      sliceFrom(
+        plan,
+        "export async function prepareGuestPlan",
+        "export async function loadActiveSeasonRates"
+      )
     );
     expect(prepareBlock).toContain("assertNoBookingMemberNightConflicts");
+  });
+
+  it("pins the specific advisory-lock key per writer class (two-tier protocol, #1881)", () => {
+    // The pre-#1881 lock-before-guard checks accepted EITHER lock marker, which
+    // masked the real defect: money/status writers stayed on the global lock(1)
+    // while their capacity-claiming counterparties moved to the per-lodge key,
+    // so they no longer mutually excluded. Pin the SPECIFIC key(s) each writer
+    // class must hold.
+    const GLOBAL = "pg_advisory_xact_lock(1)";
+    const PER_LODGE = "acquireLodgeCapacityLock";
+
+    // (1) Money / booking-status transitions MUST take the global lock(1) so
+    // they mutually exclude across the whole booking/settlement regardless of
+    // lodge. Each entry is [file, startMarker, endMarker?].
+    const globalLockBlocks: Array<[string, string, string?]> = [
+      // Stripe capture + capacity-failed void.
+      [
+        "src/lib/payment-reconciliation.ts",
+        "export async function markBookingPaymentSucceeded",
+        "export async function markBookingSetupIntentSucceeded",
+      ],
+      // Group settle, refund-mark, and reaper share lock(1) with each other.
+      [
+        "src/lib/group-settlement.ts",
+        "async function settleConfirmedChildrenAndNotify",
+        "export async function applyGroupSettlementSucceeded",
+      ],
+      // End marker added (#1881) so this block no longer swallows
+      // markGroupSettlementIntentFailed — each mark is asserted on its own body.
+      [
+        "src/lib/group-settlement.ts",
+        "export async function markGroupSettlementIntentRefunded",
+        "export async function markGroupSettlementIntentFailed",
+      ],
+      // markGroupSettlementIntentFailed also takes lock(1) since #1881 (it took
+      // none before, contradicting the doc's "all take lock(1)" claim).
+      [
+        "src/lib/group-settlement.ts",
+        "export async function markGroupSettlementIntentFailed",
+      ],
+      ["src/lib/cron-group-settlement-reaper.ts", "async function releaseSettlementChildren"],
+      ["src/lib/group-cancel.ts", "export async function settleGroupBookingOnOrganiserCancel"],
+      // Cancel + quote hold-release crons.
+      ["src/lib/booking-cancel.ts", "export async function cancelBooking"],
+      ["src/lib/cron-quote-expiry-reminders.ts", "async function releaseExpiredQuoteHolds"],
+    ];
+    for (const [file, start, end] of globalLockBlocks) {
+      // #1881 — strip comments so a commented-out `pg_advisory_xact_lock(1)`
+      // (which appears in comments in booking-cancel.ts and
+      // cron-quote-expiry-reminders.ts) cannot satisfy the presence check.
+      const block = stripComments(sliceFrom(readRepoFile(file), start, end));
+      expect(block, `${start}: takes the global lock(1)`).toContain(GLOBAL);
+    }
+
+    // (2) Writers that do BOTH tiers (money/status + capacity claim) MUST take
+    // the global lock(1) BEFORE the per-lodge lock (consistent global→per-lodge
+    // order, deadlock-safe).
+    const twoLockBlocks: Array<[string, string, string?]> = [
+      [
+        "src/lib/payment-reconciliation.ts",
+        "export async function markBookingPaymentSucceeded",
+        "export async function markBookingSetupIntentSucceeded",
+      ],
+      [
+        "src/lib/booking-request.ts",
+        "export async function approveBookingRequest",
+        "export async function purgeExpiredBookingRequests",
+      ],
+      [
+        "src/app/api/payments/switch-to-internet-banking/route.ts",
+        "const paymentResult = await prisma.$transaction",
+      ],
+      [
+        "src/lib/booking-batch-modification-service.ts",
+        "export async function modifyBookingBatch",
+      ],
+      // #1881 — previously-unpinned two-tier writers (money/status + capacity).
+      // The date-modification services both claim beds under a per-lodge lock
+      // after the global lock(1).
+      [
+        "src/lib/booking-date-modification-service.ts",
+        "export async function modifyBookingDates",
+        "export async function adminShiftBookingDates",
+      ],
+      [
+        "src/lib/booking-date-modification-service.ts",
+        "export async function adminShiftBookingDates",
+      ],
+      // Guest removal recomputes price/capacity under both locks.
+      [
+        "src/lib/booking-guest-removal-service.ts",
+        "export async function removeBookingGuestInTransaction",
+        "export async function loadSeasonRateData",
+      ],
+      // F11 waitlist-confirm $0 PAID claim: a net-new capacity claim to a
+      // capacity-holding status, so lock(1) then the per-lodge lock.
+      [
+        "src/app/api/bookings/[id]/waitlist-confirm/route.ts",
+        "if (booking.finalPriceCents === 0 && result.newStatus === BookingStatus.PAYMENT_PENDING)",
+      ],
+    ];
+    for (const [file, start, end] of twoLockBlocks) {
+      // #1881 — strip comments so neither lock marker can be satisfied by a
+      // comment mentioning the lock rather than the executable acquisition.
+      const block = stripComments(sliceFrom(readRepoFile(file), start, end));
+      const globalIdx = block.indexOf(GLOBAL);
+      const lodgeIdx = block.indexOf(PER_LODGE);
+      expect(globalIdx, `${start}: takes the global lock(1)`).toBeGreaterThanOrEqual(0);
+      expect(lodgeIdx, `${start}: takes the per-lodge lock`).toBeGreaterThanOrEqual(0);
+      expect(
+        globalIdx,
+        `${start}: global lock(1) is acquired BEFORE the per-lodge lock`
+      ).toBeLessThan(lodgeIdx);
+    }
+
+    // (3) confirm-pending-guests: both capacity-claiming branches take BOTH
+    // locks (the whole handler is scanned; it contains lock(1) and the per-lodge
+    // lock, each ahead of its status-guarded claim). Comment-stripped so a
+    // commented mention of either lock cannot satisfy the check.
+    const confirmPending = stripComments(
+      readRepoFile(
+        "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts"
+      )
+    );
+    expect(confirmPending).toContain(GLOBAL);
+    expect(confirmPending).toContain(`${PER_LODGE}(tx, booking.lodgeId)`);
+
+    // (4) The member-night guard self-takes the PER-MEMBER lock across lodges,
+    // since capacity locks are per-lodge only and the invariant spans lodges.
+    const memberNight = stripComments(
+      readRepoFile("src/lib/booking-member-night-conflicts.ts")
+    );
+    const assertBlock = sliceFrom(
+      memberNight,
+      "export async function assertNoBookingMemberNightConflicts"
+    );
+    expect(assertBlock).toContain("lockBookingMemberNights");
+    expect(memberNight).toContain('"booking-member-night"');
+
+    // (5) F10 credit-note-repairs: the account-credit allocation repair claims
+    // the member credit ledger under the PER-MEMBER lockMemberCreditLedger key
+    // (hashtext("member-credit-ledger"), hashtext(memberId)) — NOT the global
+    // lock(1) the pre-#1881 repair took, which did not exclude the concurrent
+    // credit writers on that member. Comment-stripped so a commented mention
+    // cannot satisfy the check.
+    const creditNoteRepairs = stripComments(
+      readRepoFile("src/lib/xero-inbound/credit-note-repairs.ts")
+    );
+    const repairBlock = sliceFrom(
+      creditNoteRepairs,
+      "export async function repairAccountCreditAllocationBusinessState"
+    );
+    expect(
+      repairBlock,
+      "repairAccountCreditAllocationBusinessState: takes lockMemberCreditLedger"
+    ).toContain("lockMemberCreditLedger(");
+    const memberCredit = readRepoFile("src/lib/member-credit.ts");
+    expect(memberCredit).toContain('"member-credit-ledger"');
+  });
+
+  it("restores a failed second-stage zero-dollar waitlist claim to a retryable state (#1881 F11)", () => {
+    const source = stripComments(
+      readRepoFile("src/app/api/bookings/[id]/waitlist-confirm/route.ts")
+    );
+    const zeroDollar = sliceFrom(
+      source,
+      "if (booking.finalPriceCents === 0 && result.newStatus === BookingStatus.PAYMENT_PENDING)",
+      "if (result.newStatus === BookingStatus.PENDING"
+    );
+    const capacityFailure = sliceFrom(
+      zeroDollar,
+      "if (!available)",
+      "await tx.payment.create"
+    );
+    expect(capacityFailure).toContain("tx.booking.updateMany");
+    expect(capacityFailure).toContain("status: BookingStatus.WAITLISTED");
+    expect(capacityFailure).toContain("status: BookingStatus.PAYMENT_PENDING");
+  });
+
+  it("runs the opt-in concurrency race harness against its dedicated CI PostgreSQL service (#1881)", () => {
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    expect(workflow).toContain("concurrency-race-postgres:");
+    expect(workflow).toContain("POSTGRES_DB: concurrency_race_1881");
+    expect(workflow).toContain("55442:5432");
+    expect(workflow).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(workflow).toContain(
+      "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
+    );
+    const migrateStep = workflow.indexOf(
+      "name: Migrate dedicated advisory-lock race database"
+    );
+    const raceStep = workflow.indexOf(
+      "name: Test advisory-lock race protocol against dedicated PostgreSQL"
+    );
+    expect(migrateStep).toBeGreaterThan(-1);
+    expect(raceStep).toBeGreaterThan(migrateStep);
+    const migrationBlock = workflow.slice(migrateStep, raceStep);
+    expect(migrationBlock).toContain(
+      "DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
+    );
+    expect(migrationBlock).toContain("run: npx prisma migrate deploy");
+    expect(migrationBlock).not.toContain("drift_main");
+    expect(workflow).toContain(
+      "npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts"
+    );
   });
 
   it("wraps age-up membership upgrades and token issuance in a transaction", () => {
@@ -488,7 +771,7 @@ describe("review finding source/schema contracts", () => {
     const expireStaleOffersBlock = sliceFrom(
       source,
       "export async function expireStaleOffers",
-      "/**\n * Recalculate and update waitlistPosition"
+      "// test seam"
     );
 
     expect(expireStaleOffersBlock).toContain("prisma.$transaction");

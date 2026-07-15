@@ -1166,14 +1166,19 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice) {
     if (applied.outcome === "settled") {
       result.settledGroupSettlements = 1;
       result.settledChildBookings = applied.settledBookingIds.length;
-    } else if (applied.outcome === "amount_mismatch") {
+    } else if (
+      applied.outcome === "amount_mismatch" ||
+      applied.outcome === "cancelled"
+    ) {
       // A child booking changed while the combined invoice sat open (#1033):
       // the bank transfer no longer matches what the children cost. Unlike
       // Stripe there is nothing to auto-refund, so alert the operators; the
       // settlement stays PENDING for manual reconciliation.
       logger.error(
         { invoiceId, settlementId: settlement.id },
-        "Paid group settlement invoice no longer matches its children - operator review required"
+        applied.outcome === "cancelled"
+          ? "Paid group settlement invoice belongs to a cancelled group - operator refund required"
+          : "Paid group settlement invoice no longer matches its children - operator review required"
       );
       const settlementDetail = await prisma.groupBookingSettlement.findUnique({
         where: { id: settlement.id },
@@ -1194,7 +1199,10 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice) {
         checkIn: settlementDetail?.groupBooking.organiserBooking.checkIn ?? new Date(),
         checkOut: settlementDetail?.groupBooking.organiserBooking.checkOut ?? new Date(),
         amountCents: settlementDetail?.amountCents ?? 0,
-        errorMessage: `Group settlement invoice ${invoiceId} was paid, but a child booking changed while it was open so the total no longer matches. No bookings were settled; reconcile manually (short-pay/refund the difference or re-issue the settlement).`,
+        errorMessage:
+          applied.outcome === "cancelled"
+            ? `Group settlement invoice ${invoiceId} was paid after the organiser cancelled the group. No child bookings were settled; refund or credit the organiser in Xero.`
+            : `Group settlement invoice ${invoiceId} was paid, but a child booking changed while it was open so the total no longer matches. No bookings were settled; reconcile manually (short-pay/refund the difference or re-issue the settlement).`,
         paymentIntentId: invoiceId,
       }).catch((alertErr) =>
         logger.error(

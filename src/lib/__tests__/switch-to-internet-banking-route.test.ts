@@ -7,8 +7,10 @@ const mocks = vi.hoisted(() => ({
   requireActiveSessionUser: vi.fn(),
   loadEffectiveModuleFlags: vi.fn(),
   findUnique: vi.fn(),
+  txBookingFindUnique: vi.fn(),
   upsert: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingUpdateMany: vi.fn(),
   settingsFindUnique: vi.fn(),
   transaction: vi.fn(),
   txExecuteRaw: vi.fn(),
@@ -19,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
   isXeroConnected: vi.fn(),
   creditAggregate: vi.fn(),
+  lockMemberCreditLedger: vi.fn(),
+  acquireLodgeCapacityLock: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -52,6 +56,16 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
     mocks.kickQueuedXeroOutboxOperationsIfConnected,
 }));
 vi.mock("@/lib/xero", () => ({ isXeroConnected: mocks.isXeroConnected }));
+vi.mock("@/lib/member-credit", () => ({
+  lockMemberCreditLedger: mocks.lockMemberCreditLedger,
+}));
+vi.mock("@/lib/capacity", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  return {
+    ...actual,
+    acquireLodgeCapacityLock: mocks.acquireLodgeCapacityLock,
+  };
+});
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }));
@@ -109,8 +123,12 @@ beforeEach(() => {
     internetBankingPayments: true,
   });
   mocks.findUnique.mockResolvedValue(stripeBooking());
+  // #1881 — the route re-reads the booking under the locks inside the tx before
+  // switching; default it to the same payable snapshot with an empty guest set.
+  mocks.txBookingFindUnique.mockResolvedValue({ ...stripeBooking(), guests: [] });
   mocks.upsert.mockResolvedValue({ id: "payment-1" });
   mocks.bookingUpdate.mockResolvedValue({});
+  mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   // Settings singleton: null → defaults (holdBedSlots false, no lead-time gate),
   // so the switch stays PAYMENT_PENDING without a capacity re-check.
   mocks.settingsFindUnique.mockResolvedValue(null);
@@ -124,7 +142,12 @@ beforeEach(() => {
         $queryRaw: vi.fn().mockResolvedValue([]),
         lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
         payment: { upsert: mocks.upsert },
-        booking: { update: mocks.bookingUpdate },
+        memberCredit: { aggregate: mocks.creditAggregate },
+        booking: {
+          findUnique: mocks.txBookingFindUnique,
+          update: mocks.bookingUpdate,
+          updateMany: mocks.bookingUpdateMany,
+        },
       })
   );
   mocks.cancelPaymentIntentIfCancellable.mockResolvedValue(undefined);
@@ -136,6 +159,8 @@ beforeEach(() => {
   });
   // Default booking has no applied credit → effective amount == finalPrice.
   mocks.creditAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+  mocks.lockMemberCreditLedger.mockResolvedValue(undefined);
+  mocks.acquireLodgeCapacityLock.mockResolvedValue(undefined);
   mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(undefined);
   mocks.isXeroConnected.mockResolvedValue(true);
 });
@@ -222,6 +247,21 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     await expect(res.json()).resolves.toEqual({ reference: REFERENCE });
     // No re-conversion work.
     expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("409s and writes nothing when a concurrent cancel moved the booking out of PAYMENT_PENDING under the locks (#1881)", async () => {
+    // The pre-transaction read still sees PAYMENT_PENDING, but the under-lock
+    // re-read sees a booking a concurrent cancel already moved to CANCELLED.
+    mocks.txBookingFindUnique.mockResolvedValue({
+      ...stripeBooking({ status: "CANCELLED" }),
+      guests: [],
+    });
+    const res = await POST(postRequest());
+    expect(res.status).toBe(409);
+    // No payment switch, no invoice work — the claim was refused.
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
     expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
   });
 
@@ -345,6 +385,45 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     );
     expect(mocks.recordInternetBankingPaymentTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ amountCents: 3000 })
+    );
+  });
+
+  it("uses the repriced booking and credit ledger under global -> lodge -> member locks (#1881)", async () => {
+    // The unlocked request snapshot was $45 with no credit. While it waited for
+    // lock(1), a valid reprice raised the booking to $60 and the member applied
+    // $20 credit. The persisted IB mirror must use the locked pair: 4000+2000.
+    mocks.txBookingFindUnique.mockResolvedValue({
+      ...stripeBooking({ finalPriceCents: 6000 }),
+      guests: [],
+    });
+    mocks.creditAggregate.mockResolvedValue({ _sum: { amountCents: -2000 } });
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(200);
+    expect(mocks.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          amountCents: 4000,
+          creditAppliedCents: 2000,
+        }),
+      })
+    );
+    expect(mocks.recordInternetBankingPaymentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 4000 })
+    );
+    expect(mocks.lockMemberCreditLedger).toHaveBeenCalledWith(
+      "member-1",
+      expect.objectContaining({ memberCredit: expect.any(Object) })
+    );
+    expect(mocks.txExecuteRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]
+    );
+    expect(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.lockMemberCreditLedger.mock.invocationCallOrder[0]
+    );
+    expect(mocks.lockMemberCreditLedger.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.creditAggregate.mock.invocationCallOrder[0]
     );
   });
 

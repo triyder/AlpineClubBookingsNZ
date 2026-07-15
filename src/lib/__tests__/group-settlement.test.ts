@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BookingStatus,
   GroupBookingPaymentMode,
+  GroupBookingStatus,
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindMany: vi.fn(),
   bookingFindUnique: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingUpdateMany: vi.fn(),
   paymentUpsert: vi.fn(),
   settlementUpsert: vi.fn(),
   settlementFindUnique: vi.fn(),
@@ -40,14 +42,17 @@ const mocks = vi.hoisted(() => ({
 // synchronously against it so assertions can inspect every write.
 const txClient = {
   $executeRaw: mocks.txExecuteRaw,
+  groupBooking: { findUnique: mocks.groupBookingFindUnique },
   lodge: { findFirst: mocks.lodgeFindFirst },
   booking: {
     findUnique: mocks.bookingFindUnique,
     findMany: mocks.bookingFindMany,
     update: mocks.bookingUpdate,
+    updateMany: mocks.bookingUpdateMany,
   },
   payment: { upsert: mocks.paymentUpsert },
   groupBookingSettlement: {
+    upsert: mocks.settlementUpsert,
     findUnique: mocks.settlementFindUnique,
     update: mocks.settlementUpdate,
     updateMany: mocks.settlementUpdateMany,
@@ -154,6 +159,7 @@ beforeEach(() => {
   });
   mocks.settlementUpsert.mockResolvedValue({ id: "settle-1", groupBookingId: GROUP_ID });
   mocks.settlementUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.findOrCreateCustomer.mockResolvedValue({ id: "cus_123" });
   mocks.createPaymentIntent.mockResolvedValue({
     id: "pi_settle_1",
@@ -405,7 +411,39 @@ describe("createGroupSettlementIntent", () => {
       })
     );
     // One combined invoice enqueued; never a Stripe PaymentIntent.
-    expect(mocks.enqueueSettlementInvoice).toHaveBeenCalledWith("settle-1");
+    expect(mocks.enqueueSettlementInvoice).toHaveBeenCalledWith("settle-1", {
+      store: txClient,
+    });
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("commits the Internet Banking settlement and outbox row in one transaction", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.CONFIRMED },
+    ]);
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "child-1",
+      finalPriceCents: 4500,
+      lodgeId: "lodge-1",
+      status: BookingStatus.CONFIRMED,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    });
+    mocks.enqueueSettlementInvoice.mockRejectedValueOnce(
+      new Error("outbox insert failed")
+    );
+
+    await expect(
+      createGroupSettlementIntent("ABCD2345", ORGANISER, "internet_banking")
+    ).rejects.toThrow("outbox insert failed");
+
+    expect(mocks.settlementUpsert).toHaveBeenCalled();
+    expect(mocks.enqueueSettlementInvoice).toHaveBeenCalledWith("settle-1", {
+      store: txClient,
+    });
+    expect(mocks.kickXero).not.toHaveBeenCalled();
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
   });
 
@@ -780,13 +818,14 @@ describe("createGroupSettlementIntent", () => {
 });
 
 describe("markGroupSettlementIntentRefunded", () => {
-  it("marks the settlement REFUNDED under the settle advisory lock (#1883)", async () => {
+  it("marks the settlement REFUNDED under the settle advisory lock (#1883/#1881)", async () => {
     await markGroupSettlementIntentRefunded("pi_settle_1");
 
-    // Same default-lodge advisory lock as the settle path, so the mark cannot
-    // interleave with an in-flight settle of the same settlement.
+    // Same GLOBAL lock(1) as the settle path and the reaper (#1881), so the mark
+    // cannot interleave with an in-flight settle/reap of the same settlement.
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
-    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(txClient, "lodge-1");
+    expect(mocks.txExecuteRaw).toHaveBeenCalled();
+    expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalled();
     // Guarded updateMany: never clobbers SUCCEEDED (already applied — that
     // conflict is alerted upstream) and is idempotent across redelivery.
     expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
@@ -806,9 +845,17 @@ describe("markGroupSettlementIntentRefunded", () => {
 });
 
 describe("markGroupSettlementIntentFailed", () => {
-  it("atomically moves only a non-terminal settlement to FAILED", async () => {
+  it("atomically moves only a non-terminal settlement to FAILED under lock(1)", async () => {
     await markGroupSettlementIntentFailed("pi_settle_1");
 
+    // #1881 — the mark now runs inside a transaction holding the SAME global
+    // lock(1) as its sibling markGroupSettlementIntentRefunded, the settle path
+    // and the reaper, so it can no longer interleave BETWEEN a multi-statement
+    // settle transaction's statements (the doc's "all settlement-status
+    // transitions take lock(1)" claim). It takes no per-lodge lock.
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.txExecuteRaw).toHaveBeenCalled();
+    expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalled();
     // The guarded updateMany fuses the "still non-terminal?" check with the write,
     // so a racing succeeded/refunded settlement is never overwritten to FAILED.
     expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
@@ -937,6 +984,162 @@ describe("applyGroupSettlementSucceeded", () => {
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     expect(mocks.settlementUpdate).not.toHaveBeenCalled();
     expect(mocks.sendSettlementReceipt).not.toHaveBeenCalled();
+  });
+
+  it("charges the price re-read under the settlement lock, not the stale pre-lock total", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        id: "child-1",
+        finalPriceCents: 4500,
+        status: BookingStatus.PAYMENT_PENDING,
+      },
+    ]);
+    // A concurrent repricing writer completed before this settlement acquired
+    // lock(1). The provider request and settlement row must use 6000, never the
+    // stale 4500 loaded before the lock.
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "child-1",
+      finalPriceCents: 6000,
+      lodgeId: "lodge-1",
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    });
+    mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    expect(result.amountCents).toBe(6000);
+    expect(mocks.createPaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 6000 })
+    );
+    expect(mocks.settlementUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ amountCents: 6000 }),
+      })
+    );
+  });
+
+  it.each(["stripe", "internet_banking"] as const)(
+    "rejects a CANCELLED group before initiating %s settlement (#1881)",
+    async (paymentMethod) => {
+      mocks.groupBookingFindUnique.mockResolvedValue(
+        organiserPaysGroup({ status: GroupBookingStatus.CANCELLED })
+      );
+
+      await expect(
+        createGroupSettlementIntent("ABCD2345", ORGANISER, paymentMethod)
+      ).rejects.toMatchObject({ status: 409 });
+
+      expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+      expect(mocks.settlementUpsert).not.toHaveBeenCalled();
+      expect(mocks.enqueueSettlementInvoice).not.toHaveBeenCalled();
+    }
+  );
+
+  it("cancels an intent when cancellation wins after the pre-provider check but before attach (#1881)", async () => {
+    mocks.groupBookingFindUnique
+      .mockResolvedValueOnce(organiserPaysGroup({ status: GroupBookingStatus.OPEN }))
+      .mockResolvedValueOnce({ status: GroupBookingStatus.OPEN })
+      .mockResolvedValueOnce({ status: GroupBookingStatus.CANCELLED });
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        id: "child-1",
+        finalPriceCents: 4500,
+        status: BookingStatus.PAYMENT_PENDING,
+      },
+    ]);
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "child-1",
+      lodgeId: "lodge-1",
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-02"),
+      guests: [],
+    });
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([
+        {
+          id: "child-1",
+          finalPriceCents: 4500,
+          status: BookingStatus.PAYMENT_PENDING,
+        },
+      ])
+      .mockResolvedValueOnce([{ lodgeId: "lodge-1" }]);
+    mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
+
+    await expect(
+      createGroupSettlementIntent("ABCD2345", ORGANISER, "stripe")
+    ).rejects.toMatchObject({ status: 409 });
+
+    expect(mocks.createPaymentIntent).toHaveBeenCalledTimes(1);
+    expect(mocks.settlementUpsert).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntent).toHaveBeenCalledWith("pi_settle_1");
+  });
+
+  it.each(["stripe", "internet_banking"] as const)(
+    "re-checks the cancellation fence under the initiation lock for %s (#1881)",
+    async (paymentMethod) => {
+      mocks.groupBookingFindUnique
+        .mockResolvedValueOnce(
+          organiserPaysGroup({ status: GroupBookingStatus.OPEN })
+        )
+        .mockResolvedValueOnce({ status: GroupBookingStatus.CANCELLED });
+      mocks.bookingFindMany.mockResolvedValue([
+        {
+          id: "child-1",
+          finalPriceCents: 4500,
+          status: BookingStatus.PAYMENT_PENDING,
+        },
+      ]);
+
+      await expect(
+        createGroupSettlementIntent("ABCD2345", ORGANISER, paymentMethod)
+      ).rejects.toMatchObject({ status: 409 });
+
+      expect(mocks.txExecuteRaw).toHaveBeenCalled();
+      expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalled();
+      expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+      expect(mocks.settlementUpsert).not.toHaveBeenCalled();
+      expect(mocks.enqueueSettlementInvoice).not.toHaveBeenCalled();
+    }
+  );
+
+  it("honours the durable group-cancellation fence under lock(1) (#1881)", async () => {
+    const loaded = {
+      id: "s1",
+      status: PaymentStatus.PENDING,
+      amountCents: 9000,
+      stripeCustomerId: "cus_123",
+      groupBookingId: GROUP_ID,
+      groupBooking: {
+        organiserBookingId: ORG_BOOKING,
+        status: "CANCELLED",
+        organiserMember: {
+          email: "org@example.com",
+          firstName: "Olive",
+          lastName: "Organiser",
+        },
+        organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+      },
+    };
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce(loaded)
+      .mockResolvedValueOnce({
+        status: PaymentStatus.PENDING,
+        groupBooking: { status: "CANCELLED" },
+      });
+
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+
+    expect(result).toEqual({ outcome: "cancelled", settledBookingIds: [] });
+    expect(mocks.txExecuteRaw).toHaveBeenCalled();
+    expect(mocks.bookingFindMany).not.toHaveBeenCalled();
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.settlementUpdateMany).not.toHaveBeenCalled();
   });
 
   it("refuses to apply when the paid amount does not match the recorded total", async () => {
@@ -1079,12 +1282,14 @@ describe("applyGroupSettlementSucceeded", () => {
         }),
       })
     );
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith(
+    // #1881 — status-guarded child PAID flip + settlement SUCCEEDED flip.
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({ status: BookingStatus.CONFIRMED }),
         data: expect.objectContaining({ status: BookingStatus.PAID }),
       })
     );
-    expect(mocks.settlementUpdate).toHaveBeenCalledWith(
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: PaymentStatus.SUCCEEDED }),
       })
@@ -1212,12 +1417,13 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
         }),
       })
     );
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith(
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({ status: BookingStatus.CONFIRMED }),
         data: expect.objectContaining({ status: BookingStatus.PAID }),
       })
     );
-    expect(mocks.settlementUpdate).toHaveBeenCalledWith(
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: PaymentStatus.SUCCEEDED }),
       })

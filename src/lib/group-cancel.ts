@@ -95,6 +95,7 @@ import {
   enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded,
 } from "@/lib/payment-recovery";
+import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";
 
 /** Child booking statuses that an organiser cancel must clean up. */
@@ -187,6 +188,47 @@ export async function settleGroupBookingOnOrganiserCancel(
     return;
   }
 
+  // Durable cancellation fence: settle/reaper/cancel all serialize on lock(1).
+  // Once CANCELLED commits, a later settlement apply must refuse to promote
+  // children. If settle won first, the post-fence reads below observe its
+  // SUCCEEDED/PAID state and run the refund path. No provider call occurs while
+  // this transaction is open.
+  const cancellationFence = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    await tx.groupBooking.update({
+      where: { id: group.id },
+      data: { status: GroupBookingStatus.CANCELLED },
+    });
+    // Return the exact settlement identity that existed at the cancellation
+    // serialization point.  A pre-lock null must stay null (a later creator is
+    // fenced by CANCELLED), while a pre-lock re-point to a newer intent must
+    // cancel/fail that newer intent rather than the stale route snapshot.
+    const settlement = await tx.groupBookingSettlement.findUnique({
+      where: { groupBookingId: group.id },
+    });
+    const queuedVoid = settlement?.xeroInvoiceId
+      ? await enqueueXeroGroupSettlementInvoiceVoidOperation(settlement.id, {
+          createdByMemberId: sessionUserId,
+          store: tx,
+        })
+      : null;
+    return {
+      settlement,
+      queuedVoidOperationId: queuedVoid?.queueOperationId ?? null,
+    };
+  });
+
+  // The compensating row committed atomically with CANCELLED.  This kick is
+  // opportunistic only; the normal outbox cron owns durable retry.
+  if (cancellationFence.queuedVoidOperationId) {
+    void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((err) =>
+      logger.error(
+        { err, groupBookingId: group.id },
+        "Failed to kick queued Xero group-invoice VOID after cancellation"
+      )
+    );
+  }
+
   const children = await prisma.booking.findMany({
     where: {
       parentBookingId: organiserBookingId,
@@ -197,7 +239,7 @@ export async function settleGroupBookingOnOrganiserCancel(
     include: { member: true, payment: true },
   });
 
-  const settlement = group.settlement;
+  let settlement = cancellationFence.settlement;
 
   // Mid-settlement: an open (PENDING) intent with children committed to CONFIRMED
   // but not yet captured. Void the intent and fail the settlement BEFORE
@@ -208,18 +250,61 @@ export async function settleGroupBookingOnOrganiserCancel(
     settlement.status === PaymentStatus.PENDING &&
     settlement.stripePaymentIntentId
   ) {
+    // Capture the non-null row in a const so the async closure below keeps the
+    // narrowing (`settlement` is now a `let`, reassigned after the reload).
+    const openSettlement = settlement;
+    // The Stripe void is an external provider call — keep it OUTSIDE the DB
+    // transaction (the whole point of the lock discipline).
     try {
-      await cancelPaymentIntentIfCancellable(settlement.stripePaymentIntentId);
+      await cancelPaymentIntentIfCancellable(openSettlement.stripePaymentIntentId!);
     } catch (err) {
       logger.error(
         { err, groupBookingId: group.id },
         "Failed to void open group settlement intent on organiser cancel"
       );
     }
-    await prisma.groupBookingSettlement.update({
-      where: { id: settlement.id },
-      data: { status: PaymentStatus.FAILED },
+    // #1881 — the FAILED claim was previously a bare `update` gated on a STALE
+    // in-memory status read, taking NO lock, so it could not mutually exclude a
+    // concurrent settle/reaper (which now serialise on lock(1)). Mirror
+    // markGroupSettlementIntentFailed: take lock(1), re-read, and status-guard
+    // the FAILED claim so a settle that captured the organiser's money under
+    // the same lock is never clobbered back to FAILED.
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await tx.groupBookingSettlement.updateMany({
+        where: {
+          id: openSettlement.id,
+          stripePaymentIntentId: openSettlement.stripePaymentIntentId,
+          status: PaymentStatus.PENDING,
+        },
+        data: { status: PaymentStatus.FAILED },
+      });
     });
+  }
+
+  // #1881 — RELOAD the FULL settlement row AFTER the guarded FAILED claim so
+  // every refund decision below reads ONE consistent status. A concurrent
+  // settle can capture the organiser's money under lock(1) between the initial
+  // load (~:197) and here, flipping the settlement PENDING -> SUCCEEDED and the
+  // children CONFIRMED -> PAID. Reading only a repointed `settled` flag while
+  // the refund-firing guard, the REFUNDED/PARTIALLY_REFUNDED flip and its
+  // decision still read the STALE in-memory row was strictly worse than no
+  // re-read: `settled` would compute + persist a refund plan, but the stale
+  // guard (status !== SUCCEEDED) would SKIP the whole refund block — no Stripe
+  // refund, no REFUNDED flip, no durable recovery armed — while the child loop
+  // still wrote phantom per-child refund mirrors for money that never moved.
+  // Reassigning `settlement` to the fresh row makes the plan, the Stripe
+  // refund, the status flip, the recovery enqueue, and the per-child mirrors
+  // all agree on one status: when settle won the race (now SUCCEEDED) the
+  // owed refund FIRES and recovery is armed; a stale read can no longer strand
+  // the organiser's money behind phantom mirrors.
+  if (settlement) {
+    const freshSettlement = await prisma.groupBookingSettlement.findUnique({
+      where: { id: settlement.id },
+    });
+    if (freshSettlement) {
+      settlement = freshSettlement;
+    }
   }
 
   // Refund the organiser when the group was already settled. Only genuinely PAID
@@ -288,7 +373,9 @@ export async function settleGroupBookingOnOrganiserCancel(
   if (
     totalRefundCents > 0 &&
     settlement?.stripePaymentIntentId &&
-    settlement.status === PaymentStatus.SUCCEEDED
+    // #1881 — the SAME fresh-status value the plan was computed from, so the
+    // plan, the refund, the flip and the mirrors never disagree on the status.
+    settled
   ) {
     // F3 (#1351): persist the retry debt BEFORE the Stripe call. The anchor
     // paymentId satisfies the recovery-op schema FK only; the processor
@@ -412,10 +499,11 @@ export async function settleGroupBookingOnOrganiserCancel(
     // Captured from inside the per-child tx so the best-effort outbox worker
     // kick can run POST-commit (the enqueue itself is now durable — below).
     let queuedCreditNoteOperationId: string | null = null;
+    let childClaimed = false;
     try {
       queuedCreditNoteOperationId = await prisma.$transaction(async (tx) => {
-        await tx.booking.update({
-          where: { id: child.id },
+        const cancelled = await tx.booking.updateMany({
+          where: { id: child.id, status: { in: [...ACTIVE_CHILD_STATUSES] } },
           data: {
             status: BookingStatus.CANCELLED,
             ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
@@ -425,6 +513,8 @@ export async function settleGroupBookingOnOrganiserCancel(
             ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
           },
         });
+        if (cancelled.count === 0) return null;
+        childClaimed = true;
         await reconcileBedAllocationsForBooking({
           bookingId: child.id,
           db: tx,
@@ -483,6 +573,8 @@ export async function settleGroupBookingOnOrganiserCancel(
       );
       continue;
     }
+
+    if (!childClaimed) continue;
 
     // Best-effort outbox worker kick, kept POST-commit (the outbox cron drains
     // the row regardless). Never inside the tx: that would put a Xero provider
@@ -566,7 +658,7 @@ export async function settleGroupBookingOnOrganiserCancel(
     );
   }
 
-  await markGroupCancelled(group.id);
+  // The group was fenced CANCELLED before provider calls and child cleanup.
 
   logger.info(
     {
@@ -696,25 +788,35 @@ export async function executeGroupSettlementRefundPlan(
     const nextRefunded = Math.min(child.payment.amountCents, refundForChild);
     // Conditional write: organiser-settled child payments receive refunds
     // ONLY from this module, so refundedAmountCents === 0 means unmirrored.
-    const applied = await prisma.payment.updateMany({
-      where: { id: child.payment.id, refundedAmountCents: 0 },
-      data: {
-        refundedAmountCents: nextRefunded,
-        status:
-          nextRefunded >= child.payment.amountCents
-            ? PaymentStatus.REFUNDED
-            : PaymentStatus.PARTIALLY_REFUNDED,
-      },
+    // Mirror and durable Xero outbox insertion are one atomic unit.  Previously
+    // the mirror committed first and enqueue failures were swallowed, leaving a
+    // permanently stranded accounting operation that replay would skip because
+    // refundedAmountCents was already non-zero.
+    const mirrorResult = await prisma.$transaction(async (tx) => {
+      const applied = await tx.payment.updateMany({
+        where: { id: child.payment!.id, refundedAmountCents: 0 },
+        data: {
+          refundedAmountCents: nextRefunded,
+          status:
+            nextRefunded >= child.payment!.amountCents
+              ? PaymentStatus.REFUNDED
+              : PaymentStatus.PARTIALLY_REFUNDED,
+        },
+      });
+      if (applied.count !== 1) {
+        return { applied: false, queuedOperationId: null };
+      }
+      const queued = await enqueueXeroRefundCreditNoteOperation(
+        child.payment!.id,
+        nextRefunded,
+        { store: tx }
+      );
+      return { applied: true, queuedOperationId: queued.queueOperationId };
     });
-    if (applied.count !== 1) continue;
+    if (!mirrorResult.applied) continue;
     mirroredChildren += 1;
 
-    try {
-      const queued = await enqueueXeroRefundCreditNoteOperation(
-        child.payment.id,
-        nextRefunded
-      );
-      if (queued.queueOperationId && (await isXeroConnected())) {
+    if (mirrorResult.queuedOperationId && (await isXeroConnected())) {
         void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch(
           (xeroErr) =>
             logger.error(
@@ -722,12 +824,6 @@ export async function executeGroupSettlementRefundPlan(
               "Failed to kick Xero refund credit note worker after settlement refund replay"
             )
         );
-      }
-    } catch (xeroErr) {
-      logger.error(
-        { err: xeroErr, bookingId: child.id, settlementId },
-        "Failed to queue Xero refund credit note during settlement refund replay"
-      );
     }
 
     logAudit({

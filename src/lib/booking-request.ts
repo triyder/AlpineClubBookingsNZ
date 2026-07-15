@@ -1047,9 +1047,17 @@ export async function approveBookingRequest(input: {
 
   try {
     conversion = await prisma.$transaction(async (tx) => {
-      // Per-lodge advisory lock serialises booking creation paths for the
-      // request's lodge so the capacity check below stays safe (same helper
-      // as booking-create.ts). A null lodgeId means the club's default lodge.
+      // Two-tier lock protocol (#1881). Converting the held AWAITING_REVIEW
+      // booking to PENDING is BOTH a booking-status transition that must
+      // mutually exclude the hold-release / cancel paths (which serialise on
+      // the global lock(1) — booking-cancel.ts, cron-quote-expiry-reminders.ts)
+      // AND a capacity-relevant claim for the request's lodge. Before #1881 the
+      // accept took ONLY the per-lodge lock, so it did NOT mutually exclude
+      // those releasers (they hold a different key): a release could cancel the
+      // held booking out from under a converting accept. Take BOTH locks now,
+      // global lock(1) FIRST (consistent global-before-per-lodge order → no
+      // deadlock), then the per-lodge capacity lock.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       const requestLodgeId = request.lodgeId ?? (await getDefaultLodgeId(tx));
       await acquireLodgeCapacityLock(tx, requestLodgeId);
 
@@ -1163,8 +1171,14 @@ export async function approveBookingRequest(input: {
         // range is unchanged (fixed at request submission), so existing bed
         // allocations remain valid — no reconcile needed.
         await reassignHeldBookingGuests(tx, held.id, guestCreates);
-        booking = await tx.booking.update({
-          where: { id: held.id },
+        // Status-guarded claim (#1881, defense in depth alongside lock(1)):
+        // flip the held booking ONLY while it is still AWAITING_REVIEW. Under
+        // lock(1) the re-read above already established that and no releaser can
+        // interleave, but the guard means a hold-release that somehow slipped
+        // the lock can never be clobbered back to PENDING (which would resurrect
+        // a cancelled hold as a live booking).
+        const converted = await tx.booking.updateMany({
+          where: { id: held.id, status: BookingStatus.AWAITING_REVIEW },
           data: {
             checkIn: request.checkIn,
             checkOut: request.checkOut,
@@ -1184,8 +1198,11 @@ export async function approveBookingRequest(input: {
             // allocations live on guest rows and are unaffected by ownership.
             memberId: ownerId,
           },
-          select: { id: true },
         });
+        if (converted.count === 0) {
+          throw new BookingRequestError("Held booking is no longer available", 409);
+        }
+        booking = { id: held.id };
         member = { id: ownerId };
       } else {
         const capacityRanges = guests.map(() => ({

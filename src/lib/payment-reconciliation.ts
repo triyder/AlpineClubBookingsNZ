@@ -55,12 +55,14 @@ export type MarkBookingPaymentSucceededResult = {
   refundError?: string;
 };
 
-const PAYABLE_SUCCESS_STATUSES = new Set<string>([
+const PAYABLE_SUCCESS_STATUS_LIST = [
   BookingStatus.PAYMENT_PENDING,
   BookingStatus.CONFIRMED,
   BookingStatus.PENDING,
   BookingStatus.DRAFT,
-]);
+] as const;
+
+const PAYABLE_SUCCESS_STATUSES = new Set<string>(PAYABLE_SUCCESS_STATUS_LIST);
 
 async function alertRefundFailure({
   booking,
@@ -102,9 +104,22 @@ export async function markBookingPaymentSucceeded({
   paymentMethodId: string | null;
 }): Promise<MarkBookingPaymentSucceededResult> {
   const reconciliation = await prisma.$transaction(async (tx) => {
-    // Pre-lock read: only the lock key. lodgeId is immutable, so keying the
-    // lock from this read is safe; every status/capacity-relevant field is
-    // taken from the post-lock re-read below.
+    // Two-tier lock protocol (#1881). A Stripe capture does BOTH tiers of work:
+    // it flips the booking's status + moves money (the booking-status/money
+    // tier), AND it claims capacity (the per-lodge tier). It must therefore
+    // hold BOTH locks, and the global lock(1) is taken FIRST — always
+    // global-before-per-lodge, so the ordering is deadlock-free against every
+    // other two-lock writer (invoice-paid-effects, confirm-pending-guests).
+    // Without lock(1) this capture no longer mutually excluded the cancel /
+    // hold-release / settlement paths (which serialise on lock(1)); a concurrent
+    // cancel could interleave and the bare PAID write below could resurrect a
+    // just-cancelled booking. The per-lodge lock still serialises the capacity
+    // claim against per-lodge creators.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+
+    // Pre-lock read: only the lodge lock key. lodgeId is immutable, so keying
+    // the per-lodge lock from this read is safe; every status/capacity-relevant
+    // field is taken from the post-lock re-read below.
     const lockTarget = await tx.booking.findUnique({
       where: { id: bookingId },
       select: { lodgeId: true },
@@ -274,8 +289,13 @@ export async function markBookingPaymentSucceeded({
       );
     }
     if (!capacity.available && !bookingHasCapacityOverride(booking)) {
-      await tx.booking.update({
-        where: { id: booking.id },
+      // Status-guarded void (#1881, defense in depth): claim the cancel only
+      // while the booking is still in a payable state. Under lock(1) the
+      // post-lock re-read already established that, so count 0 is a "cannot
+      // happen" — but guarding the write means a concurrent status transition
+      // that somehow slipped the lock can never be clobbered back to CANCELLED.
+      const voided = await tx.booking.updateMany({
+        where: { id: booking.id, status: { in: [...PAYABLE_SUCCESS_STATUS_LIST] } },
         data: {
           status: BookingStatus.CANCELLED,
           draftExpiresAt: null,
@@ -288,6 +308,11 @@ export async function markBookingPaymentSucceeded({
           ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
         },
       });
+      if (voided.count === 0) {
+        throw new Error(
+          "Booking status changed concurrently during the capacity-failed void (#1881)"
+        );
+      }
       await reconcileBedAllocationsForBooking({
         bookingId: booking.id,
         db: tx,
@@ -338,13 +363,22 @@ export async function markBookingPaymentSucceeded({
       };
     }
 
-    await tx.booking.update({
-      where: { id: booking.id },
+    // Status-guarded PAID claim (#1881, defense in depth alongside lock(1)):
+    // only settle a still-payable booking. Under lock(1) count 0 cannot happen
+    // (the re-read above already gated on this), but the guard means a cancel
+    // that somehow raced past the lock cannot be resurrected to PAID.
+    const claimed = await tx.booking.updateMany({
+      where: { id: booking.id, status: { in: [...PAYABLE_SUCCESS_STATUS_LIST] } },
       data: {
         status: BookingStatus.PAID,
         draftExpiresAt: null,
       },
     });
+    if (claimed.count === 0) {
+      throw new Error(
+        "Booking status changed concurrently during the PAID claim (#1881)"
+      );
+    }
     await reconcileBedAllocationsForBooking({
       bookingId: booking.id,
       db: tx,

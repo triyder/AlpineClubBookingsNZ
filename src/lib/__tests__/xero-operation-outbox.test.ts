@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   createXeroEntranceFeeInvoice: vi.fn(),
   createXeroInvoiceForBooking: vi.fn(),
   createXeroInvoiceForGroupSettlement: vi.fn(),
+  voidXeroInvoiceForCancelledGroupSettlement: vi.fn(),
   createXeroMembershipSubscriptionInvoice: vi.fn(),
   updateXeroBookingInvoiceForBooking: vi.fn(),
   createXeroSupplementaryInvoice: vi.fn(),
@@ -92,6 +93,8 @@ vi.mock("@/lib/xero-sync", () => ({
 
 vi.mock("@/lib/xero-group-settlement-invoices", () => ({
   createXeroInvoiceForGroupSettlement: mocks.createXeroInvoiceForGroupSettlement,
+  voidXeroInvoiceForCancelledGroupSettlement:
+    mocks.voidXeroInvoiceForCancelledGroupSettlement,
 }));
 vi.mock("@/lib/xero-subscription-invoices", () => ({
   createXeroMembershipSubscriptionInvoice: mocks.createXeroMembershipSubscriptionInvoice,
@@ -1249,7 +1252,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       direction: "OUTBOUND",
       queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
     });
-    expect(args.where.queueType.in).toHaveLength(14);
+    expect(args.where.queueType.in).toHaveLength(15);
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
@@ -1925,6 +1928,19 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.createXeroInvoiceForGroupSettlement,
     },
+    GROUP_SETTLEMENT_INVOICE_VOID: {
+      op: {
+        id: "op_settle_void_1",
+        localId: "settle_1",
+        localModel: "GroupBookingSettlement",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+          settlementId: "settle_1",
+        },
+      },
+      handler: mocks.voidXeroInvoiceForCancelledGroupSettlement,
+    },
     MEMBERSHIP_SUBSCRIPTION_INVOICE: {
       op: {
         id: "op_subscription_charge_1",
@@ -1964,6 +1980,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       skippedReason: null,
     });
     mocks.createXeroInvoiceForGroupSettlement.mockResolvedValue("inv");
+    mocks.voidXeroInvoiceForCancelledGroupSettlement.mockResolvedValue(undefined);
     mocks.createXeroMembershipSubscriptionInvoice.mockResolvedValue("inv");
   });
 

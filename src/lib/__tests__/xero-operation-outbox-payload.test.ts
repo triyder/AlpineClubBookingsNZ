@@ -89,6 +89,13 @@ describe("xero operation outbox payload parsing", () => {
       localModels: ["Payment"],
     });
     expect(
+      getQueuedOutboxExpectedOperation("GROUP_SETTLEMENT_INVOICE_VOID")
+    ).toEqual({
+      entityType: "INVOICE",
+      operationType: "UPDATE",
+      localModels: ["GroupBookingSettlement"],
+    });
+    expect(
       getQueuedOutboxExpectedOperation(
         "MEMBERSHIP_CANCELLATION_CREDIT_NOTE"
       )
@@ -145,6 +152,7 @@ describe("xero operation outbox payload parsing", () => {
       "MEMBERSHIP_CANCELLATION_CREDIT_NOTE",
       "MEMBERSHIP_CANCELLATION_CONTACT",
       "GROUP_SETTLEMENT_INVOICE",
+      "GROUP_SETTLEMENT_INVOICE_VOID",
       "MEMBERSHIP_SUBSCRIPTION_INVOICE",
     ]);
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
@@ -169,6 +177,7 @@ describe("xero operation outbox payload parsing", () => {
       ["MEMBERSHIP_CANCELLATION_CREDIT_NOTE", "CREDIT_NOTE"],
       ["MEMBERSHIP_CANCELLATION_CONTACT", "CONTACT"],
       ["GROUP_SETTLEMENT_INVOICE", "INVOICE"],
+      ["GROUP_SETTLEMENT_INVOICE_VOID", "INVOICE"],
       ["MEMBERSHIP_SUBSCRIPTION_INVOICE", "INVOICE"],
     ]);
     for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {

@@ -298,6 +298,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
   const createdGuests: Array<Record<string, unknown>> = [];
 
   return {
+    // #1881 — the batch service now takes the global lock(1) via $executeRaw.
+    $executeRaw: vi.fn().mockResolvedValue(undefined),
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
     lodge: {
       findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),

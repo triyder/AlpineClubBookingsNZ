@@ -33,11 +33,25 @@ const SRC_DIR = path.join(process.cwd(), "src");
 // count is always fine (delete the entry at zero); growing one needs an
 // explicit justification in the PR that edits this file.
 const LEGACY_CLUB_WIDE_LOCK_INVENTORY: Record<string, number> = {
+  // #1881: the two capacity-admission branches in confirm-pending-guests
+  // deliberately compose global lifecycle lock(1) first with the canonical
+  // per-lodge capacity lock. The global lock prevents cancellation/settlement
+  // resurrection while the lodge lock serialises the capacity claim.
+  "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts": 2,
+  "src/app/api/bookings/[id]/waitlist-confirm/route.ts": 1,
+  "src/app/api/payments/switch-to-internet-banking/route.ts": 1,
+  "src/lib/booking-batch-modification-service.ts": 1,
   "src/lib/booking-cancel.ts": 4,
+  "src/lib/booking-date-modification-service.ts": 2,
+  "src/lib/booking-guest-removal-service.ts": 1,
+  "src/lib/booking-request.ts": 1,
   "src/lib/cron-group-settlement-reaper.ts": 2,
   "src/lib/cron-quote-expiry-reminders.ts": 2,
+  "src/lib/group-cancel.ts": 2,
+  "src/lib/group-settlement.ts": 6,
   "src/lib/internet-banking-payment-cron.ts": 1,
-  "src/lib/xero-inbound/credit-note-repairs.ts": 1,
+  "src/lib/payment-reconciliation.ts": 1,
+  "src/lib/xero-group-settlement-invoices.ts": 3,
   "src/lib/xero-inbound/invoice-paid-effects.ts": 1,
 };
 

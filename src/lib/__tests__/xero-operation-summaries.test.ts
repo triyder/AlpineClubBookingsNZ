@@ -62,6 +62,20 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
     );
   });
 
+  it("summarizes a queued group-settlement invoice void", () => {
+    const summary = summarizeXeroOperation({
+      entityType: "INVOICE",
+      operationType: "UPDATE",
+      requestPayload: {
+        queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+        settlementId: "settlement-abcdefghijklmno",
+      },
+      responsePayload: null,
+    });
+    expect(summary?.title).toBe("Queued: void cancelled group-settlement invoice");
+    expect(factValue(summary!, "Settlement")).toBe("settlement-a...");
+  });
+
   it("summarizes a queued refund credit note with a watermark", () => {
     const summary = summarizeXeroOperation({
       entityType: "CREDIT_NOTE",

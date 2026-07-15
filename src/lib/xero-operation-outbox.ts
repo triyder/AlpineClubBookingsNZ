@@ -37,7 +37,10 @@ import { createXeroCreditNoteForModification } from "@/lib/xero-modification-cre
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { isXeroConnected } from "@/lib/xero-token-store";
-import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
+import {
+  createXeroInvoiceForGroupSettlement,
+  voidXeroInvoiceForCancelledGroupSettlement,
+} from "@/lib/xero-group-settlement-invoices";
 import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
 import {
   getQueuedOutboxExpectedOperation,
@@ -50,6 +53,7 @@ import {
   XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
   XERO_OUTBOX_ENTRANCE_FEE_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
+  XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
@@ -425,9 +429,13 @@ export async function enqueueXeroAppliedCreditAllocationOperation(
 
 export async function enqueueXeroGroupSettlementInvoiceOperation(
   settlementId: string,
-  options?: { createdByMemberId?: string }
+  options?: {
+    createdByMemberId?: string;
+    store?: Prisma.TransactionClient;
+  }
 ) {
-  const settlement = await prisma.groupBookingSettlement.findUnique({
+  const db = options?.store ?? prisma;
+  const settlement = await db.groupBookingSettlement.findUnique({
     where: { id: settlementId },
     select: {
       id: true,
@@ -446,7 +454,7 @@ export async function enqueueXeroGroupSettlementInvoiceOperation(
     };
   }
 
-  const existingLink = await prisma.xeroObjectLink.findFirst({
+  const existingLink = await db.xeroObjectLink.findFirst({
     where: {
       localModel: "GroupBookingSettlement",
       localId: settlement.id,
@@ -471,7 +479,7 @@ export async function enqueueXeroGroupSettlementInvoiceOperation(
     "v1"
   );
 
-  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+  const existingQueuedOperation = await db.xeroSyncOperation.findFirst({
     where: {
       correlationKey,
       direction: "OUTBOUND",
@@ -509,6 +517,7 @@ export async function enqueueXeroGroupSettlementInvoiceOperation(
       settlementId,
     },
     createdByMemberId: options?.createdByMemberId ?? null,
+    store: options?.store,
   });
 
   return {
@@ -2048,6 +2057,13 @@ export async function processQueuedXeroOutboxOperations(options?: {
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
         });
+      } else if (
+        payload?.queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE
+      ) {
+        await voidXeroInvoiceForCancelledGroupSettlement(
+          payload.settlementId,
+          { syncOperationId: queuedOperation.id }
+        );
       } else if (
         payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
       ) {

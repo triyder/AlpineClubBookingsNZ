@@ -379,7 +379,8 @@ async function handlePaymentIntentSucceeded(
     });
     if (
       applied.outcome === "not_found" ||
-      applied.outcome === "amount_mismatch"
+      applied.outcome === "amount_mismatch" ||
+      applied.outcome === "cancelled"
     ) {
       await refundSupersededGroupSettlementIntent(paymentIntent, applied.outcome);
     }
@@ -1058,11 +1059,13 @@ async function alertPaymentAmountMismatch(
  */
 async function refundSupersededGroupSettlementIntent(
   paymentIntent: Stripe.PaymentIntent,
-  outcome: "not_found" | "amount_mismatch"
+  outcome: "not_found" | "amount_mismatch" | "cancelled"
 ) {
   const groupBookingId = paymentIntent.metadata?.groupBookingId ?? null;
   const failureDescription =
-    outcome === "not_found"
+    outcome === "cancelled"
+      ? "belonged to a group whose organiser cancellation was already fenced"
+      : outcome === "not_found"
       ? "matched no group settlement record (the settlement switched payment method or was re-attempted)"
       : "did not match the group settlement total at apply time (the recorded amount, or a child booking changed while the intent was open)";
 

@@ -14,6 +14,10 @@ import {
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import {
+  acquireLodgeCapacityLock,
+  checkCapacityForGuestRanges,
+} from "@/lib/capacity";
 
 export async function POST(
   _request: NextRequest,
@@ -77,7 +81,11 @@ export async function POST(
   // Handle zero-dollar bookings — auto-create payment and set PAID
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    include: { member: true, guests: true, promoRedemption: { include: { promoCode: true } } },
+    include: {
+      member: true,
+      guests: { include: { nights: true } }, // per-night sets (issue #713)
+      promoRedemption: { include: { promoCode: true } },
+    },
   });
 
   if (!booking) {
@@ -85,7 +93,62 @@ export async function POST(
   }
 
   if (booking.finalPriceCents === 0 && result.newStatus === BookingStatus.PAYMENT_PENDING) {
-    await prisma.$transaction(async (tx) => {
+    // #1881 — flipping a $0 booking PAYMENT_PENDING -> PAID is a net-new
+    // capacity claim to a capacity-holding status. confirmWaitlistOffer above
+    // committed the PAYMENT_PENDING flip in a SEPARATE transaction under its own
+    // per-lodge lock, so this claim ran wholly unserialised before: no lock, no
+    // re-check, a bare id-only update. Bring it under the two-tier protocol —
+    // global lock(1) first (mutual exclusion with cancel/settlement), then the
+    // per-lodge lock (serialise the capacity claim against per-lodge creators),
+    // re-read under the locks, re-check capacity, and status-guard the flip.
+    const flip = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await acquireLodgeCapacityLock(tx, booking.lodgeId);
+
+      const locked = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: { guests: { include: { nights: true } } },
+      });
+      if (!locked || locked.status !== BookingStatus.PAYMENT_PENDING) {
+        return { ok: false as const, status: 409 };
+      }
+
+      const { available } = await checkCapacityForGuestRanges(
+        locked.lodgeId,
+        locked.checkIn,
+        locked.checkOut,
+        locked.guests,
+        bookingId,
+        tx
+      );
+      if (!available) {
+        // PAYMENT_PENDING does not hold capacity. Revert the failed second-stage
+        // $0 claim to WAITLISTED inside this locked transaction so ordinary
+        // waitlist offering can retry it instead of stranding a booking that
+        // owns no bed.
+        const restored = await tx.booking.updateMany({
+          where: { id: bookingId, status: BookingStatus.PAYMENT_PENDING },
+          data: {
+            status: BookingStatus.WAITLISTED,
+            waitlistOfferedAt: null,
+            waitlistOfferExpiresAt: null,
+            waitlistOfferedLodgeId: null,
+            waitlistOfferedPriceCents: null,
+          },
+        });
+        if (restored.count === 1) {
+          await reconcileBedAllocationsForBooking({
+            bookingId,
+            db: tx,
+            previousRange: {
+              checkIn: locked.checkIn,
+              checkOut: locked.checkOut,
+            },
+          });
+        }
+        return { ok: false as const, status: 409 };
+      }
+
       await tx.payment.create({
         data: {
           bookingId,
@@ -93,10 +156,15 @@ export async function POST(
           status: "SUCCEEDED",
         },
       });
-      await tx.booking.update({
-        where: { id: bookingId },
+      const claimed = await tx.booking.updateMany({
+        where: { id: bookingId, status: BookingStatus.PAYMENT_PENDING },
         data: { status: BookingStatus.PAID },
       });
+      if (claimed.count === 0) {
+        // Lost the claim to a concurrent writer despite the lock (defense in
+        // depth). The payment.create above rolls back with the transaction.
+        return { ok: false as const, status: 409 };
+      }
       await reconcileBedAllocationsForBooking({
         bookingId,
         db: tx,
@@ -105,7 +173,18 @@ export async function POST(
           checkOut: booking.checkOut,
         },
       });
+      return { ok: true as const };
     });
+
+    if (!flip.ok) {
+      // The locked claim already restored WAITLISTED, so the normal offer cron
+      // can retry it; PAYMENT_PENDING does not hold capacity and is never left
+      // parked as an operator-only recovery state.
+      return NextResponse.json(
+        { error: "Capacity is no longer available for this booking." },
+        { status: flip.status }
+      );
+    }
 
     sendBookingConfirmedEmail(
       booking.member.email,

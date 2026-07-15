@@ -28,6 +28,7 @@ import {
   BookingEventType,
   BookingStatus,
   GroupBookingPaymentMode,
+  GroupBookingStatus,
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
@@ -40,7 +41,6 @@ import {
 } from "@/lib/stripe";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
-import { getDefaultLodgeId } from "@/lib/lodges";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
 import {
@@ -78,6 +78,7 @@ type GroupSettlementOutcome =
   // A succeeded intent could not be applied (#1883): the settle route surfaces
   // the real apply outcome instead of masking it as "already_settled".
   | "refunded"
+  | "cancelled"
   | "amount_mismatch"
   | "not_found";
 
@@ -114,6 +115,7 @@ async function requireOrganiserPaysGroup(rawCode: string, sessionUserId: string)
           organiserMemberId: true,
           organiserBookingId: true,
           paymentMode: true,
+          status: true,
           organiserMember: {
             select: { id: true, email: true, firstName: true, lastName: true },
           },
@@ -136,6 +138,9 @@ async function requireOrganiserPaysGroup(rawCode: string, sessionUserId: string)
       "This group is each-pays-own; joiners settle their own bookings",
       409
     );
+  }
+  if (group.status === GroupBookingStatus.CANCELLED) {
+    throw new GroupBookingError("This group booking has been cancelled", 409);
   }
   return group;
 }
@@ -183,13 +188,6 @@ export async function createGroupSettlementIntent(
     return { outcome: "nothing_to_settle", amountCents: 0, childCount: 0 };
   }
 
-  const amountCents = children.reduce((sum, c) => sum + c.finalPriceCents, 0);
-  if (amountCents <= 0) {
-    // Zero-dollar joiners auto-confirm at creation and never reach here; guard
-    // anyway so we never open a Stripe intent for nothing.
-    return { outcome: "nothing_to_settle", amountCents: 0, childCount: 0 };
-  }
-
   // Internet Banking: raise one combined Xero invoice to the organiser instead
   // of charging a card. Reconciliation flips the children to PAID on payment.
   if (paymentMethod === "internet_banking") {
@@ -197,9 +195,56 @@ export async function createGroupSettlementIntent(
       group.id,
       group.organiserBooking.checkIn,
       children,
-      amountCents,
       group.settlement?.stripePaymentIntentId ?? null,
     );
+  }
+
+  const settlementHasRefundHistory =
+    group.settlement?.status === PaymentStatus.REFUNDED ||
+    group.settlement?.status === PaymentStatus.PARTIALLY_REFUNDED;
+  const preLockAmountCents = children.reduce(
+    (sum, child) => sum + child.finalPriceCents,
+    0
+  );
+  let existingIntent: Awaited<ReturnType<typeof getPaymentIntent>> | null = null;
+
+  // Captured money is reconciled before attempting a new capacity claim. The
+  // pre-lock total is not sent to a provider here; the apply path revalidates
+  // the capture, settlement, children and total under its own lock.
+  if (
+    group.settlement?.stripePaymentIntentId &&
+    group.settlement.amountCents === preLockAmountCents &&
+    !settlementHasRefundHistory
+  ) {
+    existingIntent = await getPaymentIntent(
+      group.settlement.stripePaymentIntentId
+    );
+    if (existingIntent.status === "succeeded") {
+      const applied = await applyGroupSettlementSucceeded({
+        id: existingIntent.id,
+        amount: existingIntent.amount,
+      });
+      return {
+        outcome:
+          applied.outcome === "settled" ||
+          applied.outcome === "already_settled"
+            ? "already_settled"
+            : applied.outcome,
+        amountCents: group.settlement.amountCents,
+        childCount: children.length,
+      };
+    }
+  }
+
+  // Lock, re-read and claim before deriving provider amount. Repricing writers
+  // share lock(1), so this returned snapshot is authoritative for this attempt.
+  const committedChildren = await commitChildrenToConfirmed(group.id, children);
+  const amountCents = committedChildren.reduce(
+    (sum, child) => sum + child.finalPriceCents,
+    0
+  );
+  if (amountCents <= 0) {
+    return { outcome: "nothing_to_settle", amountCents: 0, childCount: 0 };
   }
 
   // Reuse an outstanding intent for the same total before creating a new one,
@@ -210,15 +255,14 @@ export async function createGroupSettlementIntent(
   // re-admitting it would settle the children with money already handed back.
   // Skipping the branch mints a FRESH intent whose idempotency key is
   // discriminated by the refunded intent id, so Stripe cannot replay it either.
-  const settlementHasRefundHistory =
-    group.settlement?.status === PaymentStatus.REFUNDED ||
-    group.settlement?.status === PaymentStatus.PARTIALLY_REFUNDED;
   if (
     group.settlement?.stripePaymentIntentId &&
     group.settlement.amountCents === amountCents &&
     !settlementHasRefundHistory
   ) {
-    const existing = await getPaymentIntent(group.settlement.stripePaymentIntentId);
+    const existing =
+      existingIntent ??
+      (await getPaymentIntent(group.settlement.stripePaymentIntentId));
     if (existing.status === "succeeded") {
       const applied = await applyGroupSettlementSucceeded({
         id: existing.id,
@@ -228,7 +272,7 @@ export async function createGroupSettlementIntent(
         applied.outcome === "settled" ||
         applied.outcome === "already_settled"
       ) {
-        return { outcome: "already_settled", amountCents, childCount: children.length };
+        return { outcome: "already_settled", amountCents, childCount: committedChildren.length };
       }
       // The capture did NOT settle anything (refund history, drifted total, or
       // a vanished settlement row). Never report it settled (#1883): surface
@@ -238,24 +282,19 @@ export async function createGroupSettlementIntent(
       return {
         outcome: applied.outcome,
         amountCents,
-        childCount: children.length,
+        childCount: committedChildren.length,
       };
     }
     if (existing.client_secret && existing.status !== "canceled") {
-      // Make sure the children are committed even when we reuse the intent.
-      await commitChildrenToConfirmed(children);
       return {
         outcome: "ready",
         amountCents,
-        childCount: children.length,
+        childCount: committedChildren.length,
         clientSecret: existing.client_secret,
         paymentIntentId: existing.id,
       };
     }
   }
-
-  // Commit the beds (all-or-nothing) before charging anything.
-  await commitChildrenToConfirmed(children);
 
   const customer = await findOrCreateCustomer({
     email: group.organiserMember.email,
@@ -283,22 +322,42 @@ export async function createGroupSettlementIntent(
     idempotencyKey: `groupsettle_${group.id}_${amountCents}_${group.settlement?.stripePaymentIntentId ?? "initial"}`,
   });
 
-  await prisma.groupBookingSettlement.upsert({
-    where: { groupBookingId: group.id },
-    create: {
-      groupBookingId: group.id,
-      stripePaymentIntentId: paymentIntent.id,
-      stripeCustomerId: customer.id,
-      amountCents,
-      status: PaymentStatus.PENDING,
-    },
-    update: {
-      stripePaymentIntentId: paymentIntent.id,
-      stripeCustomerId: customer.id,
-      amountCents,
-      status: PaymentStatus.PENDING,
-    },
+  const attached = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const currentGroup = await tx.groupBooking.findUnique({
+      where: { id: group.id },
+      select: { status: true },
+    });
+    if (!currentGroup || currentGroup.status === GroupBookingStatus.CANCELLED) {
+      return false;
+    }
+    await tx.groupBookingSettlement.upsert({
+      where: { groupBookingId: group.id },
+      create: {
+        groupBookingId: group.id,
+        stripePaymentIntentId: paymentIntent.id,
+        stripeCustomerId: customer.id,
+        amountCents,
+        status: PaymentStatus.PENDING,
+      },
+      update: {
+        stripePaymentIntentId: paymentIntent.id,
+        stripeCustomerId: customer.id,
+        amountCents,
+        status: PaymentStatus.PENDING,
+      },
+    });
+    return true;
   });
+  if (!attached) {
+    await cancelPaymentIntentIfCancellable(paymentIntent.id).catch((err) =>
+      logger.error(
+        { err, groupBookingId: group.id, paymentIntentId: paymentIntent.id },
+        "Failed to cancel a group settlement intent fenced during creation"
+      )
+    );
+    throw new GroupBookingError("This group booking has been cancelled", 409);
+  }
 
   // The new intent supersedes any prior card attempt (e.g. the total changed).
   // Void the old intent so a retained client_secret in a stale tab can no
@@ -312,7 +371,7 @@ export async function createGroupSettlementIntent(
   return {
     outcome: "ready",
     amountCents,
-    childCount: children.length,
+    childCount: committedChildren.length,
     clientSecret: paymentIntent.client_secret,
     paymentIntentId: paymentIntent.id,
   };
@@ -331,7 +390,6 @@ async function createGroupSettlementInvoice(
   groupBookingId: string,
   checkIn: Date,
   children: SettleableChild[],
-  amountCents: number,
   staleStripePaymentIntentId: string | null
 ): Promise<GroupSettlementIntentResult> {
   const modules = await loadEffectiveModuleFlags();
@@ -361,25 +419,47 @@ async function createGroupSettlementInvoice(
     );
   }
 
-  // Hold the beds (all-or-nothing) before raising any invoice.
-  await commitChildrenToConfirmed(children);
+  const committedChildren = await commitChildrenToConfirmed(
+    groupBookingId,
+    children
+  );
+  const amountCents = committedChildren.reduce(
+    (sum, child) => sum + child.finalPriceCents,
+    0
+  );
+  if (amountCents <= 0) {
+    return { outcome: "nothing_to_settle", amountCents: 0, childCount: 0 };
+  }
 
-  const settlement = await prisma.groupBookingSettlement.upsert({
-    where: { groupBookingId },
-    create: {
-      groupBookingId,
-      source: PaymentSource.INTERNET_BANKING,
-      amountCents,
-      status: PaymentStatus.PENDING,
-    },
-    update: {
-      source: PaymentSource.INTERNET_BANKING,
-      // Drop any stale Stripe intent from a prior card attempt so reconciliation
-      // and the webhook never reuse it for an Internet Banking settlement.
-      stripePaymentIntentId: null,
-      amountCents,
-      status: PaymentStatus.PENDING,
-    },
+  const { settlement, queued } = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const currentGroup = await tx.groupBooking.findUnique({
+      where: { id: groupBookingId },
+      select: { status: true },
+    });
+    if (!currentGroup || currentGroup.status === GroupBookingStatus.CANCELLED) {
+      throw new GroupBookingError("This group booking has been cancelled", 409);
+    }
+    const settlement = await tx.groupBookingSettlement.upsert({
+      where: { groupBookingId },
+      create: {
+        groupBookingId,
+        source: PaymentSource.INTERNET_BANKING,
+        amountCents,
+        status: PaymentStatus.PENDING,
+      },
+      update: {
+        source: PaymentSource.INTERNET_BANKING,
+        stripePaymentIntentId: null,
+        amountCents,
+        status: PaymentStatus.PENDING,
+      },
+    });
+    const queued = await enqueueXeroGroupSettlementInvoiceOperation(
+      settlement.id,
+      { store: tx }
+    );
+    return { settlement, queued };
   });
 
   // Void the dropped card intent in Stripe so a retained client_secret in a
@@ -390,24 +470,24 @@ async function createGroupSettlementInvoice(
     groupBookingId,
   );
 
-  // Enqueue the combined invoice. A failure here is logged, not thrown: the beds
-  // are held and the settlement is recorded, and the outbox can be re-driven.
+  // The outbox row was committed atomically with the settlement above. Only the
+  // opportunistic worker kick is best-effort; the cron will drain the durable
+  // row if this process stops or the kick fails.
   try {
-    const queued = await enqueueXeroGroupSettlementInvoiceOperation(settlement.id);
     if (queued.queueOperationId) {
       await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
     }
   } catch (xeroErr) {
     logger.error(
       { err: xeroErr, groupBookingId, settlementId: settlement.id },
-      "Failed to queue combined Xero invoice for group settlement"
+      "Failed to kick combined Xero invoice worker for group settlement"
     );
   }
 
   return {
     outcome: "invoice_sent",
     amountCents,
-    childCount: children.length,
+    childCount: committedChildren.length,
     reference: buildGroupSettlementPaymentReference(groupBookingId),
   };
 }
@@ -444,13 +524,20 @@ async function cancelSupersededSettlementIntent(
  * fits, the whole transaction rolls back and a 409 lists the nights that are
  * full.
  */
-async function commitChildrenToConfirmed(children: SettleableChild[]) {
-  const pending = children.filter(
-    (c) => c.status === BookingStatus.PAYMENT_PENDING
-  );
-  if (pending.length === 0) return;
+async function commitChildrenToConfirmed(
+  groupBookingId: string,
+  children: SettleableChild[]
+): Promise<SettleableChild[]> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const currentGroup = await tx.groupBooking.findUnique({
+      where: { id: groupBookingId },
+      select: { status: true },
+    });
+    if (!currentGroup || currentGroup.status === GroupBookingStatus.CANCELLED) {
+      throw new GroupBookingError("This group booking has been cancelled", 409);
+    }
 
-  await prisma.$transaction(async (tx) => {
     // Flipping PAYMENT_PENDING -> CONFIRMED is a net-new capacity claim, so it
     // must serialize under the lodge whose beds are being claimed: the child's
     // lodge, NOT the group's default lodge. Booking creators at that lodge hold
@@ -462,7 +549,7 @@ async function commitChildrenToConfirmed(children: SettleableChild[]) {
     // Group joins cannot cross lodges, so this is normally a single lodge; the
     // multi-lock loop is defensive.
     const pendingLodgeRows = await tx.booking.findMany({
-      where: { id: { in: pending.map((c) => c.id) } },
+      where: { id: { in: children.map((c) => c.id) } },
       select: { lodgeId: true },
     });
     const lodgeIds = Array.from(
@@ -472,13 +559,28 @@ async function commitChildrenToConfirmed(children: SettleableChild[]) {
       await acquireLodgeCapacityLock(tx, lodgeId);
     }
 
-    for (const child of pending) {
+    const committed: SettleableChild[] = [];
+    for (const child of children) {
       // Re-read inside the lock; another path may have already moved it.
       const fresh = await tx.booking.findUnique({
         where: { id: child.id },
         include: { guests: { include: { nights: true } } },
       });
-      if (!fresh || fresh.status !== BookingStatus.PAYMENT_PENDING) {
+      if (
+        !fresh ||
+        !SETTLEABLE_CHILD_STATUSES.includes(
+          fresh.status as (typeof SETTLEABLE_CHILD_STATUSES)[number]
+        )
+      ) {
+        continue;
+      }
+
+      if (fresh.status === BookingStatus.CONFIRMED) {
+        committed.push({
+          id: fresh.id,
+          finalPriceCents: fresh.finalPriceCents ?? child.finalPriceCents,
+          status: fresh.status,
+        });
         continue;
       }
 
@@ -521,7 +623,13 @@ async function commitChildrenToConfirmed(children: SettleableChild[]) {
         db: tx,
         previousRange: { checkIn: fresh.checkIn, checkOut: fresh.checkOut },
       });
+      committed.push({
+        id: fresh.id,
+        finalPriceCents: fresh.finalPriceCents ?? child.finalPriceCents,
+        status: BookingStatus.CONFIRMED,
+      });
     }
+    return committed;
   });
 }
 
@@ -531,6 +639,7 @@ export interface GroupSettlementAppliedResult {
     | "already_settled"
     | "not_found"
     | "amount_mismatch"
+    | "cancelled"
     // #1883 — the settlement carries refund history; the (still "succeeded")
     // intent's money was handed back, so it must never settle the children.
     | "refunded";
@@ -545,6 +654,7 @@ interface LoadedSettlementForApply {
   groupBookingId: string;
   groupBooking: {
     organiserBookingId: string;
+    status: GroupBookingStatus;
     organiserMember: { email: string; firstName: string; lastName: string };
     organiserBooking: { checkIn: Date; checkOut: Date };
   };
@@ -555,6 +665,7 @@ const APPLY_SETTLEMENT_INCLUDE = {
   groupBooking: {
     select: {
       organiserBookingId: true,
+      status: true,
       organiserMember: { select: { email: true, firstName: true, lastName: true } },
       organiserBooking: { select: { checkIn: true, checkOut: true } },
     },
@@ -581,26 +692,36 @@ async function settleConfirmedChildrenAndNotify(
   }
 ): Promise<GroupSettlementAppliedResult> {
   const settled = await prisma.$transaction(async (tx) => {
-    // This path only flips CONFIRMED -> PAID; both statuses already hold
-    // capacity, so NO net-new capacity claim occurs here and the lock key is
-    // immaterial to capacity correctness. The default-lodge key is therefore
-    // acceptable (and kept for continuity) — do NOT copy this into a path that
-    // CLAIMS capacity (e.g. commitChildrenToConfirmed above), which must lock
-    // the specific lodge whose beds it reserves.
-    const defaultLodgeId = await getDefaultLodgeId(tx);
-    await acquireLodgeCapacityLock(tx, defaultLodgeId);
+    // #1881 two-tier protocol. This path flips CONFIRMED -> PAID (no net-new
+    // capacity claim — both statuses already hold beds) AND flips the settlement
+    // status (a money/booking-status transition). The settlement-status tier is
+    // serialised by the GLOBAL lock(1), which is the SAME key the group-settlement
+    // reaper, markGroupSettlementIntentFailed/Refunded, and the organiser-cancel
+    // FAILED claim take, so settle can never interleave a reap/fail/refund of the
+    // same settlement. (The pre-#1881 default-lodge key did NOT exclude the
+    // reaper's lock(1), so a settle could race a reap into an inconsistent
+    // settlement/child state.) No per-lodge lock is needed here because nothing
+    // claims capacity; a path that CLAIMS capacity (commitChildrenToConfirmed)
+    // still takes the specific child lodge locks.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
     // Re-confirm the settlement is still unpaid inside the lock (idempotency).
     const current = await tx.groupBookingSettlement.findUnique({
       where: { id: settlement.id },
-      select: { status: true },
+      select: {
+        status: true,
+        groupBooking: { select: { status: true } },
+      },
     });
+    if (current?.groupBooking?.status === GroupBookingStatus.CANCELLED) {
+      return "cancelled" as const;
+    }
     if (current?.status === PaymentStatus.SUCCEEDED) {
       return [] as string[];
     }
     // #1883 — a refund can land between the caller's status read and this
-    // lock (markGroupSettlementIntentRefunded takes the SAME lock, so the two
-    // serialize). Refunded money must never settle the children.
+    // lock (markGroupSettlementIntentRefunded takes the SAME global lock, so the
+    // two serialize). Refunded money must never settle the children.
     if (
       current?.status === PaymentStatus.REFUNDED ||
       current?.status === PaymentStatus.PARTIALLY_REFUNDED
@@ -661,10 +782,22 @@ async function settleConfirmedChildrenAndNotify(
           stripeCustomerId: options.stripeCustomerId ?? null,
         },
       });
-      await tx.booking.update({
-        where: { id: child.id },
+      // Status-guarded PAID flip (#1881): CONFIRMED -> PAID only. The children
+      // query already filtered CONFIRMED under lock(1); the guard makes the
+      // no-clobber guarantee structural against a racing reaper revert.
+      const paid = await tx.booking.updateMany({
+        where: { id: child.id, status: BookingStatus.CONFIRMED },
         data: { status: BookingStatus.PAID, draftExpiresAt: null },
       });
+      // Defense-in-depth (#1881, mirroring F1's markBookingPaymentSucceeded
+      // claim): under lock(1) with the CONFIRMED-filtered read above this can
+      // never be 0, but assert it so a count-0 rolls the whole settle back
+      // rather than leaving this child's Payment SUCCEEDED with no PAID booking.
+      if (paid.count === 0) {
+        throw new Error(
+          "Group settlement child status changed concurrently during the PAID claim (#1881)"
+        );
+      }
       await reconcileBedAllocationsForBooking({
         bookingId: child.id,
         db: tx,
@@ -673,8 +806,19 @@ async function settleConfirmedChildrenAndNotify(
       settledIds.push(child.id);
     }
 
-    await tx.groupBookingSettlement.update({
-      where: { id: settlement.id },
+    // Status-guarded settlement SUCCEEDED claim (#1881): never overwrite a
+    // settlement a concurrent reaper/refund already moved to a terminal state.
+    await tx.groupBookingSettlement.updateMany({
+      where: {
+        id: settlement.id,
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
+      },
       data: { status: PaymentStatus.SUCCEEDED, paidAt: new Date() },
     });
 
@@ -687,6 +831,14 @@ async function settleConfirmedChildrenAndNotify(
       "Group settlement was refunded before the settle transaction ran - refusing to settle (#1883)"
     );
     return { outcome: "refunded", settledBookingIds: [] };
+  }
+
+  if (settled === "cancelled") {
+    logger.warn(
+      { groupBookingId: settlement.groupBookingId, settlementId: settlement.id },
+      "Group cancellation fenced settlement apply - refusing to settle children (#1881)"
+    );
+    return { outcome: "cancelled", settledBookingIds: [] };
   }
 
   if (settled === null) {
@@ -891,9 +1043,9 @@ export async function applyGroupSettlementSucceededFromInvoice(
  * row itself: the settle-page reuse branch, applyGroupSettlementSucceeded and
  * the in-lock re-check all refuse REFUNDED/PARTIALLY_REFUNDED settlements.
  *
- * Runs under the SAME default-lodge advisory lock as
- * settleConfirmedChildrenAndNotify so the mark serializes with any in-flight
- * settle of the same settlement. The guarded updateMany never overwrites a
+ * Runs under the SAME global lock(1) as settleConfirmedChildrenAndNotify and the
+ * reaper (#1881) so the mark serializes with any in-flight settle/reap of the
+ * same settlement. The guarded updateMany never overwrites a
  * settlement that already SUCCEEDED (the refund path alerts admins about that
  * conflict) and is idempotent across webhook redelivery; a no-match (e.g. the
  * settlement was legitimately re-pointed at a newer intent) is a no-op.
@@ -905,8 +1057,7 @@ export async function markGroupSettlementIntentRefunded(
   paymentIntentId: string
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
-    const defaultLodgeId = await getDefaultLodgeId(tx);
-    await acquireLodgeCapacityLock(tx, defaultLodgeId);
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     await tx.groupBookingSettlement.updateMany({
       where: {
         stripePaymentIntentId: paymentIntentId,
@@ -932,23 +1083,41 @@ export async function markGroupSettlementIntentFailed(
   paymentIntentId: string,
   status: PaymentStatus = PaymentStatus.FAILED
 ): Promise<void> {
-  // Guard an out-of-order payment_failed/canceled webhook racing payment_intent.succeeded:
-  // atomically move only a settlement that is NOT already in a positive terminal state.
-  // markGroupSettlementIntentFailed only records a non-success outcome (its callers are the
-  // payment_failed and payment_intent.canceled webhooks, both stored as FAILED), so it can never
-  // legitimately need to leave SUCCEEDED/REFUNDED/PARTIALLY_REFUNDED. updateMany fuses the
-  // "still non-terminal?" check with the write; a no-match (incl. unknown intent) is a no-op.
-  await prisma.groupBookingSettlement.updateMany({
-    where: {
-      stripePaymentIntentId: paymentIntentId,
-      status: {
-        notIn: [
-          PaymentStatus.SUCCEEDED,
-          PaymentStatus.REFUNDED,
-          PaymentStatus.PARTIALLY_REFUNDED,
-        ],
+  // #1881 — take the SAME global lock(1) as its sibling
+  // markGroupSettlementIntentRefunded, the settle path
+  // (settleConfirmedChildrenAndNotify), the reaper, and the organiser-cancel
+  // FAILED claim. Before this the FAILED mark took NO lock, so it could execute
+  // BETWEEN the multi-statement settle transaction's own statements (the settle
+  // holds lock(1) for its whole duration; an unlocked updateMany does not
+  // serialise against it), leaving a torn interleaving the doc's "all
+  // settlement-status transitions take lock(1)" claim explicitly rules out.
+  // Wrapping the mark in lock(1) makes the two mutually exclude: they run
+  // whole-before-whole, never interleaved.
+  //
+  // The guard deliberately does NOT exclude FAILED from the settle path's notIn
+  // set: a settlement marked FAILED by a payment_failed/canceled webhook whose
+  // money is then GENUINELY captured (payment_intent.succeeded -> settle) MUST
+  // still become SUCCEEDED — real captured money has to settle the children, so
+  // letting settle overwrite FAILED -> SUCCEEDED is correct, not a bug. What the
+  // lock adds is atomicity (no interleaving), not a new veto. This mark records
+  // only a non-success outcome (callers: payment_failed, payment_intent.canceled,
+  // both stored FAILED), so it can never legitimately need to leave a positive
+  // terminal state; the guarded updateMany fuses the "still non-terminal?" check
+  // with the write, and a no-match (incl. unknown intent) is a no-op.
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    await tx.groupBookingSettlement.updateMany({
+      where: {
+        stripePaymentIntentId: paymentIntentId,
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
       },
-    },
-    data: { status },
+      data: { status },
+    });
   });
 }

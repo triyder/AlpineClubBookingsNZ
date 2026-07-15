@@ -258,9 +258,15 @@ export async function removeBookingGuestInTransaction({
   actorRole: string;
   settlementMethod?: BookingModificationSettlementMethod;
 }): Promise<RemoveBookingGuestResult> {
-  // Pre-lock read: only the lock key. lodgeId is immutable, so keying the lock
-  // from this read is safe; the guest set, pricing and refund below consume
-  // ONLY the post-lock re-read.
+  // Two-tier lock protocol (#1881). A single-guest removal computes a reduction
+  // refund (money) AND re-checks capacity, so it takes BOTH locks: the global
+  // lock(1) FIRST so it mutually excludes cancel / settlement / hold-release,
+  // then the per-lodge lock. The caller runs this inside prisma.$transaction, so
+  // lock(1) here is the transaction's first lock (global-before-per-lodge order).
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+  // Pre-lock read: only the lodge lock key. lodgeId is immutable, so keying the
+  // per-lodge lock from this read is safe; the guest set, pricing and refund
+  // below consume ONLY the post-lock re-read.
   const lockTarget = await tx.booking.findUnique({
     where: { id: bookingId },
     select: { lodgeId: true },

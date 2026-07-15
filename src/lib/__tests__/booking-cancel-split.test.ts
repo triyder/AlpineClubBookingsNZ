@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   bookingFindMany: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingUpdateMany: vi.fn(),
   prismaTransaction: vi.fn(),
   promoRedemptionFindUnique: vi.fn(),
   sendBookingCancelledEmail: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.bookingFindUnique,
       findMany: mocks.bookingFindMany,
       update: mocks.bookingUpdate,
+      updateMany: mocks.bookingUpdateMany,
     },
     promoRedemption: { findUnique: mocks.promoRedemptionFindUnique },
     promoCode: { update: vi.fn() },
@@ -91,6 +93,7 @@ describe("cancelBooking split cascade (#738)", () => {
             booking: {
               findUnique: mocks.bookingFindUnique,
               update: mocks.bookingUpdate,
+              updateMany: mocks.bookingUpdateMany,
             },
             payment: { update: vi.fn() },
           });
@@ -99,6 +102,7 @@ describe("cancelBooking split cascade (#738)", () => {
       }
     );
     mocks.bookingUpdate.mockResolvedValue({});
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     mocks.restoreCreditFromBooking.mockResolvedValue(0);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
     mocks.promoRedemptionFindUnique.mockResolvedValue(null);

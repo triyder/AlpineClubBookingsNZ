@@ -12,6 +12,51 @@ import {
 const BOOKING_MEMBER_NIGHT_CONFLICT_CODE =
   "BOOKING_MEMBER_NIGHT_CONFLICT";
 
+const BOOKING_MEMBER_NIGHT_LOCK_NAMESPACE = "booking-member-night";
+
+// The subset of a transaction client this module needs to take the per-member
+// advisory lock. `prisma` and any `Prisma.TransactionClient` both satisfy it.
+type MemberNightLockClient = { $executeRaw: Prisma.TransactionClient["$executeRaw"] };
+
+function hasExecuteRaw(db: unknown): db is MemberNightLockClient {
+  return (
+    typeof db === "object" &&
+    db !== null &&
+    typeof (db as { $executeRaw?: unknown }).$executeRaw === "function"
+  );
+}
+
+/**
+ * Serialise the member-night guard ACROSS LODGES (#1881). The person-night
+ * invariant — "a linked member is on at most one live booking per lodge night"
+ * — spans lodges (`findBookingMemberNightConflicts` intentionally ignores
+ * `lodgeId`), but capacity claims serialise only PER lodge
+ * (`acquireLodgeCapacityLock`). So two concurrent writers creating/re-dating the
+ * SAME member's footprint at DIFFERENT lodges hold different capacity locks and
+ * both pass the guard, double-booking the member. Take a per-member
+ * transaction-scoped advisory lock for every member-linked guest BEFORE the
+ * guard reads, in sorted memberId order so composing several can never deadlock
+ * (the same sorted-order discipline the multi-lodge processor uses). Keyed in
+ * its own namespace, so it never contends with the per-lodge, global, or
+ * credit-ledger locks. Callers take this AFTER their per-lodge lock, giving a
+ * consistent lodge → member-night acquisition order.
+ */
+export async function lockBookingMemberNights(
+  db: MemberNightLockClient,
+  guests: readonly ConflictGuestInput[],
+): Promise<void> {
+  const memberIds = Array.from(
+    new Set(
+      guests
+        .map((guest) => guest.memberId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ).sort();
+  for (const memberId of memberIds) {
+    await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${BOOKING_MEMBER_NIGHT_LOCK_NAMESPACE}), hashtext(${memberId}))`;
+  }
+}
+
 // test seam
 export const MEMBER_NIGHT_CONFLICT_BOOKING_STATUSES = [
   BookingStatus.DRAFT,
@@ -218,6 +263,18 @@ export async function assertNoBookingMemberNightConflicts(
   db: ConflictDb,
   input: Parameters<typeof findBookingMemberNightConflicts>[1],
 ) {
+  // #1881 — take the per-member advisory lock BEFORE the guard reads, so the
+  // cross-lodge person-night invariant is serialised (capacity locks are
+  // per-lodge only). This is the authoritative enforcement path and always runs
+  // inside a transaction, so the lock is transaction-scoped and released on
+  // commit/rollback. The advisory (non-authoritative) `findBookingMemberNight-
+  // Conflicts` pre-check deliberately does NOT lock. If `db` is not a
+  // lock-capable client (never the case for the authoritative callers, which
+  // pass the transaction client), the guard still reads — this only adds the
+  // cross-lodge serialisation, it never weakens the existing check.
+  if (hasExecuteRaw(db)) {
+    await lockBookingMemberNights(db, input.guests);
+  }
   const conflicts = await findBookingMemberNightConflicts(db, input);
   if (conflicts.length > 0) {
     throw new BookingMemberNightConflictError(conflicts);
