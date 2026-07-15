@@ -7,8 +7,10 @@ const mocks = vi.hoisted(() => ({
   requireActiveSessionUser: vi.fn(),
   loadEffectiveModuleFlags: vi.fn(),
   findUnique: vi.fn(),
+  txBookingFindUnique: vi.fn(),
   upsert: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingUpdateMany: vi.fn(),
   settingsFindUnique: vi.fn(),
   transaction: vi.fn(),
   txExecuteRaw: vi.fn(),
@@ -109,8 +111,12 @@ beforeEach(() => {
     internetBankingPayments: true,
   });
   mocks.findUnique.mockResolvedValue(stripeBooking());
+  // #1881 — the route re-reads the booking under the locks inside the tx before
+  // switching; default it to the same payable snapshot with an empty guest set.
+  mocks.txBookingFindUnique.mockResolvedValue({ ...stripeBooking(), guests: [] });
   mocks.upsert.mockResolvedValue({ id: "payment-1" });
   mocks.bookingUpdate.mockResolvedValue({});
+  mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   // Settings singleton: null → defaults (holdBedSlots false, no lead-time gate),
   // so the switch stays PAYMENT_PENDING without a capacity re-check.
   mocks.settingsFindUnique.mockResolvedValue(null);
@@ -124,7 +130,11 @@ beforeEach(() => {
         $queryRaw: vi.fn().mockResolvedValue([]),
         lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
         payment: { upsert: mocks.upsert },
-        booking: { update: mocks.bookingUpdate },
+        booking: {
+          findUnique: mocks.txBookingFindUnique,
+          update: mocks.bookingUpdate,
+          updateMany: mocks.bookingUpdateMany,
+        },
       })
   );
   mocks.cancelPaymentIntentIfCancellable.mockResolvedValue(undefined);
@@ -222,6 +232,21 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     await expect(res.json()).resolves.toEqual({ reference: REFERENCE });
     // No re-conversion work.
     expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("409s and writes nothing when a concurrent cancel moved the booking out of PAYMENT_PENDING under the locks (#1881)", async () => {
+    // The pre-transaction read still sees PAYMENT_PENDING, but the under-lock
+    // re-read sees a booking a concurrent cancel already moved to CANCELLED.
+    mocks.txBookingFindUnique.mockResolvedValue({
+      ...stripeBooking({ status: "CANCELLED" }),
+      guests: [],
+    });
+    const res = await POST(postRequest());
+    expect(res.status).toBe(409);
+    // No payment switch, no invoice work — the claim was refused.
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
     expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
   });
 

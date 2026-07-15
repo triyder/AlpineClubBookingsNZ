@@ -186,19 +186,39 @@ export async function POST(request: NextRequest) {
   const holdBedSlots = internetBankingSettings.holdBedSlots;
   const holdUntil = buildInternetBankingHoldUntil(internetBankingSettings);
   const paymentResult = await prisma.$transaction(async (tx) => {
+    // #1881 two-tier protocol. Switching to Internet Banking with holdBedSlots
+    // flips the booking to CONFIRMED (a capacity-holding status) — a net-new
+    // capacity claim and a money-side-effect (the IB payment). It must take
+    // BOTH locks (global lock(1) first, then the per-lodge capacity lock) and
+    // re-read the booking UNDER the locks: the pre-transaction `booking`
+    // snapshot was read with no lock at all, so before this the capacity check
+    // and status flip consumed a stale snapshot and did not mutually exclude a
+    // concurrent cancel (lock(1)) or per-lodge creator.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
     await acquireLodgeCapacityLock(tx, bookingLodgeId);
+
+    // Re-read under the locks; every status/capacity decision below consumes
+    // ONLY this post-lock snapshot. A concurrent cancel/modify that committed
+    // during the lock wait is only visible here.
+    const locked = await tx.booking.findUnique({
+      where: { id: booking.id },
+      include: { guests: { include: { nights: true } } },
+    });
+    if (!locked || locked.status !== BookingStatus.PAYMENT_PENDING) {
+      return { type: "notSwitchable" as const };
+    }
 
     if (holdBedSlots) {
       const capacity = await checkCapacityForGuestRanges(
         bookingLodgeId,
-        booking.checkIn,
-        booking.checkOut,
-        booking.guests,
-        booking.id,
+        locked.checkIn,
+        locked.checkOut,
+        locked.guests,
+        locked.id,
         tx,
       );
-      if (!capacity.available && bookingHasCapacityOverride(booking)) {
+      if (!capacity.available && bookingHasCapacityOverride(locked)) {
         // Persisted capacity override (#1771): admitted above the ceiling by an
         // admin, so switching to Internet Banking must not report
         // capacityExceeded — fall through and hold the slots as requested.
@@ -207,7 +227,7 @@ export async function POST(request: NextRequest) {
           "Switching an over-capacity booking with a persisted capacity override (#1771) to Internet Banking; skipping the capacity block"
         );
       }
-      if (!capacity.available && !bookingHasCapacityOverride(booking)) {
+      if (!capacity.available && !bookingHasCapacityOverride(locked)) {
         return { type: "capacityExceeded" as const };
       }
     }
@@ -239,10 +259,17 @@ export async function POST(request: NextRequest) {
     });
 
     if (holdBedSlots) {
-      await tx.booking.update({
-        where: { id: booking.id },
+      // Status-guarded claim (#1881): only a still-PAYMENT_PENDING booking may
+      // be claimed CONFIRMED. Under the locks count 0 cannot happen (the
+      // re-read gated on it), but the guard means a concurrent cancel that
+      // slipped the lock can never be clobbered back to CONFIRMED.
+      const claimed = await tx.booking.updateMany({
+        where: { id: booking.id, status: BookingStatus.PAYMENT_PENDING },
         data: { status: BookingStatus.CONFIRMED },
       });
+      if (claimed.count === 0) {
+        return { type: "notSwitchable" as const };
+      }
       await reconcileBedAllocationsForBooking({
         bookingId: booking.id,
         db: tx,
@@ -267,6 +294,15 @@ export async function POST(request: NextRequest) {
         error: "The lodge is fully booked on some of your requested dates.",
         code: "CAPACITY_EXCEEDED",
       },
+      { status: 409 },
+    );
+  }
+
+  if (paymentResult.type === "notSwitchable") {
+    // A concurrent cancel/modify moved the booking out of PAYMENT_PENDING while
+    // we waited on the locks (#1881). Nothing was written; report a conflict.
+    return NextResponse.json(
+      { error: "This booking can no longer switch to Internet Banking." },
       { status: 409 },
     );
   }
