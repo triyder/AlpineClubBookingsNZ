@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   createXeroCreditNote: vi.fn(),
   createXeroCreditNoteForModification: vi.fn(),
   allocateAppliedCreditForBooking: vi.fn(),
+  deallocateExcessAppliedCreditForBooking: vi.fn(),
   createXeroEntranceFeeInvoice: vi.fn(),
   createXeroInvoiceForBooking: vi.fn(),
   createXeroInvoiceForGroupSettlement: vi.fn(),
@@ -130,6 +131,9 @@ vi.mock("@/lib/xero-mappings", () => ({
 
 vi.mock("@/lib/xero-applied-credit-allocation", () => ({
   allocateAppliedCreditForBooking: mocks.allocateAppliedCreditForBooking,
+}));
+vi.mock("@/lib/xero-applied-credit-deallocation", () => ({
+  deallocateExcessAppliedCreditForBooking: mocks.deallocateExcessAppliedCreditForBooking,
 }));
 vi.mock("@/lib/xero-modification-credit-notes", () => ({
   createXeroCreditNoteForModification: mocks.createXeroCreditNoteForModification,
@@ -1885,6 +1889,15 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.allocateAppliedCreditForBooking,
     },
+    APPLIED_CREDIT_DEALLOCATION: {
+      op: {
+        id: "op_applied_credit_dealloc_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        requestPayload: { queueType: "APPLIED_CREDIT_DEALLOCATION", bookingId: "booking_1" },
+      },
+      handler: mocks.deallocateExcessAppliedCreditForBooking,
+    },
     MEMBERSHIP_CANCELLATION_CREDIT_NOTE: {
       op: {
         id: "op_membership_cancel_credit_1",
@@ -1970,6 +1983,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
     mocks.createUnappliedXeroCreditNoteForModification.mockResolvedValue("cn");
     mocks.allocateCreditNoteToInvoice.mockResolvedValue(undefined);
     mocks.allocateAppliedCreditForBooking.mockResolvedValue(undefined);
+    mocks.deallocateExcessAppliedCreditForBooking.mockResolvedValue(undefined);
     mocks.createXeroMembershipCancellationCreditNote.mockResolvedValue("cn");
     mocks.syncXeroMembershipCancellationContact.mockResolvedValue({
       memberId: "member_1",

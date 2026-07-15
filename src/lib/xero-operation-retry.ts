@@ -3,6 +3,7 @@ import {
   readQueuedOutboxPayload,
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
+  XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
@@ -616,6 +617,12 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
       ? { supported: true, reason: null }
       : { supported: false, reason: "Stored allocation payload is incomplete." };
   }
+  if (operation.entityType === "ALLOCATION" && operation.operationType === "UPDATE") {
+    const queued = readQueuedOutboxPayload(operation.requestPayload);
+    return queued?.queueType === XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE
+      ? { supported: true, reason: null }
+      : { supported: false, reason: "Stored applied-credit deallocation payload is incomplete." };
+  }
 
   if (
     operation.entityType === "SUBSCRIPTION" &&
@@ -1071,6 +1078,19 @@ export async function retryXeroSyncOperation(
     );
 
     return { message: "Retried Xero credit note allocation." };
+  }
+  if (operation.entityType === "ALLOCATION" && operation.operationType === "UPDATE") {
+    const queued = readQueuedOutboxPayload(operation.requestPayload);
+    if (queued?.queueType !== XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE) {
+      throw new XeroOperationRetryError("Stored applied-credit deallocation payload is incomplete.");
+    }
+    const { deallocateExcessAppliedCreditForBooking } = await import(
+      "@/lib/xero-applied-credit-deallocation"
+    );
+    await deallocateExcessAppliedCreditForBooking(queued.bookingId, {
+      syncOperationId: operation.id,
+    });
+    return { message: "Retried applied-credit deallocation." };
   }
 
   if (operation.entityType === "SUBSCRIPTION" && operation.operationType === "FETCH") {

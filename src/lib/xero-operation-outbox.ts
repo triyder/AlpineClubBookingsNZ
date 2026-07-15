@@ -35,6 +35,7 @@ import {
 } from "@/lib/xero-mappings";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
+import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import {
@@ -48,6 +49,7 @@ import {
   readQueueType,
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
+  XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
   XERO_OUTBOX_BOOKING_INVOICE_TYPE,
   XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE,
   XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
@@ -2167,6 +2169,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
       ) {
         await allocateAppliedCreditForBooking(payload.bookingId, {
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+          syncOperationId: queuedOperation.id,
+        });
+      } else if (
+        payload?.queueType === XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE
+      ) {
+        await deallocateExcessAppliedCreditForBooking(payload.bookingId, {
           syncOperationId: queuedOperation.id,
         });
       } else {

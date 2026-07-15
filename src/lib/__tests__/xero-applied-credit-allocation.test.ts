@@ -49,6 +49,7 @@ const h = vi.hoisted(() => {
     (where.xeroCreditNoteId === null ? r.xeroCreditNoteId === null : true);
 
   const prismaStub = {
+    xeroSyncOperation: { findFirst: async () => null },
     booking: {
       findUnique: async () => ({
         id: "b1",

@@ -21,6 +21,8 @@ export const XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE =
 // CREDIT_NOTE_ALLOCATION ops; it is NOT itself a single Xero call.
 export const XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE =
   "APPLIED_CREDIT_ALLOCATION";
+export const XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE =
+  "APPLIED_CREDIT_DEALLOCATION";
 export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE =
   "MEMBERSHIP_CANCELLATION_CREDIT_NOTE";
 export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE =
@@ -52,6 +54,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
+  XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
@@ -129,6 +132,10 @@ interface QueuedAppliedCreditAllocationOutboxPayload {
   queueType: typeof XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE;
   bookingId: string;
 }
+interface QueuedAppliedCreditDeallocationOutboxPayload {
+  queueType: typeof XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE;
+  bookingId: string;
+}
 
 interface QueuedMembershipCancellationCreditNoteOutboxPayload {
   queueType: typeof XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE;
@@ -170,6 +177,7 @@ export type QueuedOutboxPayload =
   | QueuedModificationAccountCreditNoteOutboxPayload
   | QueuedCreditNoteAllocationOutboxPayload
   | QueuedAppliedCreditAllocationOutboxPayload
+  | QueuedAppliedCreditDeallocationOutboxPayload
   | QueuedMembershipCancellationCreditNoteOutboxPayload
   | QueuedMembershipCancellationContactOutboxPayload
   | QueuedGroupSettlementInvoiceOutboxPayload
@@ -366,6 +374,10 @@ export function readQueuedOutboxPayload(
       bookingId,
     };
   }
+  if (queueType === XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE) {
+    const bookingId = readString(payload.bookingId);
+    return bookingId ? { queueType, bookingId } : null;
+  }
 
   if (queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE) {
     const subscriptionId = readString(payload.subscriptionId);
@@ -496,6 +508,13 @@ export function getQueuedOutboxExpectedOperation(
     return {
       entityType: "ALLOCATION",
       operationType: "ALLOCATE",
+      localModels: ["Payment"],
+    };
+  }
+  if (queueType === XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE) {
+    return {
+      entityType: "ALLOCATION",
+      operationType: "UPDATE",
       localModels: ["Payment"],
     };
   }

@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   checkMembershipStatus: vi.fn(),
   createXeroMembershipCancellationCreditNote: vi.fn(),
   allocateAppliedCreditForBooking: vi.fn(),
+  deallocateExcessAppliedCreditForBooking: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -83,6 +84,9 @@ vi.mock("@/lib/membership-cancellation-xero", () => ({
 vi.mock("@/lib/xero-applied-credit-allocation", () => ({
   allocateAppliedCreditForBooking: mocks.allocateAppliedCreditForBooking,
 }));
+vi.mock("@/lib/xero-applied-credit-deallocation", () => ({
+  deallocateExcessAppliedCreditForBooking: mocks.deallocateExcessAppliedCreditForBooking,
+}));
 
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
@@ -98,7 +102,10 @@ import {
   retryXeroSyncOperation,
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
-import { XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
+import {
+  XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
+  XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
+} from "@/lib/xero-operation-outbox-payload";
 import { CLUB_NAME } from "@/config/club-identity";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
@@ -1429,6 +1436,25 @@ describe("retryXeroSyncOperation", () => {
     });
     // Must NOT fall through to the generic single-note allocation path.
     expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+  });
+  it("re-drives checkpointed applied-credit deallocation on retry (#1887)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation({
+      entityType: "ALLOCATION",
+      operationType: "UPDATE",
+      localModel: "Payment",
+      localId: "pay_123",
+      requestPayload: {
+        queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
+        bookingId: "b1",
+        checkpoint: { allocationIds: ["alloc-1"] },
+      },
+    }));
+    await expect(retryXeroSyncOperation("op_123")).resolves.toEqual({
+      message: "Retried applied-credit deallocation.",
+    });
+    expect(mocks.deallocateExcessAppliedCreditForBooking).toHaveBeenCalledWith(
+      "b1", { syncOperationId: "op_123" }
+    );
   });
 
   it("throws a typed retry error for unsupported operations", async () => {

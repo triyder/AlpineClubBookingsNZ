@@ -3,6 +3,7 @@ import {
   AdminCreditAdjustmentRequestStatus,
   BookingEventType,
   CreditType,
+  PaymentSource,
   Prisma,
 } from "@prisma/client";
 import { createAuditLog } from "./audit";
@@ -10,6 +11,8 @@ import { recordBookingEvent } from "./booking-events";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
 import { applyLocalRefundAllocation } from "./payment-transactions";
 import logger from "@/lib/logger";
+import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
+import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import {
   assertMatchingIdempotentAdjustmentRequest,
   calculateAppliedCreditAmount,
@@ -333,25 +336,10 @@ export async function deriveBookingAppliedCreditCents(
  * Returns the post-clamp applied credit (what the effective-price and $0 auto-pay
  * decisions must use) and the excess refunded on THIS call.
  *
- * F3 (#1887) — KNOWN, BOUNDED Xero residual on Internet-Banking bookings (owner
- * decision to leave un-reversed; Xero territory). An unpaid IB booking allocates
- * its applied credit to the Xero invoice as ACCRECCREDIT notes at booking-create
- * (booking-create.ts, via enqueueXeroAppliedCreditAllocationOperation), unlike a
- * card booking whose allocation waits for cash capture and is skipped for IB in
- * xero-booking-invoices. When this clamp returns the excess to the LOCAL ledger
- * on a pre-payment IB reprice, that Xero allocation is NOT re-derived, so the
- * invoice keeps up to `refundedExcessCents` MORE credit allocated than the local
- * ledger now shows. The residual is strictly one-directional and bounded by the
- * refunded excess: the member is never under-credited locally (balance is
- * conserved), and the IB invoice only ever appears fully- or over-covered, never
- * underpaid, so no member is over-charged and no invoice is stranded outstanding.
- * The daily credit reconciliation (`cron-credit-reconciliation.ts`) checks LOCAL
- * consistency only (negative balances + orphaned applied credit) and does not
- * compare per-invoice Xero allocation to the local applied total, so it tolerates
- * this residual without false alerts. This matches the documented #1620 IB Xero
- * divergences (operator-reconciled). Reversing the Xero allocation would need an
- * out-of-transaction Xero call (no provider calls under this lock — F7/#1355) and
- * is left as an owner decision; see docs/DOMAIN_INVARIANTS.md.
+ * F3 (#1887): an IB booking may already have ACCRECCREDIT notes allocated to its
+ * Xero invoice. The positive ledger offset and durable provider-deallocation
+ * operation commit together below. The worker performs provider calls after
+ * this transaction, preserving the no-provider-call-under-ledger-lock invariant.
  */
 export async function clampAppliedCreditToBookingPrice(
   {
@@ -379,6 +367,39 @@ export async function clampAppliedCreditToBookingPrice(
       appliedToBookingId: bookingId,
     },
   });
+
+  const booking = await tx.booking.findUnique({
+    where: { id: bookingId },
+    select: { payment: { select: { id: true, source: true, xeroInvoiceId: true } } },
+  });
+  const payment = booking?.payment;
+  if (payment?.source === PaymentSource.INTERNET_BANKING && payment.xeroInvoiceId) {
+    const allocated = await tx.memberCreditNoteAllocation.aggregate({
+      where: { appliedToBookingId: bookingId },
+      _sum: { amountCents: true },
+    });
+    const targetAppliedCents = appliedCreditCents - excessCents;
+    if ((allocated._sum.amountCents ?? 0) > targetAppliedCents) {
+      const correlationKey = buildXeroIdempotencyKey(
+        "booking", bookingId, "applied-credit-deallocation", targetAppliedCents, "v1"
+      );
+      await startXeroSyncOperation({
+        direction: "OUTBOUND",
+        entityType: "ALLOCATION",
+        operationType: "UPDATE",
+        localModel: "Payment",
+        localId: payment.id,
+        status: "PENDING",
+        idempotencyKey: correlationKey,
+        correlationKey,
+        requestPayload: {
+          queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
+          bookingId,
+        },
+        store: tx,
+      });
+    }
+  }
 
   return {
     appliedCreditCents: appliedCreditCents - excessCents,

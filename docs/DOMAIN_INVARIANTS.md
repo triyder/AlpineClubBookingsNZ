@@ -801,21 +801,19 @@ AWAITING_REVIEW does NOT refund credit or auto-$0-pay before an admin approves i
 path; the release-from-review transition lands PAYMENT_PENDING, at which point the
 clamp runs.
 
-Xero residual on Internet-Banking bookings (F3, #1887 — bounded, owner-accepted):
-an unpaid IB booking allocates its applied credit to the Xero invoice as
-ACCRECCREDIT notes at booking-create (a card booking's allocation waits for cash
-capture and is skipped for IB). The clamp returns the over-consumed slice to the
-LOCAL ledger but does NOT re-derive that Xero allocation, so the IB invoice keeps
-up to the refunded excess MORE credit allocated than the local ledger shows. The
-residual is one-directional and bounded by the refunded excess: the member's
-local credit is conserved (never under-credited) and the invoice only ever reads
-fully- or over-covered, never underpaid, so no one is over-charged. The daily
-credit reconciliation checks local consistency only (negative balances + orphaned
-applied credit), not per-invoice Xero-vs-local allocation, so it tolerates the
-residual without false alerts. This is consistent with the documented #1620 IB
-Xero divergences. Reversing the allocation needs an out-of-transaction Xero call
-(no provider calls under the ledger lock, F7/#1355) and is left as an owner
-decision rather than implemented here.
+Xero deallocation on Internet-Banking bookings (F3, #1887): the positive clamp
+offset and `APPLIED_CREDIT_DEALLOCATION` outbox operation commit in the SAME
+member-credit-locked transaction. The worker later obtains Xero's real
+allocation IDs, checkpoints them, deletes the invoice allocations, recreates the
+reduced integer-cent target, verifies it, then reduces the local allocation
+slices. Multiple notes and multiple local lots per note are supported.
+
+Crash/retry contract: partial deletes resume only checkpointed IDs; a crash after
+provider recreate but before the local update verifies the target and completes
+the local reduction. Allocation/deallocation workers for one Payment refuse to
+overlap. A provider total that is neither exact local state nor a checkpointed
+partial/target is ambiguous (for example, a manual Xero edit): the operation
+fails visibly for operator retry/manual review and never guesses an ID or amount.
 
 Every modification path also applies the same lifecycle transitions: a
 PAYMENT_PENDING booking whose EFFECTIVE (credit-reduced) price drops to zero

@@ -38,9 +38,14 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 const mockApplyLocalRefundAllocation = vi.fn();
+const mockStartXeroSyncOperation = vi.fn();
 
 vi.mock("@/lib/payment-transactions", () => ({
   applyLocalRefundAllocation: mockApplyLocalRefundAllocation,
+}));
+vi.mock("@/lib/xero-sync", () => ({
+  buildXeroIdempotencyKey: (...parts: unknown[]) => parts.join(":"),
+  startXeroSyncOperation: mockStartXeroSyncOperation,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -631,6 +636,10 @@ describe("member-credit helpers", () => {
     function makeTx(appliedNetCents: number) {
       return {
         $executeRaw: vi.fn().mockResolvedValue(undefined),
+        booking: { findUnique: vi.fn().mockResolvedValue(null) },
+        memberCreditNoteAllocation: {
+          aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }),
+        },
         memberCredit: {
           // deriveBookingAppliedCreditCents reads Σ BOOKING_APPLIED (negative);
           // magnitude is the applied credit.
@@ -670,6 +679,25 @@ describe("member-credit helpers", () => {
       });
       // It serialises on the member-credit ledger lock first.
       expect(tx.$executeRaw).toHaveBeenCalled();
+    });
+
+    it("atomically queues IB Xero deallocation for the clamped target", async () => {
+      const tx = makeTx(-4000);
+      tx.booking.findUnique.mockResolvedValue({
+        payment: { id: "payment-1", source: "INTERNET_BANKING", xeroInvoiceId: "inv-1" },
+      });
+      tx.memberCreditNoteAllocation.aggregate.mockResolvedValue({ _sum: { amountCents: 4000 } });
+      const { clampAppliedCreditToBookingPrice } = await import("@/lib/member-credit");
+      await clampAppliedCreditToBookingPrice(
+        { memberId: "member-1", bookingId: "booking-ib", newFinalPriceCents: 3000 },
+        tx as any
+      );
+      expect(mockStartXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
+        operationType: "UPDATE",
+        correlationKey: "booking:booking-ib:applied-credit-deallocation:3000:v1",
+        requestPayload: { queueType: "APPLIED_CREDIT_DEALLOCATION", bookingId: "booking-ib" },
+        store: tx,
+      }));
     });
 
     it("is a no-op when applied credit still fits the new price", async () => {

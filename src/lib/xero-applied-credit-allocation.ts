@@ -38,6 +38,7 @@ import {
 } from "./xero-contacts";
 import { formatDate } from "./xero-invoice-helpers";
 import logger from "@/lib/logger";
+import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "./xero-operation-outbox-payload";
 
 // XeroObjectLink roles for this engine's artefacts.
 const APPLIED_CREDIT_ALLOCATION_ROLE = "APPLIED_CREDIT_ALLOCATION";
@@ -386,6 +387,23 @@ export async function allocateAppliedCreditForBooking(
     return;
   }
   const payment = booking.payment;
+  if (syncOperationId) {
+    const deallocationInFlight = await prisma.xeroSyncOperation.findFirst({
+      where: {
+        id: { not: syncOperationId },
+        localModel: "Payment",
+        localId: payment.id,
+        queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
+        status: "RUNNING",
+      },
+      select: { id: true },
+    });
+    if (deallocationInFlight) {
+      throw new Error(
+        `Applied-credit deallocation ${deallocationInFlight.id} is still running for booking ${bookingId}; retrying allocation`
+      );
+    }
+  }
   // Payment-method-agnostic (#1620/#1641): the engine keys on the booking's
   // invoice + BOOKING_APPLIED ledger, never on payment.source. The enqueue call
   // sites are Internet-Banking-only in #1620; #1641 will add a card caller
