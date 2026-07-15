@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   paymentFindUnique: vi.fn(),
   paymentUpdateMany: vi.fn(),
   settlementFindUnique: vi.fn(),
+  settlementAtFenceFindUnique: vi.fn(),
   bookingFindUnique: vi.fn(),
   enqueueGroupSettlementRefundRecovery: vi.fn(),
   markGroupSettlementRefundRecoverySucceeded: vi.fn(),
@@ -44,8 +45,11 @@ const txClient = {
   $executeRaw: mocks.txExecuteRaw,
   groupBooking: { update: mocks.groupBookingUpdate },
   booking: { update: mocks.bookingUpdate, updateMany: mocks.bookingUpdate },
-  payment: { update: mocks.paymentUpdate },
-  groupBookingSettlement: { updateMany: mocks.settlementUpdateMany },
+  payment: { update: mocks.paymentUpdate, updateMany: mocks.paymentUpdateMany },
+  groupBookingSettlement: {
+    updateMany: mocks.settlementUpdateMany,
+    findUnique: mocks.settlementAtFenceFindUnique,
+  },
 };
 
 vi.mock("@/lib/prisma", () => ({
@@ -143,9 +147,14 @@ beforeEach(() => {
   );
   mocks.bookingUpdate.mockResolvedValue({ count: 1 });
   mocks.paymentUpdate.mockResolvedValue(undefined);
+  mocks.paymentUpdateMany.mockResolvedValue({ count: 1 });
   mocks.groupBookingUpdate.mockResolvedValue(undefined);
   mocks.settlementUpdate.mockResolvedValue(undefined);
   mocks.settlementUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.settlementAtFenceFindUnique.mockImplementation(async () => {
+    const initial = await mocks.groupBookingFindUnique.mock.results.at(-1)?.value;
+    return initial?.settlement ?? null;
+  });
   mocks.txExecuteRaw.mockResolvedValue(undefined);
   mocks.reconcileBedAllocations.mockResolvedValue(undefined);
   mocks.revokePaymentLinks.mockResolvedValue(undefined);
@@ -377,13 +386,8 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
       where: {
         id: "settle-1",
-        status: {
-          notIn: [
-            PaymentStatus.SUCCEEDED,
-            PaymentStatus.REFUNDED,
-            PaymentStatus.PARTIALLY_REFUNDED,
-          ],
-        },
+        stripePaymentIntentId: "pi_settle_1",
+        status: PaymentStatus.PENDING,
       },
       data: { status: PaymentStatus.FAILED },
     });
@@ -503,13 +507,8 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
       where: {
         id: "settle-1",
-        status: {
-          notIn: [
-            PaymentStatus.SUCCEEDED,
-            PaymentStatus.REFUNDED,
-            PaymentStatus.PARTIALLY_REFUNDED,
-          ],
-        },
+        stripePaymentIntentId: "pi_settle_1",
+        status: PaymentStatus.PENDING,
       },
       data: { status: PaymentStatus.FAILED },
     });
@@ -672,6 +671,69 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     });
     const [, , opts] = mocks.enqueueXeroRefund.mock.calls[0];
     expect(opts.store).toBe(txClient);
+  });
+
+  it("does not act on a settlement created after cancellation observed null under the fence", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: null,
+    });
+    mocks.settlementAtFenceFindUnique.mockResolvedValue(null);
+    mocks.settlementFindUnique.mockResolvedValue({
+      id: "settle-late",
+      status: PaymentStatus.PENDING,
+      stripePaymentIntentId: "pi_late",
+      amountCents: 4500,
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    expect(mocks.cancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
+    expect(mocks.settlementUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.settlementFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("voids and fails the intent re-pointed before cancellation acquired lock(1)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.PENDING,
+        stripePaymentIntentId: "pi_stale",
+        amountCents: 4500,
+      },
+    });
+    mocks.settlementAtFenceFindUnique.mockResolvedValue({
+      id: "settle-1",
+      status: PaymentStatus.PENDING,
+      stripePaymentIntentId: "pi_current",
+      amountCents: 4500,
+      refundPlan: null,
+    });
+    mocks.settlementFindUnique.mockResolvedValue({
+      id: "settle-1",
+      status: PaymentStatus.FAILED,
+      stripePaymentIntentId: "pi_current",
+      amountCents: 4500,
+      refundPlan: null,
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_current");
+    expect(mocks.cancelPaymentIntentIfCancellable).not.toHaveBeenCalledWith("pi_stale");
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "settle-1",
+        stripePaymentIntentId: "pi_current",
+        status: PaymentStatus.PENDING,
+      },
+      data: { status: PaymentStatus.FAILED },
+    });
   });
 
   it("enqueues no credit note for a child owed nothing (refundForChild > 0 gating preserved)", async () => {
@@ -1084,8 +1146,12 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
         status: PaymentStatus.REFUNDED,
       },
     });
-    expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500);
-    expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-2", 4500);
+    expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, {
+      store: txClient,
+    });
+    expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-2", 4500, {
+      store: txClient,
+    });
     expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         bookingId: "child-1",
@@ -1114,6 +1180,9 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
       expect.objectContaining({ where: { id: "pay-1", refundedAmountCents: 0 } })
     );
     expect(mocks.enqueueXeroRefund).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, {
+      store: txClient,
+    });
   });
 
   it("leaves ACTIVE children to the inline loop / reaper resume path", async () => {
@@ -1164,6 +1233,26 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
     );
     expect(mocks.settlementUpdate).not.toHaveBeenCalled();
     expect(mocks.paymentUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rolls back the refund mirror when durable Xero enqueue fails", async () => {
+    mocks.settlementFindUnique.mockResolvedValue(
+      settlement({ status: PaymentStatus.REFUNDED, refundPlan: { "child-1": 4500 } })
+    );
+    mocks.bookingFindUnique.mockResolvedValueOnce(
+      cancelledChild("child-1", "pay-1")
+    );
+    mocks.enqueueXeroRefund.mockRejectedValueOnce(new Error("outbox unavailable"));
+
+    await expect(executeGroupSettlementRefundPlan("settle-1")).rejects.toThrow(
+      "outbox unavailable"
+    );
+    expect(mocks.paymentUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "pay-1", refundedAmountCents: 0 } })
+    );
+    expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, {
+      store: txClient,
+    });
   });
 
   it("is a no-op for a missing settlement or an empty plan", async () => {

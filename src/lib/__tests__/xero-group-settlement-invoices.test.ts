@@ -239,4 +239,44 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
       })
     );
   });
+
+  it("voids durably and suppresses email when cancellation commits after the post-create check", async () => {
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce(settlement(GroupBookingStatus.OPEN))
+      .mockResolvedValueOnce({
+        groupBooking: { status: GroupBookingStatus.OPEN },
+      })
+      .mockResolvedValueOnce({
+        groupBooking: { status: GroupBookingStatus.CANCELLED },
+      });
+
+    await expect(
+      createXeroInvoiceForGroupSettlement("settle-1", {
+        syncOperationId: "op-1",
+      })
+    ).resolves.toBeNull();
+
+    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
+      where: { id: "settle-1" },
+      data: { xeroInvoiceId: "inv-1", xeroInvoiceNumber: "INV-1" },
+    });
+    expect(mocks.accountingApi.updateInvoice).toHaveBeenCalledWith(
+      "tenant-1",
+      "inv-1",
+      { invoices: [{ invoiceID: "inv-1", status: "VOIDED" }] },
+      undefined,
+      "group-settlement:settle-1:invoice-void-after-cancel:inv-1:v1"
+    );
+    expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+    expect(mocks.completeSync).toHaveBeenCalledWith(
+      "op-1",
+      expect.objectContaining({
+        status: "SUCCEEDED",
+        responsePayload: expect.objectContaining({
+          cancelledAfterInvoiceCreation: true,
+          invoiceEmailSuppressed: true,
+        }),
+      })
+    );
+  });
 });

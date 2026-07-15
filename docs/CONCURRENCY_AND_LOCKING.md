@@ -189,6 +189,10 @@ The opt-in PostgreSQL race harness is wired into the migration-drift job against
 its own `postgres:16-alpine` service on loopback port `55442`, database
 `concurrency_race_1881`. Its dedicated-URL, loopback, high-port, and name-marker
 guards remain mandatory; ordinary application databases are never valid targets.
+Alongside scratch-table lock/CAS probes, the harness seeds the migrated
+application schema and races the real group-settlement failure writer against a
+locked PaymentIntent re-point, proving a stale webhook cannot fail the new
+settlement attempt.
 
 ### Member-night guard → per-member lock, ACROSS lodges
 

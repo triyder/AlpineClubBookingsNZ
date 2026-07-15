@@ -391,6 +391,33 @@ export async function createXeroInvoiceForGroupSettlement(
       return null;
     }
 
+    // Cancellation can commit after the post-create check above but before the
+    // email call. Re-enter the same lifecycle fence immediately before email;
+    // if cancellation won that combined interleaving, the already-persisted
+    // provider identity makes VOID compensation durable/retryable and the
+    // organiser never receives a payable invoice for a cancelled group.
+    const cancelledBeforeEmail = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      const fresh = await tx.groupBookingSettlement.findUnique({
+        where: { id: settlement.id },
+        select: { groupBooking: { select: { status: true } } },
+      });
+      if (!fresh) {
+        throw new Error(`Group settlement not found: ${settlementId}`);
+      }
+      return fresh.groupBooking.status === GroupBookingStatus.CANCELLED;
+    });
+    if (cancelledBeforeEmail) {
+      await voidCancelledGroupSettlementInvoice({
+        settlementId: settlement.id,
+        invoiceId: createdInvoice.invoiceID,
+        invoiceNumber: createdInvoice.invoiceNumber ?? null,
+        syncOperationId: operationId!,
+        createResponse: response.body,
+      });
+      return null;
+    }
+
     // Email the invoice so the organiser can pay it by bank transfer.
     let invoiceEmailResponseBody: unknown = null;
     let invoiceEmailError: unknown = null;

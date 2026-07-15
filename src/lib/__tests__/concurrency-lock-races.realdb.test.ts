@@ -21,13 +21,14 @@
  *
  * The harness validates the MECHANISM the whole fix rests on — advisory-lock
  * mutual exclusion plus status-guarded compare-and-set — against a scratch
- * table, so it needs none of the app's schema or seed graph. That keeps it
- * self-contained and deterministic while still exercising the real Postgres
- * lock manager and MVCC that the production code depends on.
+ * table, plus a representative application-level settlement failure/re-point
+ * race against the migrated Prisma schema. This keeps the mechanism probes
+ * deterministic while proving an actual writer uses the protocol correctly.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 let prisma: typeof import("@/lib/prisma")["prisma"];
+let markGroupSettlementIntentFailed: typeof import("@/lib/group-settlement")["markGroupSettlementIntentFailed"];
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -69,6 +70,11 @@ export function assertSafeRaceDbUrl(url: string): void {
 }
 
 const PROBE_TABLE = "_concurrency_race_probe_1881";
+const APP_MEMBER_ID = "race-1881-member";
+const APP_LODGE_ID = "race-1881-lodge";
+const APP_BOOKING_ID = "race-1881-booking";
+const APP_GROUP_ID = "race-1881-group";
+const APP_SETTLEMENT_ID = "race-1881-settlement";
 
 describe("concurrency race DB safety guard (#1881)", () => {
   it("accepts only a dedicated loopback scratch database", () => {
@@ -100,12 +106,57 @@ describe("concurrency race DB safety guard (#1881)", () => {
       assertSafeRaceDbUrl(RACE_DB_URL);
       process.env.DATABASE_URL = RACE_DB_URL;
       ({ prisma } = await import("@/lib/prisma"));
+      ({ markGroupSettlementIntentFailed } = await import("@/lib/group-settlement"));
       await prisma.$executeRawUnsafe(
         `CREATE TABLE IF NOT EXISTS "${PROBE_TABLE}" (id text PRIMARY KEY, status text NOT NULL)`
       );
+      await prisma.member.create({
+        data: {
+          id: APP_MEMBER_ID,
+          email: "race-1881@example.invalid",
+          passwordHash: "not-a-real-password",
+          firstName: "Race",
+          lastName: "Harness",
+        },
+      });
+      await prisma.lodge.create({
+        data: { id: APP_LODGE_ID, name: "Race Harness", slug: "race-1881" },
+      });
+      await prisma.booking.create({
+        data: {
+          id: APP_BOOKING_ID,
+          memberId: APP_MEMBER_ID,
+          lodgeId: APP_LODGE_ID,
+          checkIn: new Date("2099-01-01"),
+          checkOut: new Date("2099-01-02"),
+          totalPriceCents: 100,
+          finalPriceCents: 100,
+        },
+      });
+      await prisma.groupBooking.create({
+        data: {
+          id: APP_GROUP_ID,
+          organiserBookingId: APP_BOOKING_ID,
+          organiserMemberId: APP_MEMBER_ID,
+          joinCode: "RACE1881",
+          paymentMode: "ORGANISER_PAYS",
+        },
+      });
+      await prisma.groupBookingSettlement.create({
+        data: {
+          id: APP_SETTLEMENT_ID,
+          groupBookingId: APP_GROUP_ID,
+          stripePaymentIntentId: "pi_race_old",
+          amountCents: 100,
+        },
+      });
     });
 
     afterAll(async () => {
+      await prisma.groupBooking.deleteMany({ where: { id: APP_GROUP_ID } });
+      await prisma.booking.deleteMany({ where: { id: APP_BOOKING_ID } });
+      await prisma.lodge.deleteMany({ where: { id: APP_LODGE_ID } });
+      await prisma.member.deleteMany({ where: { id: APP_MEMBER_ID } });
       await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "${PROBE_TABLE}"`);
       await prisma.$disconnect();
     });
@@ -220,6 +271,40 @@ describe("concurrency race DB safety guard (#1881)", () => {
       // report a claim — the clobber the guarded pattern eliminates.
       expect(a).toBe(1);
       expect(b).toBe(1);
+    });
+
+    it("application settlement failure cannot clobber an intent re-pointed under lock(1)", async () => {
+      for (let i = 0; i < 20; i += 1) {
+        const oldIntent = `pi_race_old_${i}`;
+        const newIntent = `pi_race_new_${i}`;
+        await prisma.groupBookingSettlement.update({
+          where: { id: APP_SETTLEMENT_ID },
+          data: { stripePaymentIntentId: oldIntent, status: "PENDING" },
+        });
+
+        await Promise.all([
+          // Real application webhook writer.
+          markGroupSettlementIntentFailed(oldIntent),
+          // Representative settlement retry writer using the production lock
+          // order and re-pointing the provider identity atomically.
+          prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+            await tx.groupBookingSettlement.update({
+              where: { id: APP_SETTLEMENT_ID },
+              data: { stripePaymentIntentId: newIntent, status: "PENDING" },
+            });
+          }),
+        ]);
+
+        const current = await prisma.groupBookingSettlement.findUniqueOrThrow({
+          where: { id: APP_SETTLEMENT_ID },
+          select: { stripePaymentIntentId: true, status: true },
+        });
+        expect(current).toEqual({
+          stripePaymentIntentId: newIntent,
+          status: "PENDING",
+        });
+      }
     });
   }
 );
