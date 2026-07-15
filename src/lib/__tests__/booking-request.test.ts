@@ -30,6 +30,7 @@ vi.mock("@/lib/prisma", () => ({
       create: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     bookingGuest: {
       findMany: vi.fn(),
@@ -1506,7 +1507,7 @@ describe("approveBookingRequest", () => {
     // them in place (issue #1254) rather than deleteMany+recreate.
     vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([{ id: "g1" }] as never);
     vi.mocked(prisma.bookingGuest.update).mockResolvedValue({} as never);
-    vi.mocked(prisma.booking.update).mockResolvedValue({ id: "held-1" } as never);
+    vi.mocked(prisma.booking.updateMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
     vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
     vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
@@ -1523,8 +1524,9 @@ describe("approveBookingRequest", () => {
       expect.objectContaining({ where: { id: "g1" } })
     );
     expect(prisma.bookingGuest.deleteMany).not.toHaveBeenCalled();
-    // Reuse path updates the held booking rather than creating a fresh one.
-    expect(prisma.booking.update).toHaveBeenCalled();
+    // Reuse path updates the held booking (status-guarded updateMany, #1881)
+    // rather than creating a fresh one.
+    expect(prisma.booking.updateMany).toHaveBeenCalled();
     expect(prisma.member.create).not.toHaveBeenCalled();
     expect(prisma.booking.create).not.toHaveBeenCalled();
   });
@@ -1558,7 +1560,7 @@ describe("approveBookingRequest", () => {
     } as never);
     vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([{ id: "g1" }] as never);
     vi.mocked(prisma.bookingGuest.update).mockResolvedValue({} as never);
-    vi.mocked(prisma.booking.update).mockResolvedValue({ id: "held-1" } as never);
+    vi.mocked(prisma.booking.updateMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
     vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
     vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
@@ -1613,7 +1615,7 @@ describe("approveBookingRequest", () => {
     vi.mocked(prisma.member.create).mockResolvedValue({ id: "fresh-owner" } as never);
     vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([{ id: "g1" }] as never);
     vi.mocked(prisma.bookingGuest.update).mockResolvedValue({} as never);
-    vi.mocked(prisma.booking.update).mockResolvedValue({ id: "held-1" } as never);
+    vi.mocked(prisma.booking.updateMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
     vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
     vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
@@ -1631,8 +1633,8 @@ describe("approveBookingRequest", () => {
     >;
     expect(freshArgs.canLogin).toBe(false);
     expect(freshArgs.role).toBe("NON_MEMBER");
-    // The held booking is repointed at the substitute owner.
-    const updateArgs = vi.mocked(prisma.booking.update).mock.calls[0][0].data as Record<
+    // The held booking is repointed at the substitute owner (#1881 updateMany).
+    const updateArgs = vi.mocked(prisma.booking.updateMany).mock.calls[0][0].data as Record<
       string,
       unknown
     >;

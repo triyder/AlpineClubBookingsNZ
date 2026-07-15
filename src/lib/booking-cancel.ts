@@ -10,7 +10,7 @@ import {
 import { sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { recordBookingEvent } from "./booking-events";
-import { BookingEventType, CreditType, type Prisma } from "@prisma/client";
+import { BookingEventType, BookingStatus, CreditType, type Prisma } from "@prisma/client";
 import { createCancellationCredit, restoreCreditFromBooking } from "./member-credit";
 import { processWaitlistForDates } from "./waitlist";
 import {
@@ -398,19 +398,16 @@ async function performBookingCancellation(
     // the "claim-first without durable recovery inverts a crash into money
     // LOSS" caveat does not apply here. The clobber: a held AWAITING_REVIEW
     // booking can be converted to PENDING by a concurrent quote-accept
-    // (`convertBookingRequestToBooking` in booking-request.ts). That accept
-    // takes `pg_advisory_xact_lock(1)`, re-reads the held booking's status
-    // under the lock (booking-request.ts:903), and — if still AWAITING_REVIEW
-    // — updates it by id ONLY, with no status guard (booking-request.ts:951).
-    // A plain, lockless `booking.update` here could be sequenced between that
-    // accept's status re-read and its id-only write, clobbering the
-    // just-accepted PENDING booking back to CANCELLED (a guarded updateMany
-    // WITHOUT the lock does NOT close this, because the accept's id-only write
-    // would overwrite the CANCELLED it committed). Taking the SAME advisory
-    // lock and re-reading the status under it makes cancel and accept mutually
-    // exclude; the race loser observes a non-cancellable status and aborts
-    // cleanly with a 409, running none of the side effects below. This mirrors
-    // the paid single-flight claim (#1160) further down.
+    // (`approveBookingRequest` in booking-request.ts). Under the two-tier lock
+    // protocol (#1881) that accept takes the GLOBAL `pg_advisory_xact_lock(1)`
+    // FIRST (then the per-lodge lock) and status-guards its AWAITING_REVIEW →
+    // PENDING flip. This branch takes the SAME global lock(1) and both the
+    // under-lock re-read gate below AND a status-guarded `updateMany` on the
+    // CANCELLED flip, so cancel and accept mutually exclude on the shared key
+    // and neither can clobber the other: the race loser observes a
+    // non-cancellable status (re-read gate or count 0) and aborts cleanly with a
+    // 409, running none of the side effects below. This mirrors the paid
+    // single-flight claim (#1160) further down.
     const claim = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
@@ -436,8 +433,15 @@ async function performBookingCancellation(
       const wasOffered = fresh.status === "WAITLIST_OFFERED";
       const wasAwaitingReview = fresh.status === "AWAITING_REVIEW";
 
-      await tx.booking.update({
-        where: { id: bookingId },
+      // Status-guarded release (#1881): flip only while the booking is still in
+      // the no-payment cancellable set. Redundant with the under-lock re-read
+      // under lock(1), but it makes the "no clobber" guarantee structural rather
+      // than lock-dependent.
+      const released = await tx.booking.updateMany({
+        where: {
+          id: bookingId,
+          status: { in: [...NO_PAYMENT_CANCELLABLE_STATUSES] as BookingStatus[] },
+        },
         data: {
           status: "CANCELLED",
           ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
@@ -453,6 +457,9 @@ async function performBookingCancellation(
           waitlistOfferedPriceCents: null,
         },
       });
+      if (released.count === 0) {
+        return { claimed: false as const };
+      }
       if (wasAwaitingReview) {
         // Detach any booking-request pointer to this hold so a later re-quote
         // creates a fresh hold instead of reusing this now-cancelled row
@@ -609,14 +616,20 @@ async function performBookingCancellation(
           data: { stripeSetupIntentId: null },
         });
       }
-      await tx.booking.update({
-        where: { id: bookingId },
+      // Status-guarded release (#1881): flip only while still PENDING. Also
+      // release the exclusive whole-lodge hold (#1911) alongside the admin
+      // capacity hold so a cancelled PENDING booking never leaves a stale hold.
+      const released = await tx.booking.updateMany({
+        where: { id: bookingId, status: BookingStatus.PENDING },
         data: {
           status: "CANCELLED",
           ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
           ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
         },
       });
+      if (released.count === 0) {
+        return { claimed: false as const };
+      }
       await reconcileCancelledBookingBedAllocations(fresh, tx);
       await revokePaymentLinksForBooking(bookingId, tx);
       // No-op today (credit is only applied at PAYMENT_PENDING create) — kept
@@ -784,14 +797,31 @@ async function performBookingCancellation(
           data: paymentUpdateData,
         });
       }
-      await tx.booking.update({
-        where: { id: bookingId },
+      // Status-guarded release (#1881): claim only while still in the
+      // never-captured cancellable set. The loser gate above plus lock(1)
+      // already single-flight this, but the guard makes it structural. Also
+      // release the exclusive whole-lodge hold (#1911) alongside the admin
+      // capacity hold.
+      const released = await tx.booking.updateMany({
+        where: {
+          id: bookingId,
+          status: {
+            in: [
+              BookingStatus.PAYMENT_PENDING,
+              BookingStatus.CONFIRMED,
+              BookingStatus.PAID,
+            ],
+          },
+        },
         data: {
           status: "CANCELLED",
           ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
           ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
         },
       });
+      if (released.count === 0) {
+        return { claimed: false as const };
+      }
       await reconcileCancelledBookingBedAllocations(fresh, tx);
 
       // 100% restore — ledger truth, NO override argument (owner decision:

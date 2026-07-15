@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => {
   const tx = {
     $executeRaw: vi.fn(),
     bookingRequest: { findUnique: vi.fn(), update: vi.fn() },
-    booking: { findUnique: vi.fn(), update: vi.fn() },
+    booking: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     bookingRequestQuote: { count: vi.fn() },
   };
   return {
@@ -89,6 +89,9 @@ beforeEach(() => {
   mocks.prismaMock.$transaction.mockImplementation(
     async (cb: (t: typeof mocks.tx) => unknown) => cb(mocks.tx),
   );
+  // #1881 — the hold-release flips are now status-guarded updateMany; default
+  // to a successful claim (count 1) so the release proceeds.
+  mocks.tx.booking.updateMany.mockResolvedValue({ count: 1 });
   stubQuoteFindMany({ reminderQuotes: [], releaseQuotes: [] });
   // Phase 3 (stale MODIFY/QUERY hold release, #1254) is a no-op by default.
   vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([] as never);
@@ -231,9 +234,9 @@ describe("sendQuoteExpiryReminders — expired hold release (issue #1254)", () =
     const result = await sendQuoteExpiryReminders();
 
     expect(result.releasedHoldCount).toBe(1);
-    expect(mocks.tx.booking.update).toHaveBeenCalledWith(
+    expect(mocks.tx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "held-9" },
+        where: { id: "held-9", status: BookingStatus.AWAITING_REVIEW },
         data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
       }),
     );
@@ -326,9 +329,9 @@ describe("sendQuoteExpiryReminders — stale MODIFY/QUERY hold release (issue #1
     const result = await sendQuoteExpiryReminders();
 
     expect(result.releasedHoldCount).toBe(1);
-    expect(mocks.tx.booking.update).toHaveBeenCalledWith(
+    expect(mocks.tx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "held-m" },
+        where: { id: "held-m", status: BookingStatus.AWAITING_REVIEW },
         data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
       }),
     );

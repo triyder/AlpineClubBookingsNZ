@@ -144,9 +144,12 @@ export async function sendQuoteExpiryReminders(): Promise<{
 /**
  * Free the AWAITING_REVIEW hold behind any SENT quote whose response token has
  * expired (issue #1254). Idempotent and concurrency-safe: each release runs
- * under the shared booking advisory lock and re-verifies, so a race with a
- * late accept (quote flips to ACCEPTED; held row flips to PENDING) or a
- * requester cancel is a no-op rather than cancelling a live booking.
+ * under the GLOBAL booking advisory lock (`pg_advisory_xact_lock(1)`) — the
+ * same lock the quote-accept now takes FIRST under the two-tier protocol
+ * (#1881; booking-request.ts, before its per-lodge lock) — re-verifies under
+ * it, and status-guards the CANCELLED flip. So a race with a late accept
+ * (quote → ACCEPTED, held row → PENDING) or a requester cancel is a no-op
+ * rather than cancelling a live booking.
  */
 async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
   const expiredHeldQuotes = await prisma.bookingRequestQuote.findMany({
@@ -191,10 +194,13 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
           return false;
         }
 
-        await tx.booking.update({
-          where: { id: heldBookingId },
+        // Status-guarded release (#1881): flip only while still AWAITING_REVIEW
+        // so a concurrent accept that slipped the lock can never be clobbered.
+        const releasedRows = await tx.booking.updateMany({
+          where: { id: heldBookingId, status: BookingStatus.AWAITING_REVIEW },
           data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
         });
+        if (releasedRows.count === 0) return false;
         await reconcileBedAllocationsForBooking({
           bookingId: heldBookingId,
           db: tx,
@@ -255,10 +261,12 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
  * its original quote window had passed — is kept, so the next cron tick never
  * undoes a deliberate re-hold (#1296).
  *
- * Idempotent and concurrency-safe: each release runs under the shared booking
- * advisory lock and re-verifies the request is still in a modify/query state
- * with no SENT quote and a live AWAITING_REVIEW hold, so a race with a re-quote
- * or an accept is a no-op rather than cancelling a live booking.
+ * Idempotent and concurrency-safe: each release runs under the GLOBAL booking
+ * advisory lock (`pg_advisory_xact_lock(1)`) — the same lock the quote-accept
+ * takes FIRST under the two-tier protocol (#1881) — re-verifies the request is
+ * still in a modify/query state with no SENT quote and a live AWAITING_REVIEW
+ * hold, and status-guards the CANCELLED flip, so a race with a re-quote or an
+ * accept is a no-op rather than cancelling a live booking.
  */
 async function releaseStaleModificationHolds(now: Date): Promise<number> {
   const candidates = await prisma.bookingRequest.findMany({
@@ -351,10 +359,12 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
         // only release holds placed on or before the deadline (#1296).
         if (held.createdAt > deadline) return false;
 
-        await tx.booking.update({
-          where: { id: heldBookingId },
+        // Status-guarded release (#1881): flip only while still AWAITING_REVIEW.
+        const releasedRows = await tx.booking.updateMany({
+          where: { id: heldBookingId, status: BookingStatus.AWAITING_REVIEW },
           data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
         });
+        if (releasedRows.count === 0) return false;
         await reconcileBedAllocationsForBooking({
           bookingId: heldBookingId,
           db: tx,

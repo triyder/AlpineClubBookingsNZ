@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   paymentUpdate: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingUpdateMany: vi.fn(),
   promoRedemptionFindUnique: vi.fn(),
   prismaTransaction: vi.fn(),
   daysUntilDate: vi.fn(),
@@ -259,6 +260,7 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
             booking: {
               findUnique: mocks.bookingFindUnique,
               update: mocks.bookingUpdate,
+              updateMany: mocks.bookingUpdateMany,
             },
             payment: {
               update: mocks.paymentUpdate,
@@ -281,6 +283,7 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
     );
     mocks.paymentUpdate.mockResolvedValue({});
     mocks.bookingUpdate.mockResolvedValue({});
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     mocks.promoRedemptionFindUnique.mockResolvedValue(null);
     mocks.loadCancellationPolicy.mockResolvedValue(POLICY);
     mocks.restoreCreditFromBooking.mockResolvedValue(0);
