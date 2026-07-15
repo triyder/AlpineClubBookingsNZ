@@ -197,7 +197,7 @@ export async function settleGroupBookingOnOrganiserCancel(
     include: { member: true, payment: true },
   });
 
-  const settlement = group.settlement;
+  let settlement = group.settlement;
 
   // Mid-settlement: an open (PENDING) intent with children committed to CONFIRMED
   // but not yet captured. Void the intent and fail the settlement BEFORE
@@ -242,19 +242,30 @@ export async function settleGroupBookingOnOrganiserCancel(
     });
   }
 
-  // #1881 — re-read the settlement status AFTER the guarded FAILED claim so the
-  // refund decision below reflects a settle that may have captured the
-  // organiser's money under lock(1) between the initial load and here. Without
-  // this, a stale PENDING read would skip the owed refund on a now-SUCCEEDED
-  // settlement.
-  const settlementStatusNow = settlement
-    ? (
-        await prisma.groupBookingSettlement.findUnique({
-          where: { id: settlement.id },
-          select: { status: true },
-        })
-      )?.status ?? settlement.status
-    : undefined;
+  // #1881 — RELOAD the FULL settlement row AFTER the guarded FAILED claim so
+  // every refund decision below reads ONE consistent status. A concurrent
+  // settle can capture the organiser's money under lock(1) between the initial
+  // load (~:197) and here, flipping the settlement PENDING -> SUCCEEDED and the
+  // children CONFIRMED -> PAID. Reading only a repointed `settled` flag while
+  // the refund-firing guard, the REFUNDED/PARTIALLY_REFUNDED flip and its
+  // decision still read the STALE in-memory row was strictly worse than no
+  // re-read: `settled` would compute + persist a refund plan, but the stale
+  // guard (status !== SUCCEEDED) would SKIP the whole refund block — no Stripe
+  // refund, no REFUNDED flip, no durable recovery armed — while the child loop
+  // still wrote phantom per-child refund mirrors for money that never moved.
+  // Reassigning `settlement` to the fresh row makes the plan, the Stripe
+  // refund, the status flip, the recovery enqueue, and the per-child mirrors
+  // all agree on one status: when settle won the race (now SUCCEEDED) the
+  // owed refund FIRES and recovery is armed; a stale read can no longer strand
+  // the organiser's money behind phantom mirrors.
+  if (settlement) {
+    const freshSettlement = await prisma.groupBookingSettlement.findUnique({
+      where: { id: settlement.id },
+    });
+    if (freshSettlement) {
+      settlement = freshSettlement;
+    }
+  }
 
   // Refund the organiser when the group was already settled. Only genuinely PAID
   // children were charged (a member could have joined after settlement and still
@@ -265,7 +276,7 @@ export async function settleGroupBookingOnOrganiserCancel(
   // child-loop finishes, so gating the reconstruct on `settled` would lose the
   // plan and cancel the remaining paid children WITHOUT their refund mirror.
   // Reconstruct never recomputes — see the header (tier drift on a >24h re-drive).
-  const settled = settlementStatusNow === PaymentStatus.SUCCEEDED;
+  const settled = settlement?.status === PaymentStatus.SUCCEEDED;
   let refundByChildId = new Map<string, number>();
   let totalRefundCents = 0;
 
@@ -322,7 +333,9 @@ export async function settleGroupBookingOnOrganiserCancel(
   if (
     totalRefundCents > 0 &&
     settlement?.stripePaymentIntentId &&
-    settlement.status === PaymentStatus.SUCCEEDED
+    // #1881 — the SAME fresh-status value the plan was computed from, so the
+    // plan, the refund, the flip and the mirrors never disagree on the status.
+    settled
   ) {
     // F3 (#1351): persist the retry debt BEFORE the Stripe call. The anchor
     // paymentId satisfies the recovery-op schema FK only; the processor

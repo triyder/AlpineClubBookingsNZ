@@ -410,6 +410,116 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     );
   });
 
+  it("#1881 settle-wins-mid-cancel: a concurrent settle captures under lock(1) between load and re-read — the owed refund FIRES, no phantom mirror", async () => {
+    // The exact race the #1881 re-read was added for. The organiser cancel loads
+    // the settlement while it is still PENDING; a concurrent settle then captures
+    // the organiser's money under lock(1), flipping the settlement SUCCEEDED and
+    // the children CONFIRMED -> PAID. The FAILED claim below is a no-op (the
+    // settle already moved it to a terminal state, excluded by the notIn guard),
+    // and the fresh re-read must see SUCCEEDED.
+    //
+    // Before the fix (stale in-memory status on the refund guard) this produced
+    // the strictly-worse outcome: a refund plan computed + persisted, but the
+    // refund block SKIPPED (no Stripe refund, no REFUNDED flip, no recovery),
+    // while the child loop still wrote phantom refundedAmountCents mirrors for
+    // money that never moved. Assert the corrected control flow: the refund
+    // fires, the settlement flips REFUNDED, recovery is armed, and the per-child
+    // mirror is only written AFTER the real refund.
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      // Initial load: still PENDING (the settle has not committed yet).
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.PENDING,
+        amountCents: 9000,
+        stripePaymentIntentId: "pi_settle_1",
+        refundPlan: null,
+      },
+    });
+    // The fresh re-read AFTER the guarded FAILED claim: the concurrent settle
+    // won the race and captured the money.
+    mocks.settlementFindUnique.mockResolvedValue({
+      id: "settle-1",
+      status: PaymentStatus.SUCCEEDED,
+      amountCents: 9000,
+      stripePaymentIntentId: "pi_settle_1",
+      refundPlan: null,
+    });
+    // The settle already flipped the children CONFIRMED -> PAID and recorded
+    // their per-child payments SUCCEEDED.
+    mocks.bookingFindMany.mockResolvedValue([
+      child({
+        id: "child-1",
+        status: BookingStatus.PAID,
+        finalPriceCents: 4500,
+        payment: { id: "pay-1", amountCents: 4500, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED },
+      }),
+      child({
+        id: "child-2",
+        status: BookingStatus.PAID,
+        finalPriceCents: 4500,
+        payment: { id: "pay-2", amountCents: 4500, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED },
+      }),
+    ]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    // The FAILED claim ran but was a no-op against the now-SUCCEEDED settlement
+    // (the notIn guard excludes SUCCEEDED), so it never clobbered the capture.
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "settle-1",
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
+      },
+      data: { status: PaymentStatus.FAILED },
+    });
+
+    // The owed refund FIRES for the combined captured total (the core fix).
+    expect(mocks.processRefund).toHaveBeenCalledTimes(1);
+    expect(mocks.processRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentIntentId: "pi_settle_1",
+        amountCents: 9000,
+        idempotencyKey: "group_cancel_refund_settle-1",
+      })
+    );
+    // The settlement flips REFUNDED (fresh status drove the decision).
+    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
+      where: { id: "settle-1" },
+      data: { status: PaymentStatus.REFUNDED },
+    });
+    // Durable recovery is armed before the refund and closed after the flip.
+    expect(mocks.enqueueGroupSettlementRefundRecovery).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.markGroupSettlementRefundRecoverySucceeded
+    ).toHaveBeenCalledWith({ settlementId: "settle-1" });
+
+    // Per-child mirrors ARE written, but each corresponds to the real refund:
+    // the mirror write follows the Stripe refund, never precedes it. No phantom
+    // mirror without a corresponding refund.
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay-1" },
+      data: { refundedAmountCents: 4500, status: PaymentStatus.REFUNDED },
+    });
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay-2" },
+      data: { refundedAmountCents: 4500, status: PaymentStatus.REFUNDED },
+    });
+    const firstMirrorOrder = Math.min(
+      ...mocks.paymentUpdate.mock.invocationCallOrder
+    );
+    expect(mocks.processRefund.mock.invocationCallOrder[0]).toBeLessThan(
+      firstMirrorOrder
+    );
+  });
+
   it("ORGANISER_PAYS settled with a late unpaid joiner: refunds only the paid child", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue({
       id: GROUP_ID,
