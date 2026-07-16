@@ -26,6 +26,7 @@ import {
   type BookingSortBy,
   type SortDir,
 } from "@/lib/admin-bookings-service";
+import { formatMemberPhone } from "@/lib/admin-member-detail-helpers";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { lodgeOrderBy } from "@/lib/lodges";
@@ -269,6 +270,11 @@ export default async function AdminBookingsPage({
                         </span>
                         <span className="block text-xs text-muted-foreground">{booking.member.email}</span>
                       </Link>
+                      {formatMemberPhone(booking.member) ? (
+                        <span className="block text-xs text-muted-foreground">
+                          {formatMemberPhone(booking.member)}
+                        </span>
+                      ) : null}
                     </TableCell>
                     {showLodge ? (
                       <TableCell className="text-sm">
