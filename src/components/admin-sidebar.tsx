@@ -412,6 +412,7 @@ const ZERO_PENDING_COUNTS: AdminPendingCounts = {
   membershipCancellations: 0,
   archiveRequests: 0,
   deletionRequests: 0,
+  memberDeleteRequests: 0,
   issueReports: 0,
   unassignedHutLeaderDates: 0,
 };
@@ -522,8 +523,13 @@ function SidebarLinks({
     badges["/admin/membership-cancellations"] =
       counts.membershipCancellations + counts.archiveRequests;
   }
-  if (counts.deletionRequests > 0) {
-    badges["/admin/deletion-requests"] = counts.deletionRequests;
+  // The deletion-requests page hosts two flows: self-service account deletions
+  // (deletionRequests, status PENDING) and admin-initiated hard-delete review
+  // (memberDeleteRequests, DELETE requests status REQUESTED). Merge both into
+  // one attention badge, mirroring the cancellations+archive merge above (#1938).
+  if (counts.deletionRequests + counts.memberDeleteRequests > 0) {
+    badges["/admin/deletion-requests"] =
+      counts.deletionRequests + counts.memberDeleteRequests;
   }
   if (counts.issueReports > 0) {
     badges["/admin/issue-reports"] = counts.issueReports;
