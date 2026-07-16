@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
 import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
-import { clubIdentity } from "@/config/club-identity";
-import { CLUB_NAME } from "@/config/club-identity";
+import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { buildEmbeddedBody } from "@/lib/page-content-embeds";
 import {
   getSanitizedPageContentByPath,
@@ -10,18 +9,24 @@ import {
 } from "@/lib/page-content-html";
 
 export async function generateMetadata(): Promise<Metadata> {
-  const page = await getSanitizedPageContentByPath("/join/apply");
+  const [page, { name: clubName }] = await Promise.all([
+    getSanitizedPageContentByPath("/join/apply"),
+    getCachedClubIdentity(),
+  ]);
 
   return {
     title: page?.title ?? "Apply for Membership",
     description:
       pageContentHtmlToPlainText(page?.headerText ?? "") ||
-      `Apply for membership with ${CLUB_NAME}. Provide your details and two nominators for committee review.`,
+      `Apply for membership with ${clubName}. Provide your details and two nominators for committee review.`,
   };
 }
 
 export default async function JoinApplyPage() {
-  const page = await getSanitizedPageContentByPath("/join/apply");
+  const [page, clubIdentity] = await Promise.all([
+    getSanitizedPageContentByPath("/join/apply"),
+    getCachedClubIdentity(),
+  ]);
   const embeddedBody = page ? await buildEmbeddedBody(page.contentHtml) : [];
 
   const caption = page?.caption ?? "Membership Application";
@@ -50,6 +55,7 @@ export default async function JoinApplyPage() {
           parts={embeddedBody}
           pageSlug="join-apply"
           keyPrefix="join-apply"
+          clubIdentity={clubIdentity}
         />
       ) : (
         <JoinApplyPageClient club={clubIdentity} showHero={false} />

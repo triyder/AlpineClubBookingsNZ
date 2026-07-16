@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
-import { CLUB_NAME } from "@/config/club-identity";
+import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import {
   getSanitizedPageContentByPath,
   pageContentHtmlToPlainText,
@@ -13,11 +13,14 @@ function pageSlugFromPath(path: string) {
 }
 
 export async function generateMetadata(): Promise<Metadata> {
-  const page = await getSanitizedPageContentByPath("/home");
+  const [page, { name: clubName }] = await Promise.all([
+    getSanitizedPageContentByPath("/home"),
+    getCachedClubIdentity(),
+  ]);
 
   if (!page) {
     return {
-      title: CLUB_NAME,
+      title: clubName,
     };
   }
 
@@ -25,12 +28,15 @@ export async function generateMetadata(): Promise<Metadata> {
     title: page.title,
     description:
       pageContentHtmlToPlainText(page.headerText) ||
-      `${page.title} information for ${CLUB_NAME}.`,
+      `${page.title} information for ${clubName}.`,
   };
 }
 
 export default async function HomePage() {
-  const page = await getSanitizedPageContentByPath("/home");
+  const [page, clubIdentity] = await Promise.all([
+    getSanitizedPageContentByPath("/home"),
+    getCachedClubIdentity(),
+  ]);
 
   if (!page) {
     notFound();
@@ -63,7 +69,11 @@ export default async function HomePage() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           {embeddedBody.length > 0 ? (
             <div className="space-y-10 text-base leading-7 text-brand-deep/85 [&_a]:text-brand-charcoal [&_a]:underline [&_h1]:font-heading [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:font-heading [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:font-heading [&_h3]:text-xl [&_h3]:font-semibold [&_li]:ml-6 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-4">
-              <EmbeddedPageContentParts parts={embeddedBody} pageSlug={pageSlug} />
+              <EmbeddedPageContentParts
+                parts={embeddedBody}
+                pageSlug={pageSlug}
+                clubIdentity={clubIdentity}
+              />
             </div>
           ) : (
             <div

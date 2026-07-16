@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
 import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
-import { CLUB_NAME } from "@/config/club-identity";
-import { getClubIdentity } from "@/lib/club-identity-settings";
+import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { buildEmbeddedBody } from "@/lib/page-content-embeds";
 import {
@@ -12,13 +11,16 @@ import {
 import { prisma } from "@/lib/prisma";
 
 export async function generateMetadata(): Promise<Metadata> {
-  const page = await getSanitizedPageContentByPath("/contact");
+  const [page, { name: clubName }] = await Promise.all([
+    getSanitizedPageContentByPath("/contact"),
+    getCachedClubIdentity(),
+  ]);
 
   return {
     title: page?.title ?? "Contact Us",
     description:
       pageContentHtmlToPlainText(page?.headerText ?? "") ||
-      `Get in touch with ${CLUB_NAME} about the club, lodge, or booking enquiries.`,
+      `Get in touch with ${clubName} about the club, lodge, or booking enquiries.`,
   };
 }
 
@@ -45,7 +47,7 @@ export default async function ContactPage() {
   const [page, lodge, clubIdentity] = await Promise.all([
     getSanitizedPageContentByPath("/contact"),
     loadDefaultLodgeContact(),
-    getClubIdentity(),
+    getCachedClubIdentity(),
   ]);
   const embeddedBody = page ? await buildEmbeddedBody(page.contentHtml) : [];
 
@@ -75,6 +77,7 @@ export default async function ContactPage() {
           parts={embeddedBody}
           pageSlug="contact"
           keyPrefix="contact"
+          clubIdentity={clubIdentity}
         />
       ) : (
         <ContactPageClient club={clubIdentity} lodge={lodge ?? undefined} showHero={false} />
