@@ -260,6 +260,51 @@ describe("admin Xero member-grouping route (view/edit gating, #1934)", () => {
     expect(json.reason).toBe("not_found");
   });
 
+  it("maps a forged-resume rejection (not_started) to 409 with the reason", async () => {
+    mocks.runXeroMemberGroupingBulkResyncChunk.mockRejectedValue(
+      new mocks.StaleDryRunError(
+        "not_started",
+        "This bulk re-sync was never started, so it cannot be resumed.",
+      ),
+    );
+    const res = await POST(
+      postRequest({
+        action: "bulk-resync",
+        dryRunId: "dr1",
+        confirmDryRunReviewed: true,
+        afterMemberId: "m1",
+      }),
+    );
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ reason: "not_started" });
+  });
+
+  it("maps a double-initiate rejection (already_started) to 409 with the reason", async () => {
+    mocks.runXeroMemberGroupingBulkResyncChunk.mockRejectedValue(
+      new mocks.StaleDryRunError(
+        "already_started",
+        "A bulk re-sync was already started from this dry-run.",
+      ),
+    );
+    const res = await POST(
+      postRequest({ action: "bulk-resync", dryRunId: "dr1", confirmDryRunReviewed: true }),
+    );
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ reason: "already_started" });
+  });
+
+  it("still returns the typed 409/422 when audit-logging the rejection throws (no 500, FIX 3)", async () => {
+    mocks.runXeroMemberGroupingBulkResyncChunk.mockRejectedValue(
+      new mocks.StaleDryRunError("cache_cursor_changed", "stale"),
+    );
+    mocks.logAudit.mockRejectedValue(new Error("audit sink down"));
+    const res = await POST(
+      postRequest({ action: "bulk-resync", dryRunId: "dr1", confirmDryRunReviewed: true }),
+    );
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ reason: "cache_cursor_changed" });
+  });
+
   it("allows set-mode for a finance:edit admin", async () => {
     const res = await POST(postRequest({ action: "set-mode", mode: "NONE" }));
     expect(res.status).toBe(200);

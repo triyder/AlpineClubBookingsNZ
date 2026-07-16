@@ -5,6 +5,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
+import logger from "@/lib/logger";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import { getXeroContactGroups, getXeroContactGroupCacheLastRefreshedAt } from "@/lib/xero";
 import { isXeroConnected } from "@/lib/xero-token-store";
@@ -188,7 +189,10 @@ export async function POST(request: NextRequest) {
   }
   const data = parsed.data;
 
-  // The dry-run is read-only; everything else requires finance:edit.
+  // The dry-run needs only finance:view. It reads the local caches to build the
+  // diff, but also persists a small provenance row (XeroMemberGroupingDryRun)
+  // that the bulk re-sync validates — a view-level audit artefact, not a
+  // finance-mutating action. Every other action requires finance:edit.
   if (data.action !== "dry-run" && !requireFinanceEdit(session)) {
     return forbidden();
   }
@@ -296,15 +300,25 @@ export async function POST(request: NextRequest) {
           // referenced dry-run does not exist), everything else -> 409 (a
           // conflict developed since the reviewed diff).
           if (resyncError instanceof StaleDryRunError) {
-            await logAudit({
-              action: "XERO_GROUPING_BULK_RESYNC_REJECTED",
-              memberId: session.user.id,
-              details: JSON.stringify({
-                dryRunId: data.dryRunId,
-                reason: resyncError.reason,
-                afterMemberId: data.afterMemberId ?? null,
-              }),
-            });
+            // Audit the refusal, but never let an audit-log failure convert the
+            // 409/422 into a 500 (which would also lose the reason taxonomy):
+            // log-and-continue so the typed rejection always reaches the client.
+            try {
+              await logAudit({
+                action: "XERO_GROUPING_BULK_RESYNC_REJECTED",
+                memberId: session.user.id,
+                details: JSON.stringify({
+                  dryRunId: data.dryRunId,
+                  reason: resyncError.reason,
+                  afterMemberId: data.afterMemberId ?? null,
+                }),
+              });
+            } catch (auditError) {
+              logger.error(
+                { err: auditError, dryRunId: data.dryRunId },
+                "Failed to audit-log XERO_GROUPING_BULK_RESYNC_REJECTED",
+              );
+            }
             return NextResponse.json(
               { error: resyncError.message, reason: resyncError.reason },
               { status: resyncError.reason === "not_found" ? 422 : 409 },
