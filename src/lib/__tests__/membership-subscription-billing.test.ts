@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   settings: { findUnique: vi.fn() },
   coverage: { findMany: vi.fn() },
+  subscriptions: { findMany: vi.fn() },
   members: { findMany: vi.fn() },
   membershipTypes: { findMany: vi.fn() },
   charges: { findMany: vi.fn() },
@@ -23,6 +24,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     membershipSubscriptionBillingSettings: mocks.settings,
     membershipSubscriptionChargeCoverage: mocks.coverage,
+    memberSubscription: mocks.subscriptions,
     member: mocks.members,
     membershipType: mocks.membershipTypes,
     membershipSubscriptionCharge: mocks.charges,
@@ -96,6 +98,7 @@ describe("membership subscription billing", () => {
     vi.clearAllMocks();
     mocks.settings.findUnique.mockResolvedValue({ invoiceDueDays: 30 });
     mocks.coverage.findMany.mockResolvedValue([]);
+    mocks.subscriptions.findMany.mockResolvedValue([]);
     mocks.members.findMany.mockResolvedValue([]);
     mocks.membershipTypes.findMany.mockResolvedValue([]);
     mocks.charges.findMany.mockResolvedValue([]);
@@ -176,6 +179,25 @@ describe("membership subscription billing", () => {
       xeroAccountCode: "203",
       xeroItemCode: "SUB",
     });
+  });
+
+  it("never invoices a subscription already PAID — manual mark-paid rows with no charge coverage (#1944)", async () => {
+    // A manually marked-paid member has status PAID but NO charge-coverage row
+    // (they never went through Xero billing). The sweep keys "already handled"
+    // off coverage rows, so without the PAID guard this member would be
+    // re-invoiced. Pin: they are skipped and produce no charge entry.
+    mocks.members.findMany.mockResolvedValue([member("manual-paid"), member("owes")]);
+    mocks.coverage.findMany.mockResolvedValue([]); // no coverage rows for anyone
+    mocks.subscriptions.findMany.mockResolvedValue([{ memberId: "manual-paid" }]); // PAID
+    const preview = await buildSubscriptionBillingPreview({
+      seasonYear: 2026,
+      decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+    });
+    expect(preview.entries).toHaveLength(1);
+    expect(preview.entries[0].coveredMembers).toEqual([{ id: "owes", name: "First-owes Member" }]);
+    expect(preview.entries.some((entry) =>
+      entry.coveredMembers.some((covered) => covered.id === "manual-paid"),
+    )).toBe(false);
   });
 
   it("produces one visible exception and no invoice charges when subscriptionIncome is not explicitly configured", async () => {

@@ -155,7 +155,7 @@ export async function buildSubscriptionBillingPreview(input: {
   if (decisionDate < bounds.start || decisionDate > bounds.end) {
     throw new SubscriptionBillingError(`Decision date must fall within membership year ${input.seasonYear}.`);
   }
-  const [dueDays, familyBillingMode, alreadyCovered, existingFamilyCharges, members] = await Promise.all([
+  const [dueDays, familyBillingMode, alreadyCovered, alreadyPaid, existingFamilyCharges, members] = await Promise.all([
     getSubscriptionBillingDueDays(db),
     getFamilyBillingMode(db),
     db.membershipSubscriptionChargeCoverage.findMany({
@@ -164,6 +164,20 @@ export async function buildSubscriptionBillingPreview(input: {
           seasonYear: input.seasonYear,
           ...(input.memberIds?.length ? { memberId: { in: input.memberIds } } : {}),
         },
+      },
+      select: { memberId: true },
+    }),
+    // #1944 non-clobber guard: the sweep otherwise keys "already handled" off
+    // charge-coverage rows, so a manually marked-paid subscription (status PAID
+    // with no charge and no Xero invoice link) would be re-invoiced. Skip every
+    // member whose subscription is already PAID for this season. Xero-paid rows
+    // already carry a coverage row and are a no-op here; this strictly adds the
+    // manual-PAID case and upholds "never invoice a subscription already PAID".
+    db.memberSubscription.findMany({
+      where: {
+        seasonYear: input.seasonYear,
+        status: "PAID",
+        ...(input.memberIds?.length ? { memberId: { in: input.memberIds } } : {}),
       },
       select: { memberId: true },
     }),
@@ -241,6 +255,8 @@ export async function buildSubscriptionBillingPreview(input: {
   const fallbackTypeByKey = new Map(fallbackTypes.map((type) => [type.key, type]));
 
   const coveredSet = new Set(alreadyCovered.map((row) => row.memberId));
+  // #1944: members already PAID (manual or Xero) are never re-invoiced.
+  const paidSet = new Set(alreadyPaid.map((row) => row.memberId));
   // The effective fee depends only on the membership type and the decision
   // date, and the decision date is fixed for the whole preview, so memoize
   // per membership type instead of querying once per member (#1886).
@@ -267,7 +283,7 @@ export async function buildSubscriptionBillingPreview(input: {
   const decisionDateOnly = formatDateOnly(decisionDate);
 
   for (const member of members) {
-    if (coveredSet.has(member.id)) continue;
+    if (coveredSet.has(member.id) || paidSet.has(member.id)) continue;
     const assignment = member.seasonalMembershipAssignments[0];
     const membershipType = assignment?.membershipType
       ?? fallbackTypeByKey.get(defaultMembershipTypeKeyForRole(member.role));

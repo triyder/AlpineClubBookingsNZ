@@ -353,6 +353,33 @@ export async function checkMembershipStatus(
   if (!member) throw new Error(`Member not found: ${memberId}`);
 
   const year = seasonYear ?? getSeasonYear(new Date());
+
+  // #1944 non-clobber guard: never let Xero discovery downgrade a subscription
+  // that was manually marked paid outside the Xero pipeline. The finance:edit
+  // manual mark-paid action sets status = PAID with provenance and never creates
+  // a Xero invoice, so a manual PAID row carries no xeroInvoiceId. If Xero later
+  // links a real subscription invoice to this row (xeroInvoiceId becomes set),
+  // this guard no longer fires and Xero is authoritative again, exactly as
+  // before. This protects the NOT_REQUIRED / NOT_INVOICED / invoice-derived
+  // upserts below without touching any of their logic.
+  const manualPaidGuard = await prisma.memberSubscription.findUnique({
+    where: { memberId_seasonYear: { memberId, seasonYear: year } },
+    select: {
+      status: true,
+      manuallyMarkedPaidAt: true,
+      xeroInvoiceId: true,
+      xeroOnlineInvoiceUrl: true,
+      paidAt: true,
+    },
+  });
+  if (manualPaidGuard?.manuallyMarkedPaidAt && !manualPaidGuard.xeroInvoiceId) {
+    return {
+      status: manualPaidGuard.status,
+      paidAt: manualPaidGuard.paidAt ?? undefined,
+      xeroOnlineInvoiceUrl: manualPaidGuard.xeroOnlineInvoiceUrl,
+    };
+  }
+
   const subscriptionRequired =
     !roleNeverRequiresSubscription(member.role) &&
     (await requiresPaidSubscriptionForAgeTierFromSettings(member.ageTier));

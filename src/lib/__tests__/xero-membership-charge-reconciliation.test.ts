@@ -109,6 +109,30 @@ describe("membership charge reconciliation", () => {
     });
   });
 
+  it("never downgrades a manually marked-paid row lacking a Xero invoice link (#1944)", async () => {
+    // A subscription marked paid outside the Xero pipeline carries a
+    // manuallyMarkedPaidAt with no xeroInvoiceId. checkMembershipStatus must
+    // return the manual PAID as-is and touch neither the local row nor Xero.
+    mocks.subscriptionFindUnique.mockResolvedValue({
+      id: "sub-manual",
+      status: "PAID",
+      manuallyMarkedPaidAt: new Date("2026-05-01T00:00:00.000Z"),
+      xeroInvoiceId: null,
+      xeroInvoiceNumber: null,
+      xeroOnlineInvoiceUrl: null,
+      paidAt: new Date("2026-05-01T00:00:00.000Z"),
+      chargeCoverage: null,
+    });
+
+    const result = await checkMembershipStatus("family-member-2", 2026);
+
+    expect(result.status).toBe("PAID");
+    expect(mocks.subscriptionUpsert).not.toHaveBeenCalled();
+    expect(mocks.getInvoice).not.toHaveBeenCalled();
+    expect(mocks.getInvoices).not.toHaveBeenCalled();
+    expect(mocks.startOperation).not.toHaveBeenCalled();
+  });
+
   it("refreshes a non-recipient family subscription by its immutable charge invoice", async () => {
     const result = await checkMembershipStatus("family-member-2", 2026);
 
