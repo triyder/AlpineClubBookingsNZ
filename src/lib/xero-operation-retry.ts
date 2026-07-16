@@ -73,6 +73,34 @@ function readAppliedCreditAllocationChildContext(payload: unknown): {
   };
 }
 
+function isLegacyContextlessAppliedCreditAllocationChild(
+  operation: RetryableOperation,
+): boolean {
+  if (
+    operation.entityType !== "ALLOCATION" ||
+    operation.operationType !== "ALLOCATE" ||
+    !parseAllocationRetryInput(operation)
+  ) {
+    return false;
+  }
+
+  if (operation.localModel === "MemberCreditNoteAllocation") {
+    // #1620 existing-note children always used the precise slice as their local
+    // record. No unrelated allocation workflow uses this model.
+    return true;
+  }
+
+  const payload = asRecord(operation.requestPayload);
+  // Before appliedCreditContext was added, the only direct (non-queue-shaped)
+  // Payment allocation emitted by the codebase was the #1620 minted-remainder
+  // child. Explicit queueType payloads remain eligible for their normal repair
+  // path, preserving unrelated CREDIT_NOTE_ALLOCATION retries.
+  return (
+    operation.localModel === "Payment" &&
+    !readString(payload?.queueType)
+  );
+}
+
 const REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON =
   "Refund credit notes are settled via a credit-note payment instead of invoice allocation.";
 const REDACTED_SECRET = "[REDACTED]";
@@ -552,6 +580,13 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
       reason: appliedCreditChild.parentOperationId
         ? `Retry the serialized parent applied-credit operation ${appliedCreditChild.parentOperationId}; this child allocation cannot run inline.`
         : "This applied-credit child allocation cannot run inline outside its serialized workflow.",
+    };
+  }
+  if (isLegacyContextlessAppliedCreditAllocationChild(operation)) {
+    return {
+      supported: false,
+      reason:
+        "This legacy applied-credit child allocation must be retried through its serialized parent workflow.",
     };
   }
 
@@ -1144,6 +1179,11 @@ export async function retryXeroSyncOperation(
     if (readAppliedCreditAllocationChildContext(operation.requestPayload)) {
       throw new XeroOperationRetryError(
         "Applied-credit child allocations must be retried through their serialized parent workflow.",
+      );
+    }
+    if (isLegacyContextlessAppliedCreditAllocationChild(operation)) {
+      throw new XeroOperationRetryError(
+        "Legacy applied-credit child allocations must be retried through their serialized parent workflow.",
       );
     }
 

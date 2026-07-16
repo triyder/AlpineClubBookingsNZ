@@ -105,6 +105,7 @@ import {
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
 import {
+  XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
@@ -291,6 +292,54 @@ describe("getXeroOperationRetryMeta", () => {
       reason:
         "Retry the serialized parent applied-credit operation parent_op_1; this child allocation cannot run inline.",
     });
+  });
+
+  it.each([
+    ["existing-note", "MemberCreditNoteAllocation", "slice_legacy_1"],
+    ["minted remainder", "Payment", "payment_legacy_1"],
+  ])(
+    "blocks a contextless legacy %s child allocation",
+    (_label, localModel, localId) => {
+      const result = getXeroOperationRetryMeta(
+        makeOperation({
+          entityType: "ALLOCATION",
+          operationType: "ALLOCATE",
+          localModel,
+          localId,
+          requestPayload: {
+            creditNoteId: "cn_legacy_1",
+            invoiceId: "inv_legacy_1",
+            amountCents: 2500,
+          },
+        }),
+      );
+
+      expect(result).toEqual({
+        supported: false,
+        reason:
+          "This legacy applied-credit child allocation must be retried through its serialized parent workflow.",
+      });
+    },
+  );
+
+  it("preserves unrelated queue-shaped Payment allocation retries", () => {
+    expect(
+      getXeroOperationRetryMeta(
+        makeOperation({
+          entityType: "ALLOCATION",
+          operationType: "ALLOCATE",
+          localModel: "Payment",
+          localId: "payment_repair_1",
+          requestPayload: {
+            queueType: XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
+            creditNoteId: "cn_repair_1",
+            invoiceId: "inv_repair_1",
+            amountCents: 1200,
+            role: "CREDIT_NOTE_ALLOCATION",
+          },
+        }),
+      ),
+    ).toEqual({ supported: true, reason: null });
   });
 });
 
@@ -1499,6 +1548,72 @@ describe("retryXeroSyncOperation", () => {
     ).rejects.toThrow("Retry the serialized parent applied-credit operation parent_op_1");
     expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
     expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["existing-note", "MemberCreditNoteAllocation", "slice_legacy_1"],
+    ["minted remainder", "Payment", "payment_legacy_1"],
+  ])(
+    "never executes a contextless legacy %s child inline",
+    async (_label, localModel, localId) => {
+      mocks.findUniqueOperation.mockResolvedValue(
+        makeOperation({
+          entityType: "ALLOCATION",
+          operationType: "ALLOCATE",
+          localModel,
+          localId,
+          requestPayload: {
+            creditNoteId: "cn_legacy_1",
+            invoiceId: "inv_legacy_1",
+            amountCents: 2500,
+          },
+        }),
+      );
+
+      await expect(
+        retryXeroSyncOperation("legacy_child_1", {
+          createdByMemberId: "admin_1",
+        }),
+      ).rejects.toThrow(
+        "This legacy applied-credit child allocation must be retried through its serialized parent workflow.",
+      );
+      expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+      expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    },
+  );
+
+  it("still executes an unrelated queue-shaped Payment allocation retry", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "ALLOCATION",
+        operationType: "ALLOCATE",
+        localModel: "Payment",
+        localId: "payment_repair_1",
+        requestPayload: {
+          queueType: XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
+          creditNoteId: "cn_repair_1",
+          invoiceId: "inv_repair_1",
+          amountCents: 1200,
+          role: "CREDIT_NOTE_ALLOCATION",
+        },
+      }),
+    );
+
+    await expect(
+      retryXeroSyncOperation("repair_allocation_1", {
+        createdByMemberId: "admin_1",
+      }),
+    ).resolves.toEqual({ message: "Retried Xero credit note allocation." });
+    expect(mocks.allocateCreditNoteToInvoice).toHaveBeenCalledWith(
+      "cn_repair_1",
+      "inv_repair_1",
+      1200,
+      {
+        localModel: "Payment",
+        localId: "payment_repair_1",
+        createdByMemberId: "admin_1",
+      },
+    );
   });
   it("queues checkpointed applied-credit deallocation without an inline provider call", async () => {
     mocks.findUniqueOperation.mockResolvedValue(makeOperation({

@@ -870,6 +870,9 @@ Applied-credit provider allocation child operations retain their parent booking,
 payment, and operation context. They are never manually replayed inline; retry is
 performed only through the serialized parent/outbox workflow so a stale child
 cannot recreate credit after deallocation.
+Legacy contextless children are also fail-closed by their precise-slice or direct
+Payment allocation shape; explicit queued credit-note allocation repairs remain
+separate and retryable.
 
 Every modification path also applies the same lifecycle transitions: a
 PAYMENT_PENDING booking whose EFFECTIVE (credit-reduced) price drops to zero
