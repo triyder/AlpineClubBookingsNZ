@@ -147,12 +147,52 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
 }) {
   const charge = await prisma.membershipSubscriptionCharge.findUnique({
     where: { id: input.chargeId },
-    include: { coverage: { include: { subscription: { select: { id: true } } } } },
+    include: {
+      coverage: {
+        include: {
+          subscription: {
+            select: { id: true, status: true, manuallyMarkedPaidAt: true },
+          },
+        },
+      },
+    },
   });
   if (!charge) throw new Error(`Membership subscription charge not found: ${input.chargeId}`);
   if (charge.billingBasis === "NO_INVOICE") {
     await completeXeroSyncOperation(input.syncOperationId, { responsePayload: { skipped: true, reason: "NO_INVOICE" } });
     return null;
+  }
+
+  // #1944 non-clobber guard: a charge can sit QUEUED (or retry for days) while
+  // a treasurer manually marks the covered subscription paid (cash outside
+  // Xero). Minting an invoice then would double-bill and the coverage write
+  // below would downgrade the PAID row to UNPAID. If any covered subscription
+  // is already PAID before an invoice exists, stop and surface a billing
+  // exception instead (same CONFLICT pattern as the adoption guards). Once an
+  // invoice has been minted (charge.xeroInvoiceId set) the resume path
+  // continues as before; the status-fenced updateMany below still refuses to
+  // downgrade a PAID row.
+  if (!charge.xeroInvoiceId) {
+    const alreadyPaid = charge.coverage.filter((row) => row.subscription.status === "PAID");
+    if (alreadyPaid.length > 0) {
+      await prisma.membershipSubscriptionCharge.update({
+        where: { id: charge.id },
+        data: {
+          status: "CONFLICT",
+          lastErrorCode: "SUBSCRIPTION_ALREADY_PAID",
+          lastErrorMessage: `Covered subscription${alreadyPaid.length === 1 ? " is" : "s are"} already PAID (${alreadyPaid.map((row) => row.memberName).join(", ")}); no Xero invoice was created. Reverse the manual payment or resolve the charge.`,
+        },
+      });
+      await completeXeroSyncOperation(input.syncOperationId, {
+        status: "SUCCEEDED",
+        responsePayload: {
+          conflict: "SUBSCRIPTION_ALREADY_PAID",
+          subscriptionIds: alreadyPaid.map((row) => row.subscription.id),
+          manuallyMarkedPaid: alreadyPaid.some((row) => Boolean(row.subscription.manuallyMarkedPaidAt)),
+        },
+      });
+      return null;
+    }
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -258,10 +298,23 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
         lastErrorMessage: null,
       },
     });
-    await tx.memberSubscription.updateMany({
-      where: { id: { in: charge.coverage.map((row) => row.subscription.id) } },
+    // #1944: never blind-downgrade a PAID subscription (e.g. manually marked
+    // paid between the guard above and this transaction). Skipped rows keep
+    // their PAID status and manual provenance; the invoice link is still
+    // recorded on the charge and object links for the admin to reconcile.
+    const downgraded = await tx.memberSubscription.updateMany({
+      where: {
+        id: { in: charge.coverage.map((row) => row.subscription.id) },
+        status: { not: "PAID" },
+      },
       data: { status: "UNPAID", xeroInvoiceId: invoiceId, xeroInvoiceNumber: invoiceNumber },
     });
+    if (downgraded.count < charge.coverage.length) {
+      logger.warn(
+        { chargeId: charge.id, invoiceId, updated: downgraded.count, covered: charge.coverage.length },
+        "Subscription invoice created but one or more covered subscriptions were already PAID and were not downgraded",
+      );
+    }
     for (const covered of charge.coverage) {
       await tx.xeroObjectLink.upsert({
         where: {

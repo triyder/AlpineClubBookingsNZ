@@ -345,6 +345,90 @@ export async function syncMemberSubscriptionHistoryForLinkedContact(
   };
 }
 
+/**
+ * #1944 non-clobber write fence for Xero-derived subscription state that does
+ * NOT link a real Xero invoice (NOT_REQUIRED / NOT_INVOICED / a matched invoice
+ * missing its identifier). A row with manual mark-paid provenance and no Xero
+ * invoice link records a cash payment taken outside Xero and must never be
+ * downgraded by discovery. checkMembershipStatus reads a guard up front, but
+ * multiple Xero round-trips happen between that read and the write, so a manual
+ * mark-paid landing mid-sync would be clobbered by a blind upsert. This fence
+ * re-applies the guard atomically at write time: the conditional updateMany
+ * only touches rows that either carry no manual provenance or carry a real
+ * Xero invoice link (Xero is authoritative once an invoice links), and
+ * create-if-missing covers the no-row case without racing a concurrent writer.
+ * Any row the write does touch has its manual provenance cleared, so a row can
+ * never read e.g. "NOT_INVOICED (manual)".
+ *
+ * Returns the surviving row when the fence blocks the write so callers can
+ * report the preserved (manual PAID) state instead of the discarded one.
+ */
+async function writeXeroDerivedSubscriptionState(input: {
+  memberId: string;
+  seasonYear: number;
+  status: MembershipSubscriptionStatus;
+  paidAt?: Date | null;
+}): Promise<{
+  written: boolean;
+  survivingStatus: MembershipSubscriptionStatus;
+  survivingPaidAt: Date | null;
+  survivingOnlineInvoiceUrl: string | null;
+}> {
+  const data = {
+    status: input.status,
+    xeroInvoiceId: null,
+    xeroInvoiceNumber: null,
+    xeroOnlineInvoiceUrl: null,
+    paidAt: input.paidAt ?? null,
+    manuallyMarkedPaidAt: null,
+    manuallyMarkedPaidByMemberId: null,
+    manualPaymentNote: null,
+  };
+  const updated = await prisma.memberSubscription.updateMany({
+    where: {
+      memberId: input.memberId,
+      seasonYear: input.seasonYear,
+      OR: [{ manuallyMarkedPaidAt: null }, { xeroInvoiceId: { not: null } }],
+    },
+    data,
+  });
+  if (updated.count === 0) {
+    const created = await prisma.memberSubscription.createMany({
+      data: [
+        { memberId: input.memberId, seasonYear: input.seasonYear, ...data },
+      ],
+      skipDuplicates: true,
+    });
+    if (created.count === 0) {
+      // A row exists but the fence excluded it: it is manually marked paid
+      // with no Xero invoice link (or was created concurrently). Preserve it.
+      const surviving = await prisma.memberSubscription.findUnique({
+        where: {
+          memberId_seasonYear: {
+            memberId: input.memberId,
+            seasonYear: input.seasonYear,
+          },
+        },
+        select: { status: true, paidAt: true, xeroOnlineInvoiceUrl: true },
+      });
+      if (surviving) {
+        return {
+          written: false,
+          survivingStatus: surviving.status as MembershipSubscriptionStatus,
+          survivingPaidAt: surviving.paidAt,
+          survivingOnlineInvoiceUrl: surviving.xeroOnlineInvoiceUrl,
+        };
+      }
+    }
+  }
+  return {
+    written: true,
+    survivingStatus: input.status,
+    survivingPaidAt: input.paidAt ?? null,
+    survivingOnlineInvoiceUrl: null,
+  };
+}
+
 export async function checkMembershipStatus(
   memberId: string,
   seasonYear?: number,
@@ -368,8 +452,12 @@ export async function checkMembershipStatus(
   // a Xero invoice, so a manual PAID row carries no xeroInvoiceId. If Xero later
   // links a real subscription invoice to this row (xeroInvoiceId becomes set),
   // this guard no longer fires and Xero is authoritative again, exactly as
-  // before. This protects the NOT_REQUIRED / NOT_INVOICED / invoice-derived
-  // upserts below without touching any of their logic.
+  // before. This early return is the fast path (it also avoids spending Xero
+  // API budget on a row discovery cannot change); the authoritative protection
+  // is the write-time fence in writeXeroDerivedSubscriptionState, which
+  // re-applies the same condition atomically at each non-linking write so a
+  // manual mark-paid landing mid-sync (after this read, across the Xero
+  // round-trips below) is still preserved.
   const manualPaidGuard = await prisma.memberSubscription.findUnique({
     where: { memberId_seasonYear: { memberId, seasonYear: year } },
     select: {
@@ -393,27 +481,18 @@ export async function checkMembershipStatus(
     (await requiresPaidSubscriptionForAgeTierFromSettings(member.ageTier));
 
   if (!subscriptionRequired) {
-    await prisma.memberSubscription.upsert({
-      where: {
-        memberId_seasonYear: { memberId, seasonYear: year },
-      },
-      update: {
-        status: "NOT_REQUIRED",
-        xeroInvoiceId: null,
-        xeroInvoiceNumber: null,
-        xeroOnlineInvoiceUrl: null,
-        paidAt: null,
-      },
-      create: {
-        memberId,
-        seasonYear: year,
-        status: "NOT_REQUIRED",
-        xeroInvoiceId: null,
-        xeroInvoiceNumber: null,
-        xeroOnlineInvoiceUrl: null,
-        paidAt: null,
-      },
+    const write = await writeXeroDerivedSubscriptionState({
+      memberId,
+      seasonYear: year,
+      status: "NOT_REQUIRED",
     });
+    if (!write.written) {
+      return {
+        status: write.survivingStatus,
+        paidAt: write.survivingPaidAt ?? undefined,
+        xeroOnlineInvoiceUrl: write.survivingOnlineInvoiceUrl,
+      };
+    }
 
     return { status: "NOT_REQUIRED" };
   }
@@ -542,36 +621,29 @@ export async function checkMembershipStatus(
     }
 
     if (!subscriptionInvoice) {
-      await prisma.memberSubscription.upsert({
-        where: {
-          memberId_seasonYear: { memberId, seasonYear: year },
-        },
-        update: {
-          status: "NOT_INVOICED",
-          xeroInvoiceId: null,
-          xeroInvoiceNumber: null,
-          xeroOnlineInvoiceUrl: null,
-          paidAt: null,
-        },
-        create: {
-          memberId,
-          seasonYear: year,
-          status: "NOT_INVOICED",
-          xeroInvoiceId: null,
-          xeroInvoiceNumber: null,
-          xeroOnlineInvoiceUrl: null,
-          paidAt: null,
-        },
+      const write = await writeXeroDerivedSubscriptionState({
+        memberId,
+        seasonYear: year,
+        status: "NOT_INVOICED",
       });
 
       await completeXeroSyncOperation(operation.id, {
         responsePayload: {
           fetchedInvoices: invoices.length,
           previousStatus: existingSubscription?.status ?? null,
-          nextStatus: "NOT_INVOICED",
+          nextStatus: write.survivingStatus,
           matchedInvoiceId: null,
+          preservedManualPayment: !write.written,
         },
       });
+
+      if (!write.written) {
+        return {
+          status: write.survivingStatus,
+          paidAt: write.survivingPaidAt ?? undefined,
+          xeroOnlineInvoiceUrl: write.survivingOnlineInvoiceUrl,
+        };
+      }
 
       return { status: "NOT_INVOICED" };
     }
@@ -620,28 +692,65 @@ export async function checkMembershipStatus(
       }
     }
 
-    // Update local MemberSubscription record
-    const subscriptionRecord = await prisma.memberSubscription.upsert({
-      where: {
-        memberId_seasonYear: { memberId, seasonYear: year },
-      },
-      update: {
-        status: status.status,
-        xeroInvoiceId: matchedInvoiceId,
-        xeroInvoiceNumber: matchedInvoiceNumber,
-        xeroOnlineInvoiceUrl: onlineInvoiceUrl,
-        paidAt: status.paidAt,
-      },
-      create: {
+    // Update local MemberSubscription record. When a real Xero invoice links
+    // (matchedInvoiceId set), Xero is authoritative even over a manual
+    // mark-paid that landed mid-sync, and the write clears the manual
+    // provenance columns so a row can never read e.g. "UNPAID (manual)"
+    // (#1944). In the degenerate case where the matched invoice carries no
+    // identifier, nothing links, so the manual-payment write fence applies as
+    // for the other non-linking writes.
+    let subscriptionRecordId: string | null = null;
+    if (matchedInvoiceId) {
+      const subscriptionRecord = await prisma.memberSubscription.upsert({
+        where: {
+          memberId_seasonYear: { memberId, seasonYear: year },
+        },
+        update: {
+          status: status.status,
+          xeroInvoiceId: matchedInvoiceId,
+          xeroInvoiceNumber: matchedInvoiceNumber,
+          xeroOnlineInvoiceUrl: onlineInvoiceUrl,
+          paidAt: status.paidAt,
+          manuallyMarkedPaidAt: null,
+          manuallyMarkedPaidByMemberId: null,
+          manualPaymentNote: null,
+        },
+        create: {
+          memberId,
+          seasonYear: year,
+          status: status.status,
+          xeroInvoiceId: matchedInvoiceId,
+          xeroInvoiceNumber: matchedInvoiceNumber,
+          xeroOnlineInvoiceUrl: onlineInvoiceUrl,
+          paidAt: status.paidAt,
+        },
+      });
+      subscriptionRecordId = subscriptionRecord.id;
+    } else {
+      const write = await writeXeroDerivedSubscriptionState({
         memberId,
         seasonYear: year,
         status: status.status,
-        xeroInvoiceId: matchedInvoiceId,
-        xeroInvoiceNumber: matchedInvoiceNumber,
-        xeroOnlineInvoiceUrl: onlineInvoiceUrl,
-        paidAt: status.paidAt,
-      },
-    });
+        paidAt: status.paidAt ?? null,
+      });
+      if (!write.written) {
+        await completeXeroSyncOperation(operation.id, {
+          responsePayload: {
+            fetchedInvoices: invoices.length,
+            matchedInvoiceId: null,
+            matchedInvoiceNumber,
+            previousStatus: existingSubscription?.status ?? null,
+            nextStatus: write.survivingStatus,
+            preservedManualPayment: true,
+          },
+        });
+        return {
+          status: write.survivingStatus,
+          paidAt: write.survivingPaidAt ?? undefined,
+          xeroOnlineInvoiceUrl: write.survivingOnlineInvoiceUrl,
+        };
+      }
+    }
 
     await completeXeroSyncOperation(operation.id, {
       responsePayload: {
@@ -661,11 +770,11 @@ export async function checkMembershipStatus(
       xeroObjectUrl: matchedInvoiceId
         ? buildXeroInvoiceUrl(matchedInvoiceId)
         : null,
-      extraLinks: matchedInvoiceId
+      extraLinks: matchedInvoiceId && subscriptionRecordId
         ? [
             {
               localModel: "MemberSubscription",
-              localId: subscriptionRecord.id,
+              localId: subscriptionRecordId,
               xeroObjectType: "SUBSCRIPTION",
               xeroObjectId: matchedInvoiceId,
               xeroObjectNumber: matchedInvoiceNumber,

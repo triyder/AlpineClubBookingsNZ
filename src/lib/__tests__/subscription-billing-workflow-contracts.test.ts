@@ -61,7 +61,7 @@ function charge(overrides: Record<string, unknown> = {}) {
     seasonYear: 2026,
     coveredMonths: 12,
     dueDays: 30,
-    coverage: [{ subscription: { id: "subscription-1" } }],
+    coverage: [{ memberName: "Bill Member", subscription: { id: "subscription-1", status: "NOT_INVOICED", manuallyMarkedPaidAt: null } }],
     ...overrides,
   };
 }
@@ -88,6 +88,7 @@ describe("subscription invoice delivery behavior", () => {
     vi.clearAllMocks();
     mocks.events.length = 0;
     mocks.findContact.mockResolvedValue("contact-1");
+    mocks.memberSubscriptionUpdateMany.mockResolvedValue({ count: 1 });
     mocks.getInvoices.mockResolvedValue({ body: { invoices: [] } });
     mocks.createInvoices.mockImplementation(async () => {
       mocks.events.push("create");
@@ -143,6 +144,55 @@ describe("subscription invoice delivery behavior", () => {
     expect(mocks.transaction.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.emailInvoice.mock.invocationCallOrder[0]
     );
+  });
+
+  it("conflicts instead of invoicing when a covered subscription is already PAID (#1944)", async () => {
+    // A charge QUEUED (or retrying) before a treasurer manually marks the
+    // subscription paid must never mint an invoice or downgrade the row.
+    mocks.chargeFind.mockResolvedValue(charge({
+      coverage: [{
+        memberName: "Cash Payer",
+        subscription: { id: "subscription-1", status: "PAID", manuallyMarkedPaidAt: new Date("2026-07-01T00:00:00.000Z") },
+      }],
+    }));
+
+    const result = await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+
+    expect(result).toBeNull();
+    expect(mocks.getInvoices).not.toHaveBeenCalled();
+    expect(mocks.createInvoices).not.toHaveBeenCalled();
+    expect(mocks.emailInvoice).not.toHaveBeenCalled();
+    expect(mocks.memberSubscriptionUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.chargeUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "CONFLICT", lastErrorCode: "SUBSCRIPTION_ALREADY_PAID" }),
+    }));
+    expect(mocks.complete).toHaveBeenCalledWith("op-1", expect.objectContaining({
+      responsePayload: expect.objectContaining({ conflict: "SUBSCRIPTION_ALREADY_PAID", manuallyMarkedPaid: true }),
+    }));
+  });
+
+  it("resume path still delivers an already-minted invoice but the coverage write is fenced against PAID rows (#1944)", async () => {
+    // Once an invoice exists (crash/email retry), the ALREADY_PAID guard does
+    // not block delivery — but the UNPAID coverage write must exclude PAID rows
+    // so a manual mark-paid landing in the window is never downgraded.
+    mocks.chargeFind.mockResolvedValue(charge({
+      xeroInvoiceId: "invoice-1",
+      xeroInvoiceNumber: "INV-1",
+      invoicePersistedAt: new Date("2026-07-13T00:00:00.000Z"),
+      coverage: [{
+        memberName: "Cash Payer",
+        subscription: { id: "subscription-1", status: "PAID", manuallyMarkedPaidAt: new Date("2026-07-01T00:00:00.000Z") },
+      }],
+    }));
+    mocks.memberSubscriptionUpdateMany.mockResolvedValue({ count: 0 });
+
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+
+    expect(mocks.createInvoices).not.toHaveBeenCalled();
+    expect(mocks.memberSubscriptionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: { not: "PAID" } }),
+      data: expect.objectContaining({ status: "UNPAID" }),
+    }));
   });
 
   it.each([
