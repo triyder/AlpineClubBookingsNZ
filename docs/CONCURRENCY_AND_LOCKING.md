@@ -2,12 +2,12 @@
 
 How the app serialises the operations that would otherwise race — overbooking a
 lodge, double-restoring a member's credit, two people holding the same night,
-two runners generating one roster, a settle racing a reap. Every mechanism here
-is a **PostgreSQL transaction-scoped advisory lock**
-(`pg_advisory_xact_lock(...)`): it is held for the life of the enclosing
-transaction and released automatically on commit or rollback. There is no
-row-level locking discipline to learn beyond these, plus one structural rule
-(status-guarded claims) described below.
+two runners generating one roster, a settle racing a reap. The primary
+cross-row mechanisms here are **PostgreSQL transaction-scoped advisory locks**
+(`pg_advisory_xact_lock(...)`): they are held for the life of the enclosing
+transaction and released automatically on commit or rollback. Two narrow
+`SELECT ... FOR UPDATE` protocols also exist and are inventoried below. All
+writers additionally follow the status-guarded-claim rule described below.
 
 This doc maps **which locks exist, what each one protects, how they interact,
 and the ordering every writer must follow**. Read it before changing any lock
@@ -96,11 +96,29 @@ are the literal `1`.
 | **Roster generation** | `hashtext("roster:<date>")` | inline (`admin-roster-service.ts`) | — | Roster generation for one calendar date. |
 | **Config-transfer import** | `hashtext("config-transfer-import")` | `acquireConfigImportLock(tx)` (`config-transfer/apply.ts`) | — | Single-flights configuration-bundle apply. |
 | **Membership subscription billing** | `hashtext("membership-subscription-billing:<seasonYear>")` | `confirmSubscriptionBillingPreview` (`membership-subscription-billing.ts`) | — | Annual/approval charge snapshot creation for one membership year. |
+| **Authoritative fee schedule** | `hashtext("fee-schedule:<domain>:<key>")` | `lockFeeSchedule` (`authoritative-fees.ts`) | — | Serialises effective-dated membership or entrance-fee schedule changes for one configured key. |
+| **Member partner link** | sorted `hashtext("member-partner-link:<memberId>")` keys | `lockPartnerMembers` (`member-partner-link.ts`) | — | Serialises partner-link invariants across every member touched by a link; same-family keys are sorted. |
+| **Xero member contact link (legacy key)** | `hashtext(<memberId>)` | short local-link transactions (`xero-contacts.ts`) | — | First-writer-wins local `Member.xeroContactId` linking after provider work. This legacy unnamespaced key is shared by both Xero contact-link writers; do not copy it for new domains. |
 
 The first four are the **booking / capacity / credit cluster** — they interact,
-and are where the ordering discipline matters. Families 5–9 are independent
-single-domain locks; they take distinct keys and do not contend with the cluster
-or each other, so this doc does not detail them beyond the table.
+and are where the ordering discipline matters. The remaining rows are
+independent single-domain locks. Their namespaced keys do not intentionally
+contend with the cluster or each other. The legacy Xero member-contact key is an
+explicit exception: retain it only for its two current counterpart writers and
+do not use unnamespaced `hashtext(<id>)` for new lock families.
+
+### Narrow row-lock protocols
+
+- `booking-create-promo.ts` locks the selected `PromoCode` row with `FOR UPDATE`
+  before validating and consuming its use count. Booking creation has already
+  taken the per-lodge capacity lock, so the current order is lodge -> promo row;
+  no counterpart writer may take the promo row and then a lodge lock.
+- `admin-bed-allocation.ts` locks the owning `LodgeRoom` row with `FOR UPDATE`
+  before checking and changing one room's bunk-group membership. This protocol
+  is independent of the booking/capacity/credit lock cluster.
+
+Do not add or compose a row lock without updating this inventory and documenting
+its order against every advisory- and row-lock counterpart.
 
 ## The disciplines, by writer class
 
@@ -125,7 +143,15 @@ routes, the booking modify/cancel/settlement services, and
 `xero-inbound/invoice-paid-effects.ts`. Skipping step 3 (acting on the pre-lock
 snapshot) is a TOCTOU.
 
-### Money / status transition → global `lock(1)`
+The admin exclusive whole-lodge hold route follows the same rule even though
+the hold flag itself is row-scoped: it reads only immutable `lodgeId`, takes the
+per-lodge lock, then re-reads status, hold state and dates. Both set-time
+conflict queries and their audit metadata consume that post-lock snapshot, so a
+concurrent date move cannot make the hold apply to one range while reporting
+conflicts for an older range. Its status-guarded SET remains necessary because
+cancel writers use the disjoint global lock and may still race the row update.
+
+### Global-cohort money / status transition → global `lock(1)`
 
 Cancel (`booking-cancel.ts`), Stripe capture and the capacity-failed void
 (`payment-reconciliation.ts`), the Internet-Banking hold-expiry release
@@ -169,6 +195,26 @@ switch-to-internet-banking hold, the quote-accept conversion
 (batch/date/guest-removal) take **`lock(1)` first, then the per-lodge lock**.
 `xero-inbound/invoice-paid-effects.ts` is the in-tree precedent for this
 composition.
+
+Generic quote acceptance pre-reads only the held booking's immutable concrete
+`lodgeId`, then takes global -> that lodge and fully re-reads both request and
+hold. It rejects an explicit request/hold lodge mismatch and carries the same
+concrete lodge into policy and email context. A null request lodge is never
+re-resolved through a default that may have changed after hold creation.
+
+School approval has two deliberately different branches. Fresh-create is a
+capacity-only admission and takes only the per-lodge lock. Held-reuse converts
+an existing AWAITING_REVIEW booking that cancellation/release may claim, so it
+takes **global first, then per-lodge**, re-reads the request and hold under both,
+and uses a status-guarded `AWAITING_REVIEW -> CONFIRMED` claim before side
+effects. A lost claim aborts the transaction.
+
+The linked provisional-child sweep after a parent cancellation follows the
+same order. It uses the child's immutable `lodgeId` only to select the lock,
+then re-reads the child and conditionally claims `PENDING -> CANCELLED` under
+both locks. `cron-confirm-pending` shares the per-lodge lock, so either the
+cancel wins and alone runs cancellation side effects, or the cron's confirmed /
+charged state survives and the stale sweep runs no side effect.
 
 `switch-to-internet-banking` also recomputes both the locked booking price and
 the authoritative `BOOKING_APPLIED` credit aggregate after acquiring global,
@@ -258,10 +304,13 @@ lock and re-derives an "already restored?" predicate.
 
 - **Adding a capacity claim?** Take `acquireLodgeCapacityLock(tx, lodgeId)` on
   the booking's own lodge and follow read-key → lock → re-read. If the same
-  transaction also flips booking status or moves money, take `lock(1)` FIRST.
-- **Adding a status/money transition (cancel/settle/refund/hold-release)?** Take
-  `lock(1)` and status-guard the write (`updateMany({ where: { id, status } })`,
-  bail on count 0).
+  transaction also performs a global-cohort lifecycle or settlement-money
+  transition, take `lock(1)` FIRST.
+- **Adding a global-cohort transition (cancel/capture/settle/refund/hold-release)?**
+  Take `lock(1)` and status-guard the write
+  (`updateMany({ where: { id, status } })`, bail on count 0). A capacity-only
+  admission/status claim follows the per-lodge writer matrix instead; do not
+  infer its tier from the fact that it changes a status column.
 - **Adding a member-night writer?** It runs the guard, which self-takes the
   per-member lock; just make sure it calls `assertNoBookingMemberNightConflicts`
   inside the transaction after any per-lodge lock

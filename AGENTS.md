@@ -64,6 +64,38 @@ before changing Next.js APIs or conventions.
   data-integrity work requires high or xhigh reasoning effort and human review
   before merge.
 
+### Concurrency and lock checklist
+
+Before changing a transaction, booking lifecycle, capacity check, settlement,
+credit writer, webhook, or cron, read `docs/CONCURRENCY_AND_LOCKING.md` and
+classify every mutation it composes:
+
+- global-cohort lifecycle and settlement-money transitions that must exclude
+  cancel/capture/refund/hold-release counterparts use global
+  `pg_advisory_xact_lock(1)`; capacity-only admission/status claims do not join
+  that cohort unless the locking guide's writer matrix says they compose it;
+- capacity uses `acquireLodgeCapacityLock` for the immutable lodge key;
+- member-night and credit-ledger-only invariants use their canonical per-member
+  helpers, with same-family keys sorted; a writer that also changes booking
+  status or settlement money takes both applicable tiers;
+- when tiers compose, acquire global -> lodge -> member, re-read mutable state
+  after the locks, and use a status-guarded claim (`updateMany`) before any side
+  effect; a lost claim runs no side effect;
+- keep provider calls outside long transactions unless the locking guide
+  documents the bounded exception.
+
+Before editing, inspect open PRs plus the last 10 merged PRs and issue threads
+that touch the same subsystem. Reconcile their lock keys, transaction
+boundaries, state-machine changes, and provider/outbox behavior with the
+current branch. Record the relevant PR numbers and compatibility evidence in
+the new PR's concurrency/lock declaration; do not assume a recently landed
+writer follows an older topology description.
+
+Update the lock inventory/source-contract tests and the PR's lock-impact
+declaration whenever a lock participant, key, order, or guarded transition
+changes. Do not introduce a new advisory-lock key or copy an old lock pattern
+without reconciling it with all counterpart writers.
+
 ## Orchestration Model
 
 The standard working model for agent sessions (owner directive, 2026-07-11) is

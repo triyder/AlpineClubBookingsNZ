@@ -63,6 +63,27 @@ export async function POST(
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      // Read only the immutable lock key before taking the lock. A concurrent
+      // date/status writer may commit while this transaction waits, so no
+      // mutable field from this first read may drive a decision.
+      const lockTarget = await tx.booking.findUnique({
+        where: { id: bookingId },
+        select: { lodgeId: true },
+      });
+      if (!lockTarget) {
+        return { error: "Booking not found", status: 404 as const };
+      }
+
+      // ADR-001 Security/safety: the two-sided hold rule must be lock-serialised.
+      // Take the per-lodge capacity lock — the same key every admission and
+      // capacity writer takes (acquireLodgeCapacityLock, booking-create.ts,
+      // approveSchoolBookingRequest) — then re-read the mutable booking below.
+      // This serialises a hold set against both admissions and date changes at
+      // this lodge: either the other writer commits first and its current state
+      // is consumed by the post-lock read, or this hold commits first and the
+      // other writer observes it. Booking.lodgeId is immutable and NOT NULL.
+      await acquireLodgeCapacityLock(tx, lockTarget.lodgeId);
+
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
         select: {
@@ -86,21 +107,6 @@ export async function POST(
       });
       if (!booking || booking.deletedAt) {
         return { error: "Booking not found", status: 404 as const };
-      }
-
-      // ADR-001 Security/safety: the two-sided hold rule must be lock-serialised.
-      // Take the per-lodge capacity lock — the same key every admission and
-      // capacity writer takes (acquireLodgeCapacityLock, booking-create.ts,
-      // approveSchoolBookingRequest) — BEFORE reading conflicts and writing the
-      // flag. This serialises a hold set against a concurrent admission at this
-      // lodge: either the admission commits first and surfaces here as a
-      // conflict (decision 1), or the hold commits first and the admission then
-      // hard-blocks on wholeLodgeHold (issue #118). The school approval sets the
-      // same flag inside its lock-holding transaction; this is the admin twin.
-      // lodgeId is NOT NULL for real bookings; guard defensively (a null-lodge
-      // row has no lodge to serialise, mirroring the conflict-read guard below).
-      if (booking.lodgeId) {
-        await acquireLodgeCapacityLock(tx, booking.lodgeId);
       }
 
       if (hold && booking.wholeLodgeHold) {
@@ -153,14 +159,14 @@ export async function POST(
       // who/when audit columns when clearing.
       //
       // Compare-and-set on SET (issue #186, extends #173/#177): the per-lodge
-      // lock serialises writers on THIS lodge's key, but the status guard above
-      // read the PRE-lock snapshot and a cancel path serialises on the DISJOINT
-      // club-wide key — booking-cancel clears the hold via
+      // lock serialises writers on THIS lodge's key, but a cancel path serialises
+      // on the DISJOINT club-wide key — booking-cancel clears the hold via
       // RELEASE_WHOLE_LODGE_HOLD_UPDATE while never taking the per-lodge lock. So
       // a concurrent cancel can move the row to a terminal, non-capacity-holding
-      // status between our guard read and our write; an unconditional update-by-id
-      // would then plant an inert stale hold on a CANCELLED row. Make the SET a
-      // conditional updateMany whose predicate re-checks capacity-holding at write
+      // status between our post-lock read and our write; an unconditional
+      // update-by-id would then plant an inert stale hold on a CANCELLED row.
+      // Make the SET a conditional updateMany whose predicate re-checks
+      // capacity-holding at write
       // time (the same filter capacity.ts composes). Either commit ordering then
       // converges: if the cancel wins the row no longer matches → zero rows → 409
       // and no audit; if the set wins the cancel's later hold-clear still lands.

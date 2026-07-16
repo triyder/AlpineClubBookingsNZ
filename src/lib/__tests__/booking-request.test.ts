@@ -129,7 +129,10 @@ import {
 } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import { cancelBooking } from "@/lib/booking-cancel";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  acquireLodgeCapacityLock,
+  checkCapacityForGuestRanges,
+} from "@/lib/capacity";
 import {
   assertNoBookingMemberNightConflicts,
   BookingMemberNightConflictError,
@@ -160,6 +163,7 @@ const mockedDeleteMany = vi.mocked(prisma.bookingRequest.deleteMany);
 const mockedSettingsFindUnique = vi.mocked(prisma.bookingRequestSettings.findUnique);
 const mockedSettingsUpsert = vi.mocked(prisma.bookingRequestSettings.upsert);
 const mockedTransaction = vi.mocked(prisma.$transaction);
+const mockedAcquireLodgeCapacityLock = vi.mocked(acquireLodgeCapacityLock);
 const mockedCheckCapacity = vi.mocked(checkCapacityForGuestRanges);
 const mockedSendVerification = vi.mocked(sendBookingRequestVerificationEmail);
 const mockedSendAdminPending = vi.mocked(sendAdminBookingRequestPendingEmail);
@@ -1288,6 +1292,121 @@ describe("approveBookingRequest", () => {
     expect(bookingArgs.lodgeId).toBe("lodge-2");
   });
 
+  it("locks and reuses a held booking's concrete lodge when the default changed", async () => {
+    const heldRequest = baseRequest({
+      status: BookingRequestStatus.PRICED,
+      priceCents: 12000,
+      lodgeId: null,
+      heldBookingId: "held-1",
+    });
+    mockedFindUnique.mockResolvedValue(heldRequest as never);
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedBookingFindUnique
+      .mockResolvedValueOnce({ lodgeId: "held-lodge" } as never)
+      .mockResolvedValueOnce({
+        id: "held-1",
+        lodgeId: "held-lodge",
+        memberId: "held-member",
+        status: BookingStatus.AWAITING_REVIEW,
+      } as never);
+    // The club default changed after the null-lodge request created its hold.
+    vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "new-default" } as never);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "held-member",
+      canLogin: false,
+      role: "NON_MEMBER",
+      archivedAt: null,
+      active: true,
+    } as never);
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([{ id: "g1" }] as never);
+    vi.mocked(prisma.bookingGuest.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.booking.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    const result = await approveBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toMatchObject({ type: "approved", bookingId: "held-1" });
+    expect(prisma.lodge.findFirst).not.toHaveBeenCalled();
+    expect(mockedAcquireLodgeCapacityLock).toHaveBeenCalledWith(
+      prisma,
+      "held-lodge"
+    );
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(
+      vi.mocked(prisma.$executeRaw).mock.invocationCallOrder[0]
+    ).toBeLessThan(mockedAcquireLodgeCapacityLock.mock.invocationCallOrder[0]);
+    expect(mockedCheckCapacity).not.toHaveBeenCalled();
+    expect(mockedSendApproved).toHaveBeenCalledWith(
+      expect.objectContaining({ lodgeId: "held-lodge" })
+    );
+    expect(mockedBookingFindUnique).toHaveBeenNthCalledWith(1, {
+      where: { id: "held-1" },
+      select: { lodgeId: true },
+    });
+    expect(mockedBookingFindUnique).toHaveBeenNthCalledWith(2, {
+      where: { id: "held-1" },
+      select: { id: true, lodgeId: true, memberId: true, status: true },
+    });
+  });
+
+  it("rejects a held booking whose concrete lodge differs from an explicit request lodge", async () => {
+    const heldRequest = baseRequest({
+      status: BookingRequestStatus.PRICED,
+      priceCents: 12000,
+      lodgeId: "request-lodge",
+      heldBookingId: "held-1",
+    });
+    mockedFindUnique.mockResolvedValue(heldRequest as never);
+    mockedBookingFindUnique
+      .mockResolvedValueOnce({ lodgeId: "held-lodge" } as never)
+      .mockResolvedValueOnce({
+        id: "held-1",
+        lodgeId: "held-lodge",
+        memberId: "held-member",
+        status: BookingStatus.AWAITING_REVIEW,
+      } as never);
+
+    await expect(
+      approveBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" })
+    ).rejects.toMatchObject({ status: 409 });
+
+    expect(mockedAcquireLodgeCapacityLock).toHaveBeenCalledWith(
+      prisma,
+      "held-lodge"
+    );
+    expect(mockedUpdateMany).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an approval snapshot changed before the under-lock request reread", async () => {
+    const initial = baseRequest({
+      status: BookingRequestStatus.PRICED,
+      priceCents: 12000,
+    });
+    mockedFindUnique
+      .mockResolvedValueOnce(initial as never)
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.PRICED,
+          priceCents: 13000,
+          updatedAt: new Date("2026-06-02T00:00:00.000Z"),
+        }) as never
+      );
+
+    await expect(
+      approveBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" })
+    ).rejects.toMatchObject({ status: 409 });
+
+    expect(mockedUpdateMany).not.toHaveBeenCalled();
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
   it("maps to an existing non-login contact instead of creating a new member (#1255)", async () => {
     mockedFindUnique.mockResolvedValue(
       baseRequest({ status: BookingRequestStatus.PRICED, priceCents: 12000 }) as never
@@ -1491,6 +1610,7 @@ describe("approveBookingRequest", () => {
     mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.booking.findUnique).mockResolvedValue({
       id: "held-1",
+      lodgeId: "lodge-1",
       memberId: "held-member",
       status: BookingStatus.AWAITING_REVIEW,
     } as never);
@@ -1547,6 +1667,7 @@ describe("approveBookingRequest", () => {
     mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.booking.findUnique).mockResolvedValue({
       id: "held-1",
+      lodgeId: "lodge-1",
       memberId: "held-member",
       status: BookingStatus.AWAITING_REVIEW,
     } as never);
@@ -1601,6 +1722,7 @@ describe("approveBookingRequest", () => {
     mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.booking.findUnique).mockResolvedValue({
       id: "held-1",
+      lodgeId: "lodge-1",
       memberId: "held-invalid",
       status: BookingStatus.AWAITING_REVIEW,
     } as never);

@@ -278,12 +278,14 @@ Future reviews and issues should cite this file when proposing changes.
   dependent and spans `BookingGuest` to `Booking`, which a Postgres partial
   unique index cannot reference. It is race-free because every transaction that
   **creates or re-dates** a member-linked `BookingGuest`/`BookingGuestNight`
-  footprint takes the global booking advisory lock (`pg_advisory_xact_lock(1)`)
-  before running the guard (`assertNoBookingMemberNightConflicts`); that
-  lock-before-guard ordering is frozen for every such writer by
-  `review-findings-contracts.test.ts`. (`CONCURRENCY_AND_LOCKING.md` maps this
-  lock alongside the per-lodge capacity and per-member credit locks and the
-  ordering discipline each follows.) Writes that do not change the member-night
+  footprint takes its per-lodge capacity lock before running
+  `assertNoBookingMemberNightConflicts`, whose first authoritative action takes
+  sorted per-member-night advisory locks across lodges (#1881). A writer that
+  also moves booking status or money takes global `lock(1)` before those locks.
+  The lodge-before-member ordering and the guard's self-lock are frozen by
+  `review-findings-contracts.test.ts`. (`CONCURRENCY_AND_LOCKING.md` maps these
+  locks alongside the per-member credit lock and the ordering discipline each
+  follows.) Writes that do not change the member-night
   footprint — re-pricing, name-only guest edits, lodge arrive/depart timestamps,
   and anonymization that clears the member link — legitimately skip the guard, as
   does the non-member group-join path (`verifyAndCreateNonMemberJoin`, which
@@ -306,6 +308,12 @@ Future reviews and issues should cite this file when proposing changes.
   carry a NULL member id and sit outside the constraint.
 - Draft, pending, waitlist, payment-recovery, and review states must have
   expiry, retry, admin visibility, or repair paths.
+- Linked provisional-child cancellation is guarded against the hold-resolution
+  cron (#1881 residual): after a parent cancel, each candidate takes global
+  `lock(1)` then its immutable lodge's per-lodge lock, is re-read, and is
+  conditionally claimed only while still `PENDING`. A child the cron already
+  confirmed or charged is never overwritten, and a lost claim runs none of the
+  cancellation side effects.
 - **Exclusive whole-lodge hold (ADR-001, #118):** a night overlapped by a
   capacity-holding booking with `Booking.wholeLodgeHold = true` admits no
   further capacity from any admission path — the night's `availableBeds` is
@@ -1161,15 +1169,25 @@ unpaid hold. Paying the hold moves it to a fully capacity-holding status and end
 this exposure.
 
 School approval re-checks per-night capacity for the FINAL guest list on both
-branches — fresh-create and held-reuse (excluding the held booking's own
-guests) — under the global booking advisory lock, before anything flips to a
-capacity-holding status (#1352). A hold reserves only the originally held
+branches before anything flips to a capacity-holding status (#1352, #1911,
+#1881). Fresh-create is a capacity-only admission and takes the canonical
+per-lodge capacity lock. Held-reuse excludes the held booking's own guests from
+the capacity check and takes global `lock(1)` -> per-lodge because it must
+exclude cancellation/release of the existing AWAITING_REVIEW booking. It
+re-reads the request and hold under both locks and claims
+`AWAITING_REVIEW -> CONFIRMED` with a status-guarded update; a lost claim rolls
+back every guest/member/payment/audit side effect. A hold reserves only the
+originally held
 guest count, so an admin child-count override at approval can never confirm
 more beds than actually remain on any night; the admin sees the same
 capacityExceeded outcome as the fresh path.
 
 A booking converted from (or held for) a public/school booking request keeps
-its officer-negotiated price, flat-split across guest rows; the quote's
+the held booking's immutable concrete lodge even when the request stored a null
+default-lodge selector and the configured default later changes. Held generic
+and school conversions lock that concrete lodge, fully re-read the request and
+booking, and reject any explicit lodge mismatch before mutation. The booking
+keeps its officer-negotiated price, flat-split across guest rows; the quote's
 per-tier rates are not persisted on the booking. Before a school group
 arrives, the school contact confirms who is attending (#1101): a tokenized
 public page (hash-stored, rotated per reminder email) applies identity-only

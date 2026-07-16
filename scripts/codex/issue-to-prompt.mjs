@@ -106,7 +106,7 @@ try {
     "3. Stop if the issue conflicts with code or repo policy.",
     "4. Keep the diff inside allowed scope.",
     "5. Run required safe validation.",
-    "6. Open a PR, but do not merge it or close the issue.",
+    '6. Open a PR, monitor CI to green, and follow AGENTS.md "Completion and Merge": merge eligible Low/Medium-risk work with a merge commit; hold Critical/High-risk work for an explicit owner approval comment on the PR. Close a linked issue only when its PR is eligible and merged.',
     "7. Report validation evidence, commands not run, manual checks, and residual risks.",
   ].join("\n");
 
