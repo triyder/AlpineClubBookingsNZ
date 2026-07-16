@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -8,41 +9,90 @@ import { logAudit } from "@/lib/audit";
 const AGE_TIERS = ["INFANT", "CHILD", "YOUTH", "ADULT"] as const;
 const SEASON_TYPES = ["WINTER", "SUMMER"] as const;
 const ENTRANCE_FEE_CATEGORIES = ["ADULT", "YOUTH", "CHILD", "FAMILY"] as const;
+const FLAT_KEY = "FLAT";
+
+type AgeTierValue = (typeof AGE_TIERS)[number];
+type SeasonTypeValue = (typeof SEASON_TYPES)[number];
+
+// One parsed hut-fee composite key (#1930, E4):
+// `${membershipTypeId}_${seasonType}_${ageTier|FLAT}`. `ageTier` null = the
+// flat (all-ages) cell of an ageGroupsApply=false membership type.
+interface HutFeeKeyParts {
+  membershipTypeId: string;
+  seasonType: SeasonTypeValue;
+  ageTier: AgeTierValue | null;
+}
+
+/**
+ * Parse a hut-fee composite key. Returns null for malformed keys — including
+ * the frozen legacy `${ageTier}_${seasonType}_${isMember}` shape, which this
+ * endpoint no longer reads or writes (legacy isMember-keyed rows are retained
+ * read-only in the DB until E13 drops them).
+ */
+function parseHutFeeKey(compositeKey: string): HutFeeKeyParts | null {
+  const parts = compositeKey.split("_");
+  if (parts.length !== 3) return null;
+  const [membershipTypeId, seasonTypeStr, tierStr] = parts;
+  if (!membershipTypeId) return null;
+  if (!SEASON_TYPES.includes(seasonTypeStr as SeasonTypeValue)) return null;
+  if (tierStr !== FLAT_KEY && !AGE_TIERS.includes(tierStr as AgeTierValue)) {
+    return null;
+  }
+  return {
+    membershipTypeId,
+    seasonType: seasonTypeStr as SeasonTypeValue,
+    ageTier: tierStr === FLAT_KEY ? null : (tierStr as AgeTierValue),
+  };
+}
+
+type ItemCodeMappingRow = {
+  category: string;
+  ageTier: string | null;
+  seasonType: string | null;
+  membershipTypeId: string | null;
+  entranceFeeCategory: string | null;
+  itemCode: string | null;
+  amountCents: number | null;
+};
+
+/**
+ * Serialise DB rows into the response shape. Hut fees are keyed by membership
+ * type (#1930, E4); the frozen legacy isMember-keyed HUT_FEE rows are hidden
+ * (E13 drops them).
+ */
+function buildResponseBody(rows: ItemCodeMappingRow[]) {
+  const hutFees: Record<string, { itemCode: string }> = {};
+  const entranceFees: Record<string, { itemCode: string | null; amountCents: number | null }> = {};
+  for (const row of rows) {
+    if (
+      row.category === "HUT_FEE" &&
+      row.membershipTypeId &&
+      row.seasonType &&
+      row.itemCode
+    ) {
+      const key = `${row.membershipTypeId}_${row.seasonType}_${row.ageTier ?? FLAT_KEY}`;
+      hutFees[key] = { itemCode: row.itemCode };
+    } else if (row.category === "ENTRANCE_FEE" && row.entranceFeeCategory) {
+      entranceFees[row.entranceFeeCategory] = {
+        itemCode: row.itemCode ?? null,
+        amountCents: row.amountCents,
+      };
+    }
+  }
+  return { hutFees, entranceFees };
+}
 
 /**
  * GET /api/admin/xero/item-code-mappings
- * Returns all granular Xero item code mappings grouped by category.
+ * Returns all granular Xero item code mappings grouped by category. Hut-fee
+ * keys are `${membershipTypeId}_${seasonType}_${ageTier|FLAT}` (#1930, E4).
  */
 export async function GET() {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   try {
     const rows = await prisma.xeroItemCodeMapping.findMany();
-
-    // Build hut fee matrix: key = "ADULT_WINTER_true" → { itemCode }
-    const hutFees: Record<string, { itemCode: string }> = {};
-    // Build entrance fee map: key = "ADULT" → { itemCode, amountCents }
-    const entranceFees: Record<string, { itemCode: string | null; amountCents: number | null }> = {};
-
-    for (const row of rows) {
-      if (
-        row.category === "HUT_FEE" &&
-        row.ageTier &&
-        row.seasonType &&
-        row.isMember !== null &&
-        row.itemCode
-      ) {
-        const key = `${row.ageTier}_${row.seasonType}_${row.isMember}`;
-        hutFees[key] = { itemCode: row.itemCode };
-      } else if (row.category === "ENTRANCE_FEE" && row.entranceFeeCategory) {
-        entranceFees[row.entranceFeeCategory] = {
-          itemCode: row.itemCode ?? null,
-          amountCents: row.amountCents,
-        };
-      }
-    }
-
-    return NextResponse.json({ hutFees, entranceFees });
+    return NextResponse.json(buildResponseBody(rows));
   } catch (error) {
     logger.error({ err: error }, "Failed to fetch item code mappings");
     return NextResponse.json({ error: "Failed to fetch item code mappings" }, { status: 500 });
@@ -72,14 +122,18 @@ const UpdateItemCodeMappingsSchema = z.object({
  * PUT /api/admin/xero/item-code-mappings
  * Upserts granular Xero item code mappings. Accepts partial updates.
  *
- * Body shape:
+ * Body shape (#1930, E4):
  * {
- *   hutFees: { "ADULT_WINTER_true": { itemCode: "HUTFEE-001" }, ... },
+ *   hutFees: { "<membershipTypeId>_WINTER_ADULT": { itemCode: "HUTFEE-001" },
+ *              "<membershipTypeId>_SUMMER_FLAT": { itemCode: "HUTFEE-002" }, ... },
  *   entranceFees: { "ADULT": { itemCode: "ENTFEE-001" | null, amountCents: 5000 }, ... }
  * }
  *
- * Sending null for a key deletes that mapping. For entrance fees, sending both
- * `itemCode` and `amountCents` as null also clears the row.
+ * Hut-fee keys must reference a rate-bearing membership type (a MEMBER_RATE
+ * type or the built-in NON_MEMBER type — the D2 invariant). The `FLAT` tier is
+ * the single all-ages cell of an ageGroupsApply=false type. Sending null for a
+ * key deletes that mapping. For entrance fees, sending both `itemCode` and
+ * `amountCents` as null also clears the row.
  */
 export async function PUT(request: NextRequest) {
   const guard = await requireAdmin();
@@ -99,94 +153,152 @@ export async function PUT(request: NextRequest) {
 
   const { hutFees, entranceFees } = parsed.data;
 
+  // Parse + validate every hut-fee key BEFORE any write, so a bad payload
+  // never half-applies.
+  const hutFeeWrites: Array<{
+    key: HutFeeKeyParts;
+    value: { itemCode: string } | null;
+  }> = [];
+  const seenHutFeeCells = new Set<string>();
+  for (const [compositeKey, value] of Object.entries(hutFees ?? {})) {
+    const key = parseHutFeeKey(compositeKey);
+    if (!key) {
+      return NextResponse.json(
+        {
+          error: `Invalid hut fee mapping key "${compositeKey}". Expected "<membershipTypeId>_<WINTER|SUMMER>_<${AGE_TIERS.join("|")}|${FLAT_KEY}>".`,
+        },
+        { status: 400 }
+      );
+    }
+    // App-side duplicate check (defensive: distinct raw keys cannot collide
+    // after parsing, but the flat partial unique makes dupes a hard DB error,
+    // so surface a friendly message instead).
+    const cell = `${key.membershipTypeId}::${key.seasonType}::${key.ageTier ?? FLAT_KEY}`;
+    if (seenHutFeeCells.has(cell)) {
+      return NextResponse.json(
+        { error: "Duplicate hut fee mapping for the same membership type, season, and age tier." },
+        { status: 400 }
+      );
+    }
+    seenHutFeeCells.add(cell);
+    hutFeeWrites.push({ key, value });
+  }
+
   try {
-    const ops: Promise<unknown>[] = [];
-
-    // Process hut fee entries
-    if (hutFees) {
-      for (const [compositeKey, value] of Object.entries(hutFees)) {
-        // Parse composite key: "ADULT_WINTER_true"
-        const parts = compositeKey.split("_");
-        if (parts.length !== 3) continue;
-        const [ageTierStr, seasonTypeStr, isMemberStr] = parts;
-        if (!AGE_TIERS.includes(ageTierStr as typeof AGE_TIERS[number])) continue;
-        if (!SEASON_TYPES.includes(seasonTypeStr as typeof SEASON_TYPES[number])) continue;
-        if (isMemberStr !== "true" && isMemberStr !== "false") continue;
-
-        const ageTier = ageTierStr as typeof AGE_TIERS[number];
-        const seasonType = seasonTypeStr as typeof SEASON_TYPES[number];
-        const isMember = isMemberStr === "true";
-
-        if (value === null) {
-          // Delete this mapping
-          ops.push(
-            prisma.xeroItemCodeMapping.deleteMany({
-              where: { category: "HUT_FEE", ageTier, seasonType, isMember },
-            })
+    // Referenced membership types must exist and be rate-bearing: every
+    // MEMBER_RATE type plus the built-in NON_MEMBER type (D2 invariant —
+    // NON_MEMBER_RATE/BLOCK_BOOKING types never own hut-fee item codes).
+    const referencedTypeIds = [
+      ...new Set(hutFeeWrites.map((write) => write.key.membershipTypeId)),
+    ];
+    if (referencedTypeIds.length > 0) {
+      const types = await prisma.membershipType.findMany({
+        where: { id: { in: referencedTypeIds } },
+        select: { id: true, key: true, name: true, bookingBehavior: true },
+      });
+      const typeById = new Map(types.map((type) => [type.id, type]));
+      for (const id of referencedTypeIds) {
+        const type = typeById.get(id);
+        if (!type) {
+          return NextResponse.json(
+            { error: `Unknown membership type: ${id}` },
+            { status: 400 }
           );
-        } else {
-          ops.push(
-            prisma.xeroItemCodeMapping.upsert({
-              where: {
-                category_ageTier_seasonType_isMember: {
-                  category: "HUT_FEE",
-                  ageTier,
-                  seasonType,
-                  isMember,
-                },
-              },
-              update: { itemCode: value.itemCode },
-              create: {
-                category: "HUT_FEE",
-                ageTier,
-                seasonType,
-                isMember,
-                itemCode: value.itemCode,
-              },
-            })
+        }
+        const rateBearing =
+          type.bookingBehavior === "MEMBER_RATE" || type.key === "NON_MEMBER";
+        if (!rateBearing) {
+          return NextResponse.json(
+            { error: `Membership type "${type.name}" does not carry its own hut fees, so it cannot have hut fee item codes.` },
+            { status: 400 }
           );
         }
       }
     }
 
-    // Process entrance fee entries
-    if (entranceFees) {
-      for (const [category, value] of Object.entries(entranceFees)) {
-        const entranceFeeCategory = category as typeof ENTRANCE_FEE_CATEGORIES[number];
-        if (!ENTRANCE_FEE_CATEGORIES.includes(entranceFeeCategory)) continue;
-
-        if (value === null || (value.itemCode === null && value.amountCents === null)) {
-          ops.push(
-            prisma.xeroItemCodeMapping.deleteMany({
-              where: { category: "ENTRANCE_FEE", entranceFeeCategory },
-            })
-          );
+    // Hut-fee writes. Tiered cells upsert on the composite unique; the flat
+    // (NULL-ageTier) cell cannot use a compound-unique selector with null, so
+    // it does an app-side find-then-write — races are backstopped by the
+    // raw-SQL HUT_FEE flat partial unique index (P2002 -> friendly 400 below).
+    for (const { key, value } of hutFeeWrites) {
+      const { membershipTypeId, seasonType, ageTier } = key;
+      if (value === null) {
+        await prisma.xeroItemCodeMapping.deleteMany({
+          where: { category: "HUT_FEE", membershipTypeId, seasonType, ageTier },
+        });
+      } else if (ageTier !== null) {
+        await prisma.xeroItemCodeMapping.upsert({
+          where: {
+            category_membershipTypeId_seasonType_ageTier: {
+              category: "HUT_FEE",
+              membershipTypeId,
+              seasonType,
+              ageTier,
+            },
+          },
+          update: { itemCode: value.itemCode },
+          create: {
+            category: "HUT_FEE",
+            membershipTypeId,
+            seasonType,
+            ageTier,
+            itemCode: value.itemCode,
+          },
+        });
+      } else {
+        const existing = await prisma.xeroItemCodeMapping.findFirst({
+          where: { category: "HUT_FEE", membershipTypeId, seasonType, ageTier: null },
+          select: { id: true },
+        });
+        if (existing) {
+          await prisma.xeroItemCodeMapping.update({
+            where: { id: existing.id },
+            data: { itemCode: value.itemCode },
+          });
         } else {
-          ops.push(
-            prisma.xeroItemCodeMapping.upsert({
-              where: {
-                category_entranceFeeCategory: {
-                  category: "ENTRANCE_FEE",
-                  entranceFeeCategory,
-                },
-              },
-              update: {
-                itemCode: value.itemCode,
-                amountCents: value.amountCents,
-              },
-              create: {
-                category: "ENTRANCE_FEE",
-                entranceFeeCategory,
-                itemCode: value.itemCode,
-                amountCents: value.amountCents,
-              },
-            })
-          );
+          await prisma.xeroItemCodeMapping.create({
+            data: {
+              category: "HUT_FEE",
+              membershipTypeId,
+              seasonType,
+              ageTier: null,
+              itemCode: value.itemCode,
+            },
+          });
         }
       }
     }
 
-    await Promise.all(ops);
+    // Entrance fee entries (unchanged by the #1930 re-key).
+    for (const [category, value] of Object.entries(entranceFees ?? {})) {
+      const entranceFeeCategory = category as typeof ENTRANCE_FEE_CATEGORIES[number];
+      if (!ENTRANCE_FEE_CATEGORIES.includes(entranceFeeCategory)) continue;
+
+      if (value === null || (value.itemCode === null && value.amountCents === null)) {
+        await prisma.xeroItemCodeMapping.deleteMany({
+          where: { category: "ENTRANCE_FEE", entranceFeeCategory },
+        });
+      } else {
+        await prisma.xeroItemCodeMapping.upsert({
+          where: {
+            category_entranceFeeCategory: {
+              category: "ENTRANCE_FEE",
+              entranceFeeCategory,
+            },
+          },
+          update: {
+            itemCode: value.itemCode,
+            amountCents: value.amountCents,
+          },
+          create: {
+            category: "ENTRANCE_FEE",
+            entranceFeeCategory,
+            itemCode: value.itemCode,
+            amountCents: value.amountCents,
+          },
+        });
+      }
+    }
 
     await logAudit({
       action: "xero_item_code_mappings_updated",
@@ -196,27 +308,17 @@ export async function PUT(request: NextRequest) {
 
     // Return the full updated set (reuse GET logic)
     const rows = await prisma.xeroItemCodeMapping.findMany();
-    const resultHutFees: Record<string, { itemCode: string }> = {};
-    const resultEntranceFees: Record<string, { itemCode: string | null; amountCents: number | null }> = {};
-    for (const row of rows) {
-      if (
-        row.category === "HUT_FEE" &&
-        row.ageTier &&
-        row.seasonType &&
-        row.isMember !== null &&
-        row.itemCode
-      ) {
-        resultHutFees[`${row.ageTier}_${row.seasonType}_${row.isMember}`] = { itemCode: row.itemCode };
-      } else if (row.category === "ENTRANCE_FEE" && row.entranceFeeCategory) {
-        resultEntranceFees[row.entranceFeeCategory] = {
-          itemCode: row.itemCode ?? null,
-          amountCents: row.amountCents,
-        };
-      }
-    }
-
-    return NextResponse.json({ hutFees: resultHutFees, entranceFees: resultEntranceFees });
+    return NextResponse.json(buildResponseBody(rows));
   } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return NextResponse.json(
+        { error: "Duplicate hut fee mapping for the same membership type, season, and age tier." },
+        { status: 400 }
+      );
+    }
     logger.error({ err: error }, "Failed to update item code mappings");
     return NextResponse.json({ error: "Failed to update item code mappings" }, { status: 500 });
   }

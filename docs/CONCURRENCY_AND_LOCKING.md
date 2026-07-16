@@ -90,7 +90,7 @@ are the literal `1`.
 | **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` (`capacity.ts`) | 1 | Capacity claims/checks for one lodge. |
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit). |
-| **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`) | — | Archive/delete of one member. |
+| **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`, `member-merge.ts`) | — | Archive/delete of one member; overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review; and **member merge** (dual-lock on master + loser, E11 #1937, see below). |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
 | **Roster generation** | `hashtext("roster:<date>")` | inline (`admin-roster-service.ts`) | — | Roster generation for one calendar date. |
@@ -99,6 +99,31 @@ are the literal `1`.
 | **Authoritative fee schedule** | `hashtext("fee-schedule:<domain>:<key>")` | `lockFeeSchedule` (`authoritative-fees.ts`) | — | Serialises effective-dated membership or entrance-fee schedule changes for one configured key. |
 | **Member partner link** | sorted `hashtext("member-partner-link:<memberId>")` keys | `lockPartnerMembers` (`member-partner-link.ts`) | — | Serialises partner-link invariants across every member touched by a link; same-family keys are sorted. |
 | **Xero member contact link (legacy key)** | `hashtext(<memberId>)` | short local-link transactions (`xero-contacts.ts`) | — | First-writer-wins local `Member.xeroContactId` linking after provider work. This legacy unnamespaced key is shared by both Xero contact-link writers; do not copy it for new domains. |
+
+### Composition: application-approval mapping (E10, #1936)
+
+The membership-application approval transaction is the one writer that composes
+the application and member-lifecycle families. Its fixed acquisition order is:
+
+1. `member-application:<applicationId>` (the existing approval lock), THEN
+2. every mapped target's `member-lifecycle:<memberId>`, in **sorted key order**.
+
+Counterpart analysis — no cycles are possible:
+
+- Every other `member-lifecycle` holder is single-lock in that family:
+  member archive/delete approval (`member-lifecycle-actions.ts`) locks exactly
+  one member and takes no application lock; the admin family-group request
+  review transactions (`admin-family-group-requests-service.ts`) lock exactly
+  the one pre-existing member being linked into (or removed from) a group
+  before writing `FamilyGroupMember` — required because a `FamilyGroupMember`
+  insert does not bump `Member.updatedAt`, so only the lock (not the mapping
+  preview token) can serialise it against the mapping approval's
+  in-any-family-group collision guard. (The group-create *reject* transaction
+  takes no member lock: it links nobody into a group.)
+- No `member-lifecycle` holder ever acquires a `member-application` lock, so
+  the application → member-lifecycle direction is one-way.
+- Within the member-lifecycle family the approval acquires multiple keys in
+  sorted order, matching the same-family rule above.
 
 The F20 clamp inserts any required Xero deallocation outbox row before releasing
 the member-credit lock. Provider GET/delete/recreate calls run later, outside the
@@ -156,6 +181,32 @@ do not use unnamespaced `hashtext(<id>)` for new lock families.
 
 Do not add or compose a row lock without updating this inventory and documenting
 its order against every advisory- and row-lock counterpart.
+
+### Member merge — dual member-lifecycle lock (E11 #1937)
+
+`executeMemberMerge` (`member-merge.ts`) is the only writer that holds **two**
+`member-lifecycle:<memberId>` advisory locks at once — one for the master, one
+for the loser. Both are acquired at the very top of the single merge transaction
+in **sorted id order** (`[masterId, loserId].sort()`, smaller id first) so a
+merge and its mirror (a merge started from the other direction, or a concurrent
+archive/delete of either member) can never deadlock. Because the keys share the
+`member-lifecycle:` namespace with `member-lifecycle-actions.ts`, a merge also
+mutually excludes any archive or delete of either the master or the loser.
+
+Inside the locks the merge re-reads both members, re-runs the full guard matrix,
+and re-verifies the HMAC preview token (which bakes in both `updatedAt` values)
+before any write, so a stale preview or a concurrent edit fails with a 409
+instead of merging against changed state. There are **no Xero API calls** in or
+after the transaction — the loser's Xero teardown is DB-only (deactivate
+contact-identity `XeroObjectLink` rows and re-point the active
+`ENTRANCE_FEE_INVOICE` link to the master); the loser's Xero contact is left for
+manual clean-up.
+
+The merge transaction runs with an extended interactive-transaction window
+(`timeout: 120s`, `maxWait: 10s`): re-pointing 70+ relations takes hundreds of
+sequential round-trips on a heavy member, and the dual advisory lock already
+serialises every competing lifecycle writer, so the long window cannot admit a
+concurrent conflicting write.
 
 ## The disciplines, by writer class
 

@@ -226,6 +226,54 @@ async function createMissingSeasonRates(
   }
 }
 
+// Seed the membership-type-keyed hut rates (#1930, E4) with the same D4 fan-out
+// the migration backfill uses: member rates -> every MEMBER_RATE type,
+// non-member rates -> the built-in NON_MEMBER type. Create-if-missing so admin
+// edits survive a re-run. Every type starts age-keyed (ageGroupsApply=true).
+async function createMissingMembershipTypeSeasonRates(
+  seasonId: string,
+  season: "winter" | "summer",
+) {
+  const types = await prisma.membershipType.findMany({
+    select: { id: true, key: true, bookingBehavior: true },
+  });
+  const rates = seedRatesForSeason(season);
+  const memberRates = rates.filter((rate) => rate.isMember);
+  const nonMemberRates = rates.filter((rate) => !rate.isMember);
+
+  const upsert = async (
+    membershipTypeId: string,
+    ageTier: AgeTier,
+    pricePerNightCents: number,
+  ) => {
+    await prisma.membershipTypeSeasonRate.upsert({
+      where: {
+        seasonId_membershipTypeId_ageTier: {
+          seasonId,
+          membershipTypeId,
+          ageTier,
+        },
+      },
+      update: {},
+      create: { seasonId, membershipTypeId, ageTier, pricePerNightCents },
+    });
+  };
+
+  for (const type of types) {
+    if (type.bookingBehavior === "MEMBER_RATE") {
+      for (const rate of memberRates) {
+        await upsert(type.id, rate.ageTier, rate.pricePerNightCents);
+      }
+    } else if (type.key === "NON_MEMBER") {
+      for (const rate of nonMemberRates) {
+        await upsert(type.id, rate.ageTier, rate.pricePerNightCents);
+      }
+    }
+    // NON_MEMBER_RATE (except NON_MEMBER) and BLOCK_BOOKING types deliberately
+    // get no own rows (D2 invariant).
+  }
+}
+
 // Seed the default Lodge Induction checklist template (create-if-missing). The
 // template is only created when no template with this version exists, so admin
 // edits and new versions survive a re-run. It is marked active only when no
@@ -495,6 +543,7 @@ async function main() {
     },
   });
   await createMissingSeasonRates(winter2026.id, "winter");
+  await createMissingMembershipTypeSeasonRates(winter2026.id, "winter");
   console.log(`Season seeded: ${winter2026.name}`);
 
   // Seed Summer 2026-27 season (November - March) with rates from club config.
@@ -512,7 +561,30 @@ async function main() {
     },
   });
   await createMissingSeasonRates(summer2026.id, "summer");
+  await createMissingMembershipTypeSeasonRates(summer2026.id, "summer");
   console.log(`Season seeded: ${summer2026.name}`);
+
+  // Group-discount substitution target (#1930, E4): a GroupDiscountSetting row
+  // created outside the re-key migration would carry a NULL target, leaving an
+  // enabled discount inert but for the read-time fallback. Create-if-missing
+  // (schema defaults keep the discount disabled) and heal a NULL target to the
+  // built-in FULL type — never overwriting an admin-configured target.
+  const fullMembershipType = await prisma.membershipType.findFirst({
+    where: { key: "FULL" },
+    select: { id: true },
+  });
+  if (fullMembershipType) {
+    await prisma.groupDiscountSetting.upsert({
+      where: { id: "default" },
+      update: {},
+      create: { id: "default", rateMembershipTypeId: fullMembershipType.id },
+    });
+    await prisma.groupDiscountSetting.updateMany({
+      where: { id: "default", rateMembershipTypeId: null },
+      data: { rateMembershipTypeId: fullMembershipType.id },
+    });
+    console.log("Group discount substitution target seeded");
+  }
 
   // Seed Xero account mappings with current defaults (create-if-missing).
   const accountMappings = [

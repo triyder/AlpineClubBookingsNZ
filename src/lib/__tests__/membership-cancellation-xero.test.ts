@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   getResolvedAccountMapping: vi.fn(),
   refreshXeroContactCachesFromContact: vi.fn(),
   loadMembershipCancellationSettings: vi.fn(),
-  getAgeTierXeroContactGroupMappings: vi.fn(),
+  getManagedGroupUniverse: vi.fn(),
   buildXeroPayloadHash: vi.fn(),
   startXeroSyncOperation: vi.fn(),
   completeXeroSyncOperation: vi.fn(),
@@ -71,8 +71,8 @@ vi.mock("@/lib/membership-cancellation-settings", () => ({
   loadMembershipCancellationSettings: mocks.loadMembershipCancellationSettings,
 }));
 
-vi.mock("@/lib/age-tier-xero-groups", () => ({
-  getAgeTierXeroContactGroupMappings: mocks.getAgeTierXeroContactGroupMappings,
+vi.mock("@/lib/xero-member-grouping", () => ({
+  getManagedGroupUniverse: mocks.getManagedGroupUniverse,
 }));
 
 vi.mock("@/lib/email", () => ({
@@ -283,10 +283,7 @@ describe("membership cancellation Xero operations", () => {
       xeroArchiveContactsOnCancellation: true,
       xeroContactGroups: [{ groupId: "cancelled_group", groupName: "Cancelled" }],
     });
-    mocks.getAgeTierXeroContactGroupMappings.mockResolvedValue([
-      { tier: "ADULT", groupId: "adult_group", groupName: "Adults" },
-      { tier: "YOUTH", groupId: "youth_group", groupName: "Youth" },
-    ]);
+    mocks.getManagedGroupUniverse.mockResolvedValue(["adult_group", "youth_group"]);
     mocks.getContact
       .mockResolvedValueOnce({
         body: {
@@ -378,9 +375,7 @@ describe("membership cancellation Xero operations", () => {
       xeroArchiveContactsOnCancellation: true,
       xeroContactGroups: [{ groupId: "cancelled_group", groupName: "Cancelled" }],
     });
-    mocks.getAgeTierXeroContactGroupMappings.mockResolvedValue([
-      { tier: "ADULT", groupId: "adult_group", groupName: "Adults" },
-    ]);
+    mocks.getManagedGroupUniverse.mockResolvedValue(["adult_group"]);
     mocks.getContact.mockResolvedValue({
       body: {
         contacts: [
@@ -427,9 +422,7 @@ describe("membership cancellation Xero operations", () => {
       xeroArchiveContactsOnCancellation: true,
       xeroContactGroups: [{ groupId: "cancelled_group", groupName: "Cancelled" }],
     });
-    mocks.getAgeTierXeroContactGroupMappings.mockResolvedValue([
-      { tier: "ADULT", groupId: "adult_group", groupName: "Adults" },
-    ]);
+    mocks.getManagedGroupUniverse.mockResolvedValue(["adult_group"]);
     mocks.getContact.mockResolvedValue({
       body: {
         contacts: [

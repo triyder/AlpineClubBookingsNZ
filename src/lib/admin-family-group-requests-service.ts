@@ -679,6 +679,21 @@ export async function reviewAdminFamilyGroupRequest(params: {
 
     try {
       await prisma.$transaction(async (tx) => {
+        // #1936: take the member-lifecycle advisory lock for the member this
+        // request links into (or removes from) the group, so this write
+        // serializes with the application-approval mapping transaction, whose
+        // in-any-family-group collision guard re-reads targets under the same
+        // lock. A FamilyGroupMember insert does not bump Member.updatedAt, so
+        // the mapping preview token alone cannot catch that race. Members
+        // created inside this transaction need no lock — their ids are not
+        // visible to any concurrent mapping yet. Single key today; keep any
+        // future multi-member variant in sorted key order.
+        for (const lockMemberId of [affectedMemberId]
+          .filter((value): value is string => Boolean(value))
+          .sort()) {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${lockMemberId}`}))`;
+        }
+
         if (childMemberCreateData) {
           const created = await tx.member.create({
             data: childMemberCreateData,
@@ -1102,6 +1117,12 @@ async function reviewGroupCreateRequest(params: {
     let invitationId: string | null = null;
     try {
       await prisma.$transaction(async (tx) => {
+        // #1936: member-lifecycle lock on the requester being linked into the
+        // new group — serializes with the application-approval mapping
+        // transaction's in-any-family-group guard (see the join-request
+        // review transaction above for the full rationale).
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${request.requesterId}`}))`;
+
         // GROUP_CREATE approval must create the requester's membership with
         // role ADMIN — do NOT route this through the generic member upsert
         // used by the other request types, which creates role MEMBER and

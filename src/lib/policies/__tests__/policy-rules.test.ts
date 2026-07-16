@@ -22,6 +22,9 @@ import {
 
 const ref2026 = getSeasonStartDate(2026);
 
+const MEMBER_TYPE = "type-member";
+const NONMEMBER_TYPE = "type-nonmember";
+
 function makeSeason(overrides: Partial<SeasonRateData> = {}): SeasonRateData {
   return {
     seasonId: "summer-2026",
@@ -29,14 +32,14 @@ function makeSeason(overrides: Partial<SeasonRateData> = {}): SeasonRateData {
     endDate: new Date(2027, 2, 31),
     type: "SUMMER",
     rates: [
-      { ageTier: "ADULT", isMember: true, pricePerNightCents: 3500 },
-      { ageTier: "ADULT", isMember: false, pricePerNightCents: 5000 },
-      { ageTier: "YOUTH", isMember: true, pricePerNightCents: 2500 },
-      { ageTier: "YOUTH", isMember: false, pricePerNightCents: 3500 },
-      { ageTier: "CHILD", isMember: true, pricePerNightCents: 1000 },
-      { ageTier: "CHILD", isMember: false, pricePerNightCents: 2000 },
-      { ageTier: "INFANT", isMember: true, pricePerNightCents: 0 },
-      { ageTier: "INFANT", isMember: false, pricePerNightCents: 0 },
+      { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 3500 },
+      { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 5000 },
+      { ageTier: "YOUTH", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 2500 },
+      { ageTier: "YOUTH", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 3500 },
+      { ageTier: "CHILD", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 1000 },
+      { ageTier: "CHILD", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 2000 },
+      { ageTier: "INFANT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 0 },
+      { ageTier: "INFANT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 0 },
     ],
     ...overrides,
   };
@@ -93,12 +96,16 @@ describe("policy pricing rules", () => {
     enabled: true,
     minGroupSize: 5,
     summerOnly: true,
+    // A qualifying group substitutes the member type for true non-members.
+    rateMembershipTypeId: MEMBER_TYPE,
   };
 
   it("prices bookings with summer group discount membership-rate behavior", () => {
     const guests = Array.from({ length: 5 }, () => ({
       ageTier: "ADULT" as const,
       isMember: false,
+      rateMembershipTypeId: NONMEMBER_TYPE,
+      rateSource: "NON_MEMBER_DEFAULT" as const,
     }));
 
     const result = calculateBookingPrice(
@@ -117,6 +124,8 @@ describe("policy pricing rules", () => {
     const guests = Array.from({ length: 4 }, () => ({
       ageTier: "ADULT" as const,
       isMember: false,
+      rateMembershipTypeId: NONMEMBER_TYPE,
+      rateSource: "NON_MEMBER_DEFAULT" as const,
     }));
 
     const result = calculateBookingPrice(

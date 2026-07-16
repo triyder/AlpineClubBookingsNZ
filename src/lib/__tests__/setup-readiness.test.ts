@@ -175,6 +175,83 @@ describe("setup-readiness", () => {
     expect(report).not.toContain("accounting.reports.read");
   });
 
+  it("drops the Seasons And Rates step to a warning when a membership type has rate gaps (#1930, E4)", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        membershipTypeRateGaps: [
+          "Club — Winter 2026 (missing INFANT, CHILD)",
+          "School Group — Winter 2026 (missing flat all-ages rate)",
+        ],
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const bookingCategory = readiness.categories.find((c) => c.id === "booking");
+    const seasonsCheck = bookingCategory?.checks.find(
+      (check) => check.id === "seasons-rates",
+    );
+    expect(seasonsCheck?.status).toBe("warning");
+    expect(seasonsCheck?.message).toContain("no hut rates");
+    expect(seasonsCheck?.details).toContain(
+      "Missing rates: Club — Winter 2026 (missing INFANT, CHILD)",
+    );
+    expect(seasonsCheck?.details).toContain(
+      "Missing rates: School Group — Winter 2026 (missing flat all-ages rate)",
+    );
+    expect(readiness.status).toBe("warning");
+  });
+
+  it("computes tier-aware membership-type rate gaps (#1930, E4 review F7)", async () => {
+    const { computeMembershipTypeRateGaps } = await import("@/lib/setup-readiness");
+    const types = [
+      { id: "type-full", name: "Full Member", ageGroupsApply: true },
+      { id: "type-club", name: "Club", ageGroupsApply: true },
+      { id: "type-flat-covered", name: "Flat Fallback", ageGroupsApply: true },
+      { id: "type-school", name: "School Group", ageGroupsApply: false },
+      { id: "type-school-bad", name: "School (misconfigured)", ageGroupsApply: false },
+    ];
+    const seasons = [{ id: "s-1", name: "Winter 2026" }];
+    const rateRows = [
+      // Full: complete per-tier coverage — no gap.
+      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "INFANT" },
+      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "CHILD" },
+      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "YOUTH" },
+      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "ADULT" },
+      // Club: PARTIAL tier coverage, no flat row — a booking for a missing
+      // tier hard-throws, so this is a gap (the pre-fix pair-existence check
+      // missed exactly this case).
+      { seasonId: "s-1", membershipTypeId: "type-club", ageTier: "ADULT" },
+      { seasonId: "s-1", membershipTypeId: "type-club", ageTier: "YOUTH" },
+      // Flat Fallback: age-keyed type covered entirely by its flat row (the
+      // engine falls back exact-tier -> flat) — no gap.
+      { seasonId: "s-1", membershipTypeId: "type-flat-covered", ageTier: null },
+      // School Group: flat type with its flat row — no gap.
+      { seasonId: "s-1", membershipTypeId: "type-school", ageTier: null },
+      // School (misconfigured): flat type with ONLY tier rows — shape anomaly,
+      // flagged as missing its flat rate.
+      { seasonId: "s-1", membershipTypeId: "type-school-bad", ageTier: "ADULT" },
+    ];
+
+    const gaps = computeMembershipTypeRateGaps({ types, seasons, rateRows });
+    expect(gaps).toEqual([
+      "Club — Winter 2026 (missing INFANT, CHILD)",
+      "School (misconfigured) — Winter 2026 (missing flat all-ages rate)",
+    ]);
+
+    // A type with NO rows at all for a season is a gap listing every tier.
+    const emptyGaps = computeMembershipTypeRateGaps({
+      types: [{ id: "type-new", name: "New Type", ageGroupsApply: true }],
+      seasons,
+      rateRows: [],
+    });
+    expect(emptyGaps).toEqual([
+      "New Type — Winter 2026 (missing INFANT, CHILD, YOUTH, ADULT)",
+    ]);
+  });
+
   it("surfaces missing first-boot inputs as blocked checks", () => {
     const readiness = buildSetupReadiness({
       env: {},

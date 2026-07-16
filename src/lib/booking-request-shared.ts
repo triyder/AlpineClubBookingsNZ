@@ -25,7 +25,10 @@ import {
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { sendAdminOwnerSubstitutionAlert } from "@/lib/email";
 import logger from "@/lib/logger";
-import { assertMembershipTypeBookingAllowed } from "@/lib/membership-type-policy";
+import {
+  assertMembershipTypeBookingAllowed,
+  resolveGuestRateMembershipTypes,
+} from "@/lib/membership-type-policy";
 import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
 
@@ -51,6 +54,12 @@ export type HeldBookingGuestInput = {
   stayStart: Date;
   stayEnd: Date;
   priceCents: number;
+  // Rate-membership-type snapshot (#1930, E4, D3): persisted on the guest row
+  // so Xero line building reads the resolved type (an admin-linked member of a
+  // custom MEMBER_RATE type keeps that type's item code) instead of relying on
+  // the NULL-snapshot isMember fallback forever. Snapshot-only — request
+  // prices are admin-set totals and stay exactly as stored.
+  rateMembershipTypeId?: string | null;
 };
 
 /** Capacity nights that came back oversubscribed, as NZ date-only strings. */
@@ -127,7 +136,7 @@ export async function buildApprovalGuestCreates(
     heldBookingId,
   } = params;
 
-  const guestCreates = guests.map((guest, index) => {
+  const unratedGuestCreates = guests.map((guest, index) => {
     const memberId = linkedMembers.get(index);
     return {
       firstName: guest.firstName,
@@ -141,9 +150,32 @@ export async function buildApprovalGuestCreates(
     };
   });
   await assertMembershipTypeBookingAllowed(tx, {
-    guests: guestCreates,
+    guests: unratedGuestCreates,
     seasonYear: getSeasonYear(checkIn),
   });
+
+  // Persist the rate-membership-type snapshot (#1930, E4, D3) at the same
+  // season-year context the policy guard used: an admin-linked member of a
+  // custom MEMBER_RATE type records that type; unlinked guests record the
+  // built-in NON_MEMBER type. Prices are NOT touched — the admin-set split
+  // above stays exactly as stored. rateSource is resolver-internal and is not
+  // persisted on the guest row.
+  const guestCreates: HeldBookingGuestInput[] = (
+    await resolveGuestRateMembershipTypes(tx, {
+      seasonYear: getSeasonYear(checkIn),
+      guests: unratedGuestCreates,
+    })
+  ).map((guest) => ({
+    firstName: guest.firstName,
+    lastName: guest.lastName,
+    ageTier: guest.ageTier,
+    isMember: guest.isMember,
+    memberId: guest.memberId,
+    stayStart: guest.stayStart,
+    stayEnd: guest.stayEnd,
+    priceCents: guest.priceCents,
+    rateMembershipTypeId: guest.rateMembershipTypeId,
+  }));
 
   // Block admin-mediated double-books: a request whose guests an admin
   // linked to real members must not put a member on overlapping nights

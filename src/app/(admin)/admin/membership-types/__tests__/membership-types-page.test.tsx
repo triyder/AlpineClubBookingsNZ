@@ -255,7 +255,7 @@ describe("AdminMembershipTypesPage", () => {
   });
 
   it(
-    "validates required tiers and required Xero rule groups in the editor",
+    "validates required tiers in the editor",
     async () => {
       await renderPage();
 
@@ -273,39 +273,12 @@ describe("AdminMembershipTypesPage", () => {
           .hasAttribute("disabled"),
       ).toBe(true);
 
+      // Re-selecting a tier clears the validation error.
       fireEvent.click(screen.getByLabelText("Adult"));
-      fireEvent.click(screen.getByRole("button", { name: "Add Xero rule" }));
-
-      expect(screen.getByRole("alert").textContent).toContain(
-        "Every Xero group rule needs a group.",
-      );
-
-      fireEvent.click(
-        screen.getByRole("button", { name: "Remove Xero group rule" }),
-      );
       expect(
-        screen.queryByText("Every Xero group rule needs a group."),
+        screen.queryByText("Select at least one allowed age tier."),
       ).toBeNull();
     },
     10000,
   );
-
-  it("uses plain-language Xero rule mode labels with inline guidance", async () => {
-    await renderPage();
-
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[1]);
-
-    expect(screen.getByText("Accepted - allowed, but not synced")).not.toBeNull();
-    expect(
-      screen.getByText(
-        "Managed rules add matching members during Xero sync. Accepted rules only allow an existing group; each age scope can have one Managed rule.",
-      ),
-    ).not.toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "Add Xero rule" }));
-
-    expect(
-      screen.getByText("Managed - sync adds members to this group"),
-    ).not.toBeNull();
-  });
 });

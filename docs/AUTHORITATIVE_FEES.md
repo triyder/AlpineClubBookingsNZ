@@ -1,8 +1,24 @@
 # Authoritative Fee Configuration
 
 Annual membership fees and joining fees are persisted, effective-dated club
-configuration. Hut fees remain the lodge-scoped `Season` and `SeasonRate`
-records managed under **Admin > Hut Fees & Seasons**.
+configuration. Hut fees are the lodge-scoped `Season` records managed under
+**Admin > Hut Fees & Seasons**, with per-night rates keyed by **membership
+type** in `MembershipTypeSeasonRate` (#1930, E4). Each `MEMBER_RATE` membership
+type carries its own rate rows; non-members price via the built-in
+`NON_MEMBER` type; `NON_MEMBER_RATE` (except `NON_MEMBER`) and `BLOCK_BOOKING`
+types carry zero own rows. A type prices per age tier when
+`MembershipType.ageGroupsApply` is true (one row per tier) or from a single flat
+rate when false (one `NULL`-ageTier row). The legacy member/non-member
+boolean-keyed `SeasonRate` table is **retained but frozen** — read only by the
+public `{{hut-fees}}` embed until E7 re-keys it, and dropped by E13. Xero
+hut-fee item codes re-key the same way via `XeroItemCodeMapping.membershipTypeId`
+so an invoice line never disagrees with the rate that priced it.
+
+Each priced `BookingGuest` stores a `rateMembershipTypeId` snapshot (the type
+whose rows priced it). The snapshot is recomputed and overwritten whenever a
+guest is repriced; locked nights keep their booked price and stale snapshot
+untouched. A `NULL` snapshot (pre-refactor booking) resolves at read time as
+`isMember → FULL / NON_MEMBER`.
 
 > **Terminology.** "Joining fee" is the user-facing name for the one-off fee a
 > new member pays; "Annual Membership Fee" is the recurring fee to stay a

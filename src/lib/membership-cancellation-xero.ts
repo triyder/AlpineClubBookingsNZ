@@ -1,5 +1,5 @@
 import { Contact, CreditNote, LineAmountTypes, type Contacts, type LineItem } from "xero-node";
-import { getAgeTierXeroContactGroupMappings } from "@/lib/age-tier-xero-groups";
+import { getManagedGroupUniverse } from "@/lib/xero-member-grouping";
 import {
   loadMembershipCancellationSettings,
   type MembershipCancellationXeroContactGroupSetting,
@@ -744,14 +744,14 @@ export async function syncXeroMembershipCancellationContact(params: {
     };
   }
 
-  const [settings, ageTierMappings] = await Promise.all([
+  // Managed universe now derives from active grouping rules under the current
+  // mode (E8, #1934): NONE ⇒ empty ⇒ no managed removals. The cancellation-group
+  // ADDS from MembershipCancellationSettings are mode-independent and unchanged.
+  const [settings, managedGroupIds] = await Promise.all([
     loadMembershipCancellationSettings(),
-    getAgeTierXeroContactGroupMappings(),
+    getManagedGroupUniverse(),
   ]);
   const cancelledGroups = uniqueCancellationGroups(settings.xeroContactGroups);
-  const managedGroupIds = Array.from(
-    new Set(ageTierMappings.map((mapping) => mapping.groupId)),
-  );
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const contactId = member.xeroContactId;
 
@@ -799,7 +799,7 @@ export async function syncXeroMembershipCancellationContact(params: {
     params.participantId,
     "contact",
     buildXeroPayloadHash(requestPayload),
-    "v1",
+    "v2",
   );
   let contactOperationId = operationId;
   if (contactOperationId) {

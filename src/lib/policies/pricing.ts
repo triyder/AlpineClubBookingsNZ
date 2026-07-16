@@ -11,14 +11,27 @@ import {
   type GuestNightInput,
 } from "@/lib/booking-guest-stay-ranges";
 
+// Which membership type's rate rows a guest resolves to, and why (#1930, E4).
+//   OWN_TYPE            — a member priced from their own MEMBER_RATE type.
+//   NON_MEMBER_DEFAULT  — a true non-member priced from the built-in
+//                         NON_MEMBER type (the only source group discount may
+//                         substitute).
+//   TYPE_POLICY_FORCED  — a member whose type forces the non-member rate
+//                         (bookingBehavior NON_MEMBER_RATE); priced from
+//                         NON_MEMBER but excluded from the group discount.
+export type RateSource = "OWN_TYPE" | "NON_MEMBER_DEFAULT" | "TYPE_POLICY_FORCED";
+
 export interface SeasonRateData {
   seasonId: string;
   startDate: Date;
   endDate: Date;
   type?: SeasonType;
+  // Rate rows keyed by membership type (#1930, E4). A per-age-tier type has
+  // one row per tier; a flat type (ageGroupsApply=false) has a single
+  // NULL-ageTier row that applies to every tier.
   rates: {
-    ageTier: AgeTier;
-    isMember: boolean;
+    membershipTypeId: string;
+    ageTier: AgeTier | null;
     pricePerNightCents: number;
   }[];
 }
@@ -27,13 +40,21 @@ export interface GroupDiscountConfig {
   minGroupSize: number;
   summerOnly: boolean;
   enabled: boolean;
+  // The membership type whose rate rows a qualifying discount substitutes for
+  // NON_MEMBER_DEFAULT guests (#1930, E4). When null the discount cannot
+  // upgrade a rate (defensive; seeded to the built-in FULL type).
+  rateMembershipTypeId?: string | null;
 }
 
 export interface GuestInput {
   ageTier: AgeTier;
   isMember: boolean;
   memberId?: string | null;
-  forceNonMemberRate?: boolean;
+  // The membership type whose rate rows price this guest, and the reason
+  // (#1930, E4). Resolved by resolveGuestRateMembershipTypes before pricing;
+  // persisted as the BookingGuest.rateMembershipTypeId snapshot.
+  rateMembershipTypeId: string;
+  rateSource?: RateSource;
   stayStart?: Date | null;
   stayEnd?: Date | null;
   // Explicit included nights (issue #713). When present and non-empty, the
@@ -55,6 +76,12 @@ export interface PriceBreakdown {
   guests: {
     ageTier: AgeTier;
     isMember: boolean;
+    // The resolved rate-membership-type snapshot for this guest (#1930, E4).
+    // Callers persist it as BookingGuest.rateMembershipTypeId; Xero line
+    // building reads it to pick the item code. This is the guest's RESOLVED
+    // type, NOT any per-night group-discount substitution (which stays
+    // internal, mirroring the old boolean flip that never touched storage).
+    rateMembershipTypeId: string;
     nights: number;
     priceCents: number;
     perNightCents: number[];
@@ -65,6 +92,14 @@ export interface PriceBreakdown {
   }[];
   totalPriceCents: number;
 }
+
+// A guest before the rate resolver has assigned its rate membership type
+// (#1930, E4). Callers build these, then resolveGuestRateMembershipTypes turns
+// them into fully-rated GuestInputs.
+export type UnratedGuestInput = Omit<
+  GuestInput,
+  "rateMembershipTypeId" | "rateSource"
+>;
 
 export interface PromoCodeInput {
   type: PromoCodeType;
@@ -176,14 +211,33 @@ function getGuestPricedNights(
   return getStayNights(guestStayStart, guestStayEnd);
 }
 
+/**
+ * Match a rate row within one season for a rate-membership-type + age tier.
+ * Prefers an exact per-tier row and falls back to the type's flat
+ * (NULL-ageTier) row, so both age-keyed and flat types resolve (#1930, E4).
+ */
+function matchSeasonRate(
+  season: SeasonRateData,
+  ageTier: AgeTier,
+  rateMembershipTypeId: string
+): number | null {
+  let flat: number | null = null;
+  for (const rate of season.rates) {
+    if (rate.membershipTypeId !== rateMembershipTypeId) continue;
+    if (rate.ageTier === ageTier) return rate.pricePerNightCents;
+    if (rate.ageTier === null) flat = rate.pricePerNightCents;
+  }
+  return flat;
+}
+
 // test seam
 /**
- * Find the rate for a specific night, guest tier, and membership status.
+ * Find the rate for a specific night, guest tier, and rate membership type.
  */
 export function findRateForNight(
   date: Date,
   ageTier: AgeTier,
-  isMember: boolean,
+  rateMembershipTypeId: string,
   seasons: SeasonRateData[]
 ): number | null {
   const dateKey = getBookingDateKey(date);
@@ -192,10 +246,7 @@ export function findRateForNight(
     const startKey = getBookingDateKey(season.startDate);
     const endKey = getBookingDateKey(season.endDate);
     if (dateKey >= startKey && dateKey <= endKey) {
-      const rate = season.rates.find(
-        (r) => r.ageTier === ageTier && r.isMember === isMember
-      );
-      return rate ? rate.pricePerNightCents : null;
+      return matchSeasonRate(season, ageTier, rateMembershipTypeId);
     }
   }
   return null;
@@ -230,19 +281,17 @@ export function findSeasonForDate(
 export function getNightlyRate(
   date: Date,
   ageTier: AgeTier,
-  isMember: boolean,
+  rateMembershipTypeId: string,
   seasons: SeasonRateData[]
 ): { priceCents: number; seasonId: string } | null {
   const season = findSeasonForDate(date, seasons);
   if (!season) return null;
 
-  const rate = season.rates.find(
-    (r) => r.ageTier === ageTier && r.isMember === isMember
-  );
-  if (!rate) return null;
+  const priceCents = matchSeasonRate(season, ageTier, rateMembershipTypeId);
+  if (priceCents === null) return null;
 
   return {
-    priceCents: rate.pricePerNightCents,
+    priceCents,
     seasonId: season.seasonId,
   };
 }
@@ -318,17 +367,23 @@ export function calculateBookingPrice(
       }
 
       const activeGuestCount = countActiveGuestsForNight(guests, night, bookingRange);
-      // Group discount: if applicable, treat all guests as members for rate lookup
-      const effectiveIsMember =
-        guest.forceNonMemberRate
-          ? false
-          : guest.isMember ||
-            isGroupDiscountApplicable(activeGuestCount, night, seasons, groupDiscount);
+      // Group discount (#1930, E4): substitutes the configured rate membership
+      // type ONLY for true non-members (rateSource NON_MEMBER_DEFAULT). Members
+      // keep their own type's rate (OWN_TYPE) and TYPE_POLICY_FORCED members
+      // are excluded — exactly the two behaviours the old boolean flip
+      // preserved. The substitution is per-night and internal; the persisted
+      // snapshot stays the guest's resolved rateMembershipTypeId.
+      const effectiveRateTypeId =
+        guest.rateSource === "NON_MEMBER_DEFAULT" &&
+        groupDiscount?.rateMembershipTypeId &&
+        isGroupDiscountApplicable(activeGuestCount, night, seasons, groupDiscount)
+          ? groupDiscount.rateMembershipTypeId
+          : guest.rateMembershipTypeId;
 
-      const rate = findRateForNight(night, guest.ageTier, effectiveIsMember, seasons);
+      const rate = findRateForNight(night, guest.ageTier, effectiveRateTypeId, seasons);
       if (rate === null) {
         throw new Error(
-          `No rate found for ${guest.ageTier} (member: ${guest.isMember}) on ${formatDateOnly(night)}`
+          `No rate found for ${guest.ageTier} (rate type: ${effectiveRateTypeId}) on ${formatDateOnly(night)}`
         );
       }
       perNightCents.push(rate);
@@ -338,6 +393,7 @@ export function calculateBookingPrice(
     return {
       ageTier: guest.ageTier,
       isMember: guest.isMember,
+      rateMembershipTypeId: guest.rateMembershipTypeId,
       nights: nights.length,
       priceCents: guestTotal,
       perNightCents,

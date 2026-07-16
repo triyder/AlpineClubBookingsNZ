@@ -29,12 +29,6 @@ export type AgeTierSettingData = {
   label: string;
   subscriptionRequiredForBooking?: boolean;
   familyGroupRequestCreateMemberAllowed?: boolean;
-  xeroContactGroupId?: string | null;
-  xeroContactGroupName?: string | null;
-  xeroAcceptedContactGroups?: Array<{
-    groupId: string;
-    groupName: string | null;
-  }>;
   sortOrder: number;
 };
 
@@ -46,9 +40,6 @@ export const AGE_TIER_DEFAULTS: AgeTierSettingData[] = clubConfig.ageTiers.map(
     label: tier.label,
     subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
     familyGroupRequestCreateMemberAllowed: tier.familyGroupRequestCreateMemberAllowed,
-    xeroContactGroupId: null,
-    xeroContactGroupName: null,
-    xeroAcceptedContactGroups: [],
     sortOrder,
   }),
 );
@@ -60,12 +51,7 @@ const LEGACY_THREE_TIER_SETTINGS = [
 ];
 
 export function cloneAgeTierSettings(settings: AgeTierSettingData[]): AgeTierSettingData[] {
-  return settings.map((setting) => ({
-    ...setting,
-    xeroAcceptedContactGroups: (setting.xeroAcceptedContactGroups ?? []).map((group) => ({
-      ...group,
-    })),
-  }));
+  return settings.map((setting) => ({ ...setting }));
 }
 
 function isLegacyThreeTierSettings(settings: AgeTierSettingData[]): boolean {
@@ -101,7 +87,6 @@ export function normalizeAgeTierSettings(
           setting.subscriptionRequiredForBooking ?? true,
         familyGroupRequestCreateMemberAllowed:
           setting.familyGroupRequestCreateMemberAllowed ?? false,
-        xeroAcceptedContactGroups: setting.xeroAcceptedContactGroups ?? [],
       }))
   );
 }

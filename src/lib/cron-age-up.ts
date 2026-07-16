@@ -12,6 +12,7 @@ import {
 } from "./email";
 import logger from "./logger";
 import { issueActionToken } from "./action-tokens";
+import { triggerMemberXeroContactGroupSync } from "./xero-contact-groups";
 
 const AGE_UP_PARENT_EMAIL_HANDOFF_AUDIT_ACTION =
   "member.age_up.parent_email_handoff_sent";
@@ -416,6 +417,15 @@ export async function checkAgeUpMembers(): Promise<{
         { memberId: member.id, firstName: member.firstName },
         "Age-up: member upgraded to ADULT with login"
       );
+
+      // Best-effort Xero contact-group re-sync after the tier flip (E8, #1934).
+      // Non-fatal and idempotent on re-run; a no-op unless grouping is enabled
+      // and the member has a Xero contact. Without this, a cron-aged member
+      // would stay in their old age-tier group under Type+Age until some other
+      // touch. Runs after the flip has durably committed, outside any DB tx.
+      await triggerMemberXeroContactGroupSync(member.id, {
+        reason: "cron_age_up",
+      });
     } catch (err) {
       if (upgradeResult) {
         try {

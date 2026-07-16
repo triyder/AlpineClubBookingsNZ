@@ -78,6 +78,18 @@ the live lodge name is substituted at send time.
 | `ageTiers[].nightlyRates.summer.memberCents`       | yes      | Summer member nightly rate in integer cents.                                                                     |
 | `ageTiers[].nightlyRates.summer.nonMemberCents`    | yes      | Summer non-member nightly rate in integer cents.                                                                 |
 
+> **Hut rates are keyed by membership type (#1930, E4).** The `memberCents` /
+> `nonMemberCents` seed values above are fanned out at seed time into
+> per-membership-type `MembershipTypeSeasonRate` rows: `memberCents` seeds every
+> `MEMBER_RATE` type (FULL, LIFE, FAMILY, …) and `nonMemberCents` seeds the
+> built-in `NON_MEMBER` type. `NON_MEMBER_RATE` (except `NON_MEMBER`) and
+> `BLOCK_BOOKING` types get no rate rows. Each type starts age-keyed
+> (`ageGroupsApply = true`, one row per tier); an admin may later set a type
+> flat (one `NULL`-ageTier row). Xero hut-fee item codes
+> (`XeroItemCodeMapping.membershipTypeId`) re-key the same way so an invoice
+> line never disagrees with the rate that priced it. The legacy boolean-keyed
+> `SeasonRate` table is retained but frozen (public embed only) until E7/E13.
+
 When the bed allocation module is effectively enabled and at least one active
 bed exists in Admin -> Configuration -> Rooms & Beds, booking capacity is the
 active bed count from that configurator — unless a per-lodge capacity is set
@@ -468,6 +480,44 @@ rule per document.
 Every one of these follows the single-lodge presentation rule: with only one
 active lodge, none of the selectors, columns, or lodge names appear, and the
 club behaves exactly as it does today.
+
+## Book on Behalf
+
+Book on Behalf (`/admin/book`) lets a Booking Officer (anyone with the
+**bookings:edit** permission — no membership permission required) create a
+booking for someone other than themselves. The owner can be either an existing
+member (search the MemberPicker) or a **non-member**.
+
+**Non-member bookings.** Choose "Non-member booking" beside the member search
+and enter the guest's first/last name, email and phone. The system creates a
+lightweight, **non-login** contact — exactly the kind of record an approved
+public booking request already creates — and the booking then proceeds at
+non-member rates through the normal dates → guests → quote → confirm flow.
+
+- The record is always `NON_MEMBER`, can never sign in, is created with its
+  email **unverified** (an officer-typed address is not a verified one), and is
+  billed identically to a public booking-request non-member.
+- The endpoint is `POST /api/admin/bookings/non-member-contact`, gated on
+  **bookings:edit** (the same scope as the rest of Book on Behalf).
+
+**Reuse instead of duplicating (suggest-and-pick).** As you type an email or
+name, existing non-login contacts are suggested so a repeat guest is reused
+rather than duplicated. Reuse is always an explicit pick ("Use existing") — the
+system never silently attaches a booking to an existing contact by email,
+because several walk-in contacts can legitimately share one email. If the email
+belongs to a **real member who can sign in**, creation is blocked with a pointer
+to search for them in the member picker instead. (Duplicate non-member contacts
+that do accumulate over time are cleaned up with the member-merge tool (#1937).)
+
+**Walk-ins with no email.** Tick "No email address" for a phone/walk-in guest.
+The contact is stored with a club-internal placeholder address, and that owner
+is **never emailed** (no booking confirmation, no hold email) and the
+placeholder is **never shared with Xero** as a real address.
+
+**Notifying the owner.** On confirm you choose whether the owner is emailed the
+standard confirmation/hold email; for a non-member owner this defaults to *not*
+emailing. A no-email (walk-in) owner is never emailed regardless of the choice.
+An Internet Banking (Xero) invoice email, when applicable, is still sent.
 ## Hut Leaders
 
 A hut-leader assignment (`/admin/hut-leaders`) is a date-ranged roster record
@@ -592,6 +642,35 @@ variables. `/admin/setup` exposes:
 These settings are audited when saved. They do not call Xero on save; future
 approval processing must keep Xero writes outside long database transactions.
 
+## Member Deletion Requests Page
+
+`/admin/deletion-requests` surfaces two distinct member-deletion flows in one
+place:
+
+- **Member self-service requests** — a member asks for their own account to be
+  deleted (anonymised). Approval anonymises the account, cancels future
+  bookings, and deactivates login. Backed by the `DeletionRequest` model.
+- **Admin-initiated deletion requests** — an admin raises a permanent
+  hard-delete of a member record added in error (no meaningful booking,
+  financial, lodge, Xero, or audit history). Backed by
+  `MemberLifecycleActionRequest` with `action = DELETE`.
+
+Admin-initiated requests enforce **separation of duties**: a *different* admin
+must approve or reject the request. The requester sees the approve/reject
+buttons disabled with "A different admin must review this request"; the server
+review endpoint stays authoritative and returns 403 on self-review regardless
+of the UI. Both flows contribute to the sidebar's "Deletion Requests" attention
+badge (self-service `PENDING` + admin-initiated `REQUESTED`).
+
+The admin-initiated alert email (`admin-member-delete-requested`) deep-links to
+this review queue. It is delivered under its own dedicated **Member delete
+requests** notification preference (`adminMemberDeleteRequest`), kept separate
+from the shared **Member requests** category (`adminFamilyGroupRequest`, which
+covers membership applications, family-group, cancellation, and archive
+requests). This preference is additive and defaults **on**, so existing rows
+keep delete-request alerts enabled; muting the shared member-requests category
+no longer also silences delete-request review alerts.
+
 ## Membership Type Settings
 
 Seasonal membership type settings are database-backed and managed from
@@ -635,15 +714,15 @@ Xero contact-group rules, and committee assignment are separate axes:
   page shows these as a compact ordered list; creating or editing a type opens
   a dedicated editor for identity fields, booking behavior (`MEMBER_RATE`,
   `NON_MEMBER_RATE`, `BLOCK_BOOKING`), subscription behavior (`REQUIRED`,
-  `NOT_REQUIRED`), allowed age tiers, and optional Xero contact-group rules.
-  Display names must be unique: creating or renaming a type to a
+  `NOT_REQUIRED`), and allowed age tiers. Xero contact-group rules are no longer
+  edited here — they live on the single **Xero member grouping** surface (see
+  below). Display names must be unique: creating or renaming a type to a
   case-insensitive exact match of an existing name is rejected.
 - `AgeTierSetting` remains separate because a member can be Adult Full, Adult
   Life, Adult Associate, Child Family, Youth School, and so on. Age tiers still
-  drive age-based rates and age-based default Xero grouping. Use Age Tier Xero
-  groups for broad age cohorts such as Adult or Youth, use Membership Type Xero
-  groups for status/policy groups such as Life or Associate, and use both when
-  Xero needs both labels.
+  drive age-based rates. Xero grouping by age tier is now configured on the
+  **Xero member grouping** surface (see below), not on the age-tier settings
+  page.
 - `SeasonalMembershipAssignment` records one membership type per member per
   membership `seasonYear`, including the assignment source (`ADMIN`, `IMPORT`,
   `FAMILY_SUBSCRIPTION`, `ROLL_FORWARD`, or `SYSTEM`) and an optional
@@ -663,6 +742,50 @@ Xero contact-group rules, and committee assignment are separate axes:
   inactive-type exceptions.
 - Committee assignment remains public/contact metadata and does not grant app
   access.
+
+## Xero member grouping
+
+How (or whether) members are auto-sorted into Xero contact groups is a single
+club-level setting, managed on the dedicated **Xero member grouping** admin
+surface (finance area). One mode plus one rule table replaces the old age-tier
+group fields and the membership-type Xero rules.
+
+- **Mode** (`XeroGroupingSettings` singleton):
+
+  | Mode | Behaviour |
+  |---|---|
+  | `None` | The sync is a total no-op. Existing Xero group memberships are left untouched — never added, never removed — including on the membership-cancellation path. |
+  | `Membership Type` | Only type-keyed rules apply. Tier-bearing rules are inert (shown but not applied). |
+  | `Membership Type + Age` | Most-specific `MANAGED` match wins: type+tier > type-only > tier-only. `ACCEPTED` groups are the union of matching accepted rules plus the matched managed group. |
+
+- **Rules** (`XeroContactGroupRule`): each rule is a (membership type?, age
+  tier?, `MANAGED`/`ACCEPTED`, group) tuple. `MANAGED` is the group the sync
+  adds; `ACCEPTED` is a group the sync tolerates and never removes. Duplicate
+  rule shapes are rejected. The effective membership type is resolved at the
+  current season year (the same resolver as pricing, but pricing resolves per
+  stay-night season and grouping resolves at "now").
+- **Managed universe / never delete:** the sync only ever adds/removes a
+  contact's membership of groups referenced by active rules. It **never deletes
+  a Xero contact group**, and never touches a group no active rule references.
+  A member already sitting in an accepted group is not given a spurious managed
+  add.
+- **No auto-resync:** changing the mode, or adding/editing/deactivating/deleting
+  a rule, never re-groups the existing population. Deleting a rule only shrinks
+  the managed universe — members already in that group are **not** removed by
+  the system. Members re-group on their next trigger (age-tier change,
+  current-season membership-type change, cron age-up) or via the explicit bulk
+  re-sync.
+- **Dry-run + bulk re-sync:** the surface shows a cache-based dry-run diff
+  (counts, per-member add/remove, an estimated Xero call budget, and members
+  skipped because they have no Xero contact) before any run. The bulk re-sync is
+  admin-triggered, chunked, resumable, and rate-limited; it never advances the
+  CONTACT delta-sync watermark. See
+  `docs/XERO_MEMBER_GROUPING_RUNBOOK.md` for the Tokoroa cutover procedure.
+- Existing age-configured installs migrate to `Membership Type + Age` with
+  tier-only rules, preserving behaviour identically (a correctly-grouped member
+  produces zero diff). The legacy `AgeTierSetting` Xero group columns and the
+  `AgeTierXeroAcceptedContactGroup` table are retained but no longer read
+  (dropped in the deferred E13).
 
 ## Committee Settings
 
@@ -765,6 +888,58 @@ New-member approval runs the same planner after the membership transaction;
 failure or incomplete configuration is a warning/exception and cannot undo the
 approval.
 
+### Application Approval Mapping
+
+When an admin approves a membership application, each person on it — the
+applicant and every family member — is approved as **Create new** (the default,
+identical to previous behavior) or **Map to an existing member**. Mapping is a
+link **and overwrite**: the existing record's name, date of birth, phone, and
+both address blocks are overwritten from the application (the applicant also
+overwrites email + recomputed age tier). Before approving, the admin previews a
+field-by-field diff (current → application) and the approval echoes back an HMAC
+preview token; if anything that changes the previewed outcome has moved since —
+either row edited, or a recomputed value such as an age-tier boundary — approval
+is refused (409) and the admin re-previews. Concurrent approvals mapping the
+same member serialize on a per-member advisory lock, and the second one 409s on
+token drift.
+
+Collision rules refuse approval (BLOCK) when a mapping target is inactive or
+archived, already belongs to a family group (for a family application), is
+mapped for two people at once, is a nominator on this application, is an admin
+mapped as a dependent, or when the application email belongs to a *different*
+login-capable member. A target that already has this season's membership
+coverage is kept as-is and excluded from new subscription billing (SKIP with a
+note, repeated in the post-approval warnings), so nobody is double-charged.
+
+Mapping also refuses (BLOCK) when a **scoped** admin's mapping would overwrite
+the login email of a member who holds a privileged access role — the same
+Full-Admin gate as direct member edit (issue #1026), because an email change
+plus a public forgot-password request hands the account and its roles to the
+new address. A Full Admin can approve such a mapping, and a mapping that leaves
+the email unchanged is unaffected. The acting admin's roles are recomputed
+inside the approval transaction, so a preview minted by a Full Admin cannot be
+replayed by a scoped admin — that approval fails closed with a 409 token
+mismatch.
+
+A mapped target that is already linked to a Xero contact keeps that link: the
+post-approval contact sync reuses the existing `xeroContactId` and does **not**
+re-push the member's details to Xero after the overwrite. If the mapping
+changed the member's name or email, the Xero contact keeps its old values
+(stale-name caveat) until an operator edits the contact in Xero manually. Only
+a member without an existing link gets a Xero contact found-or-created.
+
+Auth is never silently rewritten: mapping a family member never touches a
+login-capable target's password/login/2FA or email; mapping the applicant onto
+an existing login member keeps that member's auth untouched (and sends no
+set-password email), while mapping onto a non-login member promotes it to a
+login account (fresh password, set-password email, verified email, cleared email
+inheritance). Confirmation timestamps are set only when currently empty and are
+never regressed. The **joining fee defaults to skip** for a mapped applicant
+(reason "Mapped to existing member"); the admin can switch it back on for a
+lapsed rejoiner. Family-member joining fees remain out of scope. Every mapped
+person writes a critical `MEMBER_APPLICATION_MAPPED_TO_EXISTING` audit record
+capturing the overwritten fields and whether login was promoted.
+
 ## Member Import And Addresses
 
 Admin member CSV import treats a member identity as the normalized email plus
@@ -787,6 +962,47 @@ addresses. Existing members keep it off only when a saved postal address has
 material postal fields that differ from the physical address. Server routes
 remain authoritative: when `postalSameAsPhysical` is submitted, physical address
 fields are copied into postal fields before the member or application is saved.
+
+## Merging Duplicate Members
+
+When the same person ends up with two member records (for example one from an old
+import and one from a new application, or a duplicated Book-on-Behalf contact), a
+**Full Admin** can merge them from **Admin > Members > (open the record you want
+to keep) > "Merge a duplicate into this member"**. Only Full Admins see the
+action; scoped admins cannot merge.
+
+- **Who is kept.** The record you open is the **master** and survives. You pick
+  the duplicate to merge in; it is **permanently deleted** at the end (there is no
+  undo). A swap control lets you flip which record is the master before you
+  commit.
+- **What merges.** Blank fields on the master are filled from the duplicate;
+  where both have a value the master's wins. All history — bookings, payments,
+  credits, subscriptions, family/partner links, inductions, committee roles, and
+  so on — moves onto the master. Login details, security settings (password,
+  2FA), and the Xero accounting link always stay the master's and are never
+  taken from the duplicate.
+- **What is blocked.** The merge stops (with a clear reason in the preview) when
+  the master is inactive/archived, the duplicate holds an admin role (demote it
+  first), either record has a pending deletion/archive/family request (including
+  a member's own pending account-deletion request), or the duplicate carries a
+  real (invoiced/paid) membership-subscription for a season the master already
+  has a subscription row for — paid history is never silently dropped.
+- **What is warned.** The preview lists every access role the master will gain
+  from the duplicate — including custom (definition-backed) roles — plus any
+  confirmed-partner link, promo allocation, or group-booking join row that will
+  be dropped as a duplicate, so nothing changes silently.
+- **The manual Xero step.** The system does **not** touch Xero over the network
+  during a merge. The duplicate's Xero *contact* is left in Xero — the preview
+  warns you to **archive or merge it in Xero manually**. The one thing it does
+  re-point in the database is the duplicate's joining-fee (entrance-fee) invoice
+  link, so the master is still recognised as having paid a joining fee and is not
+  re-charged. The duplicate is also signed out on their next request.
+- **Confirming.** Before anything happens you see a full preview: the field-by-
+  field result, how many history rows move, which duplicate rows are de-duplicated,
+  and every warning. You must type `MERGE <duplicate's full name>` to enable the
+  irreversible **Merge and delete duplicate** button. Every merge writes one
+  critical `MEMBER_MERGED` audit record. Historic audit rows that referenced the
+  duplicate keep its id and stored name by design, so the audit trail stays intact.
 
 ## App Defaults
 

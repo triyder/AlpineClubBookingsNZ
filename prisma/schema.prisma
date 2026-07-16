@@ -197,6 +197,18 @@ enum XeroContactGroupRuleMode {
   ACCEPTED
 }
 
+// Club-level mode controlling how (or whether) members are auto-grouped into
+// Xero contact groups (E8, #1934). NONE: sync is a total no-op — existing Xero
+// groups are never added to or removed from. MEMBERSHIP_TYPE: only type-keyed
+// XeroContactGroupRule rows apply (tier-bearing rules are inert). Existing
+// age-configured installs (Tokoroa) migrate to MEMBERSHIP_TYPE_AND_AGE with
+// tier-only rules so behaviour is preserved identically.
+enum XeroMemberGroupingMode {
+  NONE
+  MEMBERSHIP_TYPE
+  MEMBERSHIP_TYPE_AND_AGE
+}
+
 enum SeasonType {
   WINTER
   SUMMER
@@ -985,6 +997,11 @@ model MembershipType {
   isBuiltIn            Boolean                            @default(false)
   bookingBehavior      MembershipTypeBookingBehavior      @default(MEMBER_RATE)
   subscriptionBehavior MembershipTypeSubscriptionBehavior @default(REQUIRED)
+  // When true, this type's hut nightly rates are keyed per age tier; when
+  // false, the type prices from a single flat rate (one NULL-ageTier
+  // MembershipTypeSeasonRate row per season). Day-one backfill copies the
+  // per-tier legacy rates, so every type starts age-keyed (#1930, E4).
+  ageGroupsApply       Boolean                            @default(true)
   sortOrder            Int                                @default(0)
   createdAt            DateTime                           @default(now())
   updatedAt            DateTime                           @updatedAt
@@ -993,6 +1010,7 @@ model MembershipType {
   allowedAgeTiers       MembershipTypeAgeTier[]
   xeroContactGroupRules XeroContactGroupRule[]
   annualFees            MembershipAnnualFee[]
+  seasonRates           MembershipTypeSeasonRate[]
 
   @@index([isActive, sortOrder])
   @@index([sortOrder])
@@ -1059,6 +1077,26 @@ model XeroContactGroupRule {
   @@index([ageTier])
   @@index([mode, isActive, sortOrder])
   @@index([groupId])
+  // Dedupe of identical rule shapes is enforced by a raw-SQL partial unique
+  // index (E8, #1934) — Prisma cannot express NULLS NOT DISTINCT, so the index
+  // lives in the migration and is recorded in prisma/partial-unique-indexes.tsv:
+  //   XeroContactGroupRule_shape_unique on
+  //   (membershipTypeId, ageTier, mode, groupId) NULLS NOT DISTINCT.
+  // App-side rule CRUD enforces the same dedupe for friendly errors.
+}
+
+// Single-row ("default") club setting selecting the Xero member-grouping mode
+// (E8, #1934). Governs syncManagedXeroContactGroupForMember and the
+// cancellation-path managed universe. Backfilled to MEMBERSHIP_TYPE_AND_AGE for
+// installs that had any age-tier Xero group config (Tokoroa), otherwise NONE.
+model XeroGroupingSettings {
+  id                String                 @id @default("default")
+  mode              XeroMemberGroupingMode @default(NONE)
+  updatedByMemberId String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  @@index([updatedByMemberId])
 }
 
 model SeasonalMembershipAssignment {
@@ -1187,7 +1225,12 @@ model Season {
   updatedAt DateTime   @updatedAt
 
   // Relations
-  rates SeasonRate[]
+  // `rates` is the legacy member/non-member boolean-keyed rate table. It is
+  // retained (frozen, read only by the public {{hut-fees}} embed) after the
+  // E4 re-key (#1930); the authoritative pricing rows now live in
+  // `membershipTypeRates`. E13 drops `rates` after a release soak.
+  rates              SeasonRate[]
+  membershipTypeRates MembershipTypeSeasonRate[]
   lodge Lodge        @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
 
   @@index([startDate, endDate])
@@ -1206,6 +1249,33 @@ model SeasonRate {
 
   @@unique([seasonId, ageTier, isMember])
   @@index([seasonId])
+}
+
+// Hut nightly rate keyed by membership type (#1930, E4). Replaces the
+// member/non-member boolean key on SeasonRate: each MEMBER_RATE membership
+// type carries its own rate rows, non-members price via the built-in
+// NON_MEMBER type, and NON_MEMBER_RATE/BLOCK_BOOKING types deliberately carry
+// zero own rows (D2 invariant). `ageTier` is nullable: a per-age-tier type
+// has one row per tier; a flat type (ageGroupsApply=false) has a single
+// NULL-ageTier row. Postgres treats NULLs as distinct in the composite
+// unique, so a companion raw-SQL partial unique index
+// (WHERE "ageTier" IS NULL) enforces one flat row per (season, type) — it
+// lives in the migration and prisma/partial-unique-indexes.tsv.
+model MembershipTypeSeasonRate {
+  id                 String   @id @default(cuid())
+  seasonId           String
+  membershipTypeId   String
+  ageTier            AgeTier?
+  pricePerNightCents Int
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  season         Season         @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  membershipType MembershipType @relation(fields: [membershipTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([seasonId, membershipTypeId, ageTier])
+  @@index([seasonId])
+  @@index([membershipTypeId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1420,6 +1490,15 @@ model BookingGuest {
   stayStart  DateTime  @db.Date
   stayEnd    DateTime  @db.Date
   priceCents Int
+  // Snapshot of the membership type whose rate rows priced this guest (#1930,
+  // E4). Persisted at pricing time by the rate resolver and read by Xero line
+  // building to pick the item code. NOT write-once: modify/reprice flows
+  // recompute and overwrite it for repriced guests; locked nights keep the
+  // price and the stale snapshot untouched. A NULL snapshot (pre-refactor
+  // bookings) falls back isMember → FULL/NON_MEMBER at read time — kept
+  // forever. Deliberately a bare column (no FK): the snapshot must survive
+  // even if a custom type is later deleted.
+  rateMembershipTypeId String?
   arrivedAt  DateTime?
   departedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -3729,6 +3808,7 @@ model NotificationPreference {
   adminIssueReport           Boolean  @default(true)
   adminBookingRequest        Boolean  @default(true)
   adminBookingReviewRequired Boolean  @default(true)
+  adminMemberDeleteRequest   Boolean  @default(true)
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 
@@ -3766,7 +3846,17 @@ model XeroItemCodeMapping {
   category            String // "HUT_FEE" | "ENTRANCE_FEE"
   ageTier             AgeTier? // HUT_FEE only
   seasonType          SeasonType? // HUT_FEE only
-  isMember            Boolean? // HUT_FEE only
+  // Legacy member/non-member key column (#1930, E4). Retained alongside the
+  // new membershipTypeId key so day-one item-code resolution stays
+  // byte-identical; E13 drops it and the old unique after a release soak.
+  isMember            Boolean? // HUT_FEE only (legacy key, retained)
+  // Membership-type key for HUT_FEE item codes (#1930, E4). Nullable ageTier
+  // mirrors MembershipTypeSeasonRate: a per-tier type has one row per tier, a
+  // flat type has a single NULL-ageTier row. A companion raw-SQL partial
+  // unique index (WHERE "ageTier" IS NULL AND category = 'HUT_FEE') enforces
+  // one flat row per (type, seasonType) and lives in the migration +
+  // prisma/partial-unique-indexes.tsv.
+  membershipTypeId    String? // HUT_FEE only
   entranceFeeCategory EntranceFeeCategory? // ENTRANCE_FEE only
   itemCode            String? // Optional Xero Item Code
   amountCents         Int? // ENTRANCE_FEE only (per-category pricing)
@@ -3774,8 +3864,14 @@ model XeroItemCodeMapping {
   updatedAt           DateTime             @updatedAt
 
   @@unique([category, ageTier, seasonType, isMember])
+  // Explicit map: the Prisma default constraint name (68 bytes) exceeds
+  // Postgres's 63-byte identifier limit and would be silently truncated,
+  // drifting from the migration SQL (#1930, E4). The client API name is
+  // unchanged (category_membershipTypeId_seasonType_ageTier).
+  @@unique([category, membershipTypeId, seasonType, ageTier], map: "XeroItemCodeMapping_category_typeId_seasonType_ageTier_key")
   @@unique([category, entranceFeeCategory])
   @@index([category])
+  @@index([membershipTypeId])
 }
 
 // ---------------------------------------------------------------------------
@@ -3965,6 +4061,12 @@ model GroupDiscountSetting {
   minGroupSize Int      @default(5)
   summerOnly   Boolean  @default(true)
   enabled      Boolean  @default(false)
+  // The membership type whose rate rows a qualifying group discount
+  // substitutes for true non-members (rateSource = NON_MEMBER_DEFAULT). Seeded
+  // to the built-in FULL type so a discounted non-member prices at the member
+  // rate, exactly as the old boolean flip did. Members keep their own type's
+  // rate and TYPE_POLICY_FORCED members are excluded (#1930, E4, D-note).
+  rateMembershipTypeId String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }

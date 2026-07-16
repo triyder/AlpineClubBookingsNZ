@@ -2,7 +2,12 @@ import "server-only";
 
 import { randomBytes } from "crypto";
 import { hash } from "bcryptjs";
-import { ApplicationStatus, AgeTier, type MemberApplication } from "@prisma/client";
+import {
+  ApplicationStatus,
+  AgeTier,
+  Prisma,
+  type MemberApplication,
+} from "@prisma/client";
 import { z } from "zod";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { logAudit } from "@/lib/audit";
@@ -33,6 +38,27 @@ import {
 } from "@/lib/xero-operation-outbox";
 import { nameField } from "@/lib/zod-helpers";
 import { CLUB_NAME } from "@/config/club-identity";
+import {
+  refKey,
+  resolvePersonDecisions,
+  type PersonDecisions,
+} from "@/lib/member-application-decisions";
+import {
+  computeApprovalMappingOutcomes,
+  getLoginHolderIdForEmail,
+  loadApprovalMappingTargets,
+  loadMappingAgeTierSettings,
+  verifyApprovalMappingPreviewToken,
+  type MappingApplicationInput,
+  type MappingTargetRecord,
+  type PersonOutcome,
+} from "@/lib/member-application-mapping";
+// Pure age-tier math for the mapping path: the approval transaction reads
+// AgeTierSetting through `tx` (loadMappingAgeTierSettings) and computes tiers
+// with the settings variant, bypassing the 5-minute cache in @/lib/age-tier so
+// the written tier always equals the tokenized preview outcome (#1936).
+import { computeAgeTierWithSettings } from "@/lib/policies/age-tier";
+import { isFullAdmin } from "@/lib/access-roles";
 import {
   NOMINATION_AUTOMATIC_REMINDER_LIMIT,
   getNominationTokenExpiryDate,
@@ -158,7 +184,7 @@ function serializeApplicantPhone(parts: {
     .join(" ") || null;
 }
 
-function parseApplicantPhone(phone: string | null) {
+export function parseApplicantPhone(phone: string | null) {
   const trimmed = cleanNullableString(phone);
   if (!trimmed) {
     return {
@@ -1249,7 +1275,12 @@ export async function approveMemberApplication(
   // false = suppress the applicant-facing approval notice. Gates only that
   // applicant email — the induction sign-off requests below are token-bearing
   // requests to the assigned signers and always send.
-  notifyMember?: boolean
+  notifyMember?: boolean,
+  // E10 (#1936): per-person map-to-existing decisions. Absent = all-CREATE =
+  // byte-identical current behavior. `mappingPreviewToken` is required whenever
+  // any person is MAP and binds this approval to the exact previewed outcome.
+  personDecisions?: PersonDecisions | null,
+  mappingPreviewToken?: string | null
 ) {
   const application = await prisma.memberApplication.findUnique({
     where: { id: applicationId },
@@ -1270,16 +1301,47 @@ export async function approveMemberApplication(
     );
   }
 
+  const seasonYear = getSeasonYear();
+  const preFamilyMembers = parseApplicationFamilyMembers(application.familyMembers);
+  const resolution = resolvePersonDecisions(preFamilyMembers.length, personDecisions);
+  if (!resolution.ok) {
+    throw new MembershipApplicationError(resolution.error, resolution.status);
+  }
+  const { decisions, mapTargetIds } = resolution;
+  const hasMappings = mapTargetIds.length > 0;
+  if (hasMappings && !mappingPreviewToken) {
+    throw new MembershipApplicationError(
+      "A mapping preview token is required when mapping to existing members. Preview the mapping again before approving.",
+      400
+    );
+  }
+  const applicantDecision = decisions[0].decision;
+  const applicantMapped = applicantDecision.mode === "MAP";
+  const applicantMapTargetId = applicantMapped ? applicantDecision.memberId : null;
+
   const applicantPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
   const passwordSetupToken = buildResetToken();
   const passwordSetupExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
   // Resolved before the transaction so the entrance-fee outbox enqueue can run
-  // inside it (#1886, F22).
-  const entranceFeeDecision = entranceFeeInvoiceDecision ?? { action: "CREATE" as const };
+  // inside it (#1886, F22). A mapped applicant defaults to SKIP (never
+  // double-charged) unless the admin explicitly supplied a decision; the SKIP is
+  // resolved here so the in-tx enqueue is simply never made.
+  const entranceFeeDecision: EntranceFeeInvoiceApprovalDecision =
+    entranceFeeInvoiceDecision ??
+    (applicantMapped
+      ? { action: "SKIP", reason: "Mapped to existing member" }
+      : { action: "CREATE" });
 
   const approved = await prisma.$transaction(async (tx) => {
     await lockMembershipApplication(tx, applicationId);
+    // Advisory-lock every MAP target in a stable sorted order (member-lifecycle
+    // convention, member-lifecycle-actions.ts) so concurrent approvals mapping
+    // the same member serialize; the second approval then sees the first's
+    // committed row and 409s on token drift.
+    for (const targetId of mapTargetIds) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${targetId}`}))`;
+    }
 
     const lockedApplication = await tx.memberApplication.findUnique({
       where: { id: applicationId },
@@ -1306,40 +1368,158 @@ export async function approveMemberApplication(
     const address = parseApplicationAddress(lockedApplication.applicantAddress);
     const familyMembers = parseApplicationFamilyMembers(lockedApplication.familyMembers);
     const applicantPhone = parseApplicantPhone(lockedApplication.applicantPhone);
-    const applicantAgeTier = await computeTier(
-      lockedApplication.applicantDateOfBirth.toISOString().slice(0, 10)
-    );
+    // E10 (#1936): when any person is mapped, age tiers are computed from
+    // AgeTierSetting rows read via `tx` (bypassing the 5-minute process cache)
+    // so the WRITTEN tier always equals the recomputed, tokenized preview
+    // outcome. The all-CREATE path keeps the existing cached computeTier
+    // behavior, byte-identical to today.
+    const mappingAgeTierSettings = hasMappings
+      ? await loadMappingAgeTierSettings(tx)
+      : null;
+    const mappingSeasonStart = getSeasonStartDate(seasonYear);
+    const applicantAgeTier = mappingAgeTierSettings
+      ? computeAgeTierWithSettings(
+          lockedApplication.applicantDateOfBirth,
+          mappingSeasonStart,
+          mappingAgeTierSettings
+        )
+      : await computeTier(
+          lockedApplication.applicantDateOfBirth.toISOString().slice(0, 10)
+        );
     // The application form captures the booking-gate profile details, so
     // approval counts as initial confirmation for the applicant and dependents.
     const profileConfirmedAt = new Date();
 
-    const existing = await tx.member.findFirst({
-      where: {
-        email: lockedApplication.applicantEmail,
-        canLogin: true,
-      },
-      select: { id: true },
-    });
+    // E10: recompute the mapping outcome from the locked, reloaded rows and
+    // verify the preview token (timing-safe). ANY outcome drift — a row edit OR
+    // a computed-result change (e.g. an age-tier boundary edit) — 409s here.
+    const createdMemberIds: string[] = [];
+    const mappedMemberIds: string[] = [];
+    const skipBillingIds = new Set<string>();
+    const mappedAudits: Array<{
+      ref: string;
+      personLabel: string;
+      targetMemberId: string;
+      overwrittenFields: Array<{ field: string; before: string | null; after: string | null }>;
+      loginPromoted: boolean;
+      skippedSeasonalAssignment: boolean;
+    }> = [];
+    const outcomeByRef = new Map<string, PersonOutcome>();
+    let mappingTargetsById = new Map<string, MappingTargetRecord>();
 
-    if (existing) {
-      throw new MembershipApplicationError(
-        `A ${CLUB_NAME} login already exists for this applicant email address`,
-        409
-      );
+    if (hasMappings) {
+      const applicationInput: MappingApplicationInput = {
+        id: lockedApplication.id,
+        updatedAt: lockedApplication.updatedAt,
+        applicantEmail: lockedApplication.applicantEmail,
+        applicantFirstName: lockedApplication.applicantFirstName,
+        applicantLastName: lockedApplication.applicantLastName,
+        applicantDateOfBirth: lockedApplication.applicantDateOfBirth,
+        applicantPhone: lockedApplication.applicantPhone,
+        applicantAddress: lockedApplication.applicantAddress,
+        familyMembers,
+        nominator1Id: lockedApplication.nominator1Id,
+        nominator2Id: lockedApplication.nominator2Id,
+      };
+      const [targetsById, loginHolderId] = await Promise.all([
+        loadApprovalMappingTargets(tx, mapTargetIds, seasonYear),
+        getLoginHolderIdForEmail(tx, lockedApplication.applicantEmail),
+      ]);
+      mappingTargetsById = targetsById;
+      // #1026 gate: the PUT actor's access roles are re-read INSIDE the
+      // transaction (never trusted from the preview or the JWT). A preview
+      // minted by a Full Admin and approved by a scoped admin recomputes with
+      // the scoped actor, so the outcome payload diverges and the token check
+      // below 409s — fail closed. A missing/role-less actor counts as not
+      // Full Admin.
+      const actingAdmin = await tx.member.findUnique({
+        where: { id: adminMemberId },
+        select: {
+          id: true,
+          canLogin: true,
+          accessRoles: { select: { role: true, roleDefinitionId: true } },
+        },
+      });
+      const actorIsFullAdmin = actingAdmin ? isFullAdmin(actingAdmin) : false;
+      const { persons, blockingErrors } = await computeApprovalMappingOutcomes({
+        application: applicationInput,
+        decisions,
+        targetsById,
+        loginHolderId,
+        seasonYear,
+        actor: { id: adminMemberId, isFullAdmin: actorIsFullAdmin },
+        ageTierSettings: mappingAgeTierSettings ?? [],
+      });
+      if (
+        !verifyApprovalMappingPreviewToken(
+          { application: applicationInput, persons, blockingErrors },
+          mappingPreviewToken as string
+        )
+      ) {
+        throw new MembershipApplicationError(
+          "The mapping has changed since it was previewed. Preview the mapping again before approving.",
+          409
+        );
+      }
+      const firstError =
+        blockingErrors[0] ?? persons.flatMap((person) => person.errors)[0];
+      if (firstError) {
+        throw new MembershipApplicationError(firstError, 409);
+      }
+      for (const person of persons) {
+        outcomeByRef.set(refKey(person.ref), person);
+      }
     }
 
-    const applicantMember = await tx.member.create({
-      data: {
+    const overwrittenFieldsFor = (outcome: PersonOutcome) =>
+      outcome.fieldDiffs
+        .filter((diff) => diff.willChange)
+        .map((diff) => ({
+          field: diff.field,
+          before: diff.current,
+          after: diff.incoming,
+        }));
+
+    let applicantMember: {
+      id: string;
+      email: string;
+      firstName: string;
+      lastName: string;
+    };
+    // Whether the applicant should receive an account-setup token + email. True
+    // for a created applicant and a non-login target promoted to login; false
+    // for a keep-auth mapped applicant (they already have a password).
+    let issueApplicantSetupToken = true;
+    let applicantKeptAuth = false;
+
+    if (applicantMapped) {
+      const outcome = outcomeByRef.get("applicant");
+      const target = mappingTargetsById.get(applicantMapTargetId as string);
+      if (!outcome || !target) {
+        throw new MembershipApplicationError(
+          "The mapping target for the applicant is no longer available. Preview the mapping again.",
+          409
+        );
+      }
+      // Defense in depth: relax the canLogin-email guard ONLY when the login
+      // holder IS this target; a different login holder still blocks.
+      const loginHolder = await tx.member.findFirst({
+        where: { email: lockedApplication.applicantEmail, canLogin: true },
+        select: { id: true },
+      });
+      if (loginHolder && loginHolder.id !== target.id) {
+        throw new MembershipApplicationError(
+          `A ${CLUB_NAME} login already exists for this applicant email address`,
+          409
+        );
+      }
+
+      const applicantUpdate: Prisma.MemberUncheckedUpdateInput = {
         email: lockedApplication.applicantEmail,
-        passwordHash: applicantPasswordHash,
-        emailVerified: true,
         firstName: lockedApplication.applicantFirstName,
         lastName: lockedApplication.applicantLastName,
         dateOfBirth: lockedApplication.applicantDateOfBirth,
-        role: "USER",
         ageTier: applicantAgeTier,
-        active: true,
-        canLogin: true,
         phoneCountryCode: applicantPhone.phoneCountryCode,
         phoneAreaCode: applicantPhone.phoneAreaCode,
         phoneNumber: applicantPhone.phoneNumber,
@@ -1355,24 +1535,110 @@ export async function approveMemberApplication(
         postalRegion: address.postalRegion,
         postalPostalCode: address.postalPostalCode,
         postalCountry: address.postalCountry,
-        profileCompletedAt: profileConfirmedAt,
-        detailsConfirmedAt: profileConfirmedAt,
-        onboardingConfirmedAt: profileConfirmedAt,
-      },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-      },
-    });
+        // Confirmation timestamps: set-if-null, never regressed.
+        ...(target.profileCompletedAt ? {} : { profileCompletedAt: profileConfirmedAt }),
+        ...(target.detailsConfirmedAt ? {} : { detailsConfirmedAt: profileConfirmedAt }),
+        ...(target.detailsConfirmedByMemberId
+          ? {}
+          : { detailsConfirmedByMemberId: target.id }),
+        ...(target.onboardingConfirmedAt ? {} : { onboardingConfirmedAt: profileConfirmedAt }),
+      };
+      if (outcome.loginPromoted) {
+        // Promotion path (canLogin:false -> true): fresh random hash, verified
+        // email, cleared email inheritance; a set-password token is issued
+        // below. Mirrors the create path's auth bootstrap.
+        applicantUpdate.canLogin = true;
+        applicantUpdate.passwordHash = applicantPasswordHash;
+        applicantUpdate.emailVerified = true;
+        applicantUpdate.inheritParentEmail = false;
+        applicantUpdate.inheritEmailFromId = null;
+      } else {
+        // Keep-auth path: never touch passwordHash/canLogin/2FA/emailVerified.
+        applicantKeptAuth = true;
+        issueApplicantSetupToken = false;
+      }
 
-    await tx.member.update({
-      where: { id: applicantMember.id },
-      data: {
-        detailsConfirmedByMemberId: applicantMember.id,
-      },
-    });
+      const updated = await tx.member.update({
+        where: { id: target.id },
+        data: applicantUpdate,
+        select: { id: true, email: true, firstName: true, lastName: true },
+      });
+      applicantMember = updated;
+      mappedMemberIds.push(target.id);
+      if (outcome.skipSeasonalAssignment) {
+        skipBillingIds.add(target.id);
+      }
+      mappedAudits.push({
+        ref: "applicant",
+        personLabel: outcome.personLabel,
+        targetMemberId: target.id,
+        overwrittenFields: overwrittenFieldsFor(outcome),
+        loginPromoted: outcome.loginPromoted,
+        skippedSeasonalAssignment: outcome.skipSeasonalAssignment,
+      });
+    } else {
+      const existing = await tx.member.findFirst({
+        where: {
+          email: lockedApplication.applicantEmail,
+          canLogin: true,
+        },
+        select: { id: true },
+      });
+
+      if (existing) {
+        throw new MembershipApplicationError(
+          `A ${CLUB_NAME} login already exists for this applicant email address`,
+          409
+        );
+      }
+
+      applicantMember = await tx.member.create({
+        data: {
+          email: lockedApplication.applicantEmail,
+          passwordHash: applicantPasswordHash,
+          emailVerified: true,
+          firstName: lockedApplication.applicantFirstName,
+          lastName: lockedApplication.applicantLastName,
+          dateOfBirth: lockedApplication.applicantDateOfBirth,
+          role: "USER",
+          ageTier: applicantAgeTier,
+          active: true,
+          canLogin: true,
+          phoneCountryCode: applicantPhone.phoneCountryCode,
+          phoneAreaCode: applicantPhone.phoneAreaCode,
+          phoneNumber: applicantPhone.phoneNumber,
+          streetAddressLine1: address.streetAddressLine1,
+          streetAddressLine2: address.streetAddressLine2,
+          streetCity: address.streetCity,
+          streetRegion: address.streetRegion,
+          streetPostalCode: address.streetPostalCode,
+          streetCountry: address.streetCountry,
+          postalAddressLine1: address.postalAddressLine1,
+          postalAddressLine2: address.postalAddressLine2,
+          postalCity: address.postalCity,
+          postalRegion: address.postalRegion,
+          postalPostalCode: address.postalPostalCode,
+          postalCountry: address.postalCountry,
+          profileCompletedAt: profileConfirmedAt,
+          detailsConfirmedAt: profileConfirmedAt,
+          onboardingConfirmedAt: profileConfirmedAt,
+        },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+        },
+      });
+
+      await tx.member.update({
+        where: { id: applicantMember.id },
+        data: {
+          detailsConfirmedByMemberId: applicantMember.id,
+        },
+      });
+      createdMemberIds.push(applicantMember.id);
+    }
 
     let familyGroupId: string | null = null;
     if (familyMembers.length > 0) {
@@ -1393,9 +1659,100 @@ export async function approveMemberApplication(
       });
     }
 
-    const dependentMemberIds: string[] = [];
-    for (const familyMember of familyMembers) {
-      const dependentAgeTier = await computeTier(familyMember.dateOfBirth);
+    for (let index = 0; index < familyMembers.length; index += 1) {
+      const familyMember = familyMembers[index];
+      const familyDecision = decisions[index + 1].decision;
+      const dependentAgeTier = mappingAgeTierSettings
+        ? computeAgeTierWithSettings(
+            new Date(familyMember.dateOfBirth),
+            mappingSeasonStart,
+            mappingAgeTierSettings
+          )
+        : await computeTier(familyMember.dateOfBirth);
+
+      if (familyDecision.mode === "MAP") {
+        const outcome = outcomeByRef.get(`family:${index}`);
+        const target = mappingTargetsById.get(familyDecision.memberId);
+        if (!outcome || !target) {
+          throw new MembershipApplicationError(
+            "A mapping target for a family member is no longer available. Preview the mapping again.",
+            409
+          );
+        }
+        const dependentUpdate: Prisma.MemberUncheckedUpdateInput = {
+          firstName: familyMember.firstName,
+          lastName: familyMember.lastName,
+          dateOfBirth: new Date(familyMember.dateOfBirth),
+          ageTier: dependentAgeTier,
+          phoneCountryCode: applicantPhone.phoneCountryCode,
+          phoneAreaCode: applicantPhone.phoneAreaCode,
+          phoneNumber: applicantPhone.phoneNumber,
+          streetAddressLine1: address.streetAddressLine1,
+          streetAddressLine2: address.streetAddressLine2,
+          streetCity: address.streetCity,
+          streetRegion: address.streetRegion,
+          streetPostalCode: address.streetPostalCode,
+          streetCountry: address.streetCountry,
+          postalAddressLine1: address.postalAddressLine1,
+          postalAddressLine2: address.postalAddressLine2,
+          postalCity: address.postalCity,
+          postalRegion: address.postalRegion,
+          postalPostalCode: address.postalPostalCode,
+          postalCountry: address.postalCountry,
+          // Confirmation timestamps: set-if-null, never regressed.
+          ...(target.profileCompletedAt ? {} : { profileCompletedAt: profileConfirmedAt }),
+          ...(target.detailsConfirmedAt ? {} : { detailsConfirmedAt: profileConfirmedAt }),
+          ...(target.detailsConfirmedByMemberId
+            ? {}
+            : { detailsConfirmedByMemberId: applicantMember.id }),
+          ...(target.onboardingConfirmedAt
+            ? {}
+            : { onboardingConfirmedAt: profileConfirmedAt }),
+        };
+        // Parent link + email inheritance ONLY when the target is a non-login
+        // member with no existing parent; never touch auth/email on a
+        // login-capable target (hard invariant). The preview noted the skip.
+        if (outcome.setParentLink) {
+          dependentUpdate.parentMemberId = applicantMember.id;
+          dependentUpdate.inheritParentEmail = true;
+          dependentUpdate.inheritEmailFromId = applicantMember.id;
+        }
+        await tx.member.update({
+          where: { id: target.id },
+          data: dependentUpdate,
+        });
+        mappedMemberIds.push(target.id);
+        if (outcome.skipSeasonalAssignment) {
+          skipBillingIds.add(target.id);
+        }
+        mappedAudits.push({
+          ref: `family[${index}]`,
+          personLabel: outcome.personLabel,
+          targetMemberId: target.id,
+          overwrittenFields: overwrittenFieldsFor(outcome),
+          loginPromoted: false,
+          skippedSeasonalAssignment: outcome.skipSeasonalAssignment,
+        });
+
+        if (familyGroupId) {
+          await tx.familyGroupMember.upsert({
+            where: {
+              familyGroupId_memberId: {
+                familyGroupId,
+                memberId: target.id,
+              },
+            },
+            create: {
+              familyGroupId,
+              memberId: target.id,
+              role: "MEMBER",
+            },
+            update: {},
+          });
+        }
+        continue;
+      }
+
       const dependent = await tx.member.create({
         data: {
           email: lockedApplication.applicantEmail,
@@ -1433,7 +1790,7 @@ export async function approveMemberApplication(
         },
         select: { id: true },
       });
-      dependentMemberIds.push(dependent.id);
+      createdMemberIds.push(dependent.id);
 
       if (familyGroupId) {
         await tx.familyGroupMember.create({
@@ -1446,17 +1803,22 @@ export async function approveMemberApplication(
       }
     }
 
-    await tx.passwordResetToken.deleteMany({
-      where: { memberId: applicantMember.id },
-    });
+    // Issue a set-password token for a created or newly-promoted applicant. A
+    // keep-auth mapped applicant already has a password, so no token is minted
+    // and no set-password email is sent below.
+    if (issueApplicantSetupToken) {
+      await tx.passwordResetToken.deleteMany({
+        where: { memberId: applicantMember.id },
+      });
 
-    await tx.passwordResetToken.create({
-      data: {
-        tokenHash: hashActionToken(passwordSetupToken),
-        memberId: applicantMember.id,
-        expiresAt: passwordSetupExpiresAt,
-      },
-    });
+      await tx.passwordResetToken.create({
+        data: {
+          tokenHash: hashActionToken(passwordSetupToken),
+          memberId: applicantMember.id,
+          expiresAt: passwordSetupExpiresAt,
+        },
+      });
+    }
 
     const updatedApplication = await tx.memberApplication.update({
       where: { id: lockedApplication.id },
@@ -1519,13 +1881,40 @@ export async function approveMemberApplication(
     return {
       application: updatedApplication,
       applicantMember,
-      createdMemberIds: [applicantMember.id, ...dependentMemberIds],
+      createdMemberIds,
+      mappedMemberIds,
+      skipBillingIds: [...skipBillingIds],
+      mappedAudits,
+      issueApplicantSetupToken,
+      applicantKeptAuth,
       entranceFeeQueue,
       entranceFeeQueueFailed,
     };
   });
 
-  const warnings = await syncApprovedMembersToXero(approved.createdMemberIds);
+  // E10: Xero contact sync + subscription billing run over the union of created
+  // AND mapped members. Members that already hold season coverage are excluded
+  // from billing (skip-with-note) so nobody is double-charged.
+  const affectedMemberIds = [
+    ...approved.createdMemberIds,
+    ...approved.mappedMemberIds,
+  ];
+  const billingMemberIds = affectedMemberIds.filter(
+    (memberId) => !approved.skipBillingIds.includes(memberId)
+  );
+  const warnings = await syncApprovedMembersToXero(affectedMemberIds);
+
+  // E10 (#1936): the seasonal-coverage skip is decided silently inside the
+  // transaction, so surface it per target in the post-approval warnings (the
+  // spec's "notes + post-approval warnings") — the admin sees exactly who kept
+  // existing coverage and was excluded from billing.
+  for (const mapped of approved.mappedAudits) {
+    if (mapped.skippedSeasonalAssignment) {
+      warnings.push(
+        `${mapped.personLabel} was mapped to an existing member who already has this season's membership coverage; the existing coverage was kept and no new subscription charge was raised.`
+      );
+    }
+  }
 
   // Subscription billing is deliberately post-approval and non-blocking.
   // Complete configuration creates immutable charges and durable Xero work;
@@ -1533,7 +1922,7 @@ export async function approveMemberApplication(
   // rolling back membership approval.
   try {
     const subscriptionBilling = await queueApprovedMembershipSubscriptionCharges({
-      memberIds: approved.createdMemberIds,
+      memberIds: billingMemberIds,
       approvedByMemberId: adminMemberId,
     });
     if (subscriptionBilling.exceptionCount > 0) {
@@ -1543,7 +1932,7 @@ export async function approveMemberApplication(
     }
   } catch (err) {
     logger.error(
-      { err, applicationId, memberIds: approved.createdMemberIds },
+      { err, applicationId, memberIds: billingMemberIds },
       "Failed to queue membership subscription billing after approval",
     );
     warnings.push("Membership subscription billing could not be queued automatically");
@@ -1591,7 +1980,15 @@ export async function approveMemberApplication(
   // gated by the admin's per-action notify choice (default is notify). The
   // induction sign-off requests below are token-bearing requests to the assigned
   // signers and stay always-send, regardless of this choice.
-  if (notifyMember !== false) {
+  //
+  // E10: a keep-auth mapped applicant already has a login and no set-password
+  // token was issued, so the set-password email is not sent; the mapping is
+  // surfaced instead so the admin knows the applicant was not emailed a link.
+  if (approved.applicantKeptAuth) {
+    warnings.push(
+      "Applicant mapped to an existing login member; no account-setup email was sent."
+    );
+  } else if (notifyMember !== false) {
     try {
       await sendMembershipApplicationApprovedEmail({
         email: approved.applicantMember.email,
@@ -1691,6 +2088,44 @@ export async function approveMemberApplication(
   // guard is needed. A notify/default choice records no notifyMember field.
   const notifyAuditFields = notifyMember === false ? { notifyMember: false } : {};
 
+  // E10: per mapped person, a critical audit capturing the overwrite. Emitted
+  // post-commit alongside the approval audit (matching the create path's
+  // post-commit audit style).
+  for (const mapped of approved.mappedAudits) {
+    await logAudit({
+      action: "MEMBER_APPLICATION_MAPPED_TO_EXISTING",
+      memberId: adminMemberId,
+      actorMemberId: adminMemberId,
+      subjectMemberId: mapped.targetMemberId,
+      targetId: mapped.targetMemberId,
+      entityType: "Member",
+      entityId: mapped.targetMemberId,
+      category: "membership",
+      severity: "critical",
+      outcome: "success",
+      summary: "Membership applicant mapped to an existing member",
+      metadata: {
+        applicationId,
+        ref: mapped.ref,
+        applicantRef: approved.application.applicantEmail,
+        targetMemberId: mapped.targetMemberId,
+        overwrittenFields: mapped.overwrittenFields,
+        loginPromoted: mapped.loginPromoted,
+        skippedSeasonalAssignment: mapped.skippedSeasonalAssignment,
+      },
+    });
+  }
+
+  // E10: the approval audit gains created/mapped id lists ONLY when the approval
+  // actually mapped someone — the all-CREATE `details` stays byte-identical.
+  const mappingAuditFields =
+    approved.mappedMemberIds.length > 0
+      ? {
+          createdMemberIds: approved.createdMemberIds,
+          mappedMemberIds: approved.mappedMemberIds,
+        }
+      : {};
+
   logAudit({
     action: "MEMBERSHIP_APPLICATION_APPROVED",
     memberId: adminMemberId,
@@ -1699,6 +2134,7 @@ export async function approveMemberApplication(
       applicantMemberId: approved.applicantMember.id,
       createdMemberCount: approved.createdMemberIds.length,
       postApprovalWarnings: warnings,
+      ...mappingAuditFields,
       ...notifyAuditFields,
     }),
   });

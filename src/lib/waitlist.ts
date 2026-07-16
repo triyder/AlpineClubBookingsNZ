@@ -162,7 +162,14 @@ async function repriceWaitlistCandidate(
       candidate.guests.map((guest, index) =>
         tx.bookingGuest.update({
           where: { id: guest.id },
-          data: { priceCents: priceBreakdown.guests[index].priceCents },
+          // Reprice overwrites the rate-membership-type snapshot alongside the
+          // price (#1930, E4): the offer re-bases the whole booking at current
+          // rates before the member confirms.
+          data: {
+            priceCents: priceBreakdown.guests[index].priceCents,
+            rateMembershipTypeId:
+              priceBreakdown.guests[index].rateMembershipTypeId,
+          },
         })
       )
     );

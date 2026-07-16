@@ -816,6 +816,27 @@ export default function MemberDetailPage({
                 setDeleteReviewError("");
               }}
             />
+            {actorIsFullAdmin && !isSelf && (
+              <div className="rounded-none border-0 shadow-none px-1 pt-2">
+                <h3 className="text-sm font-semibold text-gray-900">
+                  Merge a duplicate profile
+                </h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  Combine another duplicate member record into this one. This
+                  record stays the master — it keeps its login, security and
+                  Xero identity — and the duplicate is permanently deleted.
+                  Full Admins only.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => router.push(`/admin/members/${id}/merge`)}
+                >
+                  Merge a duplicate into this member
+                </Button>
+              </div>
+            )}
           </div>
         </MemberGroupCard>
       </Accordion>

@@ -246,7 +246,6 @@ describe("normalizeAgeTierSettings", () => {
         minAge: 0,
         maxAge: 2,
         label: "Baby (0-2)",
-        xeroAcceptedContactGroups: [],
         sortOrder: 0,
       },
       {
@@ -254,7 +253,6 @@ describe("normalizeAgeTierSettings", () => {
         minAge: 3,
         maxAge: 12,
         label: "Child (3-12)",
-        xeroAcceptedContactGroups: [],
         sortOrder: 1,
       },
       {
@@ -262,7 +260,6 @@ describe("normalizeAgeTierSettings", () => {
         minAge: 13,
         maxAge: 17,
         label: "Teen (13-17)",
-        xeroAcceptedContactGroups: [],
         sortOrder: 2,
       },
       {
@@ -270,7 +267,6 @@ describe("normalizeAgeTierSettings", () => {
         minAge: 18,
         maxAge: null,
         label: "Adult (18+)",
-        xeroAcceptedContactGroups: [],
         sortOrder: 3,
       },
     ];
@@ -293,7 +289,6 @@ describe("normalizeAgeTierSettings", () => {
         label: "Infant",
         subscriptionRequiredForBooking: false,
         familyGroupRequestCreateMemberAllowed: true,
-        xeroAcceptedContactGroups: [],
         sortOrder: 0,
       },
       {
@@ -303,7 +298,6 @@ describe("normalizeAgeTierSettings", () => {
         label: "Child",
         subscriptionRequiredForBooking: false,
         familyGroupRequestCreateMemberAllowed: false,
-        xeroAcceptedContactGroups: [],
         sortOrder: 1,
       },
     ];

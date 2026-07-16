@@ -8,6 +8,15 @@ import { Separator } from "@/components/ui/separator"
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
 import { fetchJson } from "./api"
 import {
+  allHutFeeCellKeys,
+  filterHutFeeRateTypes,
+  HUT_FEE_FLAT_KEY,
+  HUT_FEE_SEASON_TYPES,
+  hutFeeCellKey,
+  hutFeeCellsForType,
+  type HutFeeRateType,
+} from "./hut-fee-grid"
+import {
   ACCOUNT_MAPPING_KEYS,
   CREDIT_ITEM_MAPPING_KEYS,
   formatReferenceCacheLabel,
@@ -31,6 +40,21 @@ import type {
 type AccountsResponse = { accounts?: XeroAccount[]; cache?: XeroReferenceCacheMeta | null }
 type ItemsResponse = { items?: XeroItem[]; cache?: XeroReferenceCacheMeta | null }
 type ItemCodeResponse = { hutFees?: HutFeeMap; entranceFees?: EntranceFeeMap }
+type MembershipTypesResponse = {
+  membershipTypes?: Array<HutFeeRateType & { isActive: boolean }>
+}
+type AgeTierSettingsResponse = {
+  settings?: Array<{ tier: string; label: string; sortOrder: number }>
+}
+
+// Bookable age tiers shown as grid columns when the age-tier settings fetch
+// yields nothing (mirrors the /admin/seasons editor fallback).
+const FALLBACK_AGE_TIERS = [
+  { tier: "INFANT", label: "Infant" },
+  { tier: "CHILD", label: "Child" },
+  { tier: "YOUTH", label: "Youth" },
+  { tier: "ADULT", label: "Adult" },
+]
 
 export function MappingsPanel({
   connected,
@@ -59,6 +83,10 @@ export function MappingsPanel({
   const [savedHutFeeItemCodes, setSavedHutFeeItemCodes] = useState<HutFeeMap>({})
   const [entranceFeeItemCodes, setEntranceFeeItemCodes] = useState<EntranceFeeMap>({})
   const [savedEntranceFeeItemCodes, setSavedEntranceFeeItemCodes] = useState<EntranceFeeMap>({})
+  // Grid dimensions (#1930, E4): rows = rate-bearing membership types, columns
+  // = age tiers (single FLAT cell for ageGroupsApply=false types).
+  const [rateTypes, setRateTypes] = useState<HutFeeRateType[]>([])
+  const [ageTiers, setAgeTiers] = useState<Array<{ tier: string; label: string }>>(FALLBACK_AGE_TIERS)
   const panelRef = useRef<HTMLDivElement>(null)
   const errorRef = useRef<HTMLParagraphElement>(null)
   const { scrollToError, scrollToTop } = useScrollToFeedback()
@@ -68,11 +96,13 @@ export function MappingsPanel({
     setError("")
     try {
       const refreshSuffix = options?.forceRefresh ? "?refresh=1" : ""
-      const [mappings, accounts, items, itemCodes] = await Promise.all([
+      const [mappings, accounts, items, itemCodes, membershipTypes, ageTierSettings] = await Promise.all([
         fetchJson<AccountMappings>("/api/admin/xero/account-mappings", undefined, "Failed to load account mappings"),
         fetchJson<AccountsResponse>(`/api/admin/xero/chart-of-accounts${refreshSuffix}`, undefined, "Failed to load Xero accounts"),
         fetchJson<ItemsResponse>(`/api/admin/xero/items${refreshSuffix}`, undefined, "Failed to load Xero items"),
         fetchJson<ItemCodeResponse>("/api/admin/xero/item-code-mappings", undefined, "Failed to load item code mappings"),
+        fetchJson<MembershipTypesResponse>("/api/admin/membership-types", undefined, "Failed to load membership types"),
+        fetchJson<AgeTierSettingsResponse>("/api/admin/age-tier-settings", undefined, "Failed to load age tiers"),
       ])
       setAccountMappings(mappings)
       setSavedMappings(mappings)
@@ -84,6 +114,19 @@ export function MappingsPanel({
       setSavedHutFeeItemCodes(itemCodes.hutFees ?? {})
       setEntranceFeeItemCodes(itemCodes.entranceFees ?? {})
       setSavedEntranceFeeItemCodes(itemCodes.entranceFees ?? {})
+      setRateTypes(filterHutFeeRateTypes(membershipTypes.membershipTypes ?? []))
+      const bookableTierSettings = (ageTierSettings.settings ?? []).filter(
+        // NOT_APPLICABLE is the organisation/school classification — never a
+        // hut-fee item-code column (#1440).
+        (setting) => setting.tier !== "NOT_APPLICABLE",
+      )
+      if (bookableTierSettings.length > 0) {
+        setAgeTiers(
+          [...bookableTierSettings]
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+            .map(({ tier, label }) => ({ tier, label })),
+        )
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load account mappings")
     } finally {
@@ -202,7 +245,14 @@ export function MappingsPanel({
             <CreditItemRow key={key} mappingKey={key} mappings={accountMappings} setMappings={setAccountMappings} items={xeroItems} isEditingMappings={isEditingMappings} />
           )) : null}
           <Separator />
-          <HutFeeTable isEditingMappings={isEditingMappings} items={xeroItems} codes={hutFeeItemCodes} setCodes={setHutFeeItemCodes} />
+          <HutFeeTable
+            isEditingMappings={isEditingMappings}
+            items={xeroItems}
+            codes={hutFeeItemCodes}
+            setCodes={setHutFeeItemCodes}
+            rateTypes={rateTypes}
+            ageTiers={ageTiers}
+          />
           <Separator />
           <EntranceFeeTable isEditingMappings={isEditingMappings} items={xeroItems} codes={entranceFeeItemCodes} setCodes={setEntranceFeeItemCodes} />
           <div className="flex gap-2 pt-2">
@@ -300,44 +350,90 @@ function CreditItemRow({
   )
 }
 
-function HutFeeTable({ isEditingMappings, items, codes, setCodes }: { isEditingMappings: boolean; items: XeroItem[]; codes: HutFeeMap; setCodes: (value: HutFeeMap | ((prev: HutFeeMap) => HutFeeMap)) => void }) {
+function HutFeeTable({
+  isEditingMappings,
+  items,
+  codes,
+  setCodes,
+  rateTypes,
+  ageTiers,
+}: {
+  isEditingMappings: boolean
+  items: XeroItem[]
+  codes: HutFeeMap
+  setCodes: (value: HutFeeMap | ((prev: HutFeeMap) => HutFeeMap)) => void
+  rateTypes: HutFeeRateType[]
+  ageTiers: Array<{ tier: string; label: string }>
+}) {
+  const tierValues = ageTiers.map((t) => t.tier)
+  const renderCell = (mapKey: string) => {
+    const currentCode = codes[mapKey]?.itemCode ?? null
+    const matchedItem = items.find((item) => item.code === currentCode)
+    return isEditingMappings ? (
+      <ItemSelect currentCode={currentCode} items={items} onChange={(value) => setCodes((prev) => updateHutFeeMap(prev, mapKey, value))} />
+    ) : (
+      <span className={currentCode ? "text-foreground" : "text-muted-foreground"}>{matchedItem?.code ?? currentCode ?? "Not set"}</span>
+    )
+  }
   return (
     <>
       <h4 className="text-sm font-semibold text-foreground">Hut Fee Item Codes</h4>
-      <p className="text-xs text-muted-foreground">Map each combination of age tier, season, and membership status to a Xero Item.</p>
+      <p className="text-xs text-muted-foreground">
+        Map each membership type, season, and age group to a Xero Item. Types
+        without age groups have a single flat (all ages) cell. Only rate-bearing
+        membership types are listed — types that price from the non-member rate
+        follow the Non-Member row.
+      </p>
       {isEditingMappings ? (
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => {
             if (items.length === 0) return
             const filled: HutFeeMap = {}
-            for (const tier of ["INFANT", "CHILD", "YOUTH", "ADULT"]) for (const season of ["WINTER", "SUMMER"]) for (const member of [true, false]) filled[`${tier}_${season}_${member}`] = { itemCode: items[0].code }
+            for (const key of allHutFeeCellKeys(rateTypes, tierValues)) filled[key] = { itemCode: items[0].code }
             setCodes(filled)
           }}>Copy first item to all</Button>
           <Button variant="outline" size="sm" onClick={() => setCodes({})}>Clear all</Button>
         </div>
       ) : null}
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-sm">
-          <thead><tr>{["Age Tier", "Winter / Member", "Winter / Non-Member", "Summer / Member", "Summer / Non-Member"].map((heading) => <th key={heading} className="border-b p-2 text-left font-medium text-muted-foreground">{heading}</th>)}</tr></thead>
-          <tbody>
-            {(["ADULT", "YOUTH", "CHILD", "INFANT"] as const).map((tier) => (
-              <tr key={tier} className="border-b last:border-0">
-                <td className="p-2 font-medium text-foreground">{tier}</td>
-                {(["WINTER_true", "WINTER_false", "SUMMER_true", "SUMMER_false"] as const).map((combo) => {
-                  const mapKey = `${tier}_${combo}`
-                  const currentCode = codes[mapKey]?.itemCode ?? null
-                  const matchedItem = items.find((item) => item.code === currentCode)
-                  return (
-                    <td key={combo} className="p-2">
-                      {isEditingMappings ? <ItemSelect currentCode={currentCode} items={items} onChange={(value) => setCodes((prev) => updateHutFeeMap(prev, mapKey, value))} /> : <span className={currentCode ? "text-foreground" : "text-muted-foreground"}>{matchedItem?.code ?? currentCode ?? "Not set"}</span>}
-                    </td>
-                  )
-                })}
+      {rateTypes.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No rate-bearing membership types found. Configure membership types first.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr>
+                {["Membership Type", "Season", ...ageTiers.map((t) => t.label)].map((heading) => (
+                  <th key={heading} className="border-b p-2 text-left font-medium text-muted-foreground">{heading}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rateTypes.flatMap((type) =>
+                HUT_FEE_SEASON_TYPES.map((season, seasonIndex) => (
+                  <tr key={`${type.id}_${season}`} className="border-b last:border-0">
+                    {seasonIndex === 0 ? (
+                      <td className="p-2 align-top font-medium text-foreground" rowSpan={HUT_FEE_SEASON_TYPES.length}>
+                        {type.name}
+                        {!type.ageGroupsApply ? <span className="block text-xs font-normal text-muted-foreground">Flat rate (all ages)</span> : null}
+                      </td>
+                    ) : null}
+                    <td className="p-2 text-muted-foreground">{season === "WINTER" ? "Winter" : "Summer"}</td>
+                    {hutFeeCellsForType(type, tierValues).map((cell) => (
+                      <td
+                        key={cell}
+                        className="p-2"
+                        colSpan={cell === HUT_FEE_FLAT_KEY ? ageTiers.length : 1}
+                      >
+                        {renderCell(hutFeeCellKey(type.id, season, cell))}
+                      </td>
+                    ))}
+                  </tr>
+                )),
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </>
   )
 }

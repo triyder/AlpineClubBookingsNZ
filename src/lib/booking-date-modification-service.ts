@@ -449,16 +449,16 @@ export async function modifyBookingDates({
 
     const seasons = await tx.season.findMany({
       where: { active: true, ...lodgeNullTolerantScope(bookingLodgeId) },
-      include: { rates: true },
+      include: { membershipTypeRates: true },
     });
 
     const seasonRateData: SeasonRateData[] = seasons.map((s) => ({
       seasonId: s.id,
       startDate: s.startDate,
       endDate: s.endDate,
-      rates: s.rates.map((r) => ({
+      rates: s.membershipTypeRates.map((r) => ({
+        membershipTypeId: r.membershipTypeId,
         ageTier: r.ageTier,
-        isMember: r.isMember,
         pricePerNightCents: r.pricePerNightCents,
       })),
     }));
@@ -742,6 +742,9 @@ export async function modifyBookingDates({
             stayStart: newCheckIn,
             stayEnd: newCheckOut,
             priceCents: priceBreakdown.guests[i].priceCents,
+            // A date change re-bases every guest at current rates (#1930, E4):
+            // overwrite the rate-type snapshot with the newly priced total.
+            rateMembershipTypeId: priceBreakdown.guests[i].rateMembershipTypeId,
           },
         });
         await tx.bookingGuestNight.deleteMany({

@@ -29,10 +29,15 @@ const mockTx = {
   promoRedemption: { count: vi.fn(), create: vi.fn(), aggregate: vi.fn() },
   promoCode: { findUnique: vi.fn(), update: vi.fn() },
   promoCodeAssignment: { findMany: vi.fn() },
-  member: { findUnique: vi.fn() },
+  member: { findUnique: vi.fn(), findMany: vi.fn() },
   memberSubscription: { findFirst: vi.fn() },
   lodge: { findFirst: vi.fn() },
   memberLodgeAccess: { findMany: vi.fn() },
+  // Rate-membership-type snapshot resolution (#1930, E4): booking-create now
+  // resolves every guest's rate type before pricing, reading these policy-db
+  // delegates off the transaction handle. Defaults set in beforeEach.
+  seasonalMembershipAssignment: { findMany: vi.fn() },
+  membershipType: { findMany: vi.fn() },
 };
 
 vi.mock("@/lib/prisma", () => ({
@@ -85,6 +90,17 @@ vi.mock("@/lib/prisma", () => ({
     },
     groupDiscountSetting: {
       findUnique: vi.fn().mockResolvedValue(null),
+    },
+    // Rate-membership-type snapshot resolution (#1930, E4): the waitlist path
+    // prices off the prisma handle directly, so mirror the policy-db delegates.
+    seasonalMembershipAssignment: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "type-full", key: "FULL", bookingBehavior: "MEMBER_RATE", subscriptionBehavior: "REQUIRED", name: "Full", isActive: true, isBuiltIn: true },
+        { id: "type-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE", subscriptionBehavior: "NOT_REQUIRED", name: "Non-Member", isActive: true, isBuiltIn: true },
+      ]),
     },
     internetBankingPaymentSettings: {
       findUnique: vi.fn().mockResolvedValue(null),
@@ -293,6 +309,23 @@ beforeEach(() => {
   mockTx.bookingGuest.findMany.mockResolvedValue([]);
   mockTx.payment.create.mockResolvedValue({});
   mockTx.season.findMany.mockResolvedValue([]);
+  // Rate-membership-type snapshot resolution (#1930, E4): member guests resolve
+  // to FULL (role default -> member rate), true non-members to NON_MEMBER.
+  mockTx.member.findMany.mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) =>
+    (args?.where?.id?.in ?? []).map((id) => ({
+      id,
+      firstName: "Member",
+      lastName: "Test",
+      email: `${id}@test.com`,
+      role: "MEMBER",
+      ageTier: "ADULT",
+    })),
+  );
+  mockTx.seasonalMembershipAssignment.findMany.mockResolvedValue([]);
+  mockTx.membershipType.findMany.mockResolvedValue([
+    { id: "type-full", key: "FULL", bookingBehavior: "MEMBER_RATE", subscriptionBehavior: "REQUIRED", name: "Full", isActive: true, isBuiltIn: true },
+    { id: "type-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE", subscriptionBehavior: "NOT_REQUIRED", name: "Non-Member", isActive: true, isBuiltIn: true },
+  ]);
   mockTx.promoRedemption.aggregate.mockResolvedValue({ _sum: { freeNightsUsed: 0 } });
   mockTx.promoCodeAssignment.findMany.mockResolvedValue([]);
   mockTx.lodge.findFirst.mockResolvedValue({ id: "lodge-1" });

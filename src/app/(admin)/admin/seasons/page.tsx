@@ -16,10 +16,10 @@ import {
   useLodgeOptions,
 } from "@/components/lodge-select"
 
-interface SeasonRate {
-  id: string
-  ageTier: AgeTier
-  isMember: boolean
+// A hut nightly rate keyed by membership type + optional age tier (#1930, E4).
+interface MembershipTypeRate {
+  membershipTypeId: string
+  ageTier: AgeTier | null
   pricePerNightCents: number
 }
 
@@ -30,7 +30,7 @@ interface Season {
   startDate: string
   endDate: string
   active: boolean
-  rates: SeasonRate[]
+  membershipTypeRates: MembershipTypeRate[]
 }
 
 interface AgeTierSetting {
@@ -41,6 +41,17 @@ interface AgeTierSetting {
   sortOrder: number
 }
 
+// A membership type that carries its own hut rates: every MEMBER_RATE type plus
+// the built-in NON_MEMBER type. Others (NON_MEMBER_RATE except NON_MEMBER,
+// BLOCK_BOOKING) carry zero own rows (D2 invariant) and are not shown here.
+interface RateType {
+  id: string
+  key: string
+  name: string
+  bookingBehavior: "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING"
+  ageGroupsApply: boolean
+}
+
 const FALLBACK_TIERS: AgeTierSetting[] = [
   { tier: "INFANT", minAge: 0, maxAge: 4, label: "Infant (under 5)", sortOrder: 0 },
   { tier: "CHILD", minAge: 5, maxAge: 9, label: "Child (5-9)", sortOrder: 1 },
@@ -48,19 +59,36 @@ const FALLBACK_TIERS: AgeTierSetting[] = [
   { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
 ]
 
-function emptyRates(tiers: AgeTierSetting[]): Record<string, number> {
+const FLAT_KEY = "FLAT"
+
+// Rate cell key. Flat types (ageGroupsApply=false) get one FLAT cell; age-keyed
+// types get one cell per tier.
+function rateKey(membershipTypeId: string, ageTier: AgeTier | typeof FLAT_KEY): string {
+  return `${membershipTypeId}::${ageTier}`
+}
+
+function cellsForType(type: RateType, tiers: AgeTierSetting[]): Array<AgeTier | typeof FLAT_KEY> {
+  return type.ageGroupsApply ? tiers.map((t) => t.tier) : [FLAT_KEY]
+}
+
+function emptyRates(types: RateType[], tiers: AgeTierSetting[]): Record<string, number> {
   const rates: Record<string, number> = {}
-  for (const t of tiers) {
-    rates[`${t.tier}-true`] = 0
-    rates[`${t.tier}-false`] = 0
+  for (const type of types) {
+    for (const cell of cellsForType(type, tiers)) {
+      rates[rateKey(type.id, cell)] = 0
+    }
   }
   return rates
 }
 
-function seasonToRatesMap(rates: SeasonRate[]): Record<string, number> {
-  const map: Record<string, number> = {}
-  for (const rate of rates) {
-    map[`${rate.ageTier}-${rate.isMember}`] = rate.pricePerNightCents
+function seasonToRatesMap(
+  rows: MembershipTypeRate[],
+  types: RateType[],
+  tiers: AgeTierSetting[],
+): Record<string, number> {
+  const map = emptyRates(types, tiers)
+  for (const row of rows) {
+    map[rateKey(row.membershipTypeId, row.ageTier ?? FLAT_KEY)] = row.pricePerNightCents
   }
   return map
 }
@@ -68,15 +96,12 @@ function seasonToRatesMap(rates: SeasonRate[]): Record<string, number> {
 export default function SeasonsPage() {
   const [seasons, setSeasons] = useState<Season[]>([])
   const [ageTiers, setAgeTiers] = useState<AgeTierSetting[]>(FALLBACK_TIERS)
+  const [rateTypes, setRateTypes] = useState<RateType[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  // Lodge context for the page; LodgeSelect renders nothing (and reports the
-  // sole lodge) while fewer than two lodges exist (ADR-002).
   const { lodges, loading: lodgesLoading } = useLodgeOptions("admin")
-  // Hub links (ADR-003) land pre-filtered; read synchronously so the first
-  // fetch is already lodge-filtered.
   const [lodgeId, setLodgeId] = useState<string | null>(initialLodgeIdFromLocation)
 
   // Form state
@@ -85,7 +110,7 @@ export default function SeasonsPage() {
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [active, setActive] = useState(true)
-  const [rates, setRates] = useState<Record<string, number>>(emptyRates(FALLBACK_TIERS))
+  const [rates, setRates] = useState<Record<string, number>>({})
   const [saving, setSaving] = useState(false)
 
   const fetchAgeTiers = useCallback(async () => {
@@ -101,6 +126,30 @@ export default function SeasonsPage() {
     }
   }, [])
 
+  const fetchRateTypes = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/membership-types")
+      if (!res.ok) return
+      const data = await res.json()
+      const types: RateType[] = (data.membershipTypes ?? [])
+        .filter(
+          (t: RateType & { isActive: boolean }) =>
+            t.isActive &&
+            (t.bookingBehavior === "MEMBER_RATE" || t.key === "NON_MEMBER"),
+        )
+        .map((t: RateType) => ({
+          id: t.id,
+          key: t.key,
+          name: t.name,
+          bookingBehavior: t.bookingBehavior,
+          ageGroupsApply: t.ageGroupsApply,
+        }))
+      setRateTypes(types)
+    } catch {
+      // No rate types available; the grid renders empty.
+    }
+  }, [])
+
   const fetchSeasons = useCallback(async (signal?: AbortSignal) => {
     try {
       const res = await fetch(
@@ -113,8 +162,6 @@ export default function SeasonsPage() {
       const data = await res.json()
       setSeasons(data)
     } catch (err) {
-      // An aborted request means the lodge changed (or the page unmounted);
-      // a newer request owns the list now.
       if (err instanceof DOMException && err.name === "AbortError") return
       setError(err instanceof Error ? err.message : "Unknown error")
     } finally {
@@ -124,7 +171,8 @@ export default function SeasonsPage() {
 
   useEffect(() => {
     fetchAgeTiers()
-  }, [fetchAgeTiers])
+    fetchRateTypes()
+  }, [fetchAgeTiers, fetchRateTypes])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -138,7 +186,7 @@ export default function SeasonsPage() {
     setStartDate("")
     setEndDate("")
     setActive(true)
-    setRates(emptyRates(ageTiers))
+    setRates(emptyRates(rateTypes, ageTiers))
     setEditingId(null)
     setShowForm(false)
     setError("")
@@ -151,7 +199,12 @@ export default function SeasonsPage() {
     setStartDate(season.startDate.split("T")[0])
     setEndDate(season.endDate.split("T")[0])
     setActive(season.active)
-    setRates(seasonToRatesMap(season.rates))
+    setRates(seasonToRatesMap(season.membershipTypeRates, rateTypes, ageTiers))
+    setShowForm(true)
+  }
+
+  function startCreate() {
+    setRates(emptyRates(rateTypes, ageTiers))
     setShowForm(true)
   }
 
@@ -160,14 +213,16 @@ export default function SeasonsPage() {
     setSaving(true)
     setError("")
 
-    const ratesArray = Object.entries(rates).map(([key, price]) => {
-      const [ageTier, isMemberStr] = key.split("-")
-      return {
-        ageTier: ageTier as AgeTier,
-        isMember: isMemberStr === "true",
-        pricePerNightCents: price,
-      }
-    })
+    const membershipTypeRates: MembershipTypeRate[] = Object.entries(rates).map(
+      ([key, price]) => {
+        const [membershipTypeId, tierPart] = key.split("::")
+        return {
+          membershipTypeId,
+          ageTier: tierPart === FLAT_KEY ? null : (tierPart as AgeTier),
+          pricePerNightCents: price,
+        }
+      },
+    )
 
     const payload = {
       name,
@@ -175,9 +230,7 @@ export default function SeasonsPage() {
       startDate,
       endDate,
       active,
-      rates: ratesArray,
-      // Lodge is set at creation from the page's lodge context and cannot be
-      // changed by an update.
+      membershipTypeRates,
       ...(editingId ? {} : { lodgeId: lodgeId ?? undefined }),
     }
 
@@ -240,7 +293,6 @@ export default function SeasonsPage() {
   }
 
   function handleRateChange(key: string, value: string) {
-    // Convert dollar input to cents
     const dollars = parseFloat(value)
     if (isNaN(dollars)) {
       setRates((prev) => ({ ...prev, [key]: 0 }))
@@ -259,12 +311,10 @@ export default function SeasonsPage() {
         <div>
           <h1 className="text-3xl font-bold">Hut Fees & Seasons</h1>
           <p className="text-muted-foreground mt-1">
-            Configure seasonal pricing periods and nightly hut fee rates
+            Configure seasonal pricing periods and nightly hut fee rates per membership type
           </p>
         </div>
-        {!showForm && (
-          <Button onClick={() => setShowForm(true)}>Add Season</Button>
-        )}
+        {!showForm && <Button onClick={startCreate}>Add Season</Button>}
       </div>
 
       <div className="max-w-xs">
@@ -285,7 +335,7 @@ export default function SeasonsPage() {
           <CardHeader>
             <CardTitle>{editingId ? "Edit Season" : "New Season"}</CardTitle>
             <CardDescription>
-              Configure the season period and set rates for each guest type
+              Configure the season period and set rates for each membership type
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -338,70 +388,78 @@ export default function SeasonsPage() {
               <div className="space-y-4">
                 <Label className="text-base font-semibold">Nightly Rates ({APP_CURRENCY})</Label>
                 <p className="text-sm text-muted-foreground">
-                  Set the price per night for each guest type
+                  Set the price per night for each membership type. Types with age
+                  groups get a rate per age tier; flat types get a single rate.
                 </p>
 
-                <div>
-                  <h4 className="text-sm font-semibold mb-2">Member Rates</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {ageTiers.map((t) => {
-                      const key = `${t.tier}-true`
-                      return (
-                        <div key={key} className="space-y-1">
-                          <Label htmlFor={`rate-${key}`} className="text-sm">
-                            {t.label}
-                          </Label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                              $
-                            </span>
-                            <Input
-                              id={`rate-${key}`}
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              className="pl-7"
-                              value={rates[key] ? (rates[key] / 100).toFixed(2) : ""}
-                              onChange={(e) => handleRateChange(key, e.target.value)}
-                              placeholder="0.00"
-                            />
+                {rateTypes.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No rate-bearing membership types found. Configure membership
+                    types first.
+                  </p>
+                ) : (
+                  <div className="space-y-6">
+                    {rateTypes.map((rt) => (
+                      <div key={rt.id}>
+                        <h4 className="text-sm font-semibold mb-2">{rt.name}</h4>
+                        {rt.ageGroupsApply ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {ageTiers.map((t) => {
+                              const key = rateKey(rt.id, t.tier)
+                              return (
+                                <div key={key} className="space-y-1">
+                                  <Label htmlFor={`rate-${key}`} className="text-sm">
+                                    {t.label}
+                                  </Label>
+                                  <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                                      $
+                                    </span>
+                                    <Input
+                                      id={`rate-${key}`}
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      className="pl-7"
+                                      value={rates[key] ? (rates[key] / 100).toFixed(2) : ""}
+                                      onChange={(e) => handleRateChange(key, e.target.value)}
+                                      placeholder="0.00"
+                                    />
+                                  </div>
+                                </div>
+                              )
+                            })}
                           </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="text-sm font-semibold mb-2">Non-Member Rates</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {ageTiers.map((t) => {
-                      const key = `${t.tier}-false`
-                      return (
-                        <div key={key} className="space-y-1">
-                          <Label htmlFor={`rate-${key}`} className="text-sm">
-                            {t.label}
-                          </Label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                              $
-                            </span>
-                            <Input
-                              id={`rate-${key}`}
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              className="pl-7"
-                              value={rates[key] ? (rates[key] / 100).toFixed(2) : ""}
-                              onChange={(e) => handleRateChange(key, e.target.value)}
-                              placeholder="0.00"
-                            />
+                        ) : (
+                          <div className="max-w-xs space-y-1">
+                            <Label htmlFor={`rate-${rateKey(rt.id, FLAT_KEY)}`} className="text-sm">
+                              Flat rate (all ages)
+                            </Label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                                $
+                              </span>
+                              <Input
+                                id={`rate-${rateKey(rt.id, FLAT_KEY)}`}
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                className="pl-7"
+                                value={
+                                  rates[rateKey(rt.id, FLAT_KEY)]
+                                    ? (rates[rateKey(rt.id, FLAT_KEY)] / 100).toFixed(2)
+                                    : ""
+                                }
+                                onChange={(e) => handleRateChange(rateKey(rt.id, FLAT_KEY), e.target.value)}
+                                placeholder="0.00"
+                              />
+                            </div>
                           </div>
-                        </div>
-                      )
-                    })}
+                        )}
+                      </div>
+                    ))}
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="flex items-center space-x-2">
@@ -481,12 +539,9 @@ export default function SeasonsPage() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {([
-                    { heading: "Member Rates", isMember: true },
-                    { heading: "Non-Member Rates", isMember: false },
-                  ] as const).map(({ heading, isMember }) => (
-                    <div key={heading}>
-                      <h4 className="text-sm font-semibold mb-2">{heading}</h4>
+                  {rateTypes.map((rt) => (
+                    <div key={rt.id}>
+                      <h4 className="text-sm font-semibold mb-2">{rt.name}</h4>
                       <Table>
                         <TableHeader>
                           <TableRow>
@@ -495,19 +550,35 @@ export default function SeasonsPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {ageTiers.map((t) => {
-                            const rate = season.rates.find(
-                              (r) => r.ageTier === t.tier && r.isMember === isMember
-                            )
-                            return (
-                              <TableRow key={t.tier}>
-                                <TableCell>{t.label}</TableCell>
-                                <TableCell className="text-right font-mono">
-                                  {rate ? formatCents(rate.pricePerNightCents) : "Not set"}
-                                </TableCell>
-                              </TableRow>
-                            )
-                          })}
+                          {rt.ageGroupsApply ? (
+                            ageTiers.map((t) => {
+                              const rate = season.membershipTypeRates.find(
+                                (r) => r.membershipTypeId === rt.id && r.ageTier === t.tier,
+                              )
+                              return (
+                                <TableRow key={t.tier}>
+                                  <TableCell>{t.label}</TableCell>
+                                  <TableCell className="text-right font-mono">
+                                    {rate ? formatCents(rate.pricePerNightCents) : "Not set"}
+                                  </TableCell>
+                                </TableRow>
+                              )
+                            })
+                          ) : (
+                            (() => {
+                              const rate = season.membershipTypeRates.find(
+                                (r) => r.membershipTypeId === rt.id && r.ageTier === null,
+                              )
+                              return (
+                                <TableRow>
+                                  <TableCell>All ages (flat)</TableCell>
+                                  <TableCell className="text-right font-mono">
+                                    {rate ? formatCents(rate.pricePerNightCents) : "Not set"}
+                                  </TableCell>
+                                </TableRow>
+                              )
+                            })()
+                          )}
                         </TableBody>
                       </Table>
                     </div>

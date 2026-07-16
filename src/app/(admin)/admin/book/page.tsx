@@ -23,6 +23,10 @@ import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
 import { MemberPicker } from "@/components/admin/member-picker";
+import {
+  NonMemberContactForm,
+  type NonMemberOwner,
+} from "@/components/admin/non-member-contact-form";
 import { formatLocalDateOnly } from "@/lib/date-only";
 import { CreditCard, Landmark } from "lucide-react";
 
@@ -53,12 +57,20 @@ interface SelectedMember {
   lastName: string;
   email: string;
   ageTier: string;
+  // Set when the owner is an inline-created non-login NON_MEMBER (#1935): the
+  // notify dialog defaults to "don't notify" and reworded, and a placeholder
+  // (no-email) owner is never emailed at all.
+  isNonMember?: boolean;
+  isPlaceholderEmail?: boolean;
 }
 
 export default function AdminBookPage() {
   const router = useRouter();
   const { lodgeCapacity } = useClubIdentity();
   const [selectedMember, setSelectedMember] = useState<SelectedMember | null>(null);
+  // Book for an existing member, or inline-create a non-login non-member owner
+  // (#1935). Only meaningful before an owner is selected.
+  const [ownerMode, setOwnerMode] = useState<"member" | "nonMember">("member");
   const [step, setStep] = useState<"member" | "dates" | "guests" | "review">("member");
   // Lodge being booked (multi-lodge phase 8). Admin scope lists every active
   // lodge — booking on behalf is the audited path that bypasses member
@@ -150,6 +162,20 @@ export default function AdminBookPage() {
     setError("");
     setAllowPastDates(false);
     setOverCapacityNights(null);
+  }
+
+  // An inline-created / picked non-login non-member owner (#1935) proceeds
+  // through the identical dates/guests/quote/create flow as a member owner.
+  function handleNonMemberSelected(owner: NonMemberOwner) {
+    handleMemberSelect({
+      id: owner.id,
+      firstName: owner.firstName,
+      lastName: owner.lastName,
+      email: owner.email,
+      ageTier: "ADULT",
+      isNonMember: true,
+      isPlaceholderEmail: owner.isPlaceholderEmail,
+    });
   }
 
   function handleMemberClear() {
@@ -315,6 +341,13 @@ export default function AdminBookPage() {
   function handleConfirmClick() {
     setError("");
     setOverCapacityNights(null);
+    // A walk-in placeholder owner (#1935) has no deliverable address, so there
+    // is no email choice to make — create without emailing (the server also
+    // suppresses any owner email to a placeholder address).
+    if (selectedMember?.isPlaceholderEmail) {
+      void submitBooking({ notifyMember: false });
+      return;
+    }
     setNotifyDialogOpen(true);
   }
 
@@ -444,12 +477,40 @@ export default function AdminBookPage() {
     <div className="max-w-3xl space-y-6">
       <h1 className="text-3xl font-bold">Book on Behalf of Member</h1>
 
-      {/* Member picker — always visible */}
-      <MemberPicker
-        selected={selectedMember}
-        onSelect={handleMemberSelect}
-        onClear={handleMemberClear}
-      />
+      {/* Owner selection — pick an existing member, or inline-create a
+          non-login non-member owner (#1935). The toggle only shows before an
+          owner is chosen; once chosen the MemberPicker's selected card (with a
+          "Change" button) is reused for both kinds. */}
+      {!selectedMember && (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant={ownerMode === "member" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setOwnerMode("member")}
+          >
+            Existing member
+          </Button>
+          <Button
+            type="button"
+            variant={ownerMode === "nonMember" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setOwnerMode("nonMember")}
+          >
+            Non-member booking
+          </Button>
+        </div>
+      )}
+
+      {selectedMember || ownerMode === "member" ? (
+        <MemberPicker
+          selected={selectedMember}
+          onSelect={handleMemberSelect}
+          onClear={handleMemberClear}
+        />
+      ) : (
+        <NonMemberContactForm onSelected={handleNonMemberSelected} />
+      )}
 
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
@@ -916,18 +977,35 @@ export default function AdminBookPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Email the member about this booking?</DialogTitle>
+            <DialogTitle>
+              {selectedMember?.isNonMember
+                ? "Email this non-member about the booking?"
+                : "Email the member about this booking?"}
+            </DialogTitle>
             <DialogDescription>
-              The booking will be created either way. Choose whether{" "}
-              {selectedMember?.firstName ?? "the member"} receives the standard
-              confirmation / hold email — your choice is recorded in the audit
-              log. A Xero invoice email (Internet Banking) is still sent
-              regardless of this choice.
+              {selectedMember?.isNonMember ? (
+                <>
+                  This owner is a non-member with no account. The booking will be
+                  created either way; by default they are <strong>not</strong>{" "}
+                  emailed. Choose to send the standard confirmation / hold email
+                  to {selectedMember?.firstName ?? "them"} only if you want to —
+                  your choice is recorded in the audit log. A Xero invoice email
+                  (Internet Banking) is still sent regardless of this choice.
+                </>
+              ) : (
+                <>
+                  The booking will be created either way. Choose whether{" "}
+                  {selectedMember?.firstName ?? "the member"} receives the
+                  standard confirmation / hold email — your choice is recorded in
+                  the audit log. A Xero invoice email (Internet Banking) is still
+                  sent regardless of this choice.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-2">
             <Button
-              variant="outline"
+              variant={selectedMember?.isNonMember ? "default" : "outline"}
               disabled={submitting}
               onClick={() => {
                 setNotifyDialogOpen(false);
@@ -937,13 +1015,16 @@ export default function AdminBookPage() {
               Create without emailing
             </Button>
             <Button
+              variant={selectedMember?.isNonMember ? "outline" : "default"}
               disabled={submitting}
               onClick={() => {
                 setNotifyDialogOpen(false);
                 void submitBooking({ notifyMember: true });
               }}
             >
-              Create and email member
+              {selectedMember?.isNonMember
+                ? "Create and email them"
+                : "Create and email member"}
             </Button>
           </DialogFooter>
         </DialogContent>

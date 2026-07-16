@@ -1124,7 +1124,7 @@ export async function verifyAndCreateNonMemberJoin(
       endDate: { gte: checkIn },
       ...lodgeNullTolerantScope(groupLodgeId),
     },
-    include: { rates: true },
+    include: { membershipTypeRates: true },
   });
   const gds = await prisma.groupDiscountSetting.findUnique({ where: { id: "default" } });
   const price = await priceBookingGuestsWithMembershipTypePolicy(prisma, {

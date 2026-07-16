@@ -1,0 +1,669 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+
+// E10 (#1936): the extracted application-approval flow — per-person Create/Map
+// decisions, candidate chips + live search, a field-by-field diff preview, the
+// joining-fee block (SKIP default for a mapped applicant), and the Approve /
+// Reject actions. The parent page owns the notify-choice dialog + dispatch; this
+// panel produces the validated review payload and gates Approve on a fresh,
+// zero-error preview whenever any person is mapped.
+
+type PersonMode = "CREATE" | "MAP";
+
+type ApplicationFamilyMember = {
+  firstName: string;
+  lastName: string;
+  dateOfBirth: string;
+};
+
+type PanelApplication = {
+  id: string;
+  applicantFirstName: string;
+  applicantLastName: string;
+  applicantEmail: string;
+  familyMembers: ApplicationFamilyMember[];
+};
+
+type Candidate = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  ageTier?: string;
+  active?: boolean;
+  canLogin?: boolean;
+  matchedOnEmail?: boolean;
+};
+
+type FieldDiff = {
+  field: string;
+  label: string;
+  current: string | null;
+  incoming: string | null;
+  willChange: boolean;
+};
+
+type PersonRef = { kind: "applicant" } | { kind: "family"; index: number };
+
+type PersonOutcome = {
+  ref: PersonRef;
+  personLabel: string;
+  mode: PersonMode;
+  targetMemberId: string | null;
+  targetSummary: Candidate | null;
+  fieldDiffs: FieldDiff[];
+  notes: string[];
+  errors: string[];
+  suggestions: Candidate[];
+};
+
+type MappingPreview = {
+  applicationId: string;
+  persons: PersonOutcome[];
+  blockingErrors: string[];
+  hasMappings: boolean;
+  previewToken: string;
+};
+
+type PersonSelection = {
+  mode: PersonMode;
+  member: Candidate | null;
+};
+
+type FeeForm = {
+  action: "CREATE" | "SKIP";
+  amount: string;
+  narration: string;
+  reason: string;
+};
+
+export type ReviewRequestPayload = {
+  decision: "APPROVE" | "REJECT";
+  entranceFeeInvoiceDecision: unknown;
+  personDecisions: unknown;
+  mappingPreviewToken: string | null;
+};
+
+const CREATE_FEE: FeeForm = { action: "CREATE", amount: "", narration: "", reason: "" };
+const MAPPED_FEE: FeeForm = {
+  action: "SKIP",
+  amount: "",
+  narration: "",
+  reason: "Mapped to existing member",
+};
+
+function refKey(ref: PersonRef): string {
+  return ref.kind === "applicant" ? "applicant" : `family:${ref.index}`;
+}
+
+function candidateLabel(candidate: Candidate) {
+  return `${candidate.firstName} ${candidate.lastName}`.trim() || candidate.email;
+}
+
+export default function ApprovalMappingPanel({
+  application,
+  submitting,
+  onRequestReview,
+  onError,
+}: {
+  application: PanelApplication;
+  submitting: boolean;
+  onRequestReview: (payload: ReviewRequestPayload) => void;
+  onError: (message: string) => void;
+}) {
+  const [applicantSel, setApplicantSel] = useState<PersonSelection>({
+    mode: "CREATE",
+    member: null,
+  });
+  const [familySel, setFamilySel] = useState<PersonSelection[]>(
+    application.familyMembers.map(() => ({ mode: "CREATE", member: null })),
+  );
+  const [fee, setFee] = useState<FeeForm>(CREATE_FEE);
+  const [feeTouched, setFeeTouched] = useState(false);
+
+  const [preview, setPreview] = useState<MappingPreview | null>(null);
+  const [previewedSignature, setPreviewedSignature] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+
+  const [searchKey, setSearchKey] = useState<string | null>(null);
+  const [searchQueries, setSearchQueries] = useState<Record<string, string>>({});
+  const [searchResults, setSearchResults] = useState<Record<string, Candidate[]>>({});
+
+  const hasMappings =
+    applicantSel.mode === "MAP" || familySel.some((sel) => sel.mode === "MAP");
+
+  const personDecisions = useMemo(() => {
+    return {
+      applicant:
+        applicantSel.mode === "MAP" && applicantSel.member
+          ? { mode: "MAP" as const, memberId: applicantSel.member.id }
+          : { mode: "CREATE" as const },
+      family: familySel.map((sel) =>
+        sel.mode === "MAP" && sel.member
+          ? { mode: "MAP" as const, memberId: sel.member.id }
+          : { mode: "CREATE" as const },
+      ),
+    };
+  }, [applicantSel, familySel]);
+
+  const decisionSignature = useMemo(
+    () => JSON.stringify(personDecisions),
+    [personDecisions],
+  );
+
+  const allMapTargetsChosen =
+    (applicantSel.mode !== "MAP" || Boolean(applicantSel.member)) &&
+    familySel.every((sel) => sel.mode !== "MAP" || Boolean(sel.member));
+
+  const previewIsFresh = Boolean(
+    preview && previewedSignature === decisionSignature,
+  );
+  const previewErrors = preview
+    ? [
+        ...preview.blockingErrors,
+        ...preview.persons.flatMap((person) => person.errors),
+      ]
+    : [];
+
+  // Approve is enabled only when: all mapped persons have a chosen target and,
+  // if anything is mapped, a fresh preview with zero errors exists.
+  const approveDisabled =
+    submitting ||
+    !allMapTargetsChosen ||
+    (hasMappings && (!previewIsFresh || previewErrors.length > 0));
+
+  const effectiveFee = applicantSel.mode === "MAP" && !feeTouched ? MAPPED_FEE : fee;
+
+  function updateApplicantMode(mode: PersonMode) {
+    setApplicantSel((prev) => ({ mode, member: mode === "MAP" ? prev.member : null }));
+    invalidatePreview();
+    // A mapped applicant defaults the joining fee to SKIP; a created applicant
+    // defaults to CREATE. The admin can still override (feeTouched).
+    if (!feeTouched) {
+      setFee(mode === "MAP" ? MAPPED_FEE : CREATE_FEE);
+    }
+  }
+
+  function updateFamilyMode(index: number, mode: PersonMode) {
+    setFamilySel((prev) =>
+      prev.map((sel, i) =>
+        i === index ? { mode, member: mode === "MAP" ? sel.member : null } : sel,
+      ),
+    );
+    invalidatePreview();
+  }
+
+  function chooseApplicantMember(member: Candidate) {
+    setApplicantSel({ mode: "MAP", member });
+    invalidatePreview();
+  }
+
+  function chooseFamilyMember(index: number, member: Candidate) {
+    setFamilySel((prev) =>
+      prev.map((sel, i) => (i === index ? { mode: "MAP", member } : sel)),
+    );
+    invalidatePreview();
+  }
+
+  function invalidatePreview() {
+    setPreview(null);
+    setPreviewedSignature(null);
+  }
+
+  async function runPreview() {
+    if (!allMapTargetsChosen) {
+      onError("Choose an existing member for every person set to Map.");
+      return;
+    }
+    setPreviewing(true);
+    try {
+      const response = await fetch(
+        `/api/admin/member-applications/${application.id}/approval-preview`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ personDecisions }),
+        },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        onError(data.error || "Could not build the mapping preview.");
+        return;
+      }
+      setPreview(data.preview as MappingPreview);
+      setPreviewedSignature(decisionSignature);
+    } catch {
+      onError("Could not build the mapping preview.");
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
+  async function searchMembers(key: string) {
+    const query = (searchQueries[key] || "").trim();
+    if (query.length < 2) {
+      onError("Enter at least two characters to search for a member.");
+      return;
+    }
+    setSearchKey(key);
+    try {
+      const response = await fetch(
+        `/api/admin/members?q=${encodeURIComponent(query)}&active=true&pageSize=5`,
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        onError(data.error || "Could not search members.");
+        return;
+      }
+      setSearchResults((prev) => ({ ...prev, [key]: data.members || [] }));
+    } catch {
+      onError("Could not search members.");
+    } finally {
+      setSearchKey(null);
+    }
+  }
+
+  function buildEntranceFeeInvoiceDecision(): { ok: true; value: unknown } | { ok: false } {
+    if (effectiveFee.action === "SKIP") {
+      const reason = effectiveFee.reason.trim();
+      if (!reason) {
+        onError("Enter a reason for not raising the joining fee invoice.");
+        return { ok: false };
+      }
+      return { ok: true, value: { action: "SKIP", reason } };
+    }
+    const amountText = effectiveFee.amount.trim();
+    let amountCents: number | undefined;
+    if (amountText) {
+      const parsedAmount = Number(amountText);
+      amountCents = Math.round(parsedAmount * 100);
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || amountCents <= 0) {
+        onError(
+          "Enter a valid joining fee amount, or leave it blank to use the configured amount.",
+        );
+        return { ok: false };
+      }
+    }
+    return {
+      ok: true,
+      value: {
+        action: "CREATE",
+        ...(amountCents ? { amountCents } : {}),
+        ...(effectiveFee.narration.trim()
+          ? { narration: effectiveFee.narration.trim() }
+          : {}),
+      },
+    };
+  }
+
+  function handleApprove() {
+    if (hasMappings && (!previewIsFresh || previewErrors.length > 0)) {
+      onError(
+        "Preview the mapping and resolve any blocking issues before approving.",
+      );
+      return;
+    }
+    const fee = buildEntranceFeeInvoiceDecision();
+    if (!fee.ok) return;
+    onRequestReview({
+      decision: "APPROVE",
+      entranceFeeInvoiceDecision: fee.value,
+      personDecisions: hasMappings ? personDecisions : null,
+      mappingPreviewToken: hasMappings && preview ? preview.previewToken : null,
+    });
+  }
+
+  function handleReject() {
+    onRequestReview({
+      decision: "REJECT",
+      entranceFeeInvoiceDecision: undefined,
+      personDecisions: null,
+      mappingPreviewToken: null,
+    });
+  }
+
+  const outcomeByRef = new Map<string, PersonOutcome>();
+  for (const person of preview?.persons ?? []) {
+    outcomeByRef.set(refKey(person.ref), person);
+  }
+
+  function renderPersonRow(
+    ref: PersonRef,
+    label: string,
+    sel: PersonSelection,
+    setMode: (mode: PersonMode) => void,
+    chooseMember: (member: Candidate) => void,
+  ) {
+    const key = refKey(ref);
+    const outcome = outcomeByRef.get(key);
+    const results = searchResults[key] || [];
+    const suggestions = outcome?.suggestions ?? [];
+    return (
+      <div key={key} className="rounded-lg border border-slate-200 bg-white p-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="font-medium text-slate-900">{label}</p>
+          <div className="flex gap-2 text-sm">
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name={`mode-${key}`}
+                checked={sel.mode === "CREATE"}
+                onChange={() => setMode("CREATE")}
+              />
+              Create new
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name={`mode-${key}`}
+                checked={sel.mode === "MAP"}
+                onChange={() => setMode("MAP")}
+              />
+              Map to existing
+            </label>
+          </div>
+        </div>
+
+        {sel.mode === "MAP" && (
+          <div className="mt-3 space-y-2">
+            {sel.member ? (
+              <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
+                <span>
+                  Mapped to <strong>{candidateLabel(sel.member)}</strong>{" "}
+                  <span className="text-slate-600">({sel.member.email})</span>
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => chooseMember({ ...sel.member! })}
+                >
+                  Change
+                </Button>
+              </div>
+            ) : (
+              <p className="text-sm text-amber-700">
+                Choose an existing member below.
+              </p>
+            )}
+
+            {suggestions.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {suggestions.map((candidate) => (
+                  <button
+                    key={candidate.id}
+                    type="button"
+                    className={`rounded-full border px-3 py-1 text-xs ${
+                      sel.member?.id === candidate.id
+                        ? "border-emerald-400 bg-emerald-100 text-emerald-900"
+                        : "border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                    }`}
+                    onClick={() => chooseMember(candidate)}
+                  >
+                    {candidateLabel(candidate)}
+                    {candidate.matchedOnEmail ? " · email match" : ""}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <input
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={searchQueries[key] || ""}
+                onChange={(event) =>
+                  setSearchQueries((prev) => ({ ...prev, [key]: event.target.value }))
+                }
+                placeholder="Search name or email"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={searchKey === key}
+                onClick={() => searchMembers(key)}
+              >
+                {searchKey === key ? "Searching..." : "Search"}
+              </Button>
+            </div>
+
+            {results.length > 0 && (
+              <div className="space-y-1">
+                {results.map((candidate) => (
+                  <div
+                    key={candidate.id}
+                    className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-sm"
+                  >
+                    <span>
+                      {candidateLabel(candidate)}{" "}
+                      <span className="text-slate-500">{candidate.email}</span>
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => chooseMember(candidate)}
+                    >
+                      Use
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {outcome && sel.mode === "MAP" && (
+          <div className="mt-3 space-y-2">
+            {outcome.errors.map((error, index) => (
+              <p
+                key={`err-${index}`}
+                className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
+              >
+                {error}
+              </p>
+            ))}
+            {outcome.notes.map((note, index) => (
+              <p
+                key={`note-${index}`}
+                className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+              >
+                {note}
+              </p>
+            ))}
+            {outcome.fieldDiffs.some((diff) => diff.willChange) ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="text-slate-500">
+                      <th className="py-1 pr-3">Field</th>
+                      <th className="py-1 pr-3">Current</th>
+                      <th className="py-1">Application</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {outcome.fieldDiffs
+                      .filter((diff) => diff.willChange)
+                      .map((diff) => (
+                        <tr key={diff.field} className="bg-amber-50/60">
+                          <td className="py-1 pr-3 font-medium text-slate-700">
+                            {diff.label}
+                          </td>
+                          <td className="py-1 pr-3 text-slate-500 line-through">
+                            {diff.current ?? "—"}
+                          </td>
+                          <td className="py-1 font-medium text-slate-900">
+                            {diff.incoming ?? "—"}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500">
+                No field changes — the application matches this member.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 rounded-md border border-slate-200 bg-slate-50 p-4">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+          Approve: map to existing members
+        </p>
+        <p className="mt-1 text-sm text-slate-600">
+          For each person choose Create new (default) or Map to an existing
+          member. Mapping overwrites the member&apos;s details from the
+          application — preview the changes before approving.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        {renderPersonRow(
+          { kind: "applicant" },
+          `${application.applicantFirstName} ${application.applicantLastName} (applicant)`,
+          applicantSel,
+          updateApplicantMode,
+          chooseApplicantMember,
+        )}
+        {application.familyMembers.map((familyMember, index) =>
+          renderPersonRow(
+            { kind: "family", index },
+            `${familyMember.firstName} ${familyMember.lastName} (dependent)`,
+            familySel[index] ?? { mode: "CREATE", member: null },
+            (mode) => updateFamilyMode(index, mode),
+            (member) => chooseFamilyMember(index, member),
+          ),
+        )}
+      </div>
+
+      {hasMappings && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={previewing || !allMapTargetsChosen}
+            onClick={runPreview}
+          >
+            {previewing ? "Previewing..." : "Preview mapping"}
+          </Button>
+          {preview && previewIsFresh && previewErrors.length === 0 && (
+            <span className="text-sm text-emerald-700">
+              Preview ready — no blocking issues.
+            </span>
+          )}
+          {preview && !previewIsFresh && (
+            <span className="text-sm text-amber-700">
+              Selections changed — preview again before approving.
+            </span>
+          )}
+        </div>
+      )}
+
+      {preview && preview.blockingErrors.length > 0 && (
+        <div className="space-y-1">
+          {preview.blockingErrors.map((error, index) => (
+            <p
+              key={index}
+              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+            >
+              {error}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
+            Joining fee invoice
+          </p>
+          <p className="mt-1 text-amber-900">
+            Choose whether to raise the joining fee invoice when this application
+            is approved.
+            {applicantSel.mode === "MAP" && (
+              <span className="font-medium">
+                {" "}
+                Defaults to skip for a mapped applicant.
+              </span>
+            )}
+          </p>
+        </div>
+        <select
+          className="w-full rounded-md border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900"
+          value={effectiveFee.action}
+          onChange={(event) => {
+            setFeeTouched(true);
+            setFee({ ...effectiveFee, action: event.target.value as "CREATE" | "SKIP" });
+          }}
+        >
+          <option value="CREATE">Raise joining fee invoice</option>
+          <option value="SKIP">Do not raise invoice</option>
+        </select>
+        {effectiveFee.action === "CREATE" ? (
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="space-y-1">
+              <span className="text-xs font-medium text-slate-700">Amount override ($)</span>
+              <input
+                className="w-full rounded-md border border-amber-300 px-3 py-2 text-sm"
+                inputMode="decimal"
+                placeholder="Use configured amount"
+                value={effectiveFee.amount}
+                onChange={(event) => {
+                  setFeeTouched(true);
+                  setFee({ ...effectiveFee, amount: event.target.value });
+                }}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs font-medium text-slate-700">Narration override</span>
+              <input
+                className="w-full rounded-md border border-amber-300 px-3 py-2 text-sm"
+                placeholder="Use default narration"
+                value={effectiveFee.narration}
+                onChange={(event) => {
+                  setFeeTouched(true);
+                  setFee({ ...effectiveFee, narration: event.target.value });
+                }}
+              />
+            </label>
+          </div>
+        ) : (
+          <label className="space-y-1">
+            <span className="text-xs font-medium text-slate-700">
+              Reason for not raising invoice
+            </span>
+            <textarea
+              className="min-h-24 w-full rounded-md border border-amber-300 px-3 py-2 text-sm"
+              value={effectiveFee.reason}
+              onChange={(event) => {
+                setFeeTouched(true);
+                setFee({ ...effectiveFee, reason: event.target.value });
+              }}
+            />
+          </label>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <Button type="button" disabled={approveDisabled} onClick={handleApprove}>
+          {submitting ? "Working..." : "Approve"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={submitting}
+          onClick={handleReject}
+        >
+          Reject
+        </Button>
+      </div>
+    </div>
+  );
+}

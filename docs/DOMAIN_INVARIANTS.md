@@ -771,6 +771,36 @@ config so previews match what the mutating paths charge. The guest-add route
 therefore prices the whole post-add party in one pass — the added guest's
 stored price and night rows are their slice of the combined breakdown.
 
+Hut nightly rates are keyed by membership type, not a member/non-member boolean
+(#1930, E4). `MembershipTypeSeasonRate` holds one rate per `(season, membership
+type, ageTier?)`: each `MEMBER_RATE` type carries its own rows, non-members
+price via the built-in `NON_MEMBER` type, and `NON_MEMBER_RATE` (except
+`NON_MEMBER`) and `BLOCK_BOOKING` types carry **zero** own rows — the resolver
+never consults them (testable invariant). A type prices per age tier when
+`ageGroupsApply` is true, or from a single `NULL`-ageTier flat row when false;
+the engine prefers an exact tier row and falls back to the flat row. The rate
+resolver classifies every guest as `OWN_TYPE` (a `MEMBER_RATE` member on their
+own rows), `NON_MEMBER_DEFAULT` (a true non-member on the `NON_MEMBER` rows), or
+`TYPE_POLICY_FORCED` (a member whose type forces the non-member rate, priced on
+the `NON_MEMBER` rows). A missing rate for a type × active season is a hard
+throw at pricing plus a setup-readiness warning. The group discount no longer
+flips a boolean: it substitutes `GroupDiscountSetting.rateMembershipTypeId`
+(seeded to `FULL`) **only** for `NON_MEMBER_DEFAULT` guests, so members keep
+their own type's rate and `TYPE_POLICY_FORCED` members are excluded — the two
+load-bearing behaviours the old flip preserved.
+
+Every priced guest stores a `BookingGuest.rateMembershipTypeId` snapshot — the
+type whose rows priced it (the resolved type, never the per-night discount
+substitution). Xero line building reads the snapshot to pick the hut-fee item
+code. The snapshot is **not** write-once: modify/reprice flows (waitlist offer
+reprice, date change, guest add/removal) recompute and overwrite it for
+repriced guests alongside `priceCents`; a locked night keeps both its price and
+its stale snapshot untouched. A `NULL` snapshot (pre-refactor booking) falls
+back `isMember → FULL / NON_MEMBER` forever. Because the day-one fan-out
+backfill copied the old member rows/codes to every `MEMBER_RATE` type and the
+non-member rows/codes to `NON_MEMBER`, existing bookings and invoices resolve
+byte-identically under the new key.
+
 Every booking-reduction path — batch modify (`removeGuestIds`/date change),
 single-guest removal (`DELETE …/guests/[guestId]`), and date change
 (`modify-dates`) — returns member money limited by the same cancellation-policy
@@ -1584,11 +1614,39 @@ closed-world guarantee: every other `canLogin` writer in the codebase either
 CREATES a brand-new member (booking-request/school/group/Xero-import contacts,
 nomination and family-request dependants, plus admin member-create and CSV
 member-import rows — whose `canLogin` value seeds a new row, never de-logins an
-existing one) or passes `canLogin` only as a read/token filter
+existing one), GRANTS `canLogin` on an existing member without ever revoking it
+(the application-approval mapping **promotion path** — mapping an applicant onto
+a non-login member sets `canLogin: true`, a fresh password, and
+`emailVerified: true`, and cannot strand an admin because it only ever adds a
+login), or passes `canLogin` only as a read/token filter
 (`normalizeAssignableAccessRoleTokens`, list/where clauses), and so cannot
 strand an existing admin. The one remaining path that can clear `canLogin` on an existing
 admin and is NOT guarded is indirect — the age-down cron, where editing a date
 of birth to a minor tier can indirectly clear `canLogin` (informational).
+
+Application-approval mapping (link + overwrite of an existing member at approval
+time) preserves the login-uniqueness and auth invariants: it never creates a
+second `canLogin: true` member for an email (the create-path `canLogin` guard is
+relaxed only when the sole login holder for the applicant email IS the mapped
+target; a different login holder still 409s), and it never writes
+`passwordHash`/`canLogin`/2FA/`emailVerified` on any target except the defined
+non-login→login applicant promotion above — a login-capable target (applicant or
+family) keeps its existing auth untouched, and a mapped family member's email is
+never rewritten. Mapped targets keep their existing season membership coverage:
+a target already holding a seasonal assignment or subscription for the season is
+excluded from new-member subscription billing (surfaced as a note), so mapping
+never double-charges or overrides an existing coverage arrangement. Confirmation
+timestamps on a mapped target are set only when currently null and are never
+regressed, and the overwrite is bound to a previewed HMAC token so any drift in
+the computed outcome refuses the approval.
+The applicant MAP path also carries the #1026 privileged-email gate: when the
+mapping would change the login email of a login-capable target holding a
+privileged access role, only a Full Admin may approve it — a scoped admin's
+preview shows a blocking error, and because the acting admin's roles are
+recomputed inside the approval transaction (part of the tokenized outcome), a
+Full-Admin-minted preview replayed by a scoped admin fails closed with a 409
+token mismatch. Same-email mappings and the non-login promotion path (where
+`hasPrivilegedAccess` is canLogin-aware and therefore false) are unaffected.
 On-behalf booking must not depend on `membership:view`: a Booking Officer
 (`bookings:edit`) reaches the booking owner's or target member's family group
 through the bookings-scoped pickers
@@ -1615,6 +1673,28 @@ bypasses — email verification, Xero-link, subscription, guest-subscription,
 and minimum-stay gates all apply to self-bookings; the gate bypasses are keyed
 to authorized on-behalf bookings only. Only admin-only accounts (no `USER`
 token) are redirected from the member wizard to `/admin/book`.
+A Booking Officer may also inline-create a **non-member booking owner** on
+`/admin/book` (#1935): `POST /api/admin/bookings/non-member-contact`
+(bookings:edit — the #1376 on-behalf scope) mints a non-login owner identical to
+what the public booking-request approval creates, with SERVER-FORCED
+`role: NON_MEMBER`, `canLogin: false`, `ageTier: ADULT`, and — unlike the
+booking-request pipeline, whose verified public address justifies `true` —
+`emailVerified: false` (an officer-typed address is unverified). The input
+accepts only name/email/phone, so those forced fields cannot be tampered via
+payload. Dedupe is suggest-and-pick and never silent reuse: several non-login
+contacts may legitimately share an email (the `Member_email_login_unique`
+partial index only covers `canLogin: true`), so reuse requires the officer's
+explicit pick and is validated by `assertMappableOwnerContact` (non-login
+NON_MEMBER/SCHOOL, active, not archived); a login-capable exact-email match is
+never reusable and blocks creation with a "pick them in the member search"
+error. A walk-in with no email stores a club-internal placeholder on the
+reserved `.invalid` domain (`Member.email` stays non-nullable — no schema
+change): all outbound email to that owner is suppressed at the `sendEmail`
+chokepoint, and the placeholder is excluded from Xero contact email-matching
+(`findOrCreateXeroContact` skips the email search and sends an empty address) so
+it is never used to match or pushed to Xero as a real address. Non-member
+booking owners are priced identically to public booking-request non-members
+(both feed the shared pricing engine with non-member guests).
 Legacy membership lifecycle/classification code may read `Member.role` only to
 distinguish compatibility categories such as non-login/non-member records until
 that workflow is fully represented by seasonal membership type.
@@ -1802,6 +1882,84 @@ promo-code/book-on-behalf workaround that rosters a booking-less custodian).
 Hard delete must remain limited to records that pass the eligibility checks for
 no durable booking, financial, family, Xero, or membership-history blockers.
 
+### Member profile merge (E11 #1937)
+
+Two duplicate member records may be merged into one by a **Full Admin only**. The
+admin picks the **master** (the record that survives); the other is the **loser**
+and is hard-deleted at the end. The merge is **additive and master-wins**:
+
+- **Field merge.** The master's populated scalar fields always win; a blank
+  master field is filled from the loser (contact/identity/address groups —
+  phone and each address block fill as a whole, never field-by-field, so a merged
+  record never mixes one member's street number with another's city).
+  `requiresInduction` and `hutLeaderEligible` are OR-ed (and
+  `hutLeaderEligibleAt` becomes the earliest); `joinedDate` becomes the earliest.
+  **Login and identity are never merged** — `email`, `passwordHash`,
+  `emailVerified`, `canLogin`, `role`, `financeAccessLevel`, every 2FA field, and
+  `xeroContactId` always stay the master's. (Login-email uniqueness is a partial
+  unique index `WHERE canLogin = true`, so two login rows on one email can never
+  coexist mid-transaction.)
+- **Relation buckets.** Every Member-referencing relation is classified into
+  exactly one bucket by `MEMBER_MERGE_RELATION_SPECS`, enforced complete by a
+  DMMF/schema test that fails CI if a new relation is added unclassified:
+  - **move** — history re-points loser → master (`updateMany`): bookings, guests,
+    credits, refunds, redemptions, committee/hut-leader/lodge-access-created,
+    actor and reviewer back-references, and the four Member self-relations
+    (parent / secondary parent / email-inheritance / details-confirmed-by), whose
+    self-cycles are nulled on the master first.
+  - **resolve** — a unique constraint means a per-model resolver dedupes before
+    moving: `MemberSubscription`/`SeasonalMembershipAssignment` (per season),
+    `MemberAccessRole`, `MemberLodgeAccess`, `CommitteeAssignment`,
+    `PromoCodeAssignment`, `PromoRedemptionAllocation` (both uniques),
+    `MembershipCancellationRequestParticipant`, `GroupBookingJoin`,
+    `NotificationPreference` (1-1), `MemberInductionSignOff` (earliest sign-off
+    wins), `MemberInductionAssignedSigner`, `FamilyGroupMember` (keep the
+    master's row, upgrade its role to `MAX(ADMIN > MEMBER)`, and re-point the
+    family's billing membership), and `MemberPartnerLink` (canonical
+    `memberAId < memberBId` pair, self-pairs and duplicates deleted, and at most
+    one CONFIRMED partner kept for the master).
+  - **cascade** — the loser's auth identity and ephemeral tokens
+    (password-reset / email-verification / email-change tokens, all 2FA rows,
+    partner-invite tokens) are never moved; they die with `member.delete(loser)`.
+  - **snapshot** — FK-less scalar member-id columns
+    (`MemberLifecycleActionRequest.memberId`, `BookingModification.memberId`,
+    `MemberApplication` nominator/reviewer ids, `NominationToken`,
+    `IssueReport.resolvedById`, `AuditLog` columns, …) are **left pointing at the
+    loser's id by design** as immutable history; the same historic audit rows
+    that reference the loser keep its id and stored names on purpose.
+- **Subscription-collision blocker.** If the loser holds a *meaningful*
+  `MemberSubscription` (any invoice/payment/charge-coverage signal) for a season
+  the master holds **any** subscription row for — meaningful or not — the merge
+  is **blocked**: the keep-master resolver drops the loser's colliding row, so a
+  paid/invoiced loser row must never collide, even with a meaningless
+  `NOT_INVOICED` master row (dropping it would delete payment history, and a
+  charge-coverage-backed row would fail on its `onDelete: Restrict` FK). A
+  meaningless loser subscription for a season the master also holds is dropped;
+  otherwise it moves.
+- **Xero teardown (ENTRANCE_FEE_INVOICE re-point rule).** Inside the transaction
+  and with **no Xero API calls**, the loser's contact-identity `XeroObjectLink`
+  rows are deactivated and its `xeroContactId` nulled (mirroring the delete path).
+  The exception is the loser's active `ENTRANCE_FEE_INVOICE` (joining-fee) link:
+  it is **re-pointed** (its `localId` set to the master) so the paid-joining-fee
+  evidence survives — otherwise E5's invoice-idempotency check would treat the
+  master as never-invoiced and risk a double charge. If the master already holds
+  an active `ENTRANCE_FEE_INVOICE` link (the partial unique forbids two), the
+  loser's is deactivated instead and the preview says so. The loser's Xero
+  **contact** is not touched in Xero — the preview warns the admin to archive or
+  merge it there manually (residual risk: no post-merge Xero contact-group or
+  invoice re-sync, consistent with the periodic-reconciliation stance).
+- **Guards, preview and confirmation.** Full Admin only; master ≠ loser; both
+  exist; master active and not archived; loser ≠ the acting admin; the loser may
+  not hold any admin access role (and the last-Full-Admin backstop applies); no
+  PENDING/REQUESTED lifecycle, deletion, or family-join request on either member.
+  The whole merge runs in one transaction under the dual `member-lifecycle`
+  advisory lock (see CONCURRENCY_AND_LOCKING.md), re-runs the guards, and
+  re-verifies an HMAC preview token (over both ids, both `updatedAt`, and an
+  outcome digest) so a drifted preview 409s. The admin must type
+  `MERGE <loser full name>` (whitespace-normalised) to confirm, and one critical
+  `MEMBER_MERGED` audit records the loser snapshot, field outcome, per-relation
+  counts, collision resolutions, and a bounded 500-row moved-id sample.
+
 ## Integrations
 
 - Webhooks and cron jobs must be idempotent.
@@ -1814,6 +1972,52 @@ no durable booking, financial, family, Xero, or membership-history blockers.
 - Logs, webhook records, Sentry events, and PR comments must not expose secrets,
   OAuth codes/states, action tokens, client secrets, or personal data beyond the
   minimum needed for diagnosis.
+
+### Xero member grouping (E8, #1934)
+
+- A single club-level mode governs member auto-grouping: `NONE`,
+  `MEMBERSHIP_TYPE`, or `MEMBERSHIP_TYPE_AND_AGE` (`XeroGroupingSettings`
+  singleton). Grouping rules live in one table, `XeroContactGroupRule`
+  (`MANAGED` = the group the sync adds; `ACCEPTED` = tolerated, never removed).
+- The system NEVER deletes a Xero contact group. It only adds/removes a
+  contact's *membership* of groups in the "managed universe" = groupIds
+  referenced by ACTIVE rules that are applicable under the current mode.
+  Xero groups not referenced by any active rule are never touched.
+- `NONE` mode is a total no-op — the per-member sync short-circuits before any
+  Xero call, and the cancellation path performs no managed removals.
+- Resolution is pure and mode-driven (`resolveMemberGrouping`): most-specific
+  MANAGED match wins (type+tier > type-only > tier-only); ACCEPTED is the union
+  of matching accepted rules plus the matched managed group. The effective
+  membership type is resolved by the ONE shared policy helper
+  (`resolveMembershipTypePolicyForMember`) at the CURRENT season year — pricing
+  resolves per stay-night season, grouping resolves at "now"; the two must not
+  be merged.
+- Add-suppression: the managed group is added only when the contact is in NONE
+  of (matched MANAGED ∪ matched ACCEPTED), so members parked in an accepted
+  group get no spurious add. A member matching no rule is left untouched (no
+  removals); when such a member sits in managed-universe group(s) they surface
+  as an information-only entry in the dry-run snapshot (never iterated by the
+  bulk re-sync) for deliberate admin cleanup in Xero.
+- The cutover migration deactivates every pre-existing `XeroContactGroupRule`
+  row it did not backfill itself, so only tier-only backfill rules are live at
+  deploy; dormant legacy rules require a deliberate admin re-enable via the
+  grouping UI.
+- Mode/rule changes NEVER auto-resync the population. Deactivating or deleting a
+  rule shrinks the managed universe, so members already in that group are never
+  removed by the system. Members re-group on their next trigger (age-tier
+  change, current-season membership-type change, cron age-up) or via the
+  explicit admin bulk re-sync.
+- The per-member sync keeps Xero calls outside DB transactions, ledgers each
+  operation with an idempotency key (the per-add key carries a per-operation
+  nonce so a legitimate later re-add is never swallowed by Xero's 24h
+  idempotency window), adds before removing, and refreshes the contact cache
+  from the post-write contact. A remove-404 is idempotent success recorded as
+  already-absent — never counted as a removal; an add-404 is a ledgered
+  failure.
+- The bulk re-sync is admin-triggered, dry-run-first, cache-pre-filtered to
+  mismatched members, chunked and resumable by member-id cursor, and never
+  advances the CONTACT delta-sync watermark. Members without a Xero contact are
+  reported as skipped, never silently omitted.
 
 ## Operations
 
