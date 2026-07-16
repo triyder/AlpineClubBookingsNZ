@@ -64,6 +64,18 @@ const NON_MEMBER_HOLD_COPY_UPDATE_MIGRATION_PATH = join(
   "migration.sql",
 );
 
+// Issue #1945 (E15): guarded update that genericises the club-specific lodge
+// name/geography in the privacy, terms, and FAQ starter copy. It supersedes the
+// privacy (#975) and terms/FAQ (#1287) update migrations as the authoritative
+// writer of the current seed text for those three pages.
+const GENERICISE_LODGE_COPY_MIGRATION_PATH = join(
+  process.cwd(),
+  "prisma",
+  "migrations",
+  "20260717170000_genericise_starter_lodge_copy",
+  "migration.sql",
+);
+
 // Previous starter FAQ contentHtml (flat <h3>/<p> pairs), replaced by the
 // accordion update migration. Extracted verbatim from the policy-pages
 // backfill so the update migration's WHERE guard provably matches what that
@@ -106,6 +118,20 @@ function faqAccordionContentHtml(faqUpdateSql: string) {
   return faqBlock;
 }
 
+// Returns the nth $cms$-delimited blob in a migration — the value written by a
+// SET clause. Used to prove each starter-copy update chains to the next: one
+// migration's SET must equal the value the next migration guards its WHERE on.
+function nthCmsBlock(sql: string, n: number) {
+  const re = /\$cms\$([\s\S]*?)\$cms\$/g;
+  let match: RegExpExecArray | null;
+  let index = 0;
+  while ((match = re.exec(sql)) !== null) {
+    index += 1;
+    if (index === n) return match[1];
+  }
+  throw new Error(`cms block #${n} not found`);
+}
+
 // Previous default "home" copy, replaced by the update migration above. The
 // update migration's WHERE clause must guard on these values so deployments
 // where an admin has already edited the home page are left untouched.
@@ -138,8 +164,12 @@ describe("starter page content backfill migration", () => {
     NON_MEMBER_HOLD_COPY_UPDATE_MIGRATION_PATH,
     "utf8",
   );
+  const genericiseLodgeCopySql = readFileSync(
+    GENERICISE_LODGE_COPY_MIGRATION_PATH,
+    "utf8",
+  );
   const allInsertSql = `${insertSql}\n${backfill404Sql}\n${policyPagesSql}`;
-  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}`;
+  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
     const insertedIds = [
@@ -201,10 +231,15 @@ describe("starter privacy analytics update migration (#975)", () => {
     expect(sql).toContain(previousPrivacyContentHtml(policyPagesSql));
   });
 
-  it("writes the current consent-gated analytics copy from starterPageContent", () => {
-    const privacy = starterPageContent.find((page) => page.slug === "privacy");
-    expect(privacy).toBeDefined();
-    expect(sql).toContain(privacy!.contentHtml);
+  it("writes the consent-gated analytics copy the #1945 lodge-copy migration supersedes", () => {
+    // #975 no longer writes the current seed (the E15 lodge-copy migration
+    // does); it must still write exactly what E15 now guards its privacy WHERE
+    // on, so the update chain stays unbroken.
+    const genericiseSql = readFileSync(
+      GENERICISE_LODGE_COPY_MIGRATION_PATH,
+      "utf8",
+    );
+    expect(genericiseSql).toContain(nthCmsBlock(sql, 1));
     expect(sql).toContain("Google Analytics 4");
     expect(sql).toContain("updatedAt");
   });
@@ -296,14 +331,53 @@ describe("starter non-member hold copy update migration (#1287)", () => {
     expect(sql).toContain(faqAccordionContentHtml(faqUpdateSql));
   });
 
-  it("writes the current Terms and FAQ non-member policy copy", () => {
-    const terms = starterPageContent.find((page) => page.slug === "terms");
-    const faq = starterPageContent.find((page) => page.slug === "faq");
-    expect(terms).toBeDefined();
-    expect(faq).toBeDefined();
-    expect(sql).toContain(terms!.contentHtml);
-    expect(sql).toContain(faq!.contentHtml);
+  it("writes the non-member policy copy the #1945 lodge-copy migration supersedes", () => {
+    // As with #975, #1287 no longer writes the current Terms/FAQ seed (the E15
+    // lodge-copy migration does); its SET blobs must equal what E15 now guards
+    // its Terms and FAQ WHERE clauses on.
+    const genericiseSql = readFileSync(
+      GENERICISE_LODGE_COPY_MIGRATION_PATH,
+      "utf8",
+    );
+    expect(genericiseSql).toContain(nthCmsBlock(sql, 1));
+    expect(genericiseSql).toContain(nthCmsBlock(sql, 2));
     expect(sql).toContain("First Paid, First In");
     expect(sql).toContain("non-member confirmation threshold");
+  });
+});
+
+describe("starter lodge-copy genericise update migration (#1945)", () => {
+  const sql = readFileSync(GENERICISE_LODGE_COPY_MIGRATION_PATH, "utf8");
+  const privacyUpdateSql = readFileSync(PRIVACY_UPDATE_MIGRATION_PATH, "utf8");
+  const nonMemberHoldSql = readFileSync(
+    NON_MEMBER_HOLD_COPY_UPDATE_MIGRATION_PATH,
+    "utf8",
+  );
+
+  it("only updates the privacy, terms, and faq rows; never inserts or deletes", () => {
+    expect(sql).toMatch(/UPDATE\s+"PageContent"/);
+    expect(sql).not.toMatch(/\bDELETE\b/i);
+    expect(sql).not.toMatch(/\bINSERT\b/i);
+    expect(sql).toContain(`"slug" = ${sqlQuote("privacy")}`);
+    expect(sql).toContain(`"slug" = ${sqlQuote("terms")}`);
+    expect(sql).toContain(`"slug" = ${sqlQuote("faq")}`);
+  });
+
+  it("guards each update on the exact previous starter copy so edited rows are untouched", () => {
+    // Each WHERE guard must equal what the prior migration wrote (privacy from
+    // #975; terms/faq from #1287), so any admin-edited row no longer matches.
+    expect(sql).toContain(nthCmsBlock(privacyUpdateSql, 1));
+    expect(sql).toContain(nthCmsBlock(nonMemberHoldSql, 1));
+    expect(sql).toContain(nthCmsBlock(nonMemberHoldSql, 2));
+  });
+
+  it("writes the current club-agnostic, token-driven seed copy", () => {
+    for (const slug of ["privacy", "terms", "faq"]) {
+      const page = starterPageContent.find((p) => p.slug === slug);
+      expect(page, `expected starter page ${slug}`).toBeDefined();
+      expect(sql).toContain(page!.contentHtml);
+    }
+    expect(sql).toContain("{{lodge-name}}");
+    expect(sql).toContain("updatedAt");
   });
 });
