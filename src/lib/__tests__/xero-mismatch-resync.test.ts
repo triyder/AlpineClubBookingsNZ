@@ -59,10 +59,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { prisma } from "@/lib/prisma";
 import { XeroDailyLimitError } from "@/lib/xero-api-client";
-import {
-  resyncXeroContactCachesByIds,
-  XeroResyncUnavailableError,
-} from "@/lib/xero-mismatch-resync";
+import { resyncXeroContactCachesByIds } from "@/lib/xero-mismatch-resync";
 import { POST as resyncGroupMismatches } from "@/app/api/admin/xero/contact-group-mismatches/route";
 import { POST as resyncLinkMismatches } from "@/app/api/admin/xero/contact-link-mismatches/route";
 
