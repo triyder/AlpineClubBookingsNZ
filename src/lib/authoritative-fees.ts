@@ -76,6 +76,51 @@ export function validateFeeScheduleInput(input: {
   };
 }
 
+export type FeeComponentInput = {
+  label: string;
+  amountCents: number;
+  prorate: boolean;
+  xeroAccountCode?: string | null;
+  xeroItemCode?: string | null;
+  sortOrder: number;
+};
+
+// The component lifecycle invariant (#1932, E6): a NO_INVOICE fee is a zero total
+// with NO components; every invoiceable fee has >=1 component whose amounts sum
+// EXACTLY to the fee total, so the fee total stays authoritative and the invoice
+// builder never meets a fee with zero components. Enforced server-side in the one
+// transaction that writes the fee + its components.
+export function validateFeeComponents(input: {
+  components: FeeComponentInput[];
+  amountCents: number;
+  billingBasis: MembershipFeeBillingBasis;
+}) {
+  const { components, amountCents, billingBasis } = input;
+  if (billingBasis === "NO_INVOICE") {
+    if (components.length > 0) {
+      throw new FeeScheduleValidationError("A no-invoice fee cannot have components.");
+    }
+    return;
+  }
+  if (components.length === 0) {
+    throw new FeeScheduleValidationError("An invoiceable membership fee must have at least one component.");
+  }
+  for (const component of components) {
+    if (!component.label.trim()) {
+      throw new FeeScheduleValidationError("Each fee component must have a label.");
+    }
+    if (!Number.isSafeInteger(component.amountCents) || component.amountCents < 0 || component.amountCents > 2_147_483_647) {
+      throw new FeeScheduleValidationError("Each fee component amount must be a non-negative integer number of cents.");
+    }
+  }
+  const sum = components.reduce((total, component) => total + component.amountCents, 0);
+  if (sum !== amountCents) {
+    throw new FeeScheduleValidationError(
+      `Fee components must sum to the fee amount (${amountCents} cents); the supplied components sum to ${sum} cents.`,
+    );
+  }
+}
+
 export function scheduleOverlapWhere(input: {
   effectiveFrom: Date;
   effectiveTo: Date | null;

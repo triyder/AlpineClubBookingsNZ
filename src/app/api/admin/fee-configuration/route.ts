@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { AgeTier } from "@prisma/client";
+import { AgeTier, type MembershipFeeBillingBasis, type Prisma } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
 import {
   FeeScheduleValidationError,
@@ -11,7 +11,9 @@ import {
   lockFeeSchedule,
   scheduleOverlapWhere,
   serializeFeeSchedule,
+  validateFeeComponents,
   validateFeeScheduleInput,
+  type FeeComponentInput,
 } from "@/lib/authoritative-fees";
 import { prisma } from "@/lib/prisma";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
@@ -29,12 +31,25 @@ const scheduleDates = {
   effectiveFrom: dateField,
   effectiveTo: dateField.nullable().optional(),
 };
+// A component (#1932, E6) is one Xero invoice line of an annual fee. Supplying
+// `components` replaces the fee's components atomically (add/edit/remove/reorder);
+// they must sum to the fee amount (validateFeeComponents). Editing a fee's amount
+// REQUIRES supplying reconciled components in the same request.
+const componentInput = z.object({
+  label: z.string().trim().min(1).max(200),
+  amountCents: moneyField,
+  prorate: z.boolean(),
+  xeroAccountCode: z.string().trim().max(50).nullable().optional(),
+  xeroItemCode: z.string().trim().max(50).nullable().optional(),
+  sortOrder: z.number().int().min(0).max(10_000),
+});
 const mutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("CREATE_MEMBERSHIP_FEE"),
     membershipTypeId: z.string().min(1),
     billingBasis: z.enum(MEMBERSHIP_FEE_BILLING_BASES),
     prorationRule: z.enum(MEMBERSHIP_FEE_PRORATION_RULES),
+    components: z.array(componentInput).max(50).optional(),
     ...scheduleDates,
   }).strict(),
   z.object({
@@ -42,6 +57,7 @@ const mutationSchema = z.discriminatedUnion("action", [
     id: z.string().min(1),
     billingBasis: z.enum(MEMBERSHIP_FEE_BILLING_BASES),
     prorationRule: z.enum(MEMBERSHIP_FEE_PRORATION_RULES),
+    components: z.array(componentInput).max(50).optional(),
     ...scheduleDates,
   }).strict(),
   z.object({ action: z.literal("DELETE_MEMBERSHIP_FEE"), id: z.string().min(1) }).strict(),
@@ -64,6 +80,87 @@ const mutationSchema = z.discriminatedUnion("action", [
   }).strict(),
 ]);
 
+// Reconcile an annual fee's components in the same transaction that writes the
+// fee (#1932, E6). Upholds the component lifecycle invariant: CREATE auto-creates
+// the default component (or copies a same-amount predecessor's components); an
+// amount/no-invoice edit is REJECTED unless reconciled components are supplied;
+// supplying components replaces them atomically (add/edit/remove/reorder). Every
+// path validates Sigma components == fee amount before committing.
+async function reconcileMembershipFeeComponents(args: {
+  tx: Prisma.TransactionClient;
+  fee: { id: string };
+  existing: { id: string; amountCents: number; billingBasis: MembershipFeeBillingBasis } | null;
+  membershipTypeId: string;
+  suppliedComponents?: FeeComponentInput[];
+  newAmountCents: number;
+  billingBasis: MembershipFeeBillingBasis;
+}) {
+  const { tx, fee, existing, membershipTypeId, suppliedComponents, newAmountCents, billingBasis } = args;
+
+  const replaceWith = async (components: FeeComponentInput[]) => {
+    validateFeeComponents({ components, amountCents: newAmountCents, billingBasis });
+    if (components.length === 0) return;
+    await tx.membershipAnnualFeeComponent.createMany({
+      data: components.map((component, index) => ({
+        membershipAnnualFeeId: fee.id,
+        label: component.label.trim(),
+        amountCents: component.amountCents,
+        prorate: component.prorate,
+        xeroAccountCode: component.xeroAccountCode?.trim() || null,
+        xeroItemCode: component.xeroItemCode?.trim() || null,
+        sortOrder: component.sortOrder ?? index,
+      })),
+    });
+  };
+
+  if (existing) {
+    const amountChanged = newAmountCents !== existing.amountCents;
+    const crossesNoInvoice = (billingBasis === "NO_INVOICE") !== (existing.billingBasis === "NO_INVOICE");
+    if (suppliedComponents) {
+      await tx.membershipAnnualFeeComponent.deleteMany({ where: { membershipAnnualFeeId: fee.id } });
+      await replaceWith(suppliedComponents);
+      return;
+    }
+    if (amountChanged || crossesNoInvoice) {
+      throw new FeeScheduleValidationError(
+        "Editing the fee amount (or switching its no-invoice status) requires reconciling its components in the same request.",
+      );
+    }
+    return; // amount + no-invoice status unchanged: keep the existing components
+  }
+
+  // CREATE: explicit components win, else copy a same-amount predecessor's
+  // components (carry the club's structure forward across effective-dated rows),
+  // else the single default component. NO_INVOICE creates none.
+  if (suppliedComponents) {
+    await replaceWith(suppliedComponents);
+    return;
+  }
+  const predecessor = billingBasis === "NO_INVOICE"
+    ? null
+    : await tx.membershipAnnualFee.findFirst({
+        where: { membershipTypeId, id: { not: fee.id } },
+        orderBy: { effectiveFrom: "desc" },
+        include: { components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
+      });
+  if (predecessor && predecessor.components.length > 0 && predecessor.amountCents === newAmountCents) {
+    await replaceWith(predecessor.components.map((component) => ({
+      label: component.label,
+      amountCents: component.amountCents,
+      prorate: component.prorate,
+      xeroAccountCode: component.xeroAccountCode,
+      xeroItemCode: component.xeroItemCode,
+      sortOrder: component.sortOrder,
+    })));
+    return;
+  }
+  await replaceWith(
+    billingBasis === "NO_INVOICE"
+      ? []
+      : [{ label: "Annual membership fee", amountCents: newAmountCents, prorate: true, xeroAccountCode: null, xeroItemCode: null, sortOrder: 0 }],
+  );
+}
+
 async function loadConfiguration(canEdit: boolean) {
   const [familyBillingMode, membershipTypes, familyGroups] = await Promise.all([
     getFamilyBillingMode(),
@@ -71,7 +168,10 @@ async function loadConfiguration(canEdit: boolean) {
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       select: {
         id: true, key: true, name: true, isActive: true,
-        annualFees: { orderBy: [{ effectiveFrom: "desc" }], },
+        annualFees: {
+          orderBy: [{ effectiveFrom: "desc" }],
+          include: { components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
+        },
         joiningFees: { orderBy: [{ ageTier: "asc" }, { effectiveFrom: "desc" }] },
       },
     }),
@@ -103,7 +203,18 @@ async function loadConfiguration(canEdit: boolean) {
     familyBillingMode,
     membershipTypes: membershipTypes.map((type) => ({
       ...type,
-      annualFees: type.annualFees.map(serializeFeeSchedule),
+      annualFees: type.annualFees.map((fee) => ({
+        ...serializeFeeSchedule(fee),
+        components: fee.components.map((component) => ({
+          id: component.id,
+          label: component.label,
+          amountCents: component.amountCents,
+          prorate: component.prorate,
+          xeroAccountCode: component.xeroAccountCode,
+          xeroItemCode: component.xeroItemCode,
+          sortOrder: component.sortOrder,
+        })),
+      })),
       joiningFees: type.joiningFees.map((fee) => ({
         ...serializeFeeSchedule(fee),
         ageTier: fee.ageTier,
@@ -182,6 +293,15 @@ export async function POST(request: Request) {
           ? await tx.membershipAnnualFee.update({ where: { id: existing.id }, data: { ...dates, billingBasis: input.billingBasis, prorationRule: input.prorationRule } })
           : await tx.membershipAnnualFee.create({ data: { membershipTypeId, ...dates, billingBasis: input.billingBasis, prorationRule: input.prorationRule } });
         targetId = row.id;
+        await reconcileMembershipFeeComponents({
+          tx,
+          fee: row,
+          existing,
+          membershipTypeId,
+          suppliedComponents: input.components,
+          newAmountCents: dates.amountCents,
+          billingBasis: input.billingBasis,
+        });
       } else if (input.action === "CREATE_JOINING_FEE" || input.action === "UPDATE_JOINING_FEE") {
         const dates = validateFeeScheduleInput(input);
         const existing = input.action === "UPDATE_JOINING_FEE"
