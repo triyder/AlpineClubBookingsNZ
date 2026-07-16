@@ -20,6 +20,23 @@ const mocks = vi.hoisted(() => ({
   photoGalleryToken: vi.fn(),
 }));
 
+// The contact page now loads DB-first club identity + the default lodge address
+// server-side (E3 #1929). Neutralise the server-only guard and stub those reads.
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/club-identity-settings", () => ({
+  getClubIdentity: vi.fn(async () => ({
+    name: "Club Name",
+    socialLinks: {},
+    publicUrl: "https://club.example.org",
+  })),
+}));
+vi.mock("@/lib/lodges", () => ({
+  getDefaultLodgeId: vi.fn(async () => "lodge-1"),
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: { lodge: { findUnique: vi.fn(async () => ({ name: "Lodge", address: null })) } },
+}));
+
 vi.mock("@/lib/page-content-html", () => ({
   getSanitizedPageContentByPath: mocks.getSanitizedPageContentByPath,
   pageContentHtmlToPlainText: () => "",
