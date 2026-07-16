@@ -26,7 +26,10 @@
 
 import type { AgeTier, XeroContactGroupRuleMode, XeroMemberGroupingMode } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";
+import {
+  resolveMembershipTypePolicyForMember,
+  resolveMembershipTypePoliciesForMembers,
+} from "@/lib/membership-type-policy";
 import { getSeasonYear } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -334,6 +337,56 @@ export async function resolveMemberGroupingForMember(params: {
     ageTier,
     activeRules: context.activeRules,
   });
+}
+
+/**
+ * Batch resolution for many members (bulk re-sync + dry-run snapshot). Resolves
+ * every member's effective membership type in ONE query via the shared batch
+ * policy helper (E4 #1930) at the current season year, then applies the pure
+ * resolution. Under NONE, returns NONE resolutions without touching the policy.
+ */
+export async function resolveMemberGroupingsForMembers(params: {
+  members: Array<{ id: string; ageTier: AgeTier | null }>;
+  context: XeroGroupingContext;
+  now?: Date;
+}): Promise<Map<string, MemberGroupingResolution>> {
+  const { members, context } = params;
+  const result = new Map<string, MemberGroupingResolution>();
+
+  if (context.mode === "NONE") {
+    for (const member of members) {
+      result.set(
+        member.id,
+        resolveMemberGrouping({
+          mode: "NONE",
+          membershipTypeId: null,
+          ageTier: member.ageTier,
+          activeRules: context.activeRules,
+        }),
+      );
+    }
+    return result;
+  }
+
+  const seasonYear = getSeasonYear(params.now ?? new Date());
+  const policies = await resolveMembershipTypePoliciesForMembers(prisma, {
+    memberIds: members.map((member) => member.id),
+    seasonYear,
+  });
+
+  for (const member of members) {
+    const membershipTypeId = policies.get(member.id)?.membershipType.id ?? null;
+    result.set(
+      member.id,
+      resolveMemberGrouping({
+        mode: context.mode,
+        membershipTypeId,
+        ageTier: member.ageTier,
+        activeRules: context.activeRules,
+      }),
+    );
+  }
+  return result;
 }
 
 /**
