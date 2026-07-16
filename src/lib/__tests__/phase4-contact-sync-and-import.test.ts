@@ -912,6 +912,33 @@ describe("Phase 4 contact sync and cached import", () => {
     ]);
   });
 
+  it("never sends a walk-in placeholder email as a Xero OData filter (#1935)", async () => {
+    // A walk-in owner with no real address carries a club-internal placeholder
+    // on the reserved `.invalid` domain. It must never reach getContacts as an
+    // `EmailAddress="..."` filter (it would match nothing, or a stray contact) —
+    // the email search is skipped and only the name search runs.
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      id: "member_walkin",
+      firstName: "Wanda",
+      lastName: "Walkin",
+      email: "walk-in-abc123@no-email.invalid",
+    });
+    // Only the name search resolves; keep it empty so the function short-circuits.
+    mocks.accountingApi.getContacts.mockResolvedValue({ body: { contacts: [] } });
+
+    const matches = await findPotentialXeroContactsForMember("member_walkin");
+
+    expect(matches).toEqual([]);
+    // Exactly one Xero call (the name search) — no email search.
+    expect(mocks.accountingApi.getContacts).toHaveBeenCalledTimes(1);
+    // No getContacts call ever carried an EmailAddress where-clause.
+    for (const call of mocks.accountingApi.getContacts.mock.calls) {
+      const whereClause = call[2];
+      expect(String(whereClause ?? "")).not.toContain("EmailAddress");
+      expect(String(whereClause ?? "")).not.toContain("no-email.invalid");
+    }
+  });
+
   it("imports members from cached group memberships and cached contacts without live Xero fetches", async () => {
     mocks.prisma.xeroSyncCursor.findUnique
       .mockResolvedValueOnce({

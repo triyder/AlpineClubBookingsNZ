@@ -90,7 +90,7 @@ are the literal `1`.
 | **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` (`capacity.ts`) | 1 | Capacity claims/checks for one lodge. |
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit). |
-| **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`) | — | Archive/delete of one member. |
+| **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`) | — | Archive/delete of one member; overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review. |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
 | **Roster generation** | `hashtext("roster:<date>")` | inline (`admin-roster-service.ts`) | — | Roster generation for one calendar date. |
@@ -99,6 +99,31 @@ are the literal `1`.
 | **Authoritative fee schedule** | `hashtext("fee-schedule:<domain>:<key>")` | `lockFeeSchedule` (`authoritative-fees.ts`) | — | Serialises effective-dated membership or entrance-fee schedule changes for one configured key. |
 | **Member partner link** | sorted `hashtext("member-partner-link:<memberId>")` keys | `lockPartnerMembers` (`member-partner-link.ts`) | — | Serialises partner-link invariants across every member touched by a link; same-family keys are sorted. |
 | **Xero member contact link (legacy key)** | `hashtext(<memberId>)` | short local-link transactions (`xero-contacts.ts`) | — | First-writer-wins local `Member.xeroContactId` linking after provider work. This legacy unnamespaced key is shared by both Xero contact-link writers; do not copy it for new domains. |
+
+### Composition: application-approval mapping (E10, #1936)
+
+The membership-application approval transaction is the one writer that composes
+the application and member-lifecycle families. Its fixed acquisition order is:
+
+1. `member-application:<applicationId>` (the existing approval lock), THEN
+2. every mapped target's `member-lifecycle:<memberId>`, in **sorted key order**.
+
+Counterpart analysis — no cycles are possible:
+
+- Every other `member-lifecycle` holder is single-lock in that family:
+  member archive/delete approval (`member-lifecycle-actions.ts`) locks exactly
+  one member and takes no application lock; the admin family-group request
+  review transactions (`admin-family-group-requests-service.ts`) lock exactly
+  the one pre-existing member being linked into (or removed from) a group
+  before writing `FamilyGroupMember` — required because a `FamilyGroupMember`
+  insert does not bump `Member.updatedAt`, so only the lock (not the mapping
+  preview token) can serialise it against the mapping approval's
+  in-any-family-group collision guard. (The group-create *reject* transaction
+  takes no member lock: it links nobody into a group.)
+- No `member-lifecycle` holder ever acquires a `member-application` lock, so
+  the application → member-lifecycle direction is one-way.
+- Within the member-lifecycle family the approval acquires multiple keys in
+  sorted order, matching the same-family rule above.
 
 The F20 clamp inserts any required Xero deallocation outbox row before releasing
 the member-credit lock. Provider GET/delete/recreate calls run later, outside the

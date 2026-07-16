@@ -781,6 +781,18 @@ admin replaces an unconfirmed nominator -> PENDING_NOMINATORS with a fresh link
 admin rejects (fallback from PENDING_NOMINATORS or PENDING_ADMIN) -> REJECTED
 ```
 
+On the `admin approves` transition each person (the applicant and every family
+member) is either created new (default, unchanged) or **mapped onto an existing
+member** — a link + field overwrite gated by a previewed, HMAC-token-bound
+second check. Mapping recomputes the outcome from advisory-locked, reloaded rows
+inside the approval transaction and 409s on any drift (row or recomputed value),
+so concurrent approvals of the same target serialize. A mapped applicant with an
+existing login keeps its auth; a mapped non-login applicant is promoted to a
+login account; mapped family members never have auth/email rewritten. Mapped
+targets that already hold season coverage are excluded from new subscription
+billing, and a mapped applicant defaults the joining fee to skip. Approving with
+no mapping decisions is byte-identical to the create-everyone path.
+
 An admin may reject from either pending state, but `PENDING_NOMINATORS`
 applications have non-destructive recovery first. The reminder cron renews each
 unconfirmed nominator link weekly for up to four automatic reminders. The admin

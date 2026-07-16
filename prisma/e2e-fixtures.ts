@@ -180,6 +180,24 @@ export const NOMINATION_TOKEN_TWO = "b2".repeat(32); // nominator = Nadia
 // never collides with the seeded application or an existing login).
 export const PUBLIC_APPLICANT_EMAIL = demoEmail("penny.public");
 
+// --- Application-approval mapping fixture (E10, #1936) ---------------------
+// A second application seeded directly in PENDING_ADMIN whose applicant
+// matches an existing NON-LOGIN member with the same email (a lapsed-rejoiner
+// shape). The spec drives the map-to-existing flow in the admin UI: the
+// exact-email suggestion, the field-diff preview (the member is seeded with
+// no DOB/phone so the diff has changed rows), the joining-fee SKIP default,
+// and the approve that maps + promotes instead of creating a duplicate.
+// Non-login target → no live privileged roles, so the #1026 mapping email
+// gate never fires for this fixture.
+export const MAPPING_APPLICATION_ID = "e2e-mapping-app";
+export const MAPPING_TARGET_MEMBER_ID = "e2e-mapping-target";
+export const MAPPING_APPLICANT = {
+  email: demoEmail("rex.rejoiner"),
+  firstName: "Rex",
+  lastName: "Rejoiner",
+  dateOfBirth: "1988-09-12",
+} as const;
+
 // --- Multi-lodge fixtures (e2e/multi-lodge/*, gated on E2E_MULTI_LODGE) ----
 // A SECOND active lodge ("lodge B") plus the rooms, season, kiosk binding, and
 // bookings the multi-lodge Playwright project asserts on. Seeded ONLY

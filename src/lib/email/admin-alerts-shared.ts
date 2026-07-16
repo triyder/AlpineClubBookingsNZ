@@ -87,7 +87,9 @@ export async function sendToAdmins({
           attachments,
         });
 
-        return { status: outcome.status };
+        // Admin alert recipients are real admin addresses, never walk-in
+        // placeholders (#1935); fold the not-sent outcomes into "suppressed".
+        return { status: outcome.status === "sent" ? "sent" : "suppressed" };
       } catch (err) {
         logger.error(
           { err, to: email, templateName },

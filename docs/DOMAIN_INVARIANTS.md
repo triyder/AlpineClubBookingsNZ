@@ -1623,11 +1623,39 @@ closed-world guarantee: every other `canLogin` writer in the codebase either
 CREATES a brand-new member (booking-request/school/group/Xero-import contacts,
 nomination and family-request dependants, plus admin member-create and CSV
 member-import rows — whose `canLogin` value seeds a new row, never de-logins an
-existing one) or passes `canLogin` only as a read/token filter
+existing one), GRANTS `canLogin` on an existing member without ever revoking it
+(the application-approval mapping **promotion path** — mapping an applicant onto
+a non-login member sets `canLogin: true`, a fresh password, and
+`emailVerified: true`, and cannot strand an admin because it only ever adds a
+login), or passes `canLogin` only as a read/token filter
 (`normalizeAssignableAccessRoleTokens`, list/where clauses), and so cannot
 strand an existing admin. The one remaining path that can clear `canLogin` on an existing
 admin and is NOT guarded is indirect — the age-down cron, where editing a date
 of birth to a minor tier can indirectly clear `canLogin` (informational).
+
+Application-approval mapping (link + overwrite of an existing member at approval
+time) preserves the login-uniqueness and auth invariants: it never creates a
+second `canLogin: true` member for an email (the create-path `canLogin` guard is
+relaxed only when the sole login holder for the applicant email IS the mapped
+target; a different login holder still 409s), and it never writes
+`passwordHash`/`canLogin`/2FA/`emailVerified` on any target except the defined
+non-login→login applicant promotion above — a login-capable target (applicant or
+family) keeps its existing auth untouched, and a mapped family member's email is
+never rewritten. Mapped targets keep their existing season membership coverage:
+a target already holding a seasonal assignment or subscription for the season is
+excluded from new-member subscription billing (surfaced as a note), so mapping
+never double-charges or overrides an existing coverage arrangement. Confirmation
+timestamps on a mapped target are set only when currently null and are never
+regressed, and the overwrite is bound to a previewed HMAC token so any drift in
+the computed outcome refuses the approval.
+The applicant MAP path also carries the #1026 privileged-email gate: when the
+mapping would change the login email of a login-capable target holding a
+privileged access role, only a Full Admin may approve it — a scoped admin's
+preview shows a blocking error, and because the acting admin's roles are
+recomputed inside the approval transaction (part of the tokenized outcome), a
+Full-Admin-minted preview replayed by a scoped admin fails closed with a 409
+token mismatch. Same-email mappings and the non-login promotion path (where
+`hasPrivilegedAccess` is canLogin-aware and therefore false) are unaffected.
 On-behalf booking must not depend on `membership:view`: a Booking Officer
 (`bookings:edit`) reaches the booking owner's or target member's family group
 through the bookings-scoped pickers
@@ -1654,6 +1682,28 @@ bypasses — email verification, Xero-link, subscription, guest-subscription,
 and minimum-stay gates all apply to self-bookings; the gate bypasses are keyed
 to authorized on-behalf bookings only. Only admin-only accounts (no `USER`
 token) are redirected from the member wizard to `/admin/book`.
+A Booking Officer may also inline-create a **non-member booking owner** on
+`/admin/book` (#1935): `POST /api/admin/bookings/non-member-contact`
+(bookings:edit — the #1376 on-behalf scope) mints a non-login owner identical to
+what the public booking-request approval creates, with SERVER-FORCED
+`role: NON_MEMBER`, `canLogin: false`, `ageTier: ADULT`, and — unlike the
+booking-request pipeline, whose verified public address justifies `true` —
+`emailVerified: false` (an officer-typed address is unverified). The input
+accepts only name/email/phone, so those forced fields cannot be tampered via
+payload. Dedupe is suggest-and-pick and never silent reuse: several non-login
+contacts may legitimately share an email (the `Member_email_login_unique`
+partial index only covers `canLogin: true`), so reuse requires the officer's
+explicit pick and is validated by `assertMappableOwnerContact` (non-login
+NON_MEMBER/SCHOOL, active, not archived); a login-capable exact-email match is
+never reusable and blocks creation with a "pick them in the member search"
+error. A walk-in with no email stores a club-internal placeholder on the
+reserved `.invalid` domain (`Member.email` stays non-nullable — no schema
+change): all outbound email to that owner is suppressed at the `sendEmail`
+chokepoint, and the placeholder is excluded from Xero contact email-matching
+(`findOrCreateXeroContact` skips the email search and sends an empty address) so
+it is never used to match or pushed to Xero as a real address. Non-member
+booking owners are priced identically to public booking-request non-members
+(both feed the shared pricing engine with non-member guests).
 Legacy membership lifecycle/classification code may read `Member.role` only to
 distinguish compatibility categories such as non-login/non-member records until
 that workflow is fully represented by seasonal membership type.

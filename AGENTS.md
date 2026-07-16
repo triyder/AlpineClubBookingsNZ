@@ -195,3 +195,124 @@ At the successful end of a meaningful piece of work:
 - Recommended: give agents a separate GitHub identity or machine account so that
   author never equals approver and the sign-off trail does not collapse into a
   single account.
+
+## Wave Orchestration Playbook
+
+This is the standard playbook for a multi-issue "wave" (an epic broken into
+topic-sized child issues, coded autonomously and left for owner review). It
+codifies the working model that produced epic #1926. Follow it whenever you are
+handed an epic-with-children or asked to run several related issues at once.
+
+### 1. Plan first: epic + child issues are the source of truth
+
+- Break the work into **topic-sized child issues, one issue = one branch = one
+  PR**. Each child issue body opens with a plain-English explainer, then scope,
+  acceptance criteria, risks, and **re-verified `file:line` anchors**.
+- Run an adversarial **cross-review of the plan itself** before coding: have
+  reviewers attack each issue's scope against the current `main`, integrate the
+  findings back into the issue bodies, and record binding **owner decisions**
+  (label them, e.g. `D-R1..D-Rn`) in the epic body. The refreshed issue bodies
+  then supersede any earlier plan document.
+- The epic body carries: the source items, the owner decisions, the child list
+  grouped into **lanes** with an explicit **morning merge order**, cross-lane
+  **watchpoints** (files touched by more than one issue, and who rebases), and
+  any frozen contracts (e.g. "do not change this Xero reference string").
+
+### 2. Lanes, worktrees, and stacking
+
+- Run up to ~4 **parallel lanes**, each in its own **git worktree** (never share
+  a checkout — parallel branches entangle HEAD). One lane per group of issues
+  whose code surfaces do not clash.
+- Within a lane, **stack** dependent issues: cut each branch from its parent
+  branch and set the PR's **base to the parent branch**; GitHub retargets to
+  `main` as parents merge. State the base branch + merge order in every PR body.
+- Independent issues in a lane branch straight off `main`.
+- Note: repo CI only triggers on PRs based on `main`. For a **stacked** PR
+  (base = a feature branch), open a short-lived **draft "CI probe" PR of the
+  same commit against `main`**, record its result on the real PR, and close it —
+  this is the only way to get true CI signal before the parent merges.
+
+### 3. Orchestrator + subagents
+
+- **The interactive session is the orchestrator.** It owns everything with an
+  external footprint: worktree/branch setup, **claiming issues** (assign the
+  owner + post a CLAIM comment per repo convention), GitHub comments, opening
+  PRs, CI monitoring, cross-lane conflict checks, and the morning handoff. It
+  does small in-flight edits itself but **delegates bulk implementation**.
+- **Implementor subagents** build one issue inside its worktree. They commit in
+  stacked topical commits (schema / lib / callers / UI / tests / docs), **never
+  push, never touch GitHub**, and run only lint + typecheck + targeted tests
+  locally (CI arbitrates the full suite).
+- **Review subagents** attack the diff before the PR opens. **The orchestrator
+  chooses the review angle and how many reviewers per issue, scaled to risk:**
+  - Critical issues (money, schema/migrations, auth/security, Xero/Stripe, booking
+    capacity, membership/family lifecycle): **3 reviewers, distinct lenses** —
+    pick the lenses that fit the issue, e.g. (a) correctness & domain invariants,
+    (b) migration & data preservation / byte-identical backfill, (c) the
+    issue-specific hazard (Xero contract & idempotency, or security/authz, or
+    concurrency & locking).
+  - Standard issues (copy, admin UI over existing APIs, read-only surfaces):
+    **2 reviewers** — (a) correctness + regression, (b) UX/docs/permission drift.
+  - Reviewers are **adversarial**: they try to *refute* each finding against the
+    real code before reporting, and report only confirmed/plausible findings with
+    `file:line` + a concrete failure scenario. They never modify code.
+- **Fix subagents** resolve every confirmed finding; the orchestrator triages
+  (rejecting false positives with reasoning recorded in the PR body) and **re-runs
+  the relevant reviewer lens to verify the fix** — especially for security
+  blockers, where the fix can reopen a symmetric hole.
+
+### 4. Model selection
+
+- **Default subagents to the strongest generally-capable model (Opus).**
+  Reserve the top Mythos-class tier (Fable) for tasks genuinely at the reasoning
+  frontier — deep Xero-idempotency/frozen-reference contracts, immutable-charge
+  backfill correctness, irreversible member-merge + DMMF-completeness reasoning,
+  or a security blocker whose analysis the default model left uncertain. Scale
+  model *and* reasoning effort to the task; do not use the top tier blanket for
+  everything labelled "Critical".
+
+### 5. Per-issue pipeline
+
+For each issue: **implement → review → fix → verify-fix → validate → PR →
+CI-green → evidence**.
+
+- **Validate before push:** `npm run lint && npm run db:generate && npm run
+  typecheck && npm test && npm run build`, plus `npm run db:check-drift` for
+  schema issues. Run the **full** `npm test` before opening the PR, not just the
+  targeted subset — a subagent's targeted run routinely misses failures its diff
+  caused in adjacent suites (frozen-snapshot pins, mock stubs a new call needs,
+  route-area matrices, dead-code/knip, the blue/green migration-safety ledger).
+  Distinguish those real regressions from the repo's known-environmental failures
+  by comparing against `main`'s own latest CI.
+- **PRs open as drafts and stay drafts** through review → fix → CI. Flip to
+  ready-for-review only when the PR is fully reviewed, all confirmed findings are
+  fixed, and **CI is green**. At that point post an **owner-addressed "merge
+  ready" comment** summarising: what was built, the review lenses + findings, the
+  fixes, any A/B **decisions**, and carry-forward items. (In an owner-gated wave
+  the orchestrator does **not** merge — every PR is left open for the owner.)
+- **Claim / progress comments:** comment when you claim an issue, again when the
+  reviewed+fixed+green PR is ready, so the issue thread is a full audit trail.
+
+### 6. Carry-forward items become issues — but minimise them
+
+- Prefer to **fix a follow-up inside the same PR** so everything lands at once,
+  even if it slightly widens scope (re-open the PR to draft, add it, re-review
+  the delta, re-green). Only defer to a **new GitHub issue** when the item needs
+  more scoping or an owner decision. File deferred items as issues at
+  PR-finalisation time (not "eventually"), each linked to its parent PR + epic,
+  so they cannot be lost if the session ends before the owner merges.
+
+### 7. Priorities if time runs short
+
+Finish **whole lanes** to their last CI-green PR rather than starting everything
+and leaving broken stubs. A lane's later issues are worthless half-done. If a
+deployment-coupled lane must stop early, say so prominently in the handoff so the
+owner can decide on any shim. Drop the newest/lowest-value additions first.
+
+### 8. Morning handoff
+
+End the run with a summary comment on the epic and a final message to the owner:
+per-lane PR list in merge order, CI status of each, **owner decisions needed**
+(flag the gated ones explicitly), anything unfinished and why, and exact
+merge-order instructions (merge-commit only; GitHub retargets stacked PRs as
+parents merge and branches delete).
