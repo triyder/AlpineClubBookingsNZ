@@ -276,3 +276,49 @@ describe("planMemberGroupingSync", () => {
     expect(plan.isNoop).toBe(true);
   });
 });
+
+describe("Tokoroa semantic preservation (migrated tier-only rules, zero diff)", () => {
+  // Mirrors a realistic age-tier config after the backfill: each tier has a
+  // MANAGED primary group plus (for adults) a tolerated ACCEPTED group. Under
+  // MEMBERSHIP_TYPE_AND_AGE with tier-only rules, correctly-grouped members must
+  // produce ZERO Xero writes — the migration dry-run's "≈ zero diff" proof.
+  const rules: XeroGroupingRule[] = [
+    managed({ groupId: "adult_group", ageTier: "ADULT" }),
+    accepted({ groupId: "adult_committee", ageTier: "ADULT" }),
+    managed({ groupId: "youth_group", ageTier: "YOUTH" }),
+    managed({ groupId: "child_group", ageTier: "CHILD" }),
+  ];
+
+  function planFor(ageTier: "ADULT" | "YOUTH" | "CHILD", currentGroupIds: string[]) {
+    return planMemberGroupingSync({
+      resolution: resolveMemberGrouping({
+        mode: "MEMBERSHIP_TYPE_AND_AGE",
+        membershipTypeId: "full",
+        ageTier,
+        activeRules: rules,
+      }),
+      currentGroupIds,
+    });
+  }
+
+  it("adult already in the managed group: zero diff", () => {
+    expect(planFor("ADULT", ["adult_group"]).isNoop).toBe(true);
+  });
+
+  it("adult parked in an accepted group: no spurious add, zero diff", () => {
+    const plan = planFor("ADULT", ["adult_committee"]);
+    expect(plan.groupToAdd).toBeNull();
+    expect(plan.groupIdsToRemove).toEqual([]);
+    expect(plan.isNoop).toBe(true);
+  });
+
+  it("youth already in the youth group: zero diff", () => {
+    expect(planFor("YOUTH", ["youth_group"]).isNoop).toBe(true);
+  });
+
+  it("only a genuinely mis-grouped member produces a diff", () => {
+    const plan = planFor("ADULT", ["youth_group"]);
+    expect(plan.groupToAdd?.id).toBe("adult_group");
+    expect(plan.groupIdsToRemove).toEqual(["youth_group"]);
+  });
+});
