@@ -171,7 +171,10 @@ export async function sendAdminMemberDeleteRequestedAlert(params: {
       reason: params.reason,
       reviewUrl,
     },
-    preferenceKey: "adminFamilyGroupRequest",
+    // #1938: dedicated preference key so muting the shared "Member requests"
+    // (adminFamilyGroupRequest) category no longer also silences delete-request
+    // review alerts. Additive, default on.
+    preferenceKey: "adminMemberDeleteRequest",
   });
 }
 

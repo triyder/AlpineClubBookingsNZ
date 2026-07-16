@@ -3780,6 +3780,7 @@ model NotificationPreference {
   adminIssueReport           Boolean  @default(true)
   adminBookingRequest        Boolean  @default(true)
   adminBookingReviewRequired Boolean  @default(true)
+  adminMemberDeleteRequest   Boolean  @default(true)
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 

@@ -37,6 +37,9 @@ import {
   IB_BOOKING_ID,
   IB_WINDOW,
   LODGE_FILL_OWNER,
+  MAPPING_APPLICANT,
+  MAPPING_APPLICATION_ID,
+  MAPPING_TARGET_MEMBER_ID,
   MEMBERSHIP_APPLICANT,
   MEMBERSHIP_APPLICATION_ID,
   NOMINATION_TOKEN_ONE,
@@ -1052,7 +1055,37 @@ async function main() {
       { tokenHash: sha256Hex(NOMINATION_TOKEN_TWO), applicationId: membershipApp.id, nominatorMemberId: nadia.id, expiresAt: nominationTokenExpiry, reminderCount: 0, lastSentAt: new Date() },
     ],
   });
-  console.log("E2E fixtures seeded (role personas, admin, waitlist, internet banking, membership application)");
+  // Application-approval mapping fixture (E10, #1936): an existing NON-LOGIN
+  // member (no DOB/phone, so the mapping diff has changed rows) plus a
+  // PENDING_ADMIN application from the same person — the lapsed-rejoiner shape
+  // the membership-application spec maps instead of duplicating. Seeded
+  // straight to PENDING_ADMIN (nominators pre-confirmed) so the spec needs no
+  // extra nomination tokens.
+  await makeMember(
+    MAPPING_APPLICANT.email.split("@")[0],
+    MAPPING_APPLICANT.firstName,
+    MAPPING_APPLICANT.lastName,
+    { id: MAPPING_TARGET_MEMBER_ID, canLogin: false },
+  );
+  await prisma.memberApplication.create({
+    data: {
+      id: MAPPING_APPLICATION_ID,
+      applicantFirstName: MAPPING_APPLICANT.firstName,
+      applicantLastName: MAPPING_APPLICANT.lastName,
+      applicantEmail: MAPPING_APPLICANT.email,
+      applicantDateOfBirth: d(MAPPING_APPLICANT.dateOfBirth),
+      applicantPhone: "64 21 5559876",
+      nominator1Email: wanda.email,
+      nominator2Email: nadia.email,
+      nominator1Id: wanda.id,
+      nominator2Id: nadia.id,
+      nominator1ConfirmedAt: new Date(),
+      nominator2ConfirmedAt: new Date(),
+      status: "PENDING_ADMIN",
+    },
+  });
+
+  console.log("E2E fixtures seeded (role personas, admin, waitlist, internet banking, membership application + mapping)");
 
   // Notification preference example (differs from defaults).
   await prisma.notificationPreference.create({ data: { memberId: alice.id, marketingEmails: true } });

@@ -216,6 +216,37 @@ describe("findOrCreateXeroContact", () => {
     });
   });
 
+  it("skips the Xero email search for a walk-in placeholder owner and sends an empty email (#1935)", async () => {
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_walkin",
+      firstName: "Walk",
+      lastName: "In",
+      email: "walk-in-abc123@no-email.invalid",
+      xeroContactId: null,
+      phoneNumber: null,
+    });
+    mocks.prisma.xeroToken.findFirst.mockResolvedValue({
+      id: "token_1",
+      accessToken: encryptToken("access"),
+      refreshToken: encryptToken("refresh"),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      tenantId: "tenant_1",
+    });
+    mocks.tx.member.update.mockResolvedValue({ id: "mem_walkin", xeroContactId: "xero_walkin" });
+    mocks.xeroClientInstance.accountingApi.createContacts.mockResolvedValue({
+      body: { contacts: [{ contactID: "xero_walkin" }] },
+    });
+
+    await expect(findOrCreateXeroContact("mem_walkin")).resolves.toBe("xero_walkin");
+
+    // The placeholder must never be used to search Xero (it could otherwise
+    // match a real contact) and must never be sent as a real address.
+    expect(mocks.xeroClientInstance.accountingApi.getContacts).not.toHaveBeenCalled();
+    const createPayload =
+      mocks.xeroClientInstance.accountingApi.createContacts.mock.calls[0][1];
+    expect(createPayload.contacts[0].emailAddress).toBe("");
+  });
+
   it("links an exact Xero name match when createContacts fails with a duplicate-name validation error", async () => {
     mocks.tx.member.findUnique.mockResolvedValue({
       id: "mem_1",

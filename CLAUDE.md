@@ -48,6 +48,44 @@ runs adversarial-review subagents over the diff before opening the PR. Scale
 subagent model/effort to task complexity, and run independent issues as
 parallel lanes only when their code surfaces do not clash.
 
+For an epic broken into child issues, or any run of several related issues at
+once, follow `AGENTS.md` → "Wave Orchestration Playbook" in full. The essentials
+for an interactive Claude Code session:
+
+- **Plan as epic + child issues first.** One issue = one branch = one PR. Each
+  child issue carries a plain-English explainer, scope, acceptance criteria, and
+  re-verified `file:line` anchors; cross-review the plan adversarially and fold
+  the findings + binding owner decisions back into the issue bodies before
+  coding. The epic body lists the children in **lanes with a merge order** and
+  the cross-lane watchpoints.
+- **Claim each issue** as you start it: assign the owner and post a CLAIM comment
+  per repo convention. Comment again when the reviewed, fixed, CI-green PR is
+  ready — the issue thread is the audit trail.
+- **One worktree per lane**; stack dependent issues (PR base = parent branch).
+  Because CI only runs on `main`-based PRs, validate a stacked PR via a
+  throwaway draft "CI probe" PR of the same commit against `main`.
+- **Orchestrator picks the review angle and reviewer count, scaled to risk:**
+  3 distinct adversarial lenses for Critical issues (money / schema / auth /
+  Xero / capacity / lifecycle), 2 for standard issues. Reviewers try to refute
+  each finding before reporting; a fix subagent resolves confirmed findings and
+  the orchestrator re-runs the lens to verify (especially security blockers).
+- **Prefer Opus subagents;** escalate to the top Mythos-class tier (Fable) only
+  for genuinely frontier-complexity Critical work (deep Xero idempotency,
+  immutable-charge backfill, irreversible merge / DMMF reasoning, an uncertain
+  security blocker). Scale model *and* reasoning effort to the task.
+- **Run the full `npm test` before opening a PR**, not just the targeted subset —
+  a subagent's targeted run routinely misses regressions its diff caused in
+  adjacent suites (frozen snapshots, mocks a new call needs, route-area
+  matrices, knip, the blue/green migration ledger). Separate real regressions
+  from the repo's known-environmental failures by comparing against `main`'s CI.
+- **PRs open as drafts and stay draft** until fully reviewed, fixed, and
+  CI-green; then flip to ready and post an owner-addressed "merge ready" comment
+  covering what was built, review findings, fixes, decisions, and carry-forward.
+- **Minimise carry-forward:** fix a follow-up in the same PR when you can (even
+  if it slightly widens scope — re-draft, add it, re-review the delta); only
+  file a new GitHub issue when it needs owner scoping, and file it at
+  finalisation time, linked to its parent PR + epic, so it is never lost.
+
 ## Keep docs in lockstep
 
 Whenever a feature is added, changed, or removed, update everything it touches in

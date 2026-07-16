@@ -116,8 +116,12 @@ function mockGroupCreateTransaction() {
   const txRequestUpdateMany = vi.fn();
   const txTokenFindMany = vi.fn().mockResolvedValue([]);
   const txTokenDeleteMany = vi.fn().mockResolvedValue({ count: 0 });
+  // #1936: the approve transaction takes a member-lifecycle advisory lock on
+  // the requester before creating the FamilyGroupMember row.
+  const txExecuteRaw = vi.fn().mockResolvedValue(undefined);
   mockedPrisma.$transaction.mockImplementation(async (fn: any) =>
     fn({
+      $executeRaw: txExecuteRaw,
       familyGroupMember: { create: txMembershipCreate },
       familyGroupJoinRequest: {
         update: txRequestUpdate,
@@ -139,6 +143,7 @@ function mockGroupCreateTransaction() {
     txRequestUpdateMany,
     txTokenFindMany,
     txTokenDeleteMany,
+    txExecuteRaw,
   };
 }
 
@@ -156,7 +161,7 @@ describe("reviewAdminFamilyGroupRequest — GROUP_CREATE", () => {
       groupCreateRequest() as any
     );
     mockedPrisma.familyGroupMember.findFirst.mockResolvedValue(null);
-    const { txMembershipCreate, txRequestUpdate, txRequestCreate } =
+    const { txMembershipCreate, txRequestUpdate, txRequestCreate, txExecuteRaw } =
       mockGroupCreateTransaction();
 
     const result = await reviewAdminFamilyGroupRequest({
@@ -166,6 +171,12 @@ describe("reviewAdminFamilyGroupRequest — GROUP_CREATE", () => {
 
     expect(result.init).toBeUndefined();
     expect(result.body).toEqual({ success: true, action: "approve" });
+    // #1936: the requester's member-lifecycle advisory lock is taken in-tx so
+    // the group link serializes with application-approval mapping.
+    expect(txExecuteRaw).toHaveBeenCalledTimes(1);
+    expect(txExecuteRaw.mock.calls[0].flat().join(" ")).toContain(
+      "member-lifecycle:member-1"
+    );
     expect(txMembershipCreate).toHaveBeenCalledWith({
       data: {
         familyGroupId: "fg-new",
@@ -717,8 +728,10 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
     const txUpsert = vi.fn();
     const txUpdate = vi.fn();
     const txMemberUpdate = vi.fn();
+    const txExecuteRaw = vi.fn().mockResolvedValue(undefined);
     mockedPrisma.$transaction.mockImplementation(async (fn: any) =>
       fn({
+        $executeRaw: txExecuteRaw,
         member: {
           findUnique: vi.fn().mockResolvedValue({
             id: "member-1",
@@ -741,6 +754,12 @@ describe("reviewAdminFamilyGroupRequest — CHILD_REQUEST memberless-group guard
 
     expect(result.init).toBeUndefined();
     expect(result.body).toEqual({ success: true, action: "approve" });
+    // #1936: the linked member's member-lifecycle advisory lock is taken in-tx
+    // so the group link serializes with application-approval mapping.
+    expect(txExecuteRaw).toHaveBeenCalledTimes(1);
+    expect(txExecuteRaw.mock.calls[0].flat().join(" ")).toContain(
+      "member-lifecycle:child-1"
+    );
     expect(txUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({ memberId: "child-1", role: "MEMBER" }),
