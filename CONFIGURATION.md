@@ -792,6 +792,58 @@ New-member approval runs the same planner after the membership transaction;
 failure or incomplete configuration is a warning/exception and cannot undo the
 approval.
 
+### Application Approval Mapping
+
+When an admin approves a membership application, each person on it — the
+applicant and every family member — is approved as **Create new** (the default,
+identical to previous behavior) or **Map to an existing member**. Mapping is a
+link **and overwrite**: the existing record's name, date of birth, phone, and
+both address blocks are overwritten from the application (the applicant also
+overwrites email + recomputed age tier). Before approving, the admin previews a
+field-by-field diff (current → application) and the approval echoes back an HMAC
+preview token; if anything that changes the previewed outcome has moved since —
+either row edited, or a recomputed value such as an age-tier boundary — approval
+is refused (409) and the admin re-previews. Concurrent approvals mapping the
+same member serialize on a per-member advisory lock, and the second one 409s on
+token drift.
+
+Collision rules refuse approval (BLOCK) when a mapping target is inactive or
+archived, already belongs to a family group (for a family application), is
+mapped for two people at once, is a nominator on this application, is an admin
+mapped as a dependent, or when the application email belongs to a *different*
+login-capable member. A target that already has this season's membership
+coverage is kept as-is and excluded from new subscription billing (SKIP with a
+note, repeated in the post-approval warnings), so nobody is double-charged.
+
+Mapping also refuses (BLOCK) when a **scoped** admin's mapping would overwrite
+the login email of a member who holds a privileged access role — the same
+Full-Admin gate as direct member edit (issue #1026), because an email change
+plus a public forgot-password request hands the account and its roles to the
+new address. A Full Admin can approve such a mapping, and a mapping that leaves
+the email unchanged is unaffected. The acting admin's roles are recomputed
+inside the approval transaction, so a preview minted by a Full Admin cannot be
+replayed by a scoped admin — that approval fails closed with a 409 token
+mismatch.
+
+A mapped target that is already linked to a Xero contact keeps that link: the
+post-approval contact sync reuses the existing `xeroContactId` and does **not**
+re-push the member's details to Xero after the overwrite. If the mapping
+changed the member's name or email, the Xero contact keeps its old values
+(stale-name caveat) until an operator edits the contact in Xero manually. Only
+a member without an existing link gets a Xero contact found-or-created.
+
+Auth is never silently rewritten: mapping a family member never touches a
+login-capable target's password/login/2FA or email; mapping the applicant onto
+an existing login member keeps that member's auth untouched (and sends no
+set-password email), while mapping onto a non-login member promotes it to a
+login account (fresh password, set-password email, verified email, cleared email
+inheritance). Confirmation timestamps are set only when currently empty and are
+never regressed. The **joining fee defaults to skip** for a mapped applicant
+(reason "Mapped to existing member"); the admin can switch it back on for a
+lapsed rejoiner. Family-member joining fees remain out of scope. Every mapped
+person writes a critical `MEMBER_APPLICATION_MAPPED_TO_EXISTING` audit record
+capturing the overwritten fields and whether login was promoted.
+
 ## Member Import And Addresses
 
 Admin member CSV import treats a member identity as the normalized email plus

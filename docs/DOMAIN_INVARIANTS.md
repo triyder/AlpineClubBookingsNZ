@@ -1584,11 +1584,39 @@ closed-world guarantee: every other `canLogin` writer in the codebase either
 CREATES a brand-new member (booking-request/school/group/Xero-import contacts,
 nomination and family-request dependants, plus admin member-create and CSV
 member-import rows — whose `canLogin` value seeds a new row, never de-logins an
-existing one) or passes `canLogin` only as a read/token filter
+existing one), GRANTS `canLogin` on an existing member without ever revoking it
+(the application-approval mapping **promotion path** — mapping an applicant onto
+a non-login member sets `canLogin: true`, a fresh password, and
+`emailVerified: true`, and cannot strand an admin because it only ever adds a
+login), or passes `canLogin` only as a read/token filter
 (`normalizeAssignableAccessRoleTokens`, list/where clauses), and so cannot
 strand an existing admin. The one remaining path that can clear `canLogin` on an existing
 admin and is NOT guarded is indirect — the age-down cron, where editing a date
 of birth to a minor tier can indirectly clear `canLogin` (informational).
+
+Application-approval mapping (link + overwrite of an existing member at approval
+time) preserves the login-uniqueness and auth invariants: it never creates a
+second `canLogin: true` member for an email (the create-path `canLogin` guard is
+relaxed only when the sole login holder for the applicant email IS the mapped
+target; a different login holder still 409s), and it never writes
+`passwordHash`/`canLogin`/2FA/`emailVerified` on any target except the defined
+non-login→login applicant promotion above — a login-capable target (applicant or
+family) keeps its existing auth untouched, and a mapped family member's email is
+never rewritten. Mapped targets keep their existing season membership coverage:
+a target already holding a seasonal assignment or subscription for the season is
+excluded from new-member subscription billing (surfaced as a note), so mapping
+never double-charges or overrides an existing coverage arrangement. Confirmation
+timestamps on a mapped target are set only when currently null and are never
+regressed, and the overwrite is bound to a previewed HMAC token so any drift in
+the computed outcome refuses the approval.
+The applicant MAP path also carries the #1026 privileged-email gate: when the
+mapping would change the login email of a login-capable target holding a
+privileged access role, only a Full Admin may approve it — a scoped admin's
+preview shows a blocking error, and because the acting admin's roles are
+recomputed inside the approval transaction (part of the tokenized outcome), a
+Full-Admin-minted preview replayed by a scoped admin fails closed with a 409
+token mismatch. Same-email mappings and the non-login promotion path (where
+`hasPrivilegedAccess` is canLogin-aware and therefore false) are unaffected.
 On-behalf booking must not depend on `membership:view`: a Booking Officer
 (`bookings:edit`) reaches the booking owner's or target member's family group
 through the bookings-scoped pickers

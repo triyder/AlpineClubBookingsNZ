@@ -1304,6 +1304,9 @@ describe("Admin Family Group Join Requests", () => {
       const txMemberUpdate = vi.fn();
       mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
         callback({
+          // #1936 member-lifecycle advisory lock taken at the top of the
+          // review transaction (pg_advisory_xact_lock via $executeRaw).
+          $executeRaw: vi.fn().mockResolvedValue(undefined),
           member: {
             findUnique: vi.fn().mockResolvedValue({
               id: "parent-1",
@@ -1414,6 +1417,9 @@ describe("Admin Family Group Join Requests", () => {
       const txUpdate = vi.fn();
       mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
         callback({
+          // #1936 member-lifecycle advisory lock ($executeRaw) — no
+          // pre-existing member on the create path, but the call site exists.
+          $executeRaw: vi.fn().mockResolvedValue(undefined),
           member: { create: txMemberCreate },
           familyGroupMember: { upsert: txUpsert },
           familyGroupJoinRequest: { update: txUpdate },
@@ -1603,6 +1609,9 @@ describe("Admin Family Group Join Requests", () => {
       const txUpdate = vi.fn();
       mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
         callback({
+          // #1936 member-lifecycle advisory lock ($executeRaw) on the member
+          // being removed.
+          $executeRaw: vi.fn().mockResolvedValue(undefined),
           familyGroupMember: { deleteMany: txDeleteMany },
           familyGroupJoinRequest: { update: txUpdate },
         })
@@ -1713,6 +1722,9 @@ describe("Admin Family Group Join Requests", () => {
         const txUpdate = vi.fn();
         mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
           callback({
+            // #1936 member-lifecycle advisory lock ($executeRaw) taken at the
+            // top of the review transaction.
+            $executeRaw: vi.fn().mockResolvedValue(undefined),
             member: {
               findUnique: vi.fn().mockResolvedValue({
                 id: "parent-1",

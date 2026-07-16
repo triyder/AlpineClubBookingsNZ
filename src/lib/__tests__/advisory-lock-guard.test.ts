@@ -56,6 +56,14 @@ const GLOBAL_BOOKING_MONEY_LOCK_INVENTORY: Record<string, number> = {
 };
 
 const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
+  // #1936: the join-request review and group-create approve transactions take
+  // member-lifecycle:{memberId} for the pre-existing member being linked, so
+  // FamilyGroupMember writes serialize with the application-approval mapping
+  // transaction's in-any-family-group collision guard (a FamilyGroupMember
+  // insert does not bump Member.updatedAt, so the preview token alone cannot
+  // catch the race). Single-lock holders; composition and counterpart analysis
+  // in docs/CONCURRENCY_AND_LOCKING.md.
+  "src/lib/admin-family-group-requests-service.ts": 2,
   "src/lib/admin-roster-service.ts": 1,
   "src/lib/authoritative-fees.ts": 1,
   "src/lib/booking-member-night-conflicts.ts": 1,
@@ -65,7 +73,12 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   "src/lib/member-lifecycle-actions.ts": 2,
   "src/lib/member-partner-link.ts": 1,
   "src/lib/membership-subscription-billing.ts": 1,
-  "src/lib/nomination.ts": 2,
+  // #1936: 2 pre-existing membership-application locks (application id +
+  // applicant email) plus the approval-mapping transaction's sorted
+  // member-lifecycle:{targetId} loop — the approval composes
+  // member-application THEN member-lifecycle; ordering and counterpart
+  // analysis in docs/CONCURRENCY_AND_LOCKING.md.
+  "src/lib/nomination.ts": 3,
   "src/lib/xero-contacts.ts": 2,
 };
 
