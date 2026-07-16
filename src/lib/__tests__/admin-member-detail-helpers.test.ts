@@ -366,9 +366,9 @@ describe("admin-member-detail-helpers", () => {
           phoneCountryCode: "64",
           phoneAreaCode: "27",
           phoneNumber: "5551234",
-          streetCity: "Tokoroa",
+          streetCity: "Hamilton",
         })
-      ).toBe("jane@example.com · +64 27 5551234 · Tokoroa")
+      ).toBe("jane@example.com · +64 27 5551234 · Hamilton")
       expect(
         formatMemberContactPreview({
           email: "jane@example.com",
