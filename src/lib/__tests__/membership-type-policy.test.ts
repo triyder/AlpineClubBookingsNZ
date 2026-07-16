@@ -5,6 +5,7 @@ import {
   getMembershipTypeBookingPolicyErrorBody,
   priceBookingGuestsWithMembershipTypePolicy,
   requiresPaidSubscriptionForMemberForBooking,
+  resolveGuestRateMembershipTypes,
   resolveMembershipTypePoliciesForMembers,
 } from "@/lib/membership-type-policy";
 
@@ -75,6 +76,18 @@ const lifeType: PolicyType = {
   subscriptionBehavior: "NOT_REQUIRED",
 };
 
+// The built-in NON_MEMBER type the rate resolver (#1930, E4) resolves
+// non-members and TYPE_POLICY_FORCED members to.
+const nonMemberType: PolicyType = {
+  id: "type-nonmember",
+  key: "NON_MEMBER",
+  name: "Non-Member",
+  isActive: true,
+  isBuiltIn: true,
+  bookingBehavior: "NON_MEMBER_RATE",
+  subscriptionBehavior: "NOT_REQUIRED",
+};
+
 function makeMember(overrides: Partial<PolicyMember> = {}): PolicyMember {
   return {
     id: "member-1",
@@ -118,14 +131,16 @@ function makePolicyDb(options: {
   };
 }
 
+// Membership-type-keyed rates (#1930, E4): FULL member rows and NON_MEMBER
+// (non-member) rows for ADULT.
 const seasonRates = [
   {
     seasonId: "season-2026",
     startDate: new Date("2026-04-01T00:00:00.000Z"),
     endDate: new Date("2026-10-31T00:00:00.000Z"),
     rates: [
-      { ageTier: "ADULT" as const, isMember: true, pricePerNightCents: 1000 },
-      { ageTier: "ADULT" as const, isMember: false, pricePerNightCents: 2400 },
+      { membershipTypeId: "type-full", ageTier: "ADULT" as const, pricePerNightCents: 1000 },
+      { membershipTypeId: "type-nonmember", ageTier: "ADULT" as const, pricePerNightCents: 2400 },
     ],
   },
 ];
@@ -233,6 +248,9 @@ describe("membership type booking and subscription policy", () => {
       assignments: [
         { memberId: "member-1", seasonYear: 2026, membershipType: associateType },
       ],
+      // The rate resolver (#1930, E4) needs the built-in NON_MEMBER type to map
+      // this TYPE_POLICY_FORCED member onto the non-member rate rows.
+      membershipTypes: [nonMemberType],
     });
 
     const price = await priceBookingGuestsWithMembershipTypePolicy(db, {
@@ -248,6 +266,48 @@ describe("membership type booking and subscription policy", () => {
     expect(price.guests[0]).toMatchObject({
       isMember: true,
       perNightCents: [2400],
+    });
+  });
+
+  it("classifies rate membership types by rateSource (#1930, E4, D2/D3 invariant)", async () => {
+    const db = makePolicyDb({
+      members: [
+        makeMember({ id: "full-1" }),
+        makeMember({ id: "assoc-1" }),
+        makeMember({ id: "nonmember-1" }),
+      ],
+      assignments: [
+        { memberId: "full-1", seasonYear: 2026, membershipType: fullType },
+        { memberId: "assoc-1", seasonYear: 2026, membershipType: associateType },
+      ],
+      membershipTypes: [nonMemberType],
+    });
+
+    const rated = await resolveGuestRateMembershipTypes(db, {
+      seasonYear: 2026,
+      guests: [
+        { isMember: true, memberId: "full-1" },
+        { isMember: true, memberId: "assoc-1" },
+        { isMember: false, memberId: null },
+      ],
+    });
+
+    // OWN_TYPE: a MEMBER_RATE member prices from its own type.
+    expect(rated[0]).toMatchObject({
+      rateSource: "OWN_TYPE",
+      rateMembershipTypeId: "type-full",
+    });
+    // TYPE_POLICY_FORCED: a NON_MEMBER_RATE member resolves to NON_MEMBER, never
+    // its own (rate-less) associate type — the D2 zero-own-rows invariant.
+    expect(rated[1]).toMatchObject({
+      rateSource: "TYPE_POLICY_FORCED",
+      rateMembershipTypeId: "type-nonmember",
+    });
+    expect(rated[1].rateMembershipTypeId).not.toBe("type-associate");
+    // NON_MEMBER_DEFAULT: a true non-member resolves to NON_MEMBER.
+    expect(rated[2]).toMatchObject({
+      rateSource: "NON_MEMBER_DEFAULT",
+      rateMembershipTypeId: "type-nonmember",
     });
   });
 

@@ -18,6 +18,20 @@ import {
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
+// Membership-type-keyed rates (#1930, E4): the old isMember=true rows become
+// the FULL/member type's rows, isMember=false become the NON_MEMBER type's.
+const MEMBER_TYPE = "type-member";
+const NONMEMBER_TYPE = "type-nonmember";
+
+function nonMemberGuest(ageTier: AgeTier) {
+  return {
+    ageTier,
+    isMember: false,
+    rateMembershipTypeId: NONMEMBER_TYPE,
+    rateSource: "NON_MEMBER_DEFAULT" as const,
+  };
+}
+
 function makeWinterSeason(): SeasonRateData {
   return {
     seasonId: "season-winter",
@@ -25,12 +39,12 @@ function makeWinterSeason(): SeasonRateData {
     endDate: new Date(2026, 8, 30), // Sep 30
     type: "WINTER",
     rates: [
-      { ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
-      { ageTier: "ADULT", isMember: false, pricePerNightCents: 6500 },
-      { ageTier: "YOUTH", isMember: true, pricePerNightCents: 3000 },
-      { ageTier: "YOUTH", isMember: false, pricePerNightCents: 4500 },
-      { ageTier: "CHILD", isMember: true, pricePerNightCents: 1500 },
-      { ageTier: "CHILD", isMember: false, pricePerNightCents: 2500 },
+      { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 4500 },
+      { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 6500 },
+      { ageTier: "YOUTH", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 3000 },
+      { ageTier: "YOUTH", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 4500 },
+      { ageTier: "CHILD", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 1500 },
+      { ageTier: "CHILD", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 2500 },
     ],
   };
 }
@@ -42,12 +56,12 @@ function makeSummerSeason(): SeasonRateData {
     endDate: new Date(2027, 2, 31), // Mar 31
     type: "SUMMER",
     rates: [
-      { ageTier: "ADULT", isMember: true, pricePerNightCents: 3500 },
-      { ageTier: "ADULT", isMember: false, pricePerNightCents: 5000 },
-      { ageTier: "YOUTH", isMember: true, pricePerNightCents: 2500 },
-      { ageTier: "YOUTH", isMember: false, pricePerNightCents: 3500 },
-      { ageTier: "CHILD", isMember: true, pricePerNightCents: 1000 },
-      { ageTier: "CHILD", isMember: false, pricePerNightCents: 2000 },
+      { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 3500 },
+      { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 5000 },
+      { ageTier: "YOUTH", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 2500 },
+      { ageTier: "YOUTH", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 3500 },
+      { ageTier: "CHILD", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 1000 },
+      { ageTier: "CHILD", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 2000 },
     ],
   };
 }
@@ -58,6 +72,8 @@ const defaultGroupDiscount: GroupDiscountConfig = {
   minGroupSize: 5,
   summerOnly: true,
   enabled: true,
+  // A qualifying group upgrades true non-members to the member type's rate.
+  rateMembershipTypeId: MEMBER_TYPE,
 };
 
 // ─── P5.1: Group Booking Discount ────────────────────────────────────────────
@@ -140,11 +156,11 @@ describe("P5.1: Group booking discount", () => {
       const checkIn = new Date(2026, 11, 10); // Dec 10 (summer)
       const checkOut = new Date(2026, 11, 12); // Dec 12 (2 nights)
       const guests = [
-        { ageTier: "ADULT" as const, isMember: false },
-        { ageTier: "ADULT" as const, isMember: false },
-        { ageTier: "ADULT" as const, isMember: false },
-        { ageTier: "ADULT" as const, isMember: false },
-        { ageTier: "ADULT" as const, isMember: false },
+        nonMemberGuest("ADULT"),
+        nonMemberGuest("ADULT"),
+        nonMemberGuest("ADULT"),
+        nonMemberGuest("ADULT"),
+        nonMemberGuest("ADULT"),
       ];
 
       const result = calculateBookingPrice(
@@ -163,10 +179,10 @@ describe("P5.1: Group booking discount", () => {
       const checkIn = new Date(2026, 11, 10);
       const checkOut = new Date(2026, 11, 11); // 1 night
       const guests = [
-        { ageTier: "ADULT" as const, isMember: false },
-        { ageTier: "ADULT" as const, isMember: false },
-        { ageTier: "ADULT" as const, isMember: false },
-        { ageTier: "ADULT" as const, isMember: false },
+        nonMemberGuest("ADULT"),
+        nonMemberGuest("ADULT"),
+        nonMemberGuest("ADULT"),
+        nonMemberGuest("ADULT"),
       ];
 
       const result = calculateBookingPrice(
@@ -184,7 +200,7 @@ describe("P5.1: Group booking discount", () => {
     it("does not apply group discount in winter when summerOnly", () => {
       const checkIn = new Date(2026, 6, 10); // Jul 10 (winter)
       const checkOut = new Date(2026, 6, 11); // 1 night
-      const guests = Array(6).fill({ ageTier: "ADULT" as const, isMember: false });
+      const guests = Array(6).fill(nonMemberGuest("ADULT"));
 
       const result = calculateBookingPrice(
         checkIn,

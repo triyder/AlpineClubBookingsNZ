@@ -7,18 +7,22 @@ import {
   type SeasonRateData,
 } from "@/lib/pricing";
 
-// Test fixtures
+// Test fixtures. Rates are keyed by membership type (#1930, E4): the old
+// member rows map to MEMBER_TYPE, the non-member rows to NONMEMBER_TYPE.
+const MEMBER_TYPE = "type-member";
+const NONMEMBER_TYPE = "type-nonmember";
+
 const winterSeason: SeasonRateData = {
   seasonId: "winter-2026",
   startDate: new Date(2026, 5, 1),  // June 1
   endDate: new Date(2026, 8, 30),   // Sep 30
   rates: [
-    { ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
-    { ageTier: "ADULT", isMember: false, pricePerNightCents: 7000 },
-    { ageTier: "YOUTH", isMember: true, pricePerNightCents: 3000 },
-    { ageTier: "YOUTH", isMember: false, pricePerNightCents: 5000 },
-    { ageTier: "CHILD", isMember: true, pricePerNightCents: 1500 },
-    { ageTier: "CHILD", isMember: false, pricePerNightCents: 3000 },
+    { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 4500 },
+    { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 7000 },
+    { ageTier: "YOUTH", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 3000 },
+    { ageTier: "YOUTH", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 5000 },
+    { ageTier: "CHILD", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 1500 },
+    { ageTier: "CHILD", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 3000 },
   ],
 };
 
@@ -27,12 +31,12 @@ const summerSeason: SeasonRateData = {
   startDate: new Date(2025, 9, 1),   // Oct 1
   endDate: new Date(2026, 4, 31),    // May 31
   rates: [
-    { ageTier: "ADULT", isMember: true, pricePerNightCents: 3500 },
-    { ageTier: "ADULT", isMember: false, pricePerNightCents: 5500 },
-    { ageTier: "YOUTH", isMember: true, pricePerNightCents: 2500 },
-    { ageTier: "YOUTH", isMember: false, pricePerNightCents: 4000 },
-    { ageTier: "CHILD", isMember: true, pricePerNightCents: 1000 },
-    { ageTier: "CHILD", isMember: false, pricePerNightCents: 2000 },
+    { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 3500 },
+    { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 5500 },
+    { ageTier: "YOUTH", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 2500 },
+    { ageTier: "YOUTH", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 4000 },
+    { ageTier: "CHILD", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 1000 },
+    { ageTier: "CHILD", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 2000 },
   ],
 };
 
@@ -40,42 +44,42 @@ const allSeasons = [winterSeason, summerSeason];
 
 describe("findRateForNight", () => {
   it("finds winter rate for a winter date", () => {
-    const rate = findRateForNight(new Date("2026-07-15"), "ADULT", true, allSeasons);
+    const rate = findRateForNight(new Date("2026-07-15"), "ADULT", MEMBER_TYPE, allSeasons);
     expect(rate).toBe(4500);
   });
 
   it("finds summer rate for a summer date", () => {
-    const rate = findRateForNight(new Date("2026-03-15"), "ADULT", true, allSeasons);
+    const rate = findRateForNight(new Date("2026-03-15"), "ADULT", MEMBER_TYPE, allSeasons);
     expect(rate).toBe(3500);
   });
 
   it("finds non-member rate", () => {
-    const rate = findRateForNight(new Date("2026-07-15"), "ADULT", false, allSeasons);
+    const rate = findRateForNight(new Date("2026-07-15"), "ADULT", NONMEMBER_TYPE, allSeasons);
     expect(rate).toBe(7000);
   });
 
   it("finds youth member rate", () => {
-    const rate = findRateForNight(new Date("2026-07-15"), "YOUTH", true, allSeasons);
+    const rate = findRateForNight(new Date("2026-07-15"), "YOUTH", MEMBER_TYPE, allSeasons);
     expect(rate).toBe(3000);
   });
 
   it("finds child non-member rate", () => {
-    const rate = findRateForNight(new Date("2026-07-15"), "CHILD", false, allSeasons);
+    const rate = findRateForNight(new Date("2026-07-15"), "CHILD", NONMEMBER_TYPE, allSeasons);
     expect(rate).toBe(3000);
   });
 
   it("returns null for date not covered by any season", () => {
-    const rate = findRateForNight(new Date("2027-01-15"), "ADULT", true, allSeasons);
+    const rate = findRateForNight(new Date("2027-01-15"), "ADULT", MEMBER_TYPE, allSeasons);
     expect(rate).toBeNull();
   });
 
   it("handles season boundary start date (inclusive)", () => {
-    const rate = findRateForNight(new Date(2026, 5, 1), "ADULT", true, allSeasons);
+    const rate = findRateForNight(new Date(2026, 5, 1), "ADULT", MEMBER_TYPE, allSeasons);
     expect(rate).toBe(4500);
   });
 
   it("handles season boundary end date (inclusive)", () => {
-    const rate = findRateForNight(new Date(2026, 8, 30), "ADULT", true, allSeasons);
+    const rate = findRateForNight(new Date(2026, 8, 30), "ADULT", MEMBER_TYPE, allSeasons);
     expect(rate).toBe(4500);
   });
 });
@@ -85,7 +89,7 @@ describe("calculateBookingPrice", () => {
     const result = calculateBookingPrice(
       new Date("2026-07-10"),
       new Date("2026-07-11"),
-      [{ ageTier: "ADULT", isMember: true }],
+      [{ ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" }],
       allSeasons
     );
 
@@ -99,7 +103,7 @@ describe("calculateBookingPrice", () => {
     const result = calculateBookingPrice(
       new Date("2026-07-10"),
       new Date("2026-07-13"),
-      [{ ageTier: "ADULT", isMember: true }],
+      [{ ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" }],
       allSeasons
     );
 
@@ -113,9 +117,9 @@ describe("calculateBookingPrice", () => {
       new Date("2026-07-10"),
       new Date("2026-07-12"),
       [
-        { ageTier: "ADULT", isMember: true },
-        { ageTier: "ADULT", isMember: false },
-        { ageTier: "CHILD", isMember: true },
+        { ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" },
+        { ageTier: "ADULT", isMember: false, rateMembershipTypeId: NONMEMBER_TYPE, rateSource: "NON_MEMBER_DEFAULT" },
+        { ageTier: "CHILD", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" },
       ],
       allSeasons
     );
@@ -130,7 +134,7 @@ describe("calculateBookingPrice", () => {
     const result = calculateBookingPrice(
       new Date("2026-05-30"),
       new Date("2026-06-02"),
-      [{ ageTier: "ADULT", isMember: true }],
+      [{ ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" }],
       allSeasons
     );
 
@@ -144,7 +148,7 @@ describe("calculateBookingPrice", () => {
       calculateBookingPrice(
         new Date("2027-01-10"),
         new Date("2027-01-12"),
-        [{ ageTier: "ADULT", isMember: true }],
+        [{ ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" }],
         allSeasons
       )
     ).toThrow("No rate found");
@@ -154,7 +158,7 @@ describe("calculateBookingPrice", () => {
     const result = calculateBookingPrice(
       new Date("2026-07-15"),
       new Date("2026-07-16"),
-      [{ ageTier: "YOUTH", isMember: false }],
+      [{ ageTier: "YOUTH", isMember: false, rateMembershipTypeId: NONMEMBER_TYPE, rateSource: "NON_MEMBER_DEFAULT" }],
       allSeasons
     );
 
@@ -166,7 +170,7 @@ describe("calculateBookingPrice", () => {
     const result = calculateBookingPrice(
       new Date("2026-07-01"),
       new Date("2026-07-08"),
-      [{ ageTier: "ADULT", isMember: true }],
+      [{ ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" }],
       allSeasons
     );
 

@@ -49,12 +49,20 @@ vi.mock("@/lib/prisma", () => ({
     member: {
       count: vi.fn(),
       findUnique: vi.fn(),
-      findMany: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     memberSubscription: {
       findFirst: vi.fn(),
       findMany: vi.fn(),
     },
+    // Rate resolver (#1930, E4): the NON_MEMBER type is the default rate key.
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "type-nonmember", key: "NON_MEMBER" },
+        { id: "type-full", key: "FULL" },
+      ]),
+    },
+    seasonalMembershipAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     familyGroupMember: { findMany: vi.fn() },
     season: { findMany: vi.fn() },
     promoCode: { findUnique: vi.fn(), update: vi.fn() },
@@ -673,8 +681,8 @@ describe("P2.3: Guest subscription check", () => {
     mockedPrice.mockReturnValue({
       totalPriceCents: 7500,
       guests: [
-        { ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 2500, perNightCents: [2500], nightDates: [] },
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 1, priceCents: 2500, perNightCents: [2500], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] },
       ],
     });
     mockPrisma.booking.findUnique.mockResolvedValue({
@@ -779,7 +787,7 @@ describe("P2.3: Guest subscription check", () => {
 
     mockedPrice.mockReturnValue({
       totalPriceCents: 5000,
-      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] }],
+      guests: [{ ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] }],
     });
     mockPrisma.booking.findUnique.mockResolvedValue({
       id: "booking-1",

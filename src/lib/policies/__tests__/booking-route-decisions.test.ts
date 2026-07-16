@@ -14,7 +14,15 @@ describe("booking route policy decisions", () => {
   it("normalizes enabled group discount settings and ignores disabled settings", () => {
     expect(
       toGroupDiscountConfig({ enabled: true, minGroupSize: 5, summerOnly: true })
-    ).toEqual({ enabled: true, minGroupSize: 5, summerOnly: true });
+    ).toEqual({ enabled: true, minGroupSize: 5, summerOnly: true, rateMembershipTypeId: null });
+    expect(
+      toGroupDiscountConfig({
+        enabled: true,
+        minGroupSize: 5,
+        summerOnly: true,
+        rateMembershipTypeId: "type-full",
+      })
+    ).toEqual({ enabled: true, minGroupSize: 5, summerOnly: true, rateMembershipTypeId: "type-full" });
     expect(
       toGroupDiscountConfig({ enabled: false, minGroupSize: 5, summerOnly: true })
     ).toBeUndefined();
@@ -27,7 +35,7 @@ describe("booking route policy decisions", () => {
         startDate: new Date("2026-11-01"),
         endDate: new Date("2027-03-31"),
         type: "SUMMER",
-        rates: [],
+        membershipTypeRates: [],
       },
     ]);
 

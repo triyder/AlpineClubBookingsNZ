@@ -22,15 +22,18 @@ import { lodgeNullTolerantScope } from "../lodges";
 const WINTER_START = new Date(2026, 5, 1); // 1 Jun 2026
 const WINTER_END = new Date(2026, 8, 30); // 30 Sep 2026
 
+const MEMBER_TYPE = "type-member";
+const NONMEMBER_TYPE = "type-nonmember";
+
 function lodgeASeason(): SeasonRateData {
   return {
     seasonId: "lodge-a-winter-2026",
     startDate: WINTER_START,
     endDate: WINTER_END,
     rates: [
-      { ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
-      { ageTier: "ADULT", isMember: false, pricePerNightCents: 6500 },
-      { ageTier: "CHILD", isMember: true, pricePerNightCents: 1500 },
+      { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 4500 },
+      { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 6500 },
+      { ageTier: "CHILD", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 1500 },
     ],
   };
 }
@@ -42,9 +45,9 @@ function lodgeBSeason(): SeasonRateData {
     endDate: WINTER_END,
     rates: [
       // Deliberately different money for the same date/tier as lodge A.
-      { ageTier: "ADULT", isMember: true, pricePerNightCents: 8000 },
-      { ageTier: "ADULT", isMember: false, pricePerNightCents: 11000 },
-      { ageTier: "CHILD", isMember: true, pricePerNightCents: 3000 },
+      { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 8000 },
+      { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 11000 },
+      { ageTier: "CHILD", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 3000 },
     ],
   };
 }
@@ -53,8 +56,8 @@ const night = new Date("2026-07-15");
 
 describe("dual-lodge nightly rate resolution", () => {
   it("resolves each lodge's own member rate for the same date and tier", () => {
-    const a = getNightlyRate(night, "ADULT", true, [lodgeASeason()]);
-    const b = getNightlyRate(night, "ADULT", true, [lodgeBSeason()]);
+    const a = getNightlyRate(night, "ADULT", MEMBER_TYPE, [lodgeASeason()]);
+    const b = getNightlyRate(night, "ADULT", MEMBER_TYPE, [lodgeBSeason()]);
 
     expect(a?.priceCents).toBe(4500);
     expect(b?.priceCents).toBe(8000);
@@ -64,8 +67,8 @@ describe("dual-lodge nightly rate resolution", () => {
   });
 
   it("resolves each lodge's own non-member rate for the same date and tier", () => {
-    const a = getNightlyRate(night, "ADULT", false, [lodgeASeason()]);
-    const b = getNightlyRate(night, "ADULT", false, [lodgeBSeason()]);
+    const a = getNightlyRate(night, "ADULT", NONMEMBER_TYPE, [lodgeASeason()]);
+    const b = getNightlyRate(night, "ADULT", NONMEMBER_TYPE, [lodgeBSeason()]);
 
     expect(a?.priceCents).toBe(6500);
     expect(b?.priceCents).toBe(11000);
@@ -76,8 +79,8 @@ describe("dual-lodge booking price totals", () => {
   const checkIn = new Date("2026-07-10");
   const checkOut = new Date("2026-07-13"); // 3 nights
   const guests: GuestInput[] = [
-    { ageTier: "ADULT", isMember: true },
-    { ageTier: "CHILD", isMember: true },
+    { ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" },
+    { ageTier: "CHILD", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" },
   ];
 
   it("totals a booking at each lodge using that lodge's own rates", () => {

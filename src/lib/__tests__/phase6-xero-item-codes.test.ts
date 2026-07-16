@@ -154,40 +154,67 @@ describe("buildEntranceFeeLineItem", () => {
 
 // ─── Per-guest item codes via itemCodeMap ─────────────────────────────────
 
-describe("buildInvoiceLineItems with per-guest itemCodeMap", () => {
+describe("buildInvoiceLineItems with per-guest membership-type item codes (#1930, E4)", () => {
+  const MEMBER_TYPE = "type-full";
+  const NONMEMBER_TYPE = "type-nonmember";
+
+  // Guests carry the rateMembershipType snapshot the resolver produced.
   const mixedGuests = [
-    { firstName: "John", lastName: "Smith", ageTier: "ADULT", isMember: true, priceCents: 9000 },
-    { firstName: "Jane", lastName: "Smith", ageTier: "ADULT", isMember: false, priceCents: 13000 },
-    { firstName: "Tom", lastName: "Smith", ageTier: "CHILD", isMember: true, priceCents: 4000 },
+    { firstName: "John", lastName: "Smith", ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, priceCents: 9000 },
+    { firstName: "Jane", lastName: "Smith", ageTier: "ADULT", isMember: false, rateMembershipTypeId: NONMEMBER_TYPE, priceCents: 13000 },
+    { firstName: "Tom", lastName: "Smith", ageTier: "CHILD", isMember: true, rateMembershipTypeId: MEMBER_TYPE, priceCents: 4000 },
   ];
 
-  const itemCodeMap = new Map([
-    ["ADULT_WINTER_true", "HUTFEE-ADULT-WIN-MEM"],
-    ["ADULT_WINTER_false", "HUTFEE-ADULT-WIN-NON"],
-    ["CHILD_WINTER_true", "HUTFEE-CHILD-WIN-MEM"],
-  ]);
+  // Resolver keyed `${membershipTypeId}_${seasonType}_${ageTier|"FLAT"}`.
+  const makeResolver = (legacyItemCode: string | null = null) => {
+    const byKey = new Map([
+      [`${MEMBER_TYPE}_WINTER_ADULT`, "HUTFEE-ADULT-WIN-MEM"],
+      [`${NONMEMBER_TYPE}_WINTER_ADULT`, "HUTFEE-ADULT-WIN-NON"],
+      [`${MEMBER_TYPE}_WINTER_CHILD`, "HUTFEE-CHILD-WIN-MEM"],
+    ]);
+    return {
+      byKey,
+      fullTypeId: MEMBER_TYPE,
+      nonMemberTypeId: NONMEMBER_TYPE,
+      legacyItemCode,
+      size: byKey.size,
+    };
+  };
 
-  it("assigns different item codes per guest based on ageTier, season, and membership", () => {
+  it("assigns different item codes per guest based on rate type, season, and age tier", () => {
     const items = buildInvoiceLineItems(
-      mixedGuests, checkIn, checkOut, 2, "200", null, false, itemCodeMap, "WINTER"
+      mixedGuests, checkIn, checkOut, 2, "200", null, false, makeResolver(), "WINTER"
     );
     expect(items[0].itemCode).toBe("HUTFEE-ADULT-WIN-MEM");
     expect(items[1].itemCode).toBe("HUTFEE-ADULT-WIN-NON");
     expect(items[2].itemCode).toBe("HUTFEE-CHILD-WIN-MEM");
   });
 
+  it("resolves a NULL snapshot via isMember -> FULL/NON_MEMBER", () => {
+    const nullSnapshotGuests = mixedGuests.map((g) => ({
+      ...g,
+      rateMembershipTypeId: null,
+    }));
+    const items = buildInvoiceLineItems(
+      nullSnapshotGuests, checkIn, checkOut, 2, "200", null, false, makeResolver(), "WINTER"
+    );
+    expect(items[0].itemCode).toBe("HUTFEE-ADULT-WIN-MEM"); // member -> FULL
+    expect(items[1].itemCode).toBe("HUTFEE-ADULT-WIN-NON"); // non-member -> NON_MEMBER
+    expect(items[2].itemCode).toBe("HUTFEE-CHILD-WIN-MEM");
+  });
+
   it("omits itemCode when no mapping exists for that combination", () => {
     const items = buildInvoiceLineItems(
-      mixedGuests, checkIn, checkOut, 2, "200", null, false, itemCodeMap, "SUMMER"
+      mixedGuests, checkIn, checkOut, 2, "200", null, false, makeResolver(), "SUMMER"
     );
-    // No SUMMER mappings exist in the map
+    // No SUMMER mappings exist in the resolver and no legacy fallback set.
     for (const item of items) {
       expect(item.itemCode).toBeUndefined();
       expect(item.accountCode).toBe("200");
     }
   });
 
-  it("falls back to legacy itemCode when itemCodeMap is undefined", () => {
+  it("falls back to legacy itemCode when the resolver is undefined", () => {
     const items = buildInvoiceLineItems(
       mixedGuests, checkIn, checkOut, 2, "200", "LEGACY-HUT", false, undefined, "WINTER"
     );
@@ -196,9 +223,9 @@ describe("buildInvoiceLineItems with per-guest itemCodeMap", () => {
     }
   });
 
-  it("falls back to legacy itemCode when seasonType is null", () => {
+  it("falls back to the resolver's legacy itemCode when seasonType is null", () => {
     const items = buildInvoiceLineItems(
-      mixedGuests, checkIn, checkOut, 2, "200", "LEGACY-HUT", false, itemCodeMap, null
+      mixedGuests, checkIn, checkOut, 2, "200", null, false, makeResolver("LEGACY-HUT"), null
     );
     for (const item of items) {
       expect(item.itemCode).toBe("LEGACY-HUT");
@@ -207,9 +234,8 @@ describe("buildInvoiceLineItems with per-guest itemCodeMap", () => {
 
   it("omits accountCode when per-guest itemCode is set and accountCode is default", () => {
     const items = buildInvoiceLineItems(
-      mixedGuests, checkIn, checkOut, 2, "200", null, false, itemCodeMap, "WINTER"
+      mixedGuests, checkIn, checkOut, 2, "200", null, false, makeResolver(), "WINTER"
     );
-    // Items with item codes should omit default account code
     expect(items[0].accountCode).toBeUndefined();
     expect(items[1].accountCode).toBeUndefined();
     expect(items[2].accountCode).toBeUndefined();
@@ -217,17 +243,23 @@ describe("buildInvoiceLineItems with per-guest itemCodeMap", () => {
 
   it("includes accountCode when per-guest itemCode is set but accountCode is non-default", () => {
     const items = buildInvoiceLineItems(
-      mixedGuests, checkIn, checkOut, 2, "400", null, false, itemCodeMap, "WINTER"
+      mixedGuests, checkIn, checkOut, 2, "400", null, false, makeResolver(), "WINTER"
     );
     for (const item of items) {
       expect(item.accountCode).toBe("400");
     }
   });
 
-  it("works with an empty itemCodeMap (same as no map)", () => {
-    const emptyMap = new Map<string, string>();
+  it("works with an empty resolver (no keyed rows, no legacy)", () => {
+    const emptyResolver = {
+      byKey: new Map<string, string>(),
+      fullTypeId: MEMBER_TYPE,
+      nonMemberTypeId: NONMEMBER_TYPE,
+      legacyItemCode: null,
+      size: 0,
+    };
     const items = buildInvoiceLineItems(
-      mixedGuests, checkIn, checkOut, 2, "200", null, false, emptyMap, "WINTER"
+      mixedGuests, checkIn, checkOut, 2, "200", null, false, emptyResolver, "WINTER"
     );
     for (const item of items) {
       expect(item.itemCode).toBeUndefined();
@@ -336,12 +368,12 @@ describe("Item code mapping response shape", () => {
     expect(entry.amountCents).toBe(5000);
   });
 
-  it("composite key format is correct", () => {
-    const key = `ADULT_WINTER_true`;
+  it("composite key format is correct (membershipTypeId_seasonType_ageTier)", () => {
+    const key = `type-full_WINTER_ADULT`;
     const parts = key.split("_");
     expect(parts).toHaveLength(3);
-    expect(parts[0]).toBe("ADULT");
+    expect(parts[0]).toBe("type-full");
     expect(parts[1]).toBe("WINTER");
-    expect(parts[2]).toBe("true");
+    expect(parts[2]).toBe("ADULT");
   });
 });

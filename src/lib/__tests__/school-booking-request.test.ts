@@ -15,7 +15,7 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: vi.fn(),
       update: vi.fn(),
     },
-    member: { create: vi.fn(), findUnique: vi.fn() },
+    member: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     booking: {
       create: vi.fn(),
       findUnique: vi.fn(),
@@ -33,6 +33,15 @@ vi.mock("@/lib/prisma", () => ({
     season: { findMany: vi.fn() },
     groupDiscountSetting: { findUnique: vi.fn() },
     lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
+    // Rate resolver (#1930, E4): school guests are non-members, so no members
+    // or assignments are needed — every guest resolves to NON_MEMBER.
+    seasonalMembershipAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "type-nonmember", key: "NON_MEMBER" },
+        { id: "type-full", key: "FULL" },
+      ]),
+    },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
   },
@@ -200,9 +209,10 @@ function seasonWithRates() {
       startDate: new Date("2026-07-01T00:00:00.000Z"),
       endDate: new Date("2026-09-01T00:00:00.000Z"),
       type: "WINTER",
-      rates: [
-        { ageTier: "ADULT", isMember: false, pricePerNightCents: 5000 },
-        { ageTier: "CHILD", isMember: false, pricePerNightCents: 2500 },
+      // School guests are non-members -> NON_MEMBER type rate rows (#1930, E4).
+      membershipTypeRates: [
+        { membershipTypeId: "type-nonmember", ageTier: "ADULT", pricePerNightCents: 5000 },
+        { membershipTypeId: "type-nonmember", ageTier: "CHILD", pricePerNightCents: 2500 },
       ],
     },
   ];

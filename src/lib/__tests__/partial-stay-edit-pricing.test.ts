@@ -223,7 +223,11 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
         lastName: "Stayer",
         ageTier: "ADULT",
         isMember: true,
-        memberId: null,
+        // #1930, E4: a member guest resolves to its own (member) rate only via
+        // a memberId; the rate resolver treats isMember-true-with-null-memberId
+        // as a non-member. Give this member guest a memberId so it keeps the
+        // member rate on reprice (see the note flagged to the orchestrator).
+        memberId: "m2",
         priceCents: 10000,
         stayStart: CHECK_IN,
         stayEnd: new Date("2026-08-04T00:00:00.000Z"),
@@ -255,9 +259,10 @@ const CURRENT_SEASON = [{
   id: "s1",
   startDate: new Date("2026-04-01T00:00:00.000Z"),
   endDate: new Date("2026-10-31T00:00:00.000Z"),
-  rates: [
-    { ageTier: "ADULT", isMember: true, pricePerNightCents: 6000 },
-    { ageTier: "ADULT", isMember: false, pricePerNightCents: 8000 },
+  // Membership-type-keyed rates (#1930, E4): FULL members 6000, NON_MEMBER 8000.
+  membershipTypeRates: [
+    { membershipTypeId: "type-full", ageTier: "ADULT", pricePerNightCents: 6000 },
+    { membershipTypeId: "type-nonmember", ageTier: "ADULT", pricePerNightCents: 8000 },
   ],
 }];
 
@@ -289,9 +294,15 @@ function makeTx(
       delete: vi.fn().mockResolvedValue({}),
     },
     groupDiscountSetting: {
+      // The group discount substitutes the FULL type for true non-members
+      // (#1930, E4), preserving the old "upgrade non-members to member rate".
       findUnique: vi
         .fn()
-        .mockResolvedValue(options?.groupDiscountSetting ?? null),
+        .mockResolvedValue(
+          options?.groupDiscountSetting
+            ? { ...options.groupDiscountSetting, rateMembershipTypeId: "type-full" }
+            : null,
+        ),
     },
     bookingGuestNight: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -309,9 +320,30 @@ function makeTx(
       findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
-    member: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(1) },
+    // Rate resolver (#1930, E4): member guests (with a memberId) resolve to the
+    // FULL type (role default) -> member rate; the built-in NON_MEMBER type
+    // backs true non-members and the discount substitution.
+    member: {
+      findMany: vi.fn().mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({
+          id,
+          firstName: "Member",
+          lastName: "Test",
+          email: `${id}@test.com`,
+          role: "MEMBER",
+          ageTier: "ADULT",
+        })),
+      ),
+      findUnique: vi.fn().mockResolvedValue(null),
+      count: vi.fn().mockResolvedValue(1),
+    },
     seasonalMembershipAssignment: { findMany: vi.fn().mockResolvedValue([]) },
-    membershipType: { findMany: vi.fn().mockResolvedValue([]) },
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "type-full", key: "FULL", bookingBehavior: "MEMBER_RATE", subscriptionBehavior: "REQUIRED", name: "Full", isActive: true, isBuiltIn: true },
+        { id: "type-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE", subscriptionBehavior: "NOT_REQUIRED", name: "Non-Member", isActive: true, isBuiltIn: true },
+      ]),
+    },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
   };
 }

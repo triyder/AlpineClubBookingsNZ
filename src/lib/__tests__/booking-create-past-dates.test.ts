@@ -124,9 +124,11 @@ function seasonWithRate(rateCents: number) {
       id: "season-1",
       startDate: addDaysDateOnly(getTodayDateOnly(), -400),
       endDate: addDaysDateOnly(getTodayDateOnly(), 60),
-      rates: [
-        { ageTier: AgeTier.ADULT, isMember: true, pricePerNightCents: rateCents },
-        { ageTier: AgeTier.ADULT, isMember: false, pricePerNightCents: rateCents },
+      // Membership-type-keyed rates (#1930, E4): both FULL and NON_MEMBER
+      // priced at the same rate here, matching the old member/non-member pair.
+      membershipTypeRates: [
+        { membershipTypeId: "type-full", ageTier: AgeTier.ADULT, pricePerNightCents: rateCents },
+        { membershipTypeId: "type-nonmember", ageTier: AgeTier.ADULT, pricePerNightCents: rateCents },
       ],
     },
   ];
@@ -163,6 +165,16 @@ let createdCount = 0;
 const tx = {
   $executeRaw: (...a: unknown[]) => h.executeRaw(...a),
   season: { findMany: (...a: unknown[]) => h.seasonFindMany(...a) },
+  // Rate resolver (#1930, E4): FULL and NON_MEMBER share the rate here, so the
+  // NON_MEMBER_DEFAULT fallback prices identically to the old member path.
+  member: { findMany: async () => [] },
+  seasonalMembershipAssignment: { findMany: async () => [] },
+  membershipType: {
+    findMany: async () => [
+      { id: "type-nonmember", key: "NON_MEMBER" },
+      { id: "type-full", key: "FULL" },
+    ],
+  },
   booking: {
     create: (...a: unknown[]) => h.bookingCreate(...a),
     update: (...a: unknown[]) => h.bookingUpdate(...a),

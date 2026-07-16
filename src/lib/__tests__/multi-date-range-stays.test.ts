@@ -27,15 +27,18 @@ import {
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { parseDateOnly } from "@/lib/date-only";
 
+const MEMBER_TYPE = "type-member";
+const NONMEMBER_TYPE = "type-nonmember";
+
 // June 2026 sits inside this single season.
 const SEASON: SeasonRateData = {
   seasonId: "winter-2026",
   startDate: parseDateOnly("2026-06-01"),
   endDate: parseDateOnly("2026-06-30"),
   rates: [
-    { ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
-    { ageTier: "ADULT", isMember: false, pricePerNightCents: 7000 },
-    { ageTier: "CHILD", isMember: true, pricePerNightCents: 1500 },
+    { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 4500 },
+    { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 7000 },
+    { ageTier: "CHILD", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 1500 },
   ],
 };
 
@@ -51,8 +54,8 @@ describe("per-night pricing over a night set", () => {
       CHECK_IN,
       CHECK_OUT,
       [
-        { ageTier: "ADULT", isMember: true }, // mum, full range
-        { ageTier: "ADULT", isMember: false, nights: dadNights }, // dad, gapped
+        { ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" }, // mum, full range
+        { ageTier: "ADULT", isMember: false, rateMembershipTypeId: NONMEMBER_TYPE, rateSource: "NON_MEMBER_DEFAULT", nights: dadNights }, // dad, gapped
       ],
       [SEASON],
     );
@@ -77,7 +80,7 @@ describe("per-night pricing over a night set", () => {
     const breakdown = calculateBookingPrice(
       CHECK_IN,
       CHECK_OUT,
-      [{ ageTier: "ADULT", isMember: true, nights: ["2026-06-05", "2026-06-03", "2026-06-05"] }],
+      [{ ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE", nights: ["2026-06-05", "2026-06-03", "2026-06-05"] }],
       [SEASON],
     );
     const guest = breakdown.guests[0];
@@ -92,7 +95,7 @@ describe("per-night pricing over a night set", () => {
     const withRange = calculateBookingPrice(
       CHECK_IN,
       CHECK_OUT,
-      [{ ageTier: "ADULT", isMember: true, stayStart: parseDateOnly("2026-06-01"), stayEnd: parseDateOnly("2026-06-04") }],
+      [{ ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE", stayStart: parseDateOnly("2026-06-01"), stayEnd: parseDateOnly("2026-06-04") }],
       [SEASON],
     );
     expect(withRange.guests[0].nights).toBe(3);

@@ -9,6 +9,8 @@ vi.mock("@/lib/prisma", () => ({
     lodge: { findFirst: vi.fn() },
     memberLodgeAccess: { findMany: vi.fn() },
     bookingGuest: { findMany: vi.fn().mockResolvedValue([]) },
+    membershipType: { findMany: vi.fn() },
+    seasonalMembershipAssignment: { findMany: vi.fn() },
     season: { findMany: vi.fn() },
     promoCode: { findUnique: vi.fn() },
     promoCodeAssignment: { findMany: vi.fn() },
@@ -188,6 +190,13 @@ describe("Admin Book on Behalf", () => {
     (mockedPrisma.lodge.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "lodge-1" });
     (mockedPrisma.memberLodgeAccess.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockedPrisma.bookingGuest.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    // Rate resolver (#1930, E4): the NON_MEMBER type is the default rate key.
+    (mockedPrisma.member.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.seasonalMembershipAssignment.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.membershipType.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "type-nonmember", key: "NON_MEMBER" },
+      { id: "type-full", key: "FULL" },
+    ]);
   });
 
   it("rejects admin booking without forMemberId (must book on behalf)", async () => {
@@ -987,7 +996,7 @@ describe("Promo Validate API - forMemberId", () => {
     (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     mockedCalcPrice.mockReturnValueOnce({
       totalPriceCents: 5000,
-      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 5000, perNightCents: [5000], nightDates: [] }],
+      guests: [{ ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 1, priceCents: 5000, perNightCents: [5000], nightDates: [] }],
     });
     const { validateAndCalculatePromoDiscount } = await import("@/lib/promo");
     vi.mocked(validateAndCalculatePromoDiscount).mockResolvedValueOnce({

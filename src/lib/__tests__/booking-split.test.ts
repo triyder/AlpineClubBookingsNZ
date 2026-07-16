@@ -114,20 +114,22 @@ import {
 
 const checkIn = new Date("2026-09-10T00:00:00.000Z");
 const checkOut = new Date("2026-09-12T00:00:00.000Z");
+const MEMBER_TYPE = "type-full";
+const NONMEMBER_TYPE = "type-nonmember";
 const mockSeasons = [
   {
     id: "season-1",
     startDate: new Date("2026-09-01T00:00:00.000Z"),
     endDate: new Date("2026-09-30T00:00:00.000Z"),
-    rates: [
+    membershipTypeRates: [
       {
+        membershipTypeId: MEMBER_TYPE,
         ageTier: AgeTier.ADULT,
-        isMember: true,
         pricePerNightCents: 2500,
       },
       {
+        membershipTypeId: NONMEMBER_TYPE,
         ageTier: AgeTier.ADULT,
-        isMember: false,
         pricePerNightCents: 5000,
       },
     ],
@@ -138,6 +140,17 @@ let createdCount = 0;
 const tx = {
   $executeRaw: (...a: unknown[]) => h.executeRaw(...a),
   season: { findMany: (...a: unknown[]) => h.seasonFindMany(...a) },
+  // Rate resolver (#1930, E4): no seeded members/assignments, so every guest
+  // resolves NON_MEMBER_DEFAULT and prices from the NON_MEMBER rate (>$0,
+  // keeping bookings off the zero-dollar auto-PAID path).
+  member: { findMany: async () => [] },
+  seasonalMembershipAssignment: { findMany: async () => [] },
+  membershipType: {
+    findMany: async () => [
+      { id: NONMEMBER_TYPE, key: "NON_MEMBER" },
+      { id: MEMBER_TYPE, key: "FULL" },
+    ],
+  },
   booking: {
     create: (...a: unknown[]) => h.bookingCreate(...a),
     update: (...a: unknown[]) => h.bookingUpdate(...a),
