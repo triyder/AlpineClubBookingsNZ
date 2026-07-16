@@ -69,6 +69,19 @@ vi.mock("@/config/club-identity", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/config/club-identity")>()),
   CLUB_NAME: "Test Alpine Club",
 }));
+// {{club-name}}/{{hut-leader}} now resolve through the DB-first club-identity
+// accessor (E3 #1929), not the CLUB_NAME constant. Feed it the same deterministic
+// club name so token resolution stays under test control without a database.
+vi.mock("@/lib/club-identity-settings", async () => {
+  const { clubIdentity } = await import("@/config/club-identity");
+  return {
+    CLUB_IDENTITY_SETTINGS_ID: "default",
+    getClubIdentity: vi.fn(async () => ({
+      ...clubIdentity,
+      name: "Test Alpine Club",
+    })),
+  };
+});
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/lodge-capacity")>()),
   getLodgeCapacity: vi.fn(async () => 32),
