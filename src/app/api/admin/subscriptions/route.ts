@@ -57,6 +57,8 @@ type SubscriptionCandidate = {
   xeroInvoiceId: string | null;
   xeroInvoiceNumber: string | null;
   paidAt: Date | null;
+  manuallyMarkedPaidAt: Date | null;
+  manualPaymentNote: string | null;
   xeroContactGroupsLoaded: boolean;
   xeroContactGroups: Array<{ id: string; name: string }>;
   member: {
@@ -273,6 +275,8 @@ export async function GET(request: NextRequest) {
         xeroInvoiceId: subscription.xeroInvoiceId,
         xeroInvoiceNumber: subscription.xeroInvoiceNumber,
         paidAt: subscription.paidAt,
+        manuallyMarkedPaidAt: subscription.manuallyMarkedPaidAt,
+        manualPaymentNote: subscription.manualPaymentNote,
         xeroContactGroupsLoaded: true,
         xeroContactGroups: [],
         member: subscription.member,
@@ -288,6 +292,8 @@ export async function GET(request: NextRequest) {
         xeroInvoiceId: null,
         xeroInvoiceNumber: null,
         paidAt: null,
+        manuallyMarkedPaidAt: null,
+        manualPaymentNote: null,
         xeroContactGroupsLoaded: true,
         xeroContactGroups: [],
         member,
