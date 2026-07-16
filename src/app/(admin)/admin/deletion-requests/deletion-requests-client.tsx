@@ -457,6 +457,7 @@ function AdminInitiatedDeletionSection({
   statusFilter: string;
   statusBadge: (status: string) => React.ReactNode;
 }) {
+  const [page, setPage] = useState(1);
   const [data, setData] = useState<LifecycleApiResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -467,6 +468,12 @@ function AdminInitiatedDeletionSection({
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // The status filter lives in the parent card header; when it changes, jump
+  // back to page 1 so a deep page from the previous filter is never shown.
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter]);
+
   const fetchRequests = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -474,6 +481,7 @@ function AdminInitiatedDeletionSection({
       const params = new URLSearchParams({
         action: "DELETE",
         status: statusFilter,
+        page: String(page),
       });
       const res = await fetch(
         `/api/admin/member-lifecycle-action-requests?${params}`
@@ -485,7 +493,7 @@ function AdminInitiatedDeletionSection({
     } finally {
       setLoading(false);
     }
-  }, [statusFilter]);
+  }, [statusFilter, page]);
 
   useEffect(() => {
     fetchRequests();
@@ -530,6 +538,7 @@ function AdminInitiatedDeletionSection({
         <CardDescription>
           Permanent hard-delete requests raised by an admin from a member
           record. A different admin must approve or reject each request.
+          Filtered by the status selector above.
           {data ? ` ${data.total} total` : ""}
         </CardDescription>
       </CardHeader>
@@ -538,7 +547,8 @@ function AdminInitiatedDeletionSection({
         {error && <p className="text-sm text-red-600 py-4">{error}</p>}
         {!loading && data && data.requests.length === 0 && (
           <p className="text-sm text-slate-500 py-4">
-            No admin-initiated deletion requests.
+            No {statusFilter === "ALL" ? "" : statusFilter.toLowerCase()}{" "}
+            admin-initiated deletion requests.
           </p>
         )}
         {!loading && data && data.requests.length > 0 && (
@@ -627,6 +637,31 @@ function AdminInitiatedDeletionSection({
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Pagination */}
+        {data && data.totalPages > 1 && (
+          <div className="flex items-center justify-between pt-4 border-t">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+            >
+              Previous
+            </Button>
+            <span className="text-sm text-slate-500">
+              Page {page} of {data.totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= data.totalPages}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </Button>
           </div>
         )}
       </CardContent>

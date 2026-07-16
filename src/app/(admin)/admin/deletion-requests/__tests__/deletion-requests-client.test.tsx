@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import DeletionRequestsClient from "../deletion-requests-client";
@@ -18,18 +18,22 @@ interface LifecycleRow {
   member: { id: string; name: string; email: string } | null;
 }
 
-function buildFetchMock(lifecycleRequests: LifecycleRow[]) {
+function buildFetchMock(
+  lifecycleRequests: LifecycleRow[],
+  lifecycleMeta: { total?: number; totalPages?: number } = {},
+) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/api/admin/member-lifecycle-action-requests")) {
+      const params = new URL(url, "http://localhost").searchParams;
       return {
         ok: true,
         json: async () => ({
           requests: lifecycleRequests,
-          total: lifecycleRequests.length,
-          page: 1,
+          total: lifecycleMeta.total ?? lifecycleRequests.length,
+          page: Number(params.get("page") ?? "1"),
           pageSize: 25,
-          totalPages: 1,
+          totalPages: lifecycleMeta.totalPages ?? 1,
         }),
       };
     }
@@ -124,5 +128,53 @@ describe("AdminInitiatedDeletionSection (#1938)", () => {
     expect(
       screen.getByText("A different admin must review this request"),
     ).not.toBeNull();
+  });
+
+  it("sends a page param and shows pager controls when total exceeds one page", async () => {
+    const fetchMock = buildFetchMock([row()], { total: 30, totalPages: 2 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DeletionRequestsClient sessionMemberId="admin-1" />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Erroneous Record")).not.toBeNull(),
+    );
+
+    // Initial lifecycle fetch carries page=1.
+    const lifecycleUrls = fetchMock.mock.calls
+      .map((c) => String(c[0]))
+      .filter((u) => u.includes("/api/admin/member-lifecycle-action-requests"));
+    expect(lifecycleUrls.length).toBeGreaterThan(0);
+    expect(lifecycleUrls[0]).toContain("page=1");
+
+    // Pager renders both controls and the page indicator.
+    const next = screen.getByRole("button", { name: "Next" });
+    expect(next).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Previous" })).not.toBeNull();
+    expect(screen.getByText("Page 1 of 2")).not.toBeNull();
+
+    // Advancing the page re-fetches with page=2.
+    fireEvent.click(next);
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls
+        .map((c) => String(c[0]))
+        .filter((u) =>
+          u.includes("/api/admin/member-lifecycle-action-requests"),
+        );
+      expect(urls.some((u) => u.includes("page=2"))).toBe(true);
+    });
+  });
+
+  it("shows filter-aware empty copy for the admin-initiated section", async () => {
+    // Default status filter is PENDING; no lifecycle rows returned.
+    vi.stubGlobal("fetch", buildFetchMock([]));
+
+    render(<DeletionRequestsClient sessionMemberId="admin-1" />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/No pending admin-initiated deletion requests\./),
+      ).not.toBeNull(),
+    );
   });
 });
