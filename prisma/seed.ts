@@ -541,6 +541,28 @@ async function main() {
   await createMissingMembershipTypeSeasonRates(summer2026.id, "summer");
   console.log(`Season seeded: ${summer2026.name}`);
 
+  // Group-discount substitution target (#1930, E4): a GroupDiscountSetting row
+  // created outside the re-key migration would carry a NULL target, leaving an
+  // enabled discount inert but for the read-time fallback. Create-if-missing
+  // (schema defaults keep the discount disabled) and heal a NULL target to the
+  // built-in FULL type — never overwriting an admin-configured target.
+  const fullMembershipType = await prisma.membershipType.findFirst({
+    where: { key: "FULL" },
+    select: { id: true },
+  });
+  if (fullMembershipType) {
+    await prisma.groupDiscountSetting.upsert({
+      where: { id: "default" },
+      update: {},
+      create: { id: "default", rateMembershipTypeId: fullMembershipType.id },
+    });
+    await prisma.groupDiscountSetting.updateMany({
+      where: { id: "default", rateMembershipTypeId: null },
+      data: { rateMembershipTypeId: fullMembershipType.id },
+    });
+    console.log("Group discount substitution target seeded");
+  }
+
   // Seed Xero account mappings with current defaults (create-if-missing).
   const accountMappings = [
     { key: "hutFeesIncome", code: "200" },

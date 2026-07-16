@@ -502,6 +502,35 @@ export async function resolveGuestRateMembershipTypes<
   });
 }
 
+/**
+ * Read-time fallback for the group-discount substitution target (#1930, E4).
+ * A GroupDiscountSetting row created AFTER the re-key migration (the admin
+ * route's old upsert-create, or any hand-inserted row) carries a NULL
+ * rateMembershipTypeId; without this fallback an enabled discount would be
+ * silently inert (the engine only substitutes when a target id is present),
+ * where main's boolean flip always discounted. Resolve NULL to the built-in
+ * FULL type — the same target the migration seeds — so the discount always
+ * works. No-op (no query) when the discount is disabled or already targeted.
+ */
+export async function resolveGroupDiscountRateType(
+  db: unknown,
+  groupDiscount: GroupDiscountConfig | undefined,
+): Promise<GroupDiscountConfig | undefined> {
+  if (!groupDiscount?.enabled || groupDiscount.rateMembershipTypeId) {
+    return groupDiscount;
+  }
+  if (!isMembershipTypePolicyDb(db)) {
+    return groupDiscount;
+  }
+  const [fullType] = (await db.membershipType.findMany({
+    where: { key: { in: ["FULL"] } },
+    select: { id: true },
+  })) as Array<{ id: string }>;
+  return fullType
+    ? { ...groupDiscount, rateMembershipTypeId: fullType.id }
+    : groupDiscount;
+}
+
 export async function priceBookingGuestsWithMembershipTypePolicy(
   db: unknown,
   input: {
@@ -520,16 +549,19 @@ export async function priceBookingGuestsWithMembershipTypePolicy(
     guests: input.guests,
     seasonYear,
   });
-  const ratedGuests = await resolveGuestRateMembershipTypes(db, {
-    seasonYear,
-    guests: input.guests,
-  });
+  const [ratedGuests, groupDiscount] = await Promise.all([
+    resolveGuestRateMembershipTypes(db, {
+      seasonYear,
+      guests: input.guests,
+    }),
+    resolveGroupDiscountRateType(db, input.groupDiscount),
+  ]);
   return calculateBookingPrice(
     input.checkIn,
     input.checkOut,
     ratedGuests,
     input.seasons,
-    input.groupDiscount,
+    groupDiscount,
   );
 }
 

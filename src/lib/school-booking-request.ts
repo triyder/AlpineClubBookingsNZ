@@ -76,7 +76,10 @@ import {
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
 import type { PriceBreakdown } from "@/lib/policies/pricing";
-import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
+import {
+  resolveGroupDiscountRateType,
+  resolveGuestRateMembershipTypes,
+} from "@/lib/membership-type-policy";
 import { getSeasonYear } from "@/lib/utils";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
@@ -257,7 +260,12 @@ async function priceSchoolGuests(input: {
     checkOut: input.checkOut,
     guests: ratedGuests,
     seasons: toSeasonRateData(seasons),
-    groupDiscount: toGroupDiscountConfig(groupDiscountSetting),
+    // NULL substitution target (row created post-migration) resolves to the
+    // built-in FULL type so the discount is never silently inert (#1930, E4).
+    groupDiscount: await resolveGroupDiscountRateType(
+      prisma,
+      toGroupDiscountConfig(groupDiscountSetting),
+    ),
   });
 }
 

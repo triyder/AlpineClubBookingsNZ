@@ -329,6 +329,74 @@ describe("membership type booking and subscription policy", () => {
   });
 });
 
+describe("group-discount NULL substitution target fallback (#1930, E4 review F2)", () => {
+  // Scenario: the GroupDiscountSetting row was created AFTER the re-key
+  // migration (e.g. by the pre-fix admin route's upsert-create), so its
+  // rateMembershipTypeId is NULL. The discount must still substitute the
+  // built-in FULL type for true non-members, exactly like main's boolean flip.
+  it("a row created post-migration (NULL target) still discounts non-members to the FULL rate", async () => {
+    const db = makePolicyDb({
+      members: [],
+      membershipTypes: [fullType, nonMemberType],
+    });
+
+    const price = await priceBookingGuestsWithMembershipTypePolicy(db, {
+      checkIn: new Date("2026-05-01T00:00:00.000Z"),
+      checkOut: new Date("2026-05-02T00:00:00.000Z"),
+      guests: [{ ageTier: "ADULT", isMember: false }],
+      seasons: seasonRates,
+      // NULL target, as stored by a post-migration upsert-create.
+      groupDiscount: {
+        enabled: true,
+        minGroupSize: 1,
+        summerOnly: false,
+        rateMembershipTypeId: null,
+      },
+    });
+
+    // Substituted to FULL's 1000 rate, not the NON_MEMBER 2400 rate.
+    expect(price.totalPriceCents).toBe(1000);
+    // The persisted snapshot stays the resolved NON_MEMBER type.
+    expect(price.guests[0].rateMembershipTypeId).toBe("type-nonmember");
+  });
+
+  it("resolveGroupDiscountRateType fills only an enabled NULL target and never queries otherwise", async () => {
+    const { resolveGroupDiscountRateType } = await import(
+      "@/lib/membership-type-policy"
+    );
+    const db = makePolicyDb({ members: [], membershipTypes: [fullType] });
+
+    // Disabled: untouched, no membership-type query.
+    const disabled = await resolveGroupDiscountRateType(db, {
+      enabled: false,
+      minGroupSize: 5,
+      summerOnly: true,
+      rateMembershipTypeId: null,
+    });
+    expect(disabled?.rateMembershipTypeId).toBeNull();
+    expect(db.membershipType.findMany).not.toHaveBeenCalled();
+
+    // Explicit target: untouched, no query.
+    const targeted = await resolveGroupDiscountRateType(db, {
+      enabled: true,
+      minGroupSize: 5,
+      summerOnly: true,
+      rateMembershipTypeId: "type-custom",
+    });
+    expect(targeted?.rateMembershipTypeId).toBe("type-custom");
+    expect(db.membershipType.findMany).not.toHaveBeenCalled();
+
+    // Enabled + NULL: resolved to the built-in FULL type.
+    const healed = await resolveGroupDiscountRateType(db, {
+      enabled: true,
+      minGroupSize: 5,
+      summerOnly: true,
+      rateMembershipTypeId: null,
+    });
+    expect(healed?.rateMembershipTypeId).toBe("type-full");
+  });
+});
+
 describe("membership type booking policy route integration", () => {
   it("preserves policy block errors through generic booking pricing failures", () => {
     const sources = [
