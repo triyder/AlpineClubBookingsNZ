@@ -46,6 +46,13 @@ The wizard writes `config/club.json` only. Keep provider keys, OAuth secrets,
 SMTP credentials, and deployment secrets in environment variables or your
 deployment secret store.
 
+After the first administrator can sign in, the club name, short name, and
+hut-leader label can also be overridden at runtime (without editing
+`config/club.json`) from Admin > Appearance > Club Identity — cross-linked from
+Admin > Setup > Initial Setup as "Club Identity". A blank field falls back to
+the configured default, and the change reaches the public site and emails within
+a few seconds.
+
 Configure public website colours, fonts, and the logo from the admin
 `/admin/site-style` wizard after the first administrator can sign in. The public
 website shows a neutral setup holding page until that wizard is finished. The
