@@ -1837,16 +1837,25 @@ no durable booking, financial, family, Xero, or membership-history blockers.
 - Add-suppression: the managed group is added only when the contact is in NONE
   of (matched MANAGED ∪ matched ACCEPTED), so members parked in an accepted
   group get no spurious add. A member matching no rule is left untouched (no
-  removals) and surfaces in the dry-run snapshot for admin cleanup.
+  removals); when such a member sits in managed-universe group(s) they surface
+  as an information-only entry in the dry-run snapshot (never iterated by the
+  bulk re-sync) for deliberate admin cleanup in Xero.
+- The cutover migration deactivates every pre-existing `XeroContactGroupRule`
+  row it did not backfill itself, so only tier-only backfill rules are live at
+  deploy; dormant legacy rules require a deliberate admin re-enable via the
+  grouping UI.
 - Mode/rule changes NEVER auto-resync the population. Deactivating or deleting a
   rule shrinks the managed universe, so members already in that group are never
   removed by the system. Members re-group on their next trigger (age-tier
   change, current-season membership-type change, cron age-up) or via the
   explicit admin bulk re-sync.
 - The per-member sync keeps Xero calls outside DB transactions, ledgers each
-  operation with an idempotency key, adds before removing, and refreshes the
-  contact cache from the post-write contact. A remove-404 is success (already
-  gone); an add-404 is a ledgered failure.
+  operation with an idempotency key (the per-add key carries a per-operation
+  nonce so a legitimate later re-add is never swallowed by Xero's 24h
+  idempotency window), adds before removing, and refreshes the contact cache
+  from the post-write contact. A remove-404 is idempotent success recorded as
+  already-absent — never counted as a removal; an add-404 is a ledgered
+  failure.
 - The bulk re-sync is admin-triggered, dry-run-first, cache-pre-filtered to
   mismatched members, chunked and resumable by member-id cursor, and never
   advances the CONTACT delta-sync watermark. Members without a Xero contact are
