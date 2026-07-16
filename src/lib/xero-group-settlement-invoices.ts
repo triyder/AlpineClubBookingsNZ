@@ -314,7 +314,7 @@ export async function createXeroInvoiceForGroupSettlement(
         incomeCode,
         hutFeeMapping.itemCode,
         hutFeeMapping.codeExplicitlyConfigured,
-        hutFeeItemCodeMap.size > 0 ? hutFeeItemCodeMap : undefined,
+        hutFeeItemCodeMap,
         seasonType
       )
     );
