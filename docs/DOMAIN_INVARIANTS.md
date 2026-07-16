@@ -771,6 +771,36 @@ config so previews match what the mutating paths charge. The guest-add route
 therefore prices the whole post-add party in one pass — the added guest's
 stored price and night rows are their slice of the combined breakdown.
 
+Hut nightly rates are keyed by membership type, not a member/non-member boolean
+(#1930, E4). `MembershipTypeSeasonRate` holds one rate per `(season, membership
+type, ageTier?)`: each `MEMBER_RATE` type carries its own rows, non-members
+price via the built-in `NON_MEMBER` type, and `NON_MEMBER_RATE` (except
+`NON_MEMBER`) and `BLOCK_BOOKING` types carry **zero** own rows — the resolver
+never consults them (testable invariant). A type prices per age tier when
+`ageGroupsApply` is true, or from a single `NULL`-ageTier flat row when false;
+the engine prefers an exact tier row and falls back to the flat row. The rate
+resolver classifies every guest as `OWN_TYPE` (a `MEMBER_RATE` member on their
+own rows), `NON_MEMBER_DEFAULT` (a true non-member on the `NON_MEMBER` rows), or
+`TYPE_POLICY_FORCED` (a member whose type forces the non-member rate, priced on
+the `NON_MEMBER` rows). A missing rate for a type × active season is a hard
+throw at pricing plus a setup-readiness warning. The group discount no longer
+flips a boolean: it substitutes `GroupDiscountSetting.rateMembershipTypeId`
+(seeded to `FULL`) **only** for `NON_MEMBER_DEFAULT` guests, so members keep
+their own type's rate and `TYPE_POLICY_FORCED` members are excluded — the two
+load-bearing behaviours the old flip preserved.
+
+Every priced guest stores a `BookingGuest.rateMembershipTypeId` snapshot — the
+type whose rows priced it (the resolved type, never the per-night discount
+substitution). Xero line building reads the snapshot to pick the hut-fee item
+code. The snapshot is **not** write-once: modify/reprice flows (waitlist offer
+reprice, date change, guest add/removal) recompute and overwrite it for
+repriced guests alongside `priceCents`; a locked night keeps both its price and
+its stale snapshot untouched. A `NULL` snapshot (pre-refactor booking) falls
+back `isMember → FULL / NON_MEMBER` forever. Because the day-one fan-out
+backfill copied the old member rows/codes to every `MEMBER_RATE` type and the
+non-member rows/codes to `NON_MEMBER`, existing bookings and invoices resolve
+byte-identically under the new key.
+
 Every booking-reduction path — batch modify (`removeGuestIds`/date change),
 single-guest removal (`DELETE …/guests/[guestId]`), and date change
 (`modify-dates`) — returns member money limited by the same cancellation-policy

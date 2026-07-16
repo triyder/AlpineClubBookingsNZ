@@ -54,6 +54,18 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `ageTiers[].nightlyRates.summer.memberCents`       | yes      | Summer member nightly rate in integer cents.                                                                     |
 | `ageTiers[].nightlyRates.summer.nonMemberCents`    | yes      | Summer non-member nightly rate in integer cents.                                                                 |
 
+> **Hut rates are keyed by membership type (#1930, E4).** The `memberCents` /
+> `nonMemberCents` seed values above are fanned out at seed time into
+> per-membership-type `MembershipTypeSeasonRate` rows: `memberCents` seeds every
+> `MEMBER_RATE` type (FULL, LIFE, FAMILY, …) and `nonMemberCents` seeds the
+> built-in `NON_MEMBER` type. `NON_MEMBER_RATE` (except `NON_MEMBER`) and
+> `BLOCK_BOOKING` types get no rate rows. Each type starts age-keyed
+> (`ageGroupsApply = true`, one row per tier); an admin may later set a type
+> flat (one `NULL`-ageTier row). Xero hut-fee item codes
+> (`XeroItemCodeMapping.membershipTypeId`) re-key the same way so an invoice
+> line never disagrees with the rate that priced it. The legacy boolean-keyed
+> `SeasonRate` table is retained but frozen (public embed only) until E7/E13.
+
 When the bed allocation module is effectively enabled and at least one active
 bed exists in Admin -> Configuration -> Rooms & Beds, booking capacity is the
 active bed count from that configurator — unless a per-lodge capacity is set
