@@ -124,10 +124,12 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   getAdminMemberArchiveLifecycleRequests,
+  getAdminMemberLifecycleRequests,
   createMemberArchiveRequest,
   createMemberDeleteRequest,
   getMemberDeleteEligibility,
   getPendingMemberArchiveReviewCount,
+  getPendingMemberDeleteReviewCount,
   MemberLifecycleActionError,
   reviewMemberArchiveRequest,
   reviewMemberDeleteRequest,
@@ -1142,5 +1144,116 @@ describe("member archive admin-account guards (#1604)", () => {
     });
 
     expect(result.request.status).toBe("APPROVED");
+  });
+});
+
+// #1938: the admin review list is now parameterised by action. DELETE feeds the
+// admin-initiated section on /admin/deletion-requests; the serializer must stay
+// snapshot-safe because an APPROVED DELETE has already removed the target row.
+describe("admin member lifecycle request list (#1938)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("lists DELETE requests, carrying the live member and requestedByMemberId", async () => {
+    mockPrisma.memberLifecycleActionRequest.findMany.mockResolvedValueOnce([
+      deleteRequest(),
+    ]);
+    mockPrisma.memberLifecycleActionRequest.count
+      .mockResolvedValueOnce(1) // total
+      .mockResolvedValueOnce(2); // pending (REQUESTED)
+    mockPrisma.member.findMany.mockResolvedValueOnce([archiveTarget()]);
+
+    const result = await getAdminMemberLifecycleRequests({
+      action: "DELETE",
+      status: "REQUESTED",
+      page: 1,
+      pageSize: 25,
+    });
+
+    expect(
+      mockPrisma.memberLifecycleActionRequest.findMany,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { action: "DELETE", status: "REQUESTED" },
+      }),
+    );
+    expect(result.total).toBe(1);
+    expect(result.pendingCount).toBe(2);
+    expect(result.requests[0]).toMatchObject({
+      id: "request-1",
+      requestedByMemberId: "admin-1",
+      targetName: "Former Member",
+      member: { id: "member-1", name: "Former Member" },
+    });
+  });
+
+  it("falls back to the snapshot name when an approved DELETE target is gone", async () => {
+    mockPrisma.memberLifecycleActionRequest.findMany.mockResolvedValueOnce([
+      deleteRequest({
+        status: "APPROVED",
+        memberSnapshot: {
+          member: {
+            firstName: "Gone",
+            lastName: "Away",
+            email: "gone@example.test",
+          },
+        },
+      }),
+    ]);
+    mockPrisma.memberLifecycleActionRequest.count
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(0);
+    // Target already hard-deleted: the member lookup misses.
+    mockPrisma.member.findMany.mockResolvedValueOnce([]);
+
+    const result = await getAdminMemberLifecycleRequests({
+      action: "DELETE",
+      status: "APPROVED",
+    });
+
+    expect(result.requests[0].member).toBeNull();
+    expect(result.requests[0].targetName).toBe("Gone Away");
+  });
+
+  it("maps ALL to an action-only filter", async () => {
+    mockPrisma.memberLifecycleActionRequest.findMany.mockResolvedValueOnce([]);
+    mockPrisma.memberLifecycleActionRequest.count
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(0);
+
+    await getAdminMemberLifecycleRequests({ action: "DELETE", status: "ALL" });
+
+    expect(
+      mockPrisma.memberLifecycleActionRequest.findMany,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { action: "DELETE" } }),
+    );
+  });
+
+  it("keeps the ARCHIVE wrapper querying ARCHIVE for back-compat", async () => {
+    mockPrisma.memberLifecycleActionRequest.findMany.mockResolvedValueOnce([]);
+    mockPrisma.memberLifecycleActionRequest.count
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(0);
+
+    await getAdminMemberArchiveLifecycleRequests({ status: "REQUESTED" });
+
+    expect(
+      mockPrisma.memberLifecycleActionRequest.findMany,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { action: "ARCHIVE", status: "REQUESTED" },
+      }),
+    );
+  });
+
+  it("counts pending DELETE requests for the review badge", async () => {
+    mockPrisma.memberLifecycleActionRequest.count.mockResolvedValueOnce(4);
+
+    await expect(getPendingMemberDeleteReviewCount()).resolves.toBe(4);
+    expect(mockPrisma.memberLifecycleActionRequest.count).toHaveBeenCalledWith({
+      where: { action: "DELETE", status: "REQUESTED" },
+    });
   });
 });

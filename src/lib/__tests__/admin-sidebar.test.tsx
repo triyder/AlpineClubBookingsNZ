@@ -35,6 +35,7 @@ const ZERO_COUNTS: AdminPendingCounts = {
   membershipCancellations: 0,
   archiveRequests: 0,
   deletionRequests: 0,
+  memberDeleteRequests: 0,
   issueReports: 0,
   unassignedHutLeaderDates: 0,
 };
@@ -306,6 +307,28 @@ describe("AdminSidebar", () => {
       screen.getByRole("link", { name: /Deletion Requests/ }),
     ).not.toBeNull();
     expect(screen.getByText("2")).not.toBeNull();
+  });
+
+  it("merges self-service and admin-initiated deletion counts on the Deletion Requests badge (#1938)", async () => {
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSE_STORAGE_KEY,
+      JSON.stringify({ "Monitoring & Support": false }),
+    );
+    // Self-service PENDING (3) + admin-initiated DELETE REQUESTED (2) = 5.
+    vi.stubGlobal(
+      "fetch",
+      buildFetchMock({ deletionRequests: 3, memberDeleteRequests: 2 }),
+    );
+
+    render(<AdminSidebar features={allOn} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Needs Attention")).not.toBeNull(),
+    );
+    expect(
+      screen.getByRole("link", { name: /Deletion Requests/ }),
+    ).not.toBeNull();
+    expect(screen.getByText("5")).not.toBeNull();
   });
 
   it("labels the membership cancellation queue as Cancellation Requests", () => {

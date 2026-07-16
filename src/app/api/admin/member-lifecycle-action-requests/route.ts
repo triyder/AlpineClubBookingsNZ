@@ -5,19 +5,27 @@ import {
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
-  getAdminMemberArchiveLifecycleRequests,
+  getAdminMemberLifecycleRequests,
   type AdminMemberLifecycleActionStatusFilter,
 } from "@/lib/member-lifecycle-actions";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 
 const querySchema = z.object({
+  // ARCHIVE feeds the membership-cancellations page; DELETE feeds the
+  // admin-initiated section on /admin/deletion-requests (#1938). Default stays
+  // ARCHIVE for back-compat (pinned by test).
   action: z
-    .enum([MemberLifecycleAction.ARCHIVE])
+    .enum([MemberLifecycleAction.ARCHIVE, MemberLifecycleAction.DELETE])
     .optional()
     .default(MemberLifecycleAction.ARCHIVE),
+  // The deletion-requests page filter speaks the self-service vocabulary
+  // (PENDING|APPROVED|REJECTED); lifecycle requests use REQUESTED for the
+  // pending state. Accept PENDING here and map it to REQUESTED at the boundary
+  // (#1938) so `?action=DELETE&status=PENDING` does not 400.
   status: z
     .enum([
+      "PENDING",
       MemberLifecycleActionRequestStatus.REQUESTED,
       MemberLifecycleActionRequestStatus.APPROVED,
       MemberLifecycleActionRequestStatus.REJECTED,
@@ -28,6 +36,14 @@ const querySchema = z.object({
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
 });
+
+function mapStatusFilter(
+  status: z.infer<typeof querySchema>["status"],
+): AdminMemberLifecycleActionStatusFilter {
+  return status === "PENDING"
+    ? MemberLifecycleActionRequestStatus.REQUESTED
+    : status;
+}
 
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
@@ -44,8 +60,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const data = await getAdminMemberArchiveLifecycleRequests({
-      status: parsed.data.status as AdminMemberLifecycleActionStatusFilter,
+    const data = await getAdminMemberLifecycleRequests({
+      action: parsed.data.action,
+      status: mapStatusFilter(parsed.data.status),
       page: parsed.data.page,
       pageSize: parsed.data.pageSize,
     });

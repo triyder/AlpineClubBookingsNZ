@@ -545,6 +545,34 @@ variables. `/admin/setup` exposes:
 These settings are audited when saved. They do not call Xero on save; future
 approval processing must keep Xero writes outside long database transactions.
 
+## Member Deletion Requests Page
+
+`/admin/deletion-requests` surfaces two distinct member-deletion flows in one
+place:
+
+- **Member self-service requests** — a member asks for their own account to be
+  deleted (anonymised). Approval anonymises the account, cancels future
+  bookings, and deactivates login. Backed by the `DeletionRequest` model.
+- **Admin-initiated deletion requests** — an admin raises a permanent
+  hard-delete of a member record added in error (no meaningful booking,
+  financial, lodge, Xero, or audit history). Backed by
+  `MemberLifecycleActionRequest` with `action = DELETE`.
+
+Admin-initiated requests enforce **separation of duties**: a *different* admin
+must approve or reject the request. The requester sees the approve/reject
+buttons disabled with "A different admin must review this request"; the server
+review endpoint stays authoritative and returns 403 on self-review regardless
+of the UI. Both flows contribute to the sidebar's "Deletion Requests" attention
+badge (self-service `PENDING` + admin-initiated `REQUESTED`).
+
+The admin-initiated alert email (`admin-member-delete-requested`) deep-links to
+this review queue. It is currently delivered under the shared **Member
+requests** notification preference (`adminFamilyGroupRequest`), the same
+category as membership applications, family-group, cancellation, and archive
+requests — muting that category mutes all of them. A dedicated toggle for
+delete-request alerts would require a new `NotificationPreference` column and is
+deferred to a follow-up (this change is intentionally no-schema).
+
 ## Membership Type Settings
 
 Seasonal membership type settings are database-backed and managed from

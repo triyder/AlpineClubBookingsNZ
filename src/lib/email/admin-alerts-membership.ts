@@ -150,7 +150,11 @@ export async function sendAdminMemberDeleteRequestedAlert(params: {
   reason: string;
 }) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/members/${encodeURIComponent(params.memberId)}`;
+  // #1938: deep-link to the review queue (the admin-initiated deletion section
+  // on /admin/deletion-requests) rather than the member record, so a second
+  // admin can approve/reject without having to know where to look. `memberId`
+  // is retained on the params/templateData for audit continuity.
+  const reviewUrl = `${baseUrl}/admin/deletion-requests`;
 
   await sendToAdmins({
     subject: `Member delete requested: ${params.memberName}`,
