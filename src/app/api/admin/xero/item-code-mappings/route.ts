@@ -72,7 +72,7 @@ function buildResponseBody(rows: ItemCodeMappingRow[]) {
     ) {
       const key = `${row.membershipTypeId}_${row.seasonType}_${row.ageTier ?? FLAT_KEY}`;
       hutFees[key] = { itemCode: row.itemCode };
-    } else if (row.category === "ENTRANCE_FEE" && row.entranceFeeCategory) {
+    } else if (row.category === "JOINING_FEE" && row.entranceFeeCategory) {
       entranceFees[row.entranceFeeCategory] = {
         itemCode: row.itemCode ?? null,
         amountCents: row.amountCents,
@@ -276,13 +276,13 @@ export async function PUT(request: NextRequest) {
 
       if (value === null || (value.itemCode === null && value.amountCents === null)) {
         await prisma.xeroItemCodeMapping.deleteMany({
-          where: { category: "ENTRANCE_FEE", entranceFeeCategory },
+          where: { category: "JOINING_FEE", entranceFeeCategory },
         });
       } else {
         await prisma.xeroItemCodeMapping.upsert({
           where: {
             category_entranceFeeCategory: {
-              category: "ENTRANCE_FEE",
+              category: "JOINING_FEE",
               entranceFeeCategory,
             },
           },
@@ -291,7 +291,7 @@ export async function PUT(request: NextRequest) {
             amountCents: value.amountCents,
           },
           create: {
-            category: "ENTRANCE_FEE",
+            category: "JOINING_FEE",
             entranceFeeCategory,
             itemCode: value.itemCode,
             amountCents: value.amountCents,

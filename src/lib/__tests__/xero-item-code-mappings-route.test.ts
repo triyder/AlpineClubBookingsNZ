@@ -112,7 +112,7 @@ describe("Xero item-code mappings route", () => {
   it("returns entrance fee mappings with null item codes", async () => {
     mockPrisma.xeroItemCodeMapping.findMany.mockResolvedValue([
       {
-        category: "ENTRANCE_FEE",
+        category: "JOINING_FEE",
         entranceFeeCategory: "ADULT",
         itemCode: null,
         amountCents: 5000,
@@ -129,7 +129,7 @@ describe("Xero item-code mappings route", () => {
   it("accepts entrance fee updates with a null item code", async () => {
     mockPrisma.xeroItemCodeMapping.findMany.mockResolvedValue([
       {
-        category: "ENTRANCE_FEE",
+        category: "JOINING_FEE",
         entranceFeeCategory: "ADULT",
         itemCode: null,
         amountCents: 5000,
@@ -149,7 +149,7 @@ describe("Xero item-code mappings route", () => {
       expect.objectContaining({
         where: {
           category_entranceFeeCategory: {
-            category: "ENTRANCE_FEE",
+            category: "JOINING_FEE",
             entranceFeeCategory: "ADULT",
           },
         },
@@ -169,7 +169,7 @@ describe("Xero item-code mappings route", () => {
 
     expect(res.status).toBe(200);
     expect(mockPrisma.xeroItemCodeMapping.deleteMany).toHaveBeenCalledWith({
-      where: { category: "ENTRANCE_FEE", entranceFeeCategory: "ADULT" },
+      where: { category: "JOINING_FEE", entranceFeeCategory: "ADULT" },
     });
     expect(mockPrisma.xeroItemCodeMapping.upsert).not.toHaveBeenCalled();
   });

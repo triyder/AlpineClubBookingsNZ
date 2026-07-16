@@ -66,17 +66,20 @@ describe("public PageContent token view models", () => {
     expect(mocks.cancellation).not.toHaveBeenCalled();
   });
 
-  it("uses only current EntranceFee schedules and omits missing categories", async () => {
-    mocks.entranceFees.mockResolvedValue([
-      { category: "ADULT", amountCents: 12500 },
-      { category: "YOUTH", amountCents: 5000 },
+  it("derives the public joining fees from the FULL and Family types, omitting missing tiers (#1931)", async () => {
+    // FULL carries the per-age-tier joining fees; the Family type carries the
+    // flat family fee. Missing tiers (here CHILD/INFANT and the family flat) are
+    // omitted, preserving the old output shape.
+    mocks.membershipTypes.mockResolvedValue([
+      { key: "FULL", joiningFees: [{ ageTier: "ADULT", amountCents: 12500 }, { ageTier: "YOUTH", amountCents: 5000 }] },
+      { key: "FAMILY", joiningFees: [] },
     ]);
     await expect(loadPublicEntranceFees()).resolves.toEqual([
       { category: "Adult", fee: { amountCents: 12500, label: "$125.00" } },
       { category: "Youth", fee: { amountCents: 5000, label: "$50.00" } },
     ]);
-    expect(mocks.entranceFees).toHaveBeenCalledWith(expect.objectContaining({
-      select: { category: true, amountCents: true },
+    expect(mocks.membershipTypes).toHaveBeenCalledWith(expect.objectContaining({
+      where: { key: { in: ["FULL", "FAMILY"] } },
     }));
   });
 

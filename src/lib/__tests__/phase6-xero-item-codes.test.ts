@@ -134,7 +134,7 @@ describe("buildEntranceFeeLineItem", () => {
 
   it("uses the fallback description when no itemCode is configured", () => {
     const item = buildEntranceFeeLineItem("Adult", 5000, "200", null);
-    expect(item.description).toBe("Membership entrance fee (Adult)");
+    expect(item.description).toBe("Membership joining fee (Adult)");
     expect(item.accountCode).toBe("200");
   });
 

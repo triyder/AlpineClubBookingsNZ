@@ -53,8 +53,15 @@ const LEGACY_IS_MEMBER_TYPE_KEY: Record<"true" | "false", string> = {
   false: "NON_MEMBER",
 };
 
-/** XeroItemCodeMapping.category is a plain string column with two known values. */
-const ITEM_CATEGORIES = new Set(["HUT_FEE", "ENTRANCE_FEE"]);
+/**
+ * XeroItemCodeMapping.category is a plain string column. HUT_FEE and JOINING_FEE
+ * are current; ENTRANCE_FEE is the pre-#1931 name for JOINING_FEE and is
+ * accepted on import (old bundles) then normalised to JOINING_FEE. The deeper
+ * transfer of joining-fee SCHEDULE amounts is follow-up #1941.
+ */
+const ITEM_CATEGORIES = new Set(["HUT_FEE", "ENTRANCE_FEE", "JOINING_FEE"]);
+const LEGACY_JOINING_FEE_CATEGORY = "ENTRANCE_FEE";
+const JOINING_FEE_CATEGORY = "JOINING_FEE";
 
 const xeroSourceSchema = z.object({ tenantId: z.string().nullable() });
 
@@ -144,13 +151,17 @@ function parseItemRow(
   >,
 ): ParsedItemRow | null {
   const v = new RowValidator(ITEM_FILE, index, errors);
-  const category = v.required("category", raw.category);
-  if (category && !ITEM_CATEGORIES.has(category)) {
+  const rawCategory = v.required("category", raw.category);
+  if (rawCategory && !ITEM_CATEGORIES.has(rawCategory)) {
     errors.push(
-      `${ITEM_FILE} row ${index + 2}: category — "${category}" is not HUT_FEE or ENTRANCE_FEE`,
+      `${ITEM_FILE} row ${index + 2}: category — "${rawCategory}" is not HUT_FEE or JOINING_FEE`,
     );
     return null;
   }
+  // Normalise the pre-#1931 ENTRANCE_FEE label from old bundles to JOINING_FEE
+  // so imported item-code rows share the current natural key.
+  const category =
+    rawCategory === LEGACY_JOINING_FEE_CATEGORY ? JOINING_FEE_CATEGORY : rawCategory;
 
   // Membership-type key (HUT_FEE only). OLD bundles carry `isMember` instead:
   // true -> FULL, false -> NON_MEMBER (documented lossy compat, #1930 E4).

@@ -80,7 +80,7 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
     }),
     prisma.xeroItemCodeMapping.count({
       where: {
-        category: "ENTRANCE_FEE",
+        category: "JOINING_FEE",
         OR: [{ itemCode: { not: null } }, { amountCents: { not: null } }],
       },
     }),
