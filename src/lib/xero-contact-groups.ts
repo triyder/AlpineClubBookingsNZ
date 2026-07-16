@@ -10,13 +10,16 @@ import { ContactGroup, type Contact, type Contacts } from "xero-node";
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
 import {
-  buildAgeTierXeroContactGroupConfigMap,
-  getAgeTierXeroContactGroupMappings,
-} from "@/lib/age-tier-xero-groups";
+  loadXeroGroupingContext,
+  planMemberGroupingSync,
+  resolveMemberGroupingForMember,
+} from "@/lib/xero-member-grouping";
 import {
   callXeroApi,
   getAuthenticatedXeroClient,
 } from "./xero-api-client";
+import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
+import { isXeroConnected } from "@/lib/xero-token-store";
 import { buildXeroContactUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -477,12 +480,27 @@ export async function syncManagedXeroContactGroupForMember(
     };
   }
 
-  const mappings = await getAgeTierXeroContactGroupMappings();
-  const configByTier = buildAgeTierXeroContactGroupConfigMap(mappings);
-  const expectedConfig = configByTier.get(member.ageTier) ?? null;
-  const managedGroupIds = Array.from(
-    new Set(mappings.map((mapping) => mapping.groupId))
-  );
+  // Mode-driven resolution (E8, #1934). NONE short-circuits BEFORE any Xero
+  // call — the sync is a total no-op, existing Xero memberships untouched.
+  const context = await loadXeroGroupingContext();
+  const resolution = await resolveMemberGroupingForMember({
+    memberId,
+    ageTier: member.ageTier,
+    context,
+  });
+
+  if (resolution.skippedReason === "grouping_mode_none") {
+    return {
+      memberId,
+      xeroContactId: member.xeroContactId,
+      expectedGroupId: null,
+      expectedGroupName: null,
+      addedGroupIds: [],
+      removedGroupIds: [],
+      skippedReason: "grouping_mode_none",
+    };
+  }
+
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
   const getContactFromXero = async (): Promise<Contact> => {
@@ -504,11 +522,17 @@ export async function syncManagedXeroContactGroupForMember(
 
   const initialContact = await getContactFromXero();
   const currentGroups = extractActiveXeroContactGroups(initialContact) ?? [];
-  const currentManagedGroups = currentGroups.filter((group) =>
-    managedGroupIds.includes(group.id)
-  );
+  const plan = planMemberGroupingSync({
+    resolution,
+    currentGroupIds: currentGroups.map((group) => group.id),
+  });
 
-  if (!expectedConfig || expectedConfig.acceptedGroups.length === 0) {
+  const managedGroup = resolution.managedGroup;
+
+  // No matching rule for this member's type/tier: leave the contact untouched
+  // (stale memberships surface in the mismatch snapshot for admin cleanup) but
+  // keep the cache fresh from the read we just did.
+  if (resolution.skippedReason === "no_matching_rule") {
     await refreshXeroContactCachesFromContact(initialContact);
     return {
       memberId,
@@ -517,29 +541,17 @@ export async function syncManagedXeroContactGroupForMember(
       expectedGroupName: null,
       addedGroupIds: [],
       removedGroupIds: [],
-      skippedReason: "no_mapping_for_member_age_tier",
+      skippedReason: "no_matching_rule",
     };
   }
 
-  const acceptedGroupIds = new Set(
-    expectedConfig.acceptedGroups.map((group) => group.id)
-  );
-  const defaultGroup = expectedConfig.defaultGroup;
-  const hasAcceptedGroup = currentManagedGroups.some((group) =>
-    acceptedGroupIds.has(group.id)
-  );
-  const removedGroupIds = currentManagedGroups
-    .filter((group) => !acceptedGroupIds.has(group.id))
-    .map((group) => group.id);
-  const groupToAdd = !hasAcceptedGroup ? defaultGroup : null;
-
-  if (!groupToAdd && removedGroupIds.length === 0) {
+  if (plan.isNoop) {
     await refreshXeroContactCachesFromContact(initialContact);
     return {
       memberId,
       xeroContactId: member.xeroContactId,
-      expectedGroupId: defaultGroup?.id ?? null,
-      expectedGroupName: defaultGroup?.name ?? null,
+      expectedGroupId: managedGroup?.id ?? null,
+      expectedGroupName: managedGroup?.name ?? null,
       addedGroupIds: [],
       removedGroupIds: [],
       skippedReason: null,
@@ -549,11 +561,15 @@ export async function syncManagedXeroContactGroupForMember(
   const requestPayload = {
     memberId,
     memberName: `${member.firstName} ${member.lastName}`,
+    mode: resolution.mode,
     ageTier: member.ageTier,
     xeroContactId: member.xeroContactId,
-    defaultGroup,
-    acceptedGroups: expectedConfig.acceptedGroups,
-    currentManagedGroups: currentManagedGroups.map((group) => ({
+    managedGroup,
+    acceptedGroupIds: resolution.acceptedGroupIds,
+    managedUniverse: resolution.managedUniverse,
+    plannedAddGroupId: plan.groupToAdd?.id ?? null,
+    plannedRemoveGroupIds: plan.groupIdsToRemove,
+    currentGroups: currentGroups.map((group) => ({
       id: group.id,
       name: group.name,
     })),
@@ -564,7 +580,7 @@ export async function syncManagedXeroContactGroupForMember(
     memberId,
     "managed-contact-group",
     payloadHash,
-    "v1"
+    "v2"
   );
   const operation = await startXeroSyncOperation({
     direction: "OUTBOUND",
@@ -579,8 +595,13 @@ export async function syncManagedXeroContactGroupForMember(
   });
 
   const addedGroupIds: string[] = [];
+  const removedGroupIds: string[] = [];
   try {
-    if (groupToAdd) {
+    // Add before remove (unchanged ordering). An add failure (incl. HTTP 404 —
+    // e.g. the target group was deleted in Xero) is a ledgered failure that
+    // propagates to the catch below.
+    if (plan.groupToAdd) {
+      const groupToAdd = plan.groupToAdd;
       const contacts: Contacts = {
         contacts: [{ contactID: member.xeroContactId }],
       };
@@ -589,7 +610,7 @@ export async function syncManagedXeroContactGroupForMember(
         member.xeroContactId,
         "contact-group-add",
         groupToAdd.id,
-        "v1"
+        "v2"
       );
       await callXeroApi(
         () =>
@@ -609,21 +630,36 @@ export async function syncManagedXeroContactGroupForMember(
       addedGroupIds.push(groupToAdd.id);
     }
 
-    for (const groupId of removedGroupIds) {
-      await callXeroApi(
-        () =>
-          xero.accountingApi.deleteContactGroupContact(
-            tenantId,
-            groupId,
-            member.xeroContactId!
-          ),
-        {
-          operation: "deleteContactGroupContact",
-          resourceType: "CONTACT_GROUP",
-          workflow: "syncManagedXeroContactGroupForMember",
-          context: `deleteContactGroupContact(${groupId}, ${member.xeroContactId})`,
+    for (const groupId of plan.groupIdsToRemove) {
+      try {
+        await callXeroApi(
+          () =>
+            xero.accountingApi.deleteContactGroupContact(
+              tenantId,
+              groupId,
+              member.xeroContactId!
+            ),
+          {
+            operation: "deleteContactGroupContact",
+            resourceType: "CONTACT_GROUP",
+            workflow: "syncManagedXeroContactGroupForMember",
+            context: `deleteContactGroupContact(${groupId}, ${member.xeroContactId})`,
+          }
+        );
+        removedGroupIds.push(groupId);
+      } catch (removeError) {
+        // A remove-404 means the contact is already out of the group — treat as
+        // success (idempotent) rather than failing the whole operation.
+        if (getXeroErrorStatusCode(removeError) === 404) {
+          logger.info(
+            { memberId, xeroContactId: member.xeroContactId, groupId },
+            "Xero contact already absent from managed group (404 on remove) — treated as success"
+          );
+          removedGroupIds.push(groupId);
+          continue;
         }
-      );
+        throw removeError;
+      }
     }
 
     const refreshedContact = await getContactFromXero();
@@ -658,8 +694,8 @@ export async function syncManagedXeroContactGroupForMember(
     return {
       memberId,
       xeroContactId: member.xeroContactId,
-      expectedGroupId: defaultGroup?.id ?? null,
-      expectedGroupName: defaultGroup?.name ?? null,
+      expectedGroupId: managedGroup?.id ?? null,
+      expectedGroupName: managedGroup?.name ?? null,
       addedGroupIds,
       removedGroupIds,
       skippedReason: null,
@@ -677,5 +713,36 @@ export async function syncManagedXeroContactGroupForMember(
 
     await failXeroSyncOperation(operation.id, error);
     throw error;
+  }
+}
+
+/**
+ * Shared best-effort trigger for member Xero contact-group re-sync (E8, #1934).
+ *
+ * Use this from any site that changes a member's grouping-relevant state (age
+ * tier, effective membership type). It is guarded by `isXeroConnected`, never
+ * throws (Xero failures are logged, not fatal), and is safe to call
+ * unconditionally — `syncManagedXeroContactGroupForMember` short-circuits to a
+ * no-op before any Xero call when the mode is NONE or the member has no Xero
+ * contact, so callers do not need to check the mode. Idempotent on re-run.
+ *
+ * E10 (#1936) calls this from application-approval mapping.
+ */
+export async function triggerMemberXeroContactGroupSync(
+  memberId: string,
+  options?: { createdByMemberId?: string; reason?: string }
+): Promise<void> {
+  try {
+    if (!(await isXeroConnected())) {
+      return;
+    }
+    await syncManagedXeroContactGroupForMember(memberId, {
+      createdByMemberId: options?.createdByMemberId,
+    });
+  } catch (error) {
+    logger.error(
+      { err: error, memberId, reason: options?.reason ?? null },
+      "Best-effort Xero contact group sync failed"
+    );
   }
 }
