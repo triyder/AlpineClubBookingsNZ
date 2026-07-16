@@ -1398,6 +1398,7 @@ export async function approveMemberApplication(
     const skipBillingIds = new Set<string>();
     const mappedAudits: Array<{
       ref: string;
+      personLabel: string;
       targetMemberId: string;
       overwrittenFields: Array<{ field: string; before: string | null; after: string | null }>;
       loginPromoted: boolean;
@@ -1569,6 +1570,7 @@ export async function approveMemberApplication(
       }
       mappedAudits.push({
         ref: "applicant",
+        personLabel: outcome.personLabel,
         targetMemberId: target.id,
         overwrittenFields: overwrittenFieldsFor(outcome),
         loginPromoted: outcome.loginPromoted,
@@ -1725,6 +1727,7 @@ export async function approveMemberApplication(
         }
         mappedAudits.push({
           ref: `family[${index}]`,
+          personLabel: outcome.personLabel,
           targetMemberId: target.id,
           overwrittenFields: overwrittenFieldsFor(outcome),
           loginPromoted: false,
@@ -1900,6 +1903,18 @@ export async function approveMemberApplication(
     (memberId) => !approved.skipBillingIds.includes(memberId)
   );
   const warnings = await syncApprovedMembersToXero(affectedMemberIds);
+
+  // E10 (#1936): the seasonal-coverage skip is decided silently inside the
+  // transaction, so surface it per target in the post-approval warnings (the
+  // spec's "notes + post-approval warnings") — the admin sees exactly who kept
+  // existing coverage and was excluded from billing.
+  for (const mapped of approved.mappedAudits) {
+    if (mapped.skippedSeasonalAssignment) {
+      warnings.push(
+        `${mapped.personLabel} was mapped to an existing member who already has this season's membership coverage; the existing coverage was kept and no new subscription charge was raised.`
+      );
+    }
+  }
 
   // Subscription billing is deliberately post-approval and non-blocking.
   // Complete configuration creates immutable charges and durable Xero work;

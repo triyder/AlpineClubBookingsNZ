@@ -608,6 +608,13 @@ function buildApplicantMapOutcome(args: {
       "This member will be promoted to a login account (a set-password email will be sent).",
     );
   }
+  // Informational (never blocking): the applicant target is someone's
+  // dependent record. Mapping/promotion does not touch parentMemberId.
+  if (target.parentMemberId != null) {
+    notes.push(
+      "This member is linked as a dependent of another member; the mapping keeps that parent link.",
+    );
+  }
   if (skipSeasonalAssignment) {
     notes.push(
       "Keeps existing season membership coverage; no new subscription charge will be raised.",
@@ -952,6 +959,17 @@ export async function buildApprovalMappingPreview(params: {
   });
   if (!application) {
     return jsonResult({ error: "Application not found" }, { status: 404 });
+  }
+  // Mirror approveMemberApplication: only a pending-admin application can be
+  // previewed for approval — anything else already left the review queue.
+  if (application.status !== ApplicationStatus.PENDING_ADMIN) {
+    return jsonResult(
+      {
+        error:
+          "Only applications pending admin review can be previewed for approval",
+      },
+      { status: 409 },
+    );
   }
   if (!application.applicantDateOfBirth) {
     return jsonResult(
