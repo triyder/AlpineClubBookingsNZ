@@ -41,6 +41,34 @@ export function ViewOnlyActionButton({
   );
 }
 
+/**
+ * Message shown when a save is rejected with 403 — the defense-in-depth case
+ * behind the UI gating (#1927): a stale tab that still shows live editors
+ * because the actor's permissions were narrowed after the page loaded.
+ */
+export const ADMIN_FORBIDDEN_SAVE_REASON =
+  "This change was not saved: your admin role can view this area but cannot make changes. Refresh the page to see the latest permissions.";
+
+export function AdminForbiddenSaveNotice({
+  className,
+  children = ADMIN_FORBIDDEN_SAVE_REASON,
+}: {
+  className?: string;
+  children?: ReactNode;
+}) {
+  return (
+    <p
+      role="alert"
+      className={cn(
+        "rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800",
+        className,
+      )}
+    >
+      {children}
+    </p>
+  );
+}
+
 export function AdminViewOnlyNotice({
   className,
   children = ADMIN_VIEW_ONLY_ACTION_REASON,

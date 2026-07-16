@@ -34,7 +34,9 @@ async function collectDirs(absDir: string, relBase: string): Promise<string[]> {
 
 // GET /api/admin/image-manager/directories – list all directories
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   await ensureImagesRootForRead();
@@ -44,7 +46,9 @@ export async function GET() {
 
 // POST /api/admin/image-manager/directories – create a new directory
 export async function POST(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: unknown;
@@ -129,7 +133,9 @@ export async function POST(request: NextRequest) {
 
 // PATCH /api/admin/image-manager/directories – rename a directory
 export async function PATCH(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: unknown;
@@ -196,7 +202,9 @@ export async function PATCH(request: NextRequest) {
 
 // DELETE /api/admin/image-manager/directories – delete a directory and its contents
 export async function DELETE(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: unknown;

@@ -15,6 +15,12 @@ import {
   WysiwygEditor,
   type WysiwygEditorHandle,
 } from "@/components/admin/page-content-panel";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminForbiddenSaveNotice,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 // Mirrors SITE_CONTENT_KEYS (src/lib/page-content.ts) and
 // SITE_CONTENT_LABELS (src/lib/site-content.ts, server-only).
@@ -61,8 +67,12 @@ function formatUpdatedAt(value: string | null): string {
 }
 
 export function SiteContentPanel() {
+  const canEdit = useAdminAreaEditAccess("content");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Defense-in-depth: a 403 from a stale tab (editors still shown) surfaces a
+  // visible, persistent error rather than only an ephemeral toast (#1927).
+  const [forbidden, setForbidden] = useState(false);
   const [drafts, setDrafts] = useState<Record<SectionKey, string>>({
     FOOTER_BLURB: "",
     FOOTER_QUICK_LINKS: "",
@@ -125,6 +135,7 @@ export function SiteContentPanel() {
   async function saveDocument(key: SectionKey, title: string) {
     const contentHtml = editorRefs.current[key]?.getHtml() ?? drafts[key];
     setSavingKey(key);
+    setForbidden(false);
     try {
       const res = await fetch("/api/admin/site-content", {
         method: "PUT",
@@ -133,6 +144,9 @@ export function SiteContentPanel() {
         body: JSON.stringify({ key, contentHtml }),
       });
       if (!res.ok) {
+        if (res.status === 403) {
+          setForbidden(true);
+        }
         const body = await res.json().catch(() => null);
         toast.error(body?.error ?? `Failed to save ${title}`);
         return;
@@ -165,6 +179,13 @@ export function SiteContentPanel() {
 
   return (
     <div className="space-y-6">
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view site content but cannot change it. The
+          editors below are read-only.
+        </AdminViewOnlyNotice>
+      ) : null}
+      {forbidden ? <AdminForbiddenSaveNotice /> : null}
       {SECTIONS.map((section) => (
         <Card key={section.key}>
           <CardHeader>
@@ -187,9 +208,11 @@ export function SiteContentPanel() {
               }
               placeholder={`Write the ${section.title.toLowerCase()} content...`}
               tokenHelpContext="site-footer"
+              readOnly={!canEdit}
             />
             <div className="flex justify-end">
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 type="button"
                 onClick={() => saveDocument(section.key, section.title)}
                 disabled={savingKey !== null}
@@ -198,7 +221,7 @@ export function SiteContentPanel() {
                 {savingKey === section.key
                   ? "Saving..."
                   : `Save ${section.title}`}
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           </CardContent>
         </Card>
