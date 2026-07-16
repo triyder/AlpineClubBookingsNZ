@@ -158,7 +158,7 @@ export async function createXeroEntranceFeeInvoice(
   const { category, feeMapping } = entranceFee;
   const queuedOperationId = options?.syncOperationId ?? null;
 
-  // Organisations/schools are exempt from entrance fees (owner decision,
+  // Organisations/schools are exempt from joining fees (owner decision,
   // 2026-07-07). The fresh tier read also covers replayed operations that
   // were queued (with a precomputed context or amount override) before the
   // member was reclassified as an organisation.
