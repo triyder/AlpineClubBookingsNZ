@@ -4,6 +4,16 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {},
 }));
 
+// Best-effort Xero contact-group trigger (E8, #1934): mocked so we can assert
+// it fires only for current-season changes and actually-copied candidates.
+const mockTriggerGroupSync = vi.fn();
+vi.mock("@/lib/xero-contact-groups", () => ({
+  triggerMemberXeroContactGroupSync: (...args: unknown[]) =>
+    mockTriggerGroupSync(...args),
+}));
+
+import { getSeasonYear } from "@/lib/utils";
+
 import {
   getSeasonalMembershipChangePreview,
   rollForwardSeasonalMembershipAssignments,
@@ -390,6 +400,8 @@ describe("seasonal membership assignment preview and save", () => {
         },
       }),
     );
+    // seasonYear 2026 is not necessarily the CURRENT season when this test
+    // runs; the dedicated trigger tests below pin current vs future.
     expect(db.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -416,6 +428,46 @@ describe("seasonal membership assignment preview and save", () => {
         }),
       }),
     );
+  });
+
+  it("fires the Xero contact-group trigger only for current-season saves", async () => {
+    const currentSeason = getSeasonYear();
+
+    async function saveForSeason(seasonYear: number) {
+      const db = makePreviewDb();
+      const previewResult = await getSeasonalMembershipChangePreview({
+        memberId: "member-1",
+        seasonYear,
+        membershipTypeId: "type-associate",
+        db: db as never,
+      });
+      const preview = (
+        previewResult.body as { preview: { previewToken: string } }
+      ).preview;
+      return saveSeasonalMembershipAssignment({
+        memberId: "member-1",
+        seasonYear,
+        membershipTypeId: "type-associate",
+        adminMemberId: "admin-1",
+        reason: "member changed category",
+        previewToken: preview.previewToken,
+        db: db as never,
+      });
+    }
+
+    // Future season: grouping resolves at "now", so no trigger.
+    const futureResult = await saveForSeason(currentSeason + 1);
+    expect(futureResult.init?.status).toBeUndefined();
+    expect(mockTriggerGroupSync).not.toHaveBeenCalled();
+
+    // Current season: the effective type may change now -> trigger fires.
+    const currentResult = await saveForSeason(currentSeason);
+    expect(currentResult.init?.status).toBeUndefined();
+    expect(mockTriggerGroupSync).toHaveBeenCalledTimes(1);
+    expect(mockTriggerGroupSync).toHaveBeenCalledWith("member-1", {
+      createdByMemberId: "admin-1",
+      reason: "seasonal_membership_assignment",
+    });
   });
 });
 
@@ -509,5 +561,81 @@ describe("seasonal membership assignment roll-forward", () => {
         }),
       }),
     );
+  });
+
+  it("does not fire the Xero contact-group trigger when rolling forward to a non-current season", async () => {
+    const db = makeRollForwardDb();
+
+    await rollForwardSeasonalMembershipAssignments({
+      // 2026 -> 2027 in the fixture; ensure 2027 is NOT the current season
+      // for this assertion to be meaningful.
+      fromSeasonYear: 2026,
+      toSeasonYear: 2027,
+      adminMemberId: "admin-1",
+      db: db as never,
+    });
+
+    expect(getSeasonYear()).not.toBe(2027);
+    expect(mockTriggerGroupSync).not.toHaveBeenCalled();
+  });
+
+  it("fires the trigger only for actually-copied candidates when rolling forward to the current season", async () => {
+    const currentSeason = getSeasonYear();
+    const priorSeason = currentSeason - 1;
+    const candidates = ["member-copy", "member-race"].map((memberId, index) => ({
+      id: `assignment-${memberId}`,
+      memberId,
+      seasonYear: priorSeason,
+      membershipTypeId: "type-full",
+      member: {
+        id: memberId,
+        firstName: `M${index}`,
+        lastName: "Member",
+        email: `${memberId}@example.test`,
+        active: true,
+        archivedAt: null,
+        cancelledAt: null,
+      },
+      membershipType: fullType,
+    }));
+
+    const db = {
+      seasonalMembershipAssignment: {
+        findMany: vi.fn().mockImplementation(async ({ where }: any) => {
+          if (where.seasonYear === priorSeason) return candidates;
+          if (where.memberId?.in) {
+            // Post-copy verification: member-race lost the createMany
+            // skipDuplicates race (a concurrent writer was rolled back), so
+            // only member-copy holds a current-season assignment now.
+            return [{ memberId: "member-copy" }];
+          }
+          // Target-season pre-read: nothing assigned yet.
+          return [];
+        }),
+        createMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      member: {
+        findMany: vi
+          .fn()
+          .mockResolvedValue(candidates.map((candidate) => candidate.member)),
+      },
+      auditLog: {
+        create: vi.fn().mockResolvedValue({}),
+      },
+      $transaction: vi.fn(async (callback: any) => callback(db)),
+    };
+
+    await rollForwardSeasonalMembershipAssignments({
+      fromSeasonYear: priorSeason,
+      toSeasonYear: currentSeason,
+      adminMemberId: "admin-1",
+      db: db as never,
+    });
+
+    expect(mockTriggerGroupSync).toHaveBeenCalledTimes(1);
+    expect(mockTriggerGroupSync).toHaveBeenCalledWith("member-copy", {
+      createdByMemberId: "admin-1",
+      reason: "seasonal_membership_roll_forward",
+    });
   });
 });

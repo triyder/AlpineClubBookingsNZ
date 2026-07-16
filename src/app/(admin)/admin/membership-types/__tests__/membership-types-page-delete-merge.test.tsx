@@ -191,7 +191,7 @@ describe("AdminMembershipTypesPage delete + merge", () => {
     );
   });
 
-  it("opens the merge dialog for a still-assigned custom type, warns on Xero diff, and posts the merge", async () => {
+  it("opens the merge dialog for a still-assigned custom type and posts the merge", async () => {
     await renderPage();
 
     fireEvent.click(screen.getByRole("button", { name: "Delete Social" }));
@@ -205,13 +205,10 @@ describe("AdminMembershipTypesPage delete + merge", () => {
     });
     expect(confirmButton.hasAttribute("disabled")).toBe(true);
 
-    // Pick a target with different Xero rules -> the warning appears.
+    // Choosing a target enables the merge.
     fireEvent.change(screen.getByRole("combobox"), {
       target: { value: "type-associate" },
     });
-    expect(screen.getByRole("alert").textContent).toContain(
-      "different Xero contact-group rules",
-    );
     expect(confirmButton.hasAttribute("disabled")).toBe(false);
 
     fireEvent.click(confirmButton);

@@ -618,15 +618,15 @@ Xero contact-group rules, and committee assignment are separate axes:
   page shows these as a compact ordered list; creating or editing a type opens
   a dedicated editor for identity fields, booking behavior (`MEMBER_RATE`,
   `NON_MEMBER_RATE`, `BLOCK_BOOKING`), subscription behavior (`REQUIRED`,
-  `NOT_REQUIRED`), allowed age tiers, and optional Xero contact-group rules.
-  Display names must be unique: creating or renaming a type to a
+  `NOT_REQUIRED`), and allowed age tiers. Xero contact-group rules are no longer
+  edited here — they live on the single **Xero member grouping** surface (see
+  below). Display names must be unique: creating or renaming a type to a
   case-insensitive exact match of an existing name is rejected.
 - `AgeTierSetting` remains separate because a member can be Adult Full, Adult
   Life, Adult Associate, Child Family, Youth School, and so on. Age tiers still
-  drive age-based rates and age-based default Xero grouping. Use Age Tier Xero
-  groups for broad age cohorts such as Adult or Youth, use Membership Type Xero
-  groups for status/policy groups such as Life or Associate, and use both when
-  Xero needs both labels.
+  drive age-based rates. Xero grouping by age tier is now configured on the
+  **Xero member grouping** surface (see below), not on the age-tier settings
+  page.
 - `SeasonalMembershipAssignment` records one membership type per member per
   membership `seasonYear`, including the assignment source (`ADMIN`, `IMPORT`,
   `FAMILY_SUBSCRIPTION`, `ROLL_FORWARD`, or `SYSTEM`) and an optional
@@ -646,6 +646,50 @@ Xero contact-group rules, and committee assignment are separate axes:
   inactive-type exceptions.
 - Committee assignment remains public/contact metadata and does not grant app
   access.
+
+## Xero member grouping
+
+How (or whether) members are auto-sorted into Xero contact groups is a single
+club-level setting, managed on the dedicated **Xero member grouping** admin
+surface (finance area). One mode plus one rule table replaces the old age-tier
+group fields and the membership-type Xero rules.
+
+- **Mode** (`XeroGroupingSettings` singleton):
+
+  | Mode | Behaviour |
+  |---|---|
+  | `None` | The sync is a total no-op. Existing Xero group memberships are left untouched — never added, never removed — including on the membership-cancellation path. |
+  | `Membership Type` | Only type-keyed rules apply. Tier-bearing rules are inert (shown but not applied). |
+  | `Membership Type + Age` | Most-specific `MANAGED` match wins: type+tier > type-only > tier-only. `ACCEPTED` groups are the union of matching accepted rules plus the matched managed group. |
+
+- **Rules** (`XeroContactGroupRule`): each rule is a (membership type?, age
+  tier?, `MANAGED`/`ACCEPTED`, group) tuple. `MANAGED` is the group the sync
+  adds; `ACCEPTED` is a group the sync tolerates and never removes. Duplicate
+  rule shapes are rejected. The effective membership type is resolved at the
+  current season year (the same resolver as pricing, but pricing resolves per
+  stay-night season and grouping resolves at "now").
+- **Managed universe / never delete:** the sync only ever adds/removes a
+  contact's membership of groups referenced by active rules. It **never deletes
+  a Xero contact group**, and never touches a group no active rule references.
+  A member already sitting in an accepted group is not given a spurious managed
+  add.
+- **No auto-resync:** changing the mode, or adding/editing/deactivating/deleting
+  a rule, never re-groups the existing population. Deleting a rule only shrinks
+  the managed universe — members already in that group are **not** removed by
+  the system. Members re-group on their next trigger (age-tier change,
+  current-season membership-type change, cron age-up) or via the explicit bulk
+  re-sync.
+- **Dry-run + bulk re-sync:** the surface shows a cache-based dry-run diff
+  (counts, per-member add/remove, an estimated Xero call budget, and members
+  skipped because they have no Xero contact) before any run. The bulk re-sync is
+  admin-triggered, chunked, resumable, and rate-limited; it never advances the
+  CONTACT delta-sync watermark. See
+  `docs/XERO_MEMBER_GROUPING_RUNBOOK.md` for the Tokoroa cutover procedure.
+- Existing age-configured installs migrate to `Membership Type + Age` with
+  tier-only rules, preserving behaviour identically (a correctly-grouped member
+  produces zero diff). The legacy `AgeTierSetting` Xero group columns and the
+  `AgeTierXeroAcceptedContactGroup` table are retained but no longer read
+  (dropped in the deferred E13).
 
 ## Committee Settings
 

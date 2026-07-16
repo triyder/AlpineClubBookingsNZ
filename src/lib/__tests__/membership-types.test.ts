@@ -8,7 +8,6 @@ import {
   defaultMembershipTypeKeyForRole,
   ensureBuiltInMembershipTypes,
   normalizeMembershipTypeKey,
-  normalizeMembershipTypeXeroRules,
   validateMembershipTypeRuleConfiguration,
 } from "@/lib/membership-types";
 import { ROLE_VALUES } from "@/lib/member-roles";
@@ -189,47 +188,13 @@ describe("built-in membership type seed helpers", () => {
     expect(normalizeMembershipTypeKey("")).toBe("CUSTOM");
   });
 
-  it("validates age-tier eligibility and Xero group rule conflicts", () => {
+  it("validates age-tier eligibility (Xero grouping moved to the grouping surface, #1934)", () => {
     expect(
-      validateMembershipTypeRuleConfiguration({
-        allowedAgeTiers: [],
-        xeroContactGroupRules: [],
-      }),
+      validateMembershipTypeRuleConfiguration({ allowedAgeTiers: [] }),
     ).toBe("Select at least one allowed age tier.");
 
-    const duplicateRules = normalizeMembershipTypeXeroRules([
-      { ageTier: "ADULT", mode: "ACCEPTED", groupId: "group-life" },
-      { ageTier: "ADULT", mode: "ACCEPTED", groupId: "group-life" },
-    ]);
     expect(
-      validateMembershipTypeRuleConfiguration({
-        allowedAgeTiers: ["ADULT"],
-        xeroContactGroupRules: duplicateRules,
-      }),
-    ).toBe("Duplicate Xero group rules are not allowed.");
-
-    const duplicateManagedScope = normalizeMembershipTypeXeroRules([
-      { ageTier: null, mode: "MANAGED", groupId: "group-full" },
-      { ageTier: null, mode: "MANAGED", groupId: "group-life" },
-    ]);
-    expect(
-      validateMembershipTypeRuleConfiguration({
-        allowedAgeTiers: ["ADULT"],
-        xeroContactGroupRules: duplicateManagedScope,
-      }),
-    ).toBe(
-      "Only one managed Xero group rule is allowed for each age-tier scope.",
-    );
-
-    const validRules = normalizeMembershipTypeXeroRules([
-      { ageTier: null, mode: "MANAGED", groupId: "group-members" },
-      { ageTier: "YOUTH", mode: "ACCEPTED", groupId: "group-youth" },
-    ]);
-    expect(
-      validateMembershipTypeRuleConfiguration({
-        allowedAgeTiers: ["YOUTH", "ADULT"],
-        xeroContactGroupRules: validRules,
-      }),
+      validateMembershipTypeRuleConfiguration({ allowedAgeTiers: ["YOUTH", "ADULT"] }),
     ).toBeNull();
   });
 });

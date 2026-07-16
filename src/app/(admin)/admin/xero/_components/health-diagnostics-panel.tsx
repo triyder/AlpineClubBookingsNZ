@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { AlertTriangle, CheckCircle2, Circle, Clock } from "lucide-react"
-import type { AgeTier } from "@prisma/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
@@ -401,7 +400,7 @@ function ContactGroupMismatchPanel({
     <SectionCard
       id="xero-section-contactGroupMismatches"
       title="Contact Group Mismatches"
-      description="Audit linked members against the managed Xero contact-group mapping configured in Age Group Settings."
+      description="Audit linked members against the active Xero member-grouping rules under the current mode."
       open={open}
       onToggle={(nextOpen) => onToggle("contactGroupMismatches", nextOpen)}
       actions={<Button variant="outline" size="sm" onClick={() => void onRefresh()} disabled={loading || resyncing} title="Re-fetches the flagged contacts from Xero, then recomputes this audit.">{resyncing ? "Re-syncing from Xero..." : loading ? "Loading..." : "Refresh"}</Button>}
@@ -414,16 +413,27 @@ function ContactGroupMismatchPanel({
           <div className="flex flex-col gap-3 rounded-lg border p-4 md:flex-row md:items-start md:justify-between">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold">Managed mapping status</h3>
+                <h3 className="text-sm font-semibold">Grouping status</h3>
+                <Badge variant="outline">{formatGroupingMode(data.mode)}</Badge>
                 {!data.cacheReady ? (
                   <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip>
-                ) : data.count > 0 ? (
-                  <ToneChip tone="warning" icon={AlertTriangle}>{data.count} mismatch{data.count === 1 ? "" : "es"}</ToneChip>
+                ) : data.mismatchCount > 0 ? (
+                  <ToneChip tone="warning" icon={AlertTriangle}>{data.mismatchCount} mismatch{data.mismatchCount === 1 ? "" : "es"}</ToneChip>
                 ) : (
-                  <ToneChip tone="success" icon={CheckCircle2}>{data.count} mismatch{data.count === 1 ? "" : "es"}</ToneChip>
+                  <ToneChip tone="success" icon={CheckCircle2}>{data.mismatchCount} mismatch{data.mismatchCount === 1 ? "" : "es"}</ToneChip>
                 )}
               </div>
-              <p className="text-sm text-muted-foreground">{formatConfiguredMappings(data.configuredMappings)}</p>
+              <p className="text-sm text-muted-foreground">
+                {data.mode === "NONE"
+                  ? "Grouping mode is None — the sync leaves existing Xero groups untouched."
+                  : `${data.activeRuleCount} active rule${data.activeRuleCount === 1 ? "" : "s"}. ${data.addCount} add${data.addCount === 1 ? "" : "s"} / ${data.removeCount} remove${data.removeCount === 1 ? "" : "s"} across ${data.membersConsidered} linked member${data.membersConsidered === 1 ? "" : "s"} (≈ ${data.estimatedXeroCalls} Xero call${data.estimatedXeroCalls === 1 ? "" : "s"} for a full re-sync).`}
+              </p>
+              {data.skippedNoContact.length > 0 ? (
+                <p className="text-xs text-muted-foreground">{data.skippedNoContact.length} member{data.skippedNoContact.length === 1 ? "" : "s"} without a Xero contact skipped.</p>
+              ) : null}
+              {data.informationalCount > 0 ? (
+                <p className="text-xs text-muted-foreground">{data.informationalCount} member{data.informationalCount === 1 ? "" : "s"} match no rule but sit in managed group{data.informationalCount === 1 ? "" : "s"} — information only, never re-synced automatically.</p>
+              ) : null}
               <p className="text-xs text-muted-foreground">
                 {data.cacheReady && data.lastRefreshedAt ? `Cache last refreshed ${new Date(data.lastRefreshedAt).toLocaleString("en-NZ")}.` : "The shared Xero contact-group cache has not been refreshed yet."}
               </p>
@@ -435,15 +445,15 @@ function ContactGroupMismatchPanel({
                 </p>
               ) : null}
             </div>
-            <Link href="/admin/age-tier-settings" className="text-sm text-primary hover:underline">Open Age Group Settings</Link>
+            <Link href="/admin/xero/member-grouping" className="text-sm text-primary hover:underline">Open Xero member grouping</Link>
           </div>
           {!data.cacheReady ? (
             <p className="text-sm text-muted-foreground">Refresh Xero contact groups before relying on this audit.</p>
           ) : data.mismatches.length === 0 ? (
-            <p className="text-sm text-success">No linked members are currently mismatched against the managed age-tier mappings.</p>
+            <p className="text-sm text-success">No linked members are currently mismatched against the active grouping rules.</p>
           ) : (
             <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">Showing {data.mismatches.length} of {data.count} mismatches.</p>
+              <p className="text-sm text-muted-foreground">Showing {data.mismatches.length} of {data.mismatchCount} mismatches.</p>
               {data.mismatches.map((mismatch) => (
                 <div key={mismatch.memberId} className="rounded-md border p-3">
                   <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
@@ -451,12 +461,12 @@ function ContactGroupMismatchPanel({
                       <div className="flex flex-wrap items-center gap-2">
                         <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)} className="text-sm font-medium text-primary hover:underline">{mismatch.memberName}</a>
                         <Badge variant="outline">{formatAgeTierName(mismatch.ageTier)}</Badge>
-                        {mismatch.missingExpectedGroup ? <ToneChip tone="danger" icon={AlertTriangle}>Missing accepted group</ToneChip> : null}
-                        {mismatch.unexpectedManagedGroups.length > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>{mismatch.unexpectedManagedGroups.length} extra managed group{mismatch.unexpectedManagedGroups.length === 1 ? "" : "s"}</ToneChip> : null}
+                        {mismatch.addGroupId ? <ToneChip tone="warning" icon={AlertTriangle}>Add {mismatch.managedGroup?.name ?? mismatch.addGroupId}</ToneChip> : null}
+                        {mismatch.removeGroupIds.length > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>{mismatch.removeGroupIds.length} to remove</ToneChip> : null}
                       </div>
                       <p className="text-sm text-muted-foreground">{mismatch.memberEmail}</p>
-                      <p className="text-xs text-muted-foreground">Accepted managed groups: {mismatch.acceptedGroups.length > 0 ? mismatch.acceptedGroups.map((group) => `${group.name ?? group.id}${group.isDefault ? " (default)" : ""}`).join(", ") : "None — N/A members don't belong in any managed age group"}</p>
-                      <p className="text-xs text-muted-foreground">Actual cached groups: {mismatch.actualGroups.length > 0 ? mismatch.actualGroups.map((group) => group.name).join(", ") : "None"}</p>
+                      <p className="text-xs text-muted-foreground">Would add: {mismatch.addGroupId ? (mismatch.managedGroup?.name ?? mismatch.addGroupId) : "nothing"}</p>
+                      <p className="text-xs text-muted-foreground">Would remove: {mismatch.removeGroupIds.length > 0 ? mismatch.removeGroupIds.join(", ") : "nothing"}</p>
                     </div>
                     <a href={`https://go.xero.com/app/contacts/contact/${mismatch.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline">Open in Xero</a>
                   </div>
@@ -576,13 +586,13 @@ function ContactLinkMismatchPanel({
   )
 }
 
-function formatConfiguredMappings(mappings: ContactGroupMismatchResponse["configuredMappings"]) {
-  if (mappings.length === 0) return "No age-tier to Xero contact-group mappings are configured yet."
-  const groups = mappings.reduce((acc, mapping) => {
-    const list = acc.get(mapping.tier) ?? []
-    list.push(`${mapping.groupName ?? mapping.groupId}${mapping.isDefault ? " (default)" : ""}`)
-    acc.set(mapping.tier, list)
-    return acc
-  }, new Map<AgeTier, string[]>())
-  return `Configured mappings: ${Array.from(groups).map(([tier, names]) => `${tier} -> ${names.join(", ")}`).join("; ")}`
+function formatGroupingMode(mode: ContactGroupMismatchResponse["mode"]) {
+  switch (mode) {
+    case "NONE":
+      return "Mode: None"
+    case "MEMBERSHIP_TYPE":
+      return "Mode: Membership Type"
+    case "MEMBERSHIP_TYPE_AND_AGE":
+      return "Mode: Membership Type + Age"
+  }
 }

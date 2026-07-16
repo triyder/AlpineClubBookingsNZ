@@ -219,6 +219,7 @@ const navSections: NavSection[] = [
       },
       { href: "/admin/reports", label: "Reports", icon: BarChart2 },
       { href: "/admin/xero", label: "Xero Sync", icon: RefreshCw },
+      { href: "/admin/xero/member-grouping", label: "Xero Member Grouping", icon: Users },
     ],
   },
   {

@@ -18,6 +18,8 @@ import {
   type StructuredAuditEvent,
 } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { getSeasonYear } from "@/lib/utils";
+import { triggerMemberXeroContactGroupSync } from "@/lib/xero-contact-groups";
 
 // test seam
 export const SEASONAL_MEMBERSHIP_ASSIGNMENT_CHANGED_ACTION =
@@ -621,6 +623,18 @@ export async function saveSeasonalMembershipAssignment(params: {
     return saved;
   });
 
+  // Best-effort Xero contact-group re-sync on a membership-type change (E8,
+  // #1934). Grouping resolves at the CURRENT season year, so only a change to
+  // the current season's assignment can alter a member's effective grouping —
+  // future-season edits are left for their own trigger/bulk run. Non-fatal,
+  // idempotent, and a no-op unless grouping is enabled.
+  if (params.seasonYear === getSeasonYear()) {
+    await triggerMemberXeroContactGroupSync(params.memberId, {
+      createdByMemberId: params.adminMemberId,
+      reason: "seasonal_membership_assignment",
+    });
+  }
+
   return jsonResult({
     assignment: serializeSeasonalMembershipAssignment(
       assignment as SeasonalAssignmentWithType,
@@ -765,6 +779,31 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
 
       return result.count;
     });
+
+    // Best-effort Xero contact-group re-sync (E8, #1934). Roll-forward usually
+    // targets a future season, which does not change any member's grouping at
+    // "now"; only fire when the target IS the current season. Sequential,
+    // non-fatal, and each call is a no-op unless grouping is enabled. Fire
+    // only for candidates that actually hold a target-season assignment now —
+    // createMany(skipDuplicates) may have skipped rows created concurrently
+    // since the pre-read, and those members' grouping did not change here.
+    if (copiedCount > 0 && params.toSeasonYear === getSeasonYear()) {
+      const copiedRows = await db.seasonalMembershipAssignment.findMany({
+        where: {
+          seasonYear: params.toSeasonYear,
+          memberId: { in: copyCandidates.map((candidate) => candidate.memberId) },
+        },
+        select: { memberId: true },
+      });
+      const copiedMemberIds = new Set(copiedRows.map((row) => row.memberId));
+      for (const assignment of copyCandidates) {
+        if (!copiedMemberIds.has(assignment.memberId)) continue;
+        await triggerMemberXeroContactGroupSync(assignment.memberId, {
+          createdByMemberId: params.adminMemberId,
+          reason: "seasonal_membership_roll_forward",
+        });
+      }
+    }
   }
 
   return jsonResult({

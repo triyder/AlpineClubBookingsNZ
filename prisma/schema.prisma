@@ -197,6 +197,18 @@ enum XeroContactGroupRuleMode {
   ACCEPTED
 }
 
+// Club-level mode controlling how (or whether) members are auto-grouped into
+// Xero contact groups (E8, #1934). NONE: sync is a total no-op — existing Xero
+// groups are never added to or removed from. MEMBERSHIP_TYPE: only type-keyed
+// XeroContactGroupRule rows apply (tier-bearing rules are inert). Existing
+// age-configured installs (Tokoroa) migrate to MEMBERSHIP_TYPE_AND_AGE with
+// tier-only rules so behaviour is preserved identically.
+enum XeroMemberGroupingMode {
+  NONE
+  MEMBERSHIP_TYPE
+  MEMBERSHIP_TYPE_AND_AGE
+}
+
 enum SeasonType {
   WINTER
   SUMMER
@@ -1059,6 +1071,26 @@ model XeroContactGroupRule {
   @@index([ageTier])
   @@index([mode, isActive, sortOrder])
   @@index([groupId])
+  // Dedupe of identical rule shapes is enforced by a raw-SQL partial unique
+  // index (E8, #1934) — Prisma cannot express NULLS NOT DISTINCT, so the index
+  // lives in the migration and is recorded in prisma/partial-unique-indexes.tsv:
+  //   XeroContactGroupRule_shape_unique on
+  //   (membershipTypeId, ageTier, mode, groupId) NULLS NOT DISTINCT.
+  // App-side rule CRUD enforces the same dedupe for friendly errors.
+}
+
+// Single-row ("default") club setting selecting the Xero member-grouping mode
+// (E8, #1934). Governs syncManagedXeroContactGroupForMember and the
+// cancellation-path managed universe. Backfilled to MEMBERSHIP_TYPE_AND_AGE for
+// installs that had any age-tier Xero group config (Tokoroa), otherwise NONE.
+model XeroGroupingSettings {
+  id                String                 @id @default("default")
+  mode              XeroMemberGroupingMode @default(NONE)
+  updatedByMemberId String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  @@index([updatedByMemberId])
 }
 
 model SeasonalMembershipAssignment {

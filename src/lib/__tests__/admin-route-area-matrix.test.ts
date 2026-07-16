@@ -319,6 +319,10 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/item-code-mappings": "finance",
   "/api/admin/xero/items": "finance",
   "/api/admin/xero/link-maintenance": "finance",
+  // E8 (#1934): member-grouping mode/rules/dry-run/bulk-resync — finance, like
+  // every other /api/admin/xero surface (the route guard itself narrows the
+  // POST to finance:view with per-action finance:edit checks).
+  "/api/admin/xero/member-grouping": "finance",
   "/api/admin/xero/missing-invoices": "finance",
   "/api/admin/xero/operations": "finance",
   "/api/admin/xero/operations/[id]/mark-non-replayable": "finance",

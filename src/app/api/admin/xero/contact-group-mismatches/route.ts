@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
-import { getXeroContactGroupMismatchSnapshot } from "@/lib/age-tier-xero-groups";
+import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
 import {
   resyncXeroContactCachesByIds,
   XeroResyncUnavailableError,
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const snapshot = await getXeroContactGroupMismatchSnapshot(parsed.data);
+    const snapshot = await getXeroMemberGroupingSnapshot(parsed.data);
     return NextResponse.json(snapshot);
   } catch (error) {
     logger.error({ err: error }, "Failed to load Xero contact group mismatch snapshot");
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const before = await getXeroContactGroupMismatchSnapshot(parsed.data);
+    const before = await getXeroMemberGroupingSnapshot(parsed.data);
     if (!before.cacheReady) {
       return NextResponse.json(
         {
@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       before.mismatches.map((mismatch) => mismatch.xeroContactId),
       "adminXeroContactGroupMismatchResync"
     );
-    const snapshot = await getXeroContactGroupMismatchSnapshot(parsed.data);
+    const snapshot = await getXeroMemberGroupingSnapshot(parsed.data);
     return NextResponse.json({ ...snapshot, resync });
   } catch (error) {
     if (error instanceof XeroResyncUnavailableError) {
