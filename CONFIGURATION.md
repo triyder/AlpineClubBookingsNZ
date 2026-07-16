@@ -421,6 +421,7 @@ rule per document.
 Every one of these follows the single-lodge presentation rule: with only one
 active lodge, none of the selectors, columns, or lodge names appear, and the
 club behaves exactly as it does today.
+
 ## Book on Behalf
 
 Book on Behalf (`/admin/book`) lets a Booking Officer (anyone with the
@@ -447,7 +448,7 @@ system never silently attaches a booking to an existing contact by email,
 because several walk-in contacts can legitimately share one email. If the email
 belongs to a **real member who can sign in**, creation is blocked with a pointer
 to search for them in the member picker instead. (Duplicate non-member contacts
-that do accumulate over time are cleaned up with the member-merge tool.)
+that do accumulate over time are cleaned up with the member-merge tool (#1937).)
 
 **Walk-ins with no email.** Tick "No email address" for a phone/walk-in guest.
 The contact is stored with a club-internal placeholder address, and that owner
