@@ -1,28 +1,47 @@
 import type {
   PublicBookingPolicy,
   PublicCancellationPolicy,
-  PublicEntranceFee,
-  PublicHutFeeLodge,
-  PublicMembershipType,
+  PublicFeeGroup,
 } from "@/lib/public-page-content-tokens";
 
 function EmptyToken() {
   return <p className="text-brand-deep/70">No public information is currently available.</p>;
 }
 
-export function MembershipTypesToken({ items }: { items: PublicMembershipType[] }) {
-  if (items.length === 0) return <EmptyToken />;
-  return <div className="grid gap-5 md:grid-cols-2">{items.map((item) => <article key={item.name} className="rounded-lg border border-brand-mist p-5"><h2>{item.name}</h2>{item.description && <p>{item.description}</p>}{item.annualFee ? <p><strong>{item.annualFee.label}</strong> annually{item.billingLabel ? ` (${item.billingLabel.toLowerCase()})` : ""}</p> : item.billingLabel ? <p>{item.billingLabel}</p> : null}</article>)}</div>;
-}
-
-export function EntranceFeesToken({ items }: { items: PublicEntranceFee[] }) {
-  if (items.length === 0) return <EmptyToken />;
-  return <dl className="grid gap-3 sm:grid-cols-2">{items.map((item) => <div key={item.category} className="flex justify-between rounded-lg border border-brand-mist p-4"><dt>{item.category}</dt><dd className="font-semibold tabular-nums">{item.fee.label}</dd></div>)}</dl>;
-}
-
-export function HutFeesToken({ lodges }: { lodges: PublicHutFeeLodge[] }) {
-  if (lodges.length === 0) return <EmptyToken />;
-  return <div className="space-y-8">{lodges.map((lodge) => <section key={lodge.slug}><h2>{lodge.name}</h2>{lodge.seasons.length === 0 ? <EmptyToken /> : lodge.seasons.map((season) => <article key={`${season.name}-${season.dateRange}`} className="mb-5 rounded-lg border border-brand-mist p-5"><h3>{season.name}</h3><p>{season.dateRange}</p><dl>{season.rates.map((rate) => <div key={`${rate.ageTier}-${rate.audience}`} className="flex justify-between gap-4 border-t border-brand-mist py-2"><dt>{rate.ageTier} — {rate.audience}</dt><dd className="font-semibold tabular-nums">{rate.fee.label} per night</dd></div>)}</dl></article>)}</section>)}</div>;
+/**
+ * The single grouped-table renderer for all three fee embeds — hut fees,
+ * joining fees, and annual fees (#1933, E7). Each group is a titled block; rows
+ * carry a label, an optional audience qualifier, and the amount. It makes no
+ * assumption about its position on the page: it renders standalone and can be
+ * repeated. Empty (or all-empty) groups collapse to the shared empty state so
+ * an unknown/unlisted parameter never leaks another group's data.
+ */
+export function FeeGroupsToken({ groups }: { groups: PublicFeeGroup[] }) {
+  const populated = groups.filter((group) => group.rows.length > 0);
+  if (populated.length === 0) return <EmptyToken />;
+  return (
+    <div className="space-y-6">
+      {populated.map((group, groupIndex) => (
+        <section key={`${group.heading}-${groupIndex}`}>
+          <h3>{group.heading}</h3>
+          <dl className="mt-2">
+            {group.rows.map((row, rowIndex) => (
+              <div
+                key={`${row.label}-${row.audience ?? ""}-${rowIndex}`}
+                className="flex justify-between gap-4 border-t border-brand-mist py-2"
+              >
+                <dt>
+                  {row.label}
+                  {row.audience ? <span className="text-brand-deep/70"> — {row.audience}</span> : null}
+                </dt>
+                <dd className="font-semibold tabular-nums">{row.fee.label}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ))}
+    </div>
+  );
 }
 
 export function BookingPolicyToken({ policy }: { policy: PublicBookingPolicy | null }) {

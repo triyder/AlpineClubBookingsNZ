@@ -59,9 +59,12 @@ describe("token catalogue contents", () => {
       "skifield-whakapapa",
       "photo-gallery",
       "photo-slideshow",
-      "membership-types",
-      "entrance-fees",
       "hut-fees",
+      "joining-fees",
+      "annual-fees",
+      // Deprecated aliases (#1933, E7): render identically to their new names.
+      "entrance-fees",
+      "membership-types",
       "booking-policy-summary",
       "cancellation-policy",
     ]);
