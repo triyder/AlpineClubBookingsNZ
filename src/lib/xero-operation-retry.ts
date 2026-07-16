@@ -955,7 +955,7 @@ export async function retryXeroSyncOperation(
         createdByMemberId,
         repairExistingLink: true,
       });
-      return { message: "Retried Xero entrance fee invoice creation." };
+      return { message: "Retried Xero joining fee invoice creation." };
     }
 
     if (operation.localModel === "BookingModification") {

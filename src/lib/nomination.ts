@@ -1944,7 +1944,7 @@ export async function approveMemberApplication(
   // stay outside the transaction.
   if (entranceFeeDecision.action === "CREATE") {
     if (approved.entranceFeeQueueFailed) {
-      warnings.push("Entrance fee invoice could not be queued automatically");
+      warnings.push("Joining fee invoice could not be queued automatically");
     } else if (
       approved.entranceFeeQueue?.queueOperationId &&
       (await isXeroConnected())
@@ -1966,7 +1966,7 @@ export async function approveMemberApplication(
       entityId: approved.applicantMember.id,
       category: "xero",
       outcome: "success",
-      summary: "Entrance fee invoice skipped for approved application",
+      summary: "Joining fee invoice skipped for approved application",
       details: entranceFeeDecision.reason,
       metadata: {
         applicationId,

@@ -501,7 +501,7 @@ describe("retryXeroSyncOperation", () => {
     await expect(
       retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
-      message: "Retried Xero entrance fee invoice creation.",
+      message: "Retried Xero joining fee invoice creation.",
     });
 
     expect(mocks.createXeroEntranceFeeInvoice).toHaveBeenCalledWith("mem_123", {

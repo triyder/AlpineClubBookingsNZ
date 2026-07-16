@@ -973,14 +973,14 @@ describe("membership nomination workflow", () => {
     expect(result.warnings).toEqual([
       "Xero contact sync failed for member member-1",
       "1 membership subscription billing exception requires Finance review",
-      "Entrance fee invoice could not be queued automatically",
+      "Joining fee invoice could not be queued automatically",
       "The approval email could not be sent automatically",
     ]);
     expect(prisma.memberApplication.update).toHaveBeenCalledWith({
       where: { id: "app-warn" },
       data: {
         adminNotes:
-          "Committee approved\n\nPost-approval follow-up warnings:\n- Xero contact sync failed for member member-1\n- 1 membership subscription billing exception requires Finance review\n- Entrance fee invoice could not be queued automatically\n- The approval email could not be sent automatically",
+          "Committee approved\n\nPost-approval follow-up warnings:\n- Xero contact sync failed for member member-1\n- 1 membership subscription billing exception requires Finance review\n- Joining fee invoice could not be queued automatically\n- The approval email could not be sent automatically",
       },
     });
     expect(logAudit).toHaveBeenCalledWith(

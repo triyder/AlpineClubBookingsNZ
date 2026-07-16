@@ -218,7 +218,7 @@ export async function POST(
         entityId: id,
         category: "xero",
         outcome: "success",
-        summary: "Entrance fee invoice skipped",
+        summary: "Joining fee invoice skipped",
         details: entranceFeeSkipReason,
         metadata: {
           reason: entranceFeeSkipReason,
