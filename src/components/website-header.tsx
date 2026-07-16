@@ -6,8 +6,8 @@ import {
   WebsiteMobileMenu,
   type WebsiteNavLink,
 } from "@/components/website-mobile-menu";
-import { CLUB_NAME } from "@/config/club-identity";
 import { buildBookingLoginPath } from "@/lib/auth-redirect";
+import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { listWebsiteMenuPages } from "@/lib/page-content-html";
 
 interface WebsiteHeaderProps {
@@ -21,7 +21,11 @@ export async function WebsiteHeader({
   isAuthenticated,
   logoDataUrl,
 }: WebsiteHeaderProps) {
-  const dynamicPages = await listWebsiteMenuPages();
+  const [dynamicPages, clubIdentity] = await Promise.all([
+    listWebsiteMenuPages(),
+    getCachedClubIdentity(),
+  ]);
+  const clubName = clubIdentity.name;
   const dynamicNavLinks = dynamicPages.map((page) => ({
     href: page.path,
     label: page.menuTitle.trim(),
@@ -43,7 +47,7 @@ export async function WebsiteHeader({
           className="flex items-center gap-2 font-bold text-brand-snow transition-opacity hover:opacity-85"
         >
           <WebsiteLogo
-            label={CLUB_NAME}
+            label={clubName}
             logoDataUrl={logoDataUrl}
             className="max-h-10 max-w-40"
             textClassName="max-w-48 text-brand-snow"
@@ -96,7 +100,7 @@ export async function WebsiteHeader({
 
         <WebsiteMobileMenu
           isAuthenticated={isAuthenticated}
-          clubName={CLUB_NAME}
+          clubName={clubName}
           logoDataUrl={logoDataUrl}
           navLinks={navLinks}
           bookingsHref={bookingsHref}

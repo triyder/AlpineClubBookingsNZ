@@ -6,10 +6,10 @@ import { SiteBanners } from "@/components/site-banners";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { WebsiteHeader } from "@/components/website-header";
 import { WebsiteFooter } from "@/components/website-footer";
-import { clubIdentity } from "@/config/club-identity";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import {
+  getCachedClubIdentity,
   getCachedCurrentSiteBanners,
   getCachedDefaultLodgeCapacity,
   getCachedEffectiveModuleFlags,
@@ -21,7 +21,7 @@ export default async function PublicLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const [session, lodgeCapacity, siteBanners, modules, theme] =
+  const [session, lodgeCapacity, siteBanners, modules, theme, clubIdentity] =
     await Promise.all([
       auth(),
       // Default lodge: public-site identity copy (per-lodge figures come
@@ -30,6 +30,7 @@ export default async function PublicLayout({
       getCachedCurrentSiteBanners(),
       getCachedEffectiveModuleFlags(),
       getCachedWebsiteThemeRenderState(),
+      getCachedClubIdentity(),
     ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const requestHeaders = await headers();

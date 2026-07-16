@@ -6,6 +6,47 @@ import { prisma } from "@/lib/prisma";
 export const EMAIL_MESSAGE_SETTINGS_ID = "default";
 const FALLBACK_PUBLIC_URL = "http://localhost:3000";
 
+// STABLE SEARCH-REPLACE KEY INVARIANT (E3 #1929): email template FILE defaults
+// bake the config-derived lodge name as a literal search key, and
+// applyEmailMessageSettingsToSubject/Html replace `defaults.lodgeName` (this
+// same config value) with the live lodge name at send time. Both sides MUST
+// derive from clubConfig (never the DB), or the search key baked into a subject
+// would stop matching the default and the substitution would silently no-op.
+// The DB-first club/lodge identity flows through the REPLACEMENT value
+// (settings.clubName / settings.lodgeName), not through these keys. Email
+// subject builders (email/booking.ts, email/chores.ts, email/waitlist.ts,
+// cron-checkin-reminders.ts) import EMAIL_DEFAULT_LODGE_NAME as their key —
+// replacing the retired CLUB_LODGE_NAME export from config/club-identity.ts.
+export const EMAIL_DEFAULT_LODGE_NAME = `${clubConfig.name} Lodge`;
+
+/**
+ * Resolve ClubIdentitySettings.name defensively (E3 #1929). Used only as the
+ * middle rung of the email club-name precedence: EmailMessageSetting.clubName ->
+ * ClubIdentitySettings.name -> club.json. Returns null when the row/DB/delegate
+ * is unavailable so the config default stands in. Kept local (rather than
+ * importing the server-only club-identity-settings module) so this module's
+ * import graph is unchanged.
+ */
+async function loadClubIdentityName(): Promise<string | null> {
+  const delegate = (
+    prisma as unknown as {
+      clubIdentitySettings?: {
+        findUnique: (args: unknown) => Promise<{ name: string | null } | null>;
+      };
+    }
+  ).clubIdentitySettings;
+  if (!delegate) return null;
+  try {
+    const row = await delegate.findUnique({
+      where: { id: EMAIL_MESSAGE_SETTINGS_ID },
+      select: { name: true },
+    });
+    return trimOptional(row?.name);
+  } catch {
+    return null;
+  }
+}
+
 export interface EmailMessageSettings {
   clubName: string;
   bookingsName: string;
@@ -77,14 +118,22 @@ function getDefaultEmailMessageSettings(): EmailMessageSettings {
 
 export function normalizeEmailMessageSettings(
   persisted?: Partial<PersistedEmailMessageSettings> | null,
+  clubIdentityName?: string | null,
 ): EmailMessageSettings {
   const defaults = getDefaultEmailMessageSettings();
   // Lodge identity is no longer persisted here; it resolves from the Lodge table
   // via loadEmailMessageSettingsForLodge. Callers that need real lodge identity
   // go through the load functions; this normaliser returns config defaults for
   // the lodge fields.
+  // Club-name precedence (E3 #1929): an explicit EmailMessageSetting.clubName
+  // wins; else the DB-first ClubIdentitySettings.name; else the club.json
+  // default. `defaults.clubName` stays config-derived so it remains a stable
+  // search key (see EMAIL_DEFAULT_LODGE_NAME).
   return {
-    clubName: trimOptional(persisted?.clubName) ?? defaults.clubName,
+    clubName:
+      trimOptional(persisted?.clubName) ??
+      trimOptional(clubIdentityName) ??
+      defaults.clubName,
     bookingsName: trimOptional(persisted?.bookingsName) ?? defaults.bookingsName,
     lodgeName: defaults.lodgeName,
     emailFromName:
@@ -190,11 +239,12 @@ export async function loadEmailMessageSettingsForLodge(
   lodgeId: string | null | undefined,
 ): Promise<EmailMessageSettings> {
   // Independent lookups — run per outgoing email, so don't serialise them.
-  const [persisted, lodge] = await Promise.all([
+  const [persisted, lodge, clubIdentityName] = await Promise.all([
     loadPersistedEmailMessageSettings(),
     resolveLodgeIdentity(lodgeId),
+    loadClubIdentityName(),
   ]);
-  const base = normalizeEmailMessageSettings(persisted);
+  const base = normalizeEmailMessageSettings(persisted, clubIdentityName);
   const defaults = getDefaultEmailMessageSettings();
 
   if (!lodge) return base;

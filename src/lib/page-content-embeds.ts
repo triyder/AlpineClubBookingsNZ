@@ -7,12 +7,8 @@ import {
   imagePublicUrl,
   resolveInImagesRoot,
 } from "@/lib/image-storage";
-import {
-  CLUB_FACEBOOK_URL,
-  CLUB_HUT_LEADER_LABEL,
-  CLUB_NAME,
-  CLUB_PUBLIC_URL,
-} from "@/config/club-identity";
+import { CLUB_FACEBOOK_URL, CLUB_PUBLIC_URL } from "@/config/club-identity";
+import { getClubIdentity } from "@/lib/club-identity-settings";
 import { APP_CURRENCY } from "@/config/operational";
 import {
   getDefaultLodgeCapacity,
@@ -200,6 +196,10 @@ export async function resolveTextTokens(contentHtml: string): Promise<string> {
     );
   }
 
+  // DB-first club identity (E3 #1929): pre-resolve once (the replace callback is
+  // synchronous) so {{club-name}}/{{hut-leader}} render the admin-editable values.
+  const clubIdentity = await getClubIdentity();
+
   return contentHtml.replace(
     TEXT_TOKEN_REGEX,
     (_match, paramToken: string | undefined, parameter: string | undefined, plainToken: string | undefined) => {
@@ -212,11 +212,11 @@ export async function resolveTextTokens(contentHtml: string): Promise<string> {
           return escapeHtmlText(String(value ?? ""));
         }
         case "club-name":
-          return escapeHtmlText(CLUB_NAME);
+          return escapeHtmlText(clubIdentity.name);
         case "hut-leader":
-          return escapeHtmlText(CLUB_HUT_LEADER_LABEL);
+          return escapeHtmlText(clubIdentity.hutLeaderLabel);
         case "hut-leader-lower":
-          return escapeHtmlText(CLUB_HUT_LEADER_LABEL.toLowerCase());
+          return escapeHtmlText(clubIdentity.hutLeaderLabel.toLowerCase());
         case "currency":
           return escapeHtmlText(APP_CURRENCY);
         case "facebook-url":
