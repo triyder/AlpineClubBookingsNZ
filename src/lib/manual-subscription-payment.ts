@@ -15,10 +15,20 @@ import { prisma } from "@/lib/prisma";
  * note). A manually marked-paid member is then paid-up everywhere the app keys
  * off status === "PAID" (booking, nomination, member subscription status).
  *
+ * Semantics (#1944 owner decision): manual mark-paid exists for cash payments
+ * where NO Xero invoice exists. A subscription that carries a Xero invoice link
+ * must be settled in Xero (record the payment against the invoice), so
+ * direction "paid" is rejected with 409 when xeroInvoiceId is set, and a
+ * NOT_REQUIRED row has nothing to pay so it is rejected too.
+ *
  * Marking unpaid (reversal) is only permitted on a row this feature marked paid;
  * it restores the appropriate unpaid status — UNPAID when a Xero invoice link
  * still exists (the invoice is outstanding), NOT_INVOICED otherwise — and clears
  * the provenance columns.
+ *
+ * Both writes are status-fenced (conditional updateMany, 409 when no row
+ * matches) so two admins clicking concurrently — or a Xero sync landing between
+ * read and write — can never double-apply or clobber each other.
  */
 export class ManualSubscriptionPaymentError extends Error {
   status: number;
@@ -76,9 +86,35 @@ export async function applyManualSubscriptionPayment(input: {
           409,
         );
       }
+      // Owner-decided semantics (#1944): manual mark-paid is for cash payments
+      // where no Xero invoice exists. Once an invoice links, Xero owns the
+      // money state — recording the payment here would leave the invoice
+      // outstanding in Xero and the two systems permanently disagreeing.
+      if (subscription.xeroInvoiceId) {
+        throw new ManualSubscriptionPaymentError(
+          "This subscription has an outstanding Xero invoice — record the payment against the invoice in Xero instead.",
+          409,
+        );
+      }
+      // A NOT_REQUIRED row has nothing to pay, and marking it paid would lose
+      // the policy-derived status with no way to restore it on reversal.
+      if (subscription.status === "NOT_REQUIRED") {
+        throw new ManualSubscriptionPaymentError(
+          "This subscription is not required for this member — there is nothing to mark paid.",
+          409,
+        );
+      }
       const now = new Date();
-      const updated = await tx.memberSubscription.update({
-        where: { id: subscription.id },
+      // Status-fenced write: re-assert every guard inside the WHERE so a
+      // concurrent second click, manual mark-paid, or Xero sync between the
+      // read above and this write cannot double-apply or clobber (F4).
+      const fenced = await tx.memberSubscription.updateMany({
+        where: {
+          id: subscription.id,
+          status: { notIn: ["PAID", "NOT_REQUIRED"] },
+          xeroInvoiceId: null,
+          manuallyMarkedPaidAt: null,
+        },
         data: {
           status: "PAID",
           paidAt: now,
@@ -86,6 +122,15 @@ export async function applyManualSubscriptionPayment(input: {
           manuallyMarkedPaidByMemberId: input.actingMemberId,
           manualPaymentNote: note,
         },
+      });
+      if (fenced.count === 0) {
+        throw new ManualSubscriptionPaymentError(
+          "This subscription changed while you were marking it paid — refresh and try again.",
+          409,
+        );
+      }
+      const updated = await tx.memberSubscription.findUniqueOrThrow({
+        where: { id: subscription.id },
         select: { id: true, memberId: true, seasonYear: true, status: true },
       });
       await createAuditLog(
@@ -125,8 +170,14 @@ export async function applyManualSubscriptionPayment(input: {
     const restoredStatus: SubscriptionStatus = subscription.xeroInvoiceId
       ? "UNPAID"
       : "NOT_INVOICED";
-    const updated = await tx.memberSubscription.update({
-      where: { id: subscription.id },
+    // Status-fenced write (F4): only a row still carrying manual provenance can
+    // be reversed, so a concurrent reversal / Xero sync that already cleared it
+    // 409s instead of silently re-applying.
+    const fenced = await tx.memberSubscription.updateMany({
+      where: {
+        id: subscription.id,
+        manuallyMarkedPaidAt: { not: null },
+      },
       data: {
         status: restoredStatus,
         paidAt: null,
@@ -134,6 +185,15 @@ export async function applyManualSubscriptionPayment(input: {
         manuallyMarkedPaidByMemberId: null,
         manualPaymentNote: null,
       },
+    });
+    if (fenced.count === 0) {
+      throw new ManualSubscriptionPaymentError(
+        "This subscription changed while you were reversing the manual payment — refresh and try again.",
+        409,
+      );
+    }
+    const updated = await tx.memberSubscription.findUniqueOrThrow({
+      where: { id: subscription.id },
       select: { id: true, memberId: true, seasonYear: true, status: true },
     });
     await createAuditLog(
@@ -154,6 +214,7 @@ export async function applyManualSubscriptionPayment(input: {
           subscriptionId: subscription.id,
           memberId: subscription.memberId,
           seasonYear: subscription.seasonYear,
+          previousStatus: subscription.status,
           restoredStatus,
           hasXeroInvoiceLink: Boolean(subscription.xeroInvoiceId),
         },

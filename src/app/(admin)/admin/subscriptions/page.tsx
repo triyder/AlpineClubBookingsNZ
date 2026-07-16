@@ -241,7 +241,12 @@ export default function SubscriptionsPage() {
       if (!confirm(`Mark ${who}'s ${sub.seasonYear} subscription as paid (manual)? This records a payment made outside Xero and does not create an invoice.`)) {
         return;
       }
-      note = window.prompt("Optional note (e.g. cash, cheque #123). Leave blank to skip.")?.trim() || null;
+      // Cancelling the note prompt aborts the whole action (F6) — null means
+      // "Cancel", the empty string means "OK with no note". Truncate client-side
+      // to the API cap so a long note never surfaces as a generic 400.
+      const rawNote = window.prompt("Optional note (e.g. cash, cheque #123). Leave blank to skip.");
+      if (rawNote === null) return;
+      note = rawNote.trim().slice(0, 500) || null;
     } else if (!confirm(`Reverse the manual payment for ${who}? The subscription returns to its unpaid state.`)) {
       return;
     }
@@ -638,7 +643,12 @@ export default function SubscriptionsPage() {
                         <Undo2 className="h-4 w-4 mr-1" />
                         Mark as unpaid
                       </Button>
-                    ) : sub.status !== "PAID" ? (
+                    ) : sub.status !== "PAID" && sub.status !== "NOT_REQUIRED" && !sub.xeroInvoiceId ? (
+                      // Manual mark-paid is for cash payments where NO Xero
+                      // invoice exists (#1944 owner decision). A row with a Xero
+                      // invoice link must be settled against the invoice in
+                      // Xero, and a NOT_REQUIRED row has nothing to pay, so
+                      // neither offers the action.
                       <Button
                         variant="outline"
                         size="sm"
