@@ -37,7 +37,7 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `publicUrl`                                        | yes      | Canonical public origin with no trailing slash.                                                                  |
 | `emailFromName`                                    | yes      | Display name for outbound email sender headers.                                                                  |
 | `lodgeTravelNote`                                  | no       | Email reminder travel/location note.                                                                             |
-| `hutLeaderLabel`                                   | no       | User-facing label for the hut-leader role (e.g. `Lodge Leader`, `Warden`, `Duty Manager`). Defaults to `Hut Leader`. |
+| `hutLeaderLabel`                                   | no       | User-facing label for the hut-leader **role** (e.g. `Lodge Leader`, `Warden`, `Duty Manager`), rendered wherever `{{hut-leader}}` appears — it is the role name, never a specific person. Defaults to `Hut Leader`. Who currently holds the role is assigned separately under Admin > Hut Leaders. |
 | `socialLinks.facebook`                             | no       | Facebook URL used by public pages/footer. Must be an http(s) URL, like `publicUrl`.                              |
 | `beds[].id`                                        | yes      | Stable bed or lodge identifier.                                                                                  |
 | `beds[].name`                                      | yes      | User-facing bed/lodge name.                                                                                      |
@@ -191,8 +191,10 @@ menu.
   back to the default lodge), `{{hut-leader}}`, and `{{hut-leader-lower}}`, which
   are resolved server-side
   from the current club/runtime settings (`{{hut-leader}}` renders the
-  configured hut-leader label, default `Hut Leader`; `{{hut-leader-lower}}`
-  renders its lower-cased form for mid-sentence prose). The `dataHash`
+  configured hut-leader **role label**, default `Hut Leader` — the role name,
+  never a specific person; who holds the role is managed under Admin > Hut
+  Leaders. `{{hut-leader-lower}}` renders its lower-cased form for mid-sentence
+  prose). The `dataHash`
   parameter is the Snow.nz widget hash. Photo token `path` parameters are
   normalised relative to
   `public/images/` and load images from that shared image-manager storage tree:
@@ -557,6 +559,34 @@ variables. `/admin/setup` exposes:
 These settings are audited when saved. They do not call Xero on save; future
 approval processing must keep Xero writes outside long database transactions.
 
+## Member Deletion Requests Page
+
+`/admin/deletion-requests` surfaces two distinct member-deletion flows in one
+place:
+
+- **Member self-service requests** — a member asks for their own account to be
+  deleted (anonymised). Approval anonymises the account, cancels future
+  bookings, and deactivates login. Backed by the `DeletionRequest` model.
+- **Admin-initiated deletion requests** — an admin raises a permanent
+  hard-delete of a member record added in error (no meaningful booking,
+  financial, lodge, Xero, or audit history). Backed by
+  `MemberLifecycleActionRequest` with `action = DELETE`.
+
+Admin-initiated requests enforce **separation of duties**: a *different* admin
+must approve or reject the request. The requester sees the approve/reject
+buttons disabled with "A different admin must review this request"; the server
+review endpoint stays authoritative and returns 403 on self-review regardless
+of the UI. Both flows contribute to the sidebar's "Deletion Requests" attention
+badge (self-service `PENDING` + admin-initiated `REQUESTED`).
+
+The admin-initiated alert email (`admin-member-delete-requested`) deep-links to
+this review queue. It is currently delivered under the shared **Member
+requests** notification preference (`adminFamilyGroupRequest`), the same
+category as membership applications, family-group, cancellation, and archive
+requests — muting that category mutes all of them. A dedicated toggle for
+delete-request alerts would require a new `NotificationPreference` column and is
+deferred to a follow-up (this change is intentionally no-schema).
+
 ## Membership Type Settings
 
 Seasonal membership type settings are database-backed and managed from
@@ -581,21 +611,34 @@ Xero contact-group rules, and committee assignment are separate axes:
   club-created categories live in `MembershipType`. `financeAccessLevel`
   remains synchronized for compatibility/export visibility, but does not grant
   runtime finance access.
+- Access is resolved per area (Overview, Bookings, Membership, Finance, Lodge,
+  Content, Support & System) at one of three levels — none, view, or edit —
+  and multiple roles merge to the highest level per area. **View grants
+  read-only access; edit is required to change anything.** The admin screens
+  honour this in the UI as well as on the server: a **content:view** admin
+  (for example a Read-only Admin, whose roles merge to `content:view`) opens
+  the content editors — Page Content, Site Content, Site Banners, Site Style,
+  Image Manager, and Mountain Conditions — as **read-only**, with disabled
+  editors and a "view only" notice instead of a working Save button; only a
+  **content:edit** admin can save. Lodge Instructions gate the same way on the
+  **Lodge** area. The matching route handlers require `content` (or `lodge`)
+  `view` on reads and `edit` on writes, so a stale-tab save is rejected with a
+  visible error even if the editors were still on screen.
 - `MembershipType` stores admin-configurable seasonal categories and policy:
   Full, Associate (renameable, including Reserve naming), Life, School,
   Non-Member, Family, or club-created types. The `/admin/membership-types`
   page shows these as a compact ordered list; creating or editing a type opens
   a dedicated editor for identity fields, booking behavior (`MEMBER_RATE`,
   `NON_MEMBER_RATE`, `BLOCK_BOOKING`), subscription behavior (`REQUIRED`,
-  `NOT_REQUIRED`), allowed age tiers, and optional Xero contact-group rules.
-  Display names must be unique: creating or renaming a type to a
+  `NOT_REQUIRED`), and allowed age tiers. Xero contact-group rules are no longer
+  edited here — they live on the single **Xero member grouping** surface (see
+  below). Display names must be unique: creating or renaming a type to a
   case-insensitive exact match of an existing name is rejected.
 - `AgeTierSetting` remains separate because a member can be Adult Full, Adult
   Life, Adult Associate, Child Family, Youth School, and so on. Age tiers still
-  drive age-based rates and age-based default Xero grouping. Use Age Tier Xero
-  groups for broad age cohorts such as Adult or Youth, use Membership Type Xero
-  groups for status/policy groups such as Life or Associate, and use both when
-  Xero needs both labels.
+  drive age-based rates. Xero grouping by age tier is now configured on the
+  **Xero member grouping** surface (see below), not on the age-tier settings
+  page.
 - `SeasonalMembershipAssignment` records one membership type per member per
   membership `seasonYear`, including the assignment source (`ADMIN`, `IMPORT`,
   `FAMILY_SUBSCRIPTION`, `ROLL_FORWARD`, or `SYSTEM`) and an optional
@@ -615,6 +658,50 @@ Xero contact-group rules, and committee assignment are separate axes:
   inactive-type exceptions.
 - Committee assignment remains public/contact metadata and does not grant app
   access.
+
+## Xero member grouping
+
+How (or whether) members are auto-sorted into Xero contact groups is a single
+club-level setting, managed on the dedicated **Xero member grouping** admin
+surface (finance area). One mode plus one rule table replaces the old age-tier
+group fields and the membership-type Xero rules.
+
+- **Mode** (`XeroGroupingSettings` singleton):
+
+  | Mode | Behaviour |
+  |---|---|
+  | `None` | The sync is a total no-op. Existing Xero group memberships are left untouched — never added, never removed — including on the membership-cancellation path. |
+  | `Membership Type` | Only type-keyed rules apply. Tier-bearing rules are inert (shown but not applied). |
+  | `Membership Type + Age` | Most-specific `MANAGED` match wins: type+tier > type-only > tier-only. `ACCEPTED` groups are the union of matching accepted rules plus the matched managed group. |
+
+- **Rules** (`XeroContactGroupRule`): each rule is a (membership type?, age
+  tier?, `MANAGED`/`ACCEPTED`, group) tuple. `MANAGED` is the group the sync
+  adds; `ACCEPTED` is a group the sync tolerates and never removes. Duplicate
+  rule shapes are rejected. The effective membership type is resolved at the
+  current season year (the same resolver as pricing, but pricing resolves per
+  stay-night season and grouping resolves at "now").
+- **Managed universe / never delete:** the sync only ever adds/removes a
+  contact's membership of groups referenced by active rules. It **never deletes
+  a Xero contact group**, and never touches a group no active rule references.
+  A member already sitting in an accepted group is not given a spurious managed
+  add.
+- **No auto-resync:** changing the mode, or adding/editing/deactivating/deleting
+  a rule, never re-groups the existing population. Deleting a rule only shrinks
+  the managed universe — members already in that group are **not** removed by
+  the system. Members re-group on their next trigger (age-tier change,
+  current-season membership-type change, cron age-up) or via the explicit bulk
+  re-sync.
+- **Dry-run + bulk re-sync:** the surface shows a cache-based dry-run diff
+  (counts, per-member add/remove, an estimated Xero call budget, and members
+  skipped because they have no Xero contact) before any run. The bulk re-sync is
+  admin-triggered, chunked, resumable, and rate-limited; it never advances the
+  CONTACT delta-sync watermark. See
+  `docs/XERO_MEMBER_GROUPING_RUNBOOK.md` for the Tokoroa cutover procedure.
+- Existing age-configured installs migrate to `Membership Type + Age` with
+  tier-only rules, preserving behaviour identically (a correctly-grouped member
+  produces zero diff). The legacy `AgeTierSetting` Xero group columns and the
+  `AgeTierXeroAcceptedContactGroup` table are retained but no longer read
+  (dropped in the deferred E13).
 
 ## Committee Settings
 
@@ -670,7 +757,7 @@ subscription/Xero/payment history, or call external providers.
 
 ### Membership subscription billing
 
-Finance editors operate annual subscription billing from `/admin/subscriptions`.
+Finance editors operate Annual Membership Fee billing from `/admin/subscriptions`.
 The preview resolves the selected membership year's effective annual fee,
 explicit family recipient, billing basis, and proration rule without writing or
 calling Xero. The preview also requires an explicitly configured
@@ -865,16 +952,16 @@ invalid app, email, or recovery-code attempts lock the two-factor challenge for
 
 ## Finance dashboard
 
-### Membership and entrance fee authority
+### Membership and joining fee authority
 
-Annual membership and entrance amounts are database configuration, not
+Annual membership and joining fee amounts are database configuration, not
 environment variables or provider metadata. Membership editors own public
 descriptions/listing under `/admin/membership-types`; Finance editors own
 effective-dated amounts and family billing members under
 `/admin/fee-configuration`. Hut fees remain lodge season/rate configuration.
 See `docs/AUTHORITATIVE_FEES.md` for operator and compatibility rules.
 
-The `/admin/fee-configuration` page shows annual membership fees, entrance fees,
+The `/admin/fee-configuration` page shows annual membership fees, joining fees,
 and (only when `familyBillingMode` is `BILL_FAMILY_VIA_BILLING_MEMBER`) family
 billing members. Each section loads read-only. Use the section's Edit button to
 expose its form and per-row controls; changes are staged locally and only

@@ -24,7 +24,8 @@ function unauthorizedResponse() {
 
 const adminGuardOptions = {
   forbiddenResponse: unauthorizedResponse,
-};
+  permission: { area: "content", level: "view" },
+} as const;
 
 async function listImagesRecursively(
   baseDir: string,

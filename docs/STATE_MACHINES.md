@@ -917,6 +917,16 @@ archive/delete requested -> second-admin review -> approved/rejected
 delete approval -> eligibility re-check -> hard delete only when safe
 ```
 
+Surfacing (#1938): ARCHIVE requests are reviewed on
+`/admin/membership-cancellations`; DELETE requests are reviewed in the
+"Admin-initiated deletion requests" section of `/admin/deletion-requests`. Both
+badge the sidebar. The DELETE review enforces separation of duties — a
+different admin than the requester must approve/reject (server 403 on
+self-review); the queue disables the requester's own buttons to make the rule
+visible. The list API (`/api/admin/member-lifecycle-action-requests`) takes an
+`action` of `ARCHIVE` (default) or `DELETE` and maps the page-filter status
+`PENDING` onto the lifecycle `REQUESTED` state.
+
 To verify: financial blockers, future booking blockers, family cleanup, Xero
 group/archive behavior, and email visibility.
 

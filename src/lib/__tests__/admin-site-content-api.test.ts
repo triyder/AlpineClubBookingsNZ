@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import type { AdminAccessRequirement } from "@/lib/admin-permissions";
 
 vi.mock("server-only", () => ({}));
 
@@ -23,8 +24,10 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 vi.mock("@/lib/session-guards", () => ({
-  requireAdmin: async () =>
-    (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
+  requireAdmin: async (options?: unknown) =>
+    (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(
+      options as { permission?: AdminAccessRequirement | false },
+    ),
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
 
@@ -54,6 +57,16 @@ const memberSession = {
 };
 const adminSession = {
   user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
+};
+// Read-only Admin merges to content:view (roles merge max-per-area). This is
+// the LWTC role combo that could "edit" Site Contents on-screen while the API
+// silently 403'd — pinned here so the split can't regress (#1927).
+const contentViewerSession = {
+  user: {
+    id: "viewer-1",
+    role: "MEMBER",
+    accessRoles: [{ role: "ADMIN_READONLY" }],
+  },
 };
 
 function putRequest(body: unknown) {
@@ -98,6 +111,12 @@ describe("GET /api/admin/site-content", () => {
     const response = await GET();
     expect(response.status).toBe(403);
     expect(mocks.siteContentFindMany).not.toHaveBeenCalled();
+  });
+
+  it("allows a content:view-only admin to read (GET requires content:view)", async () => {
+    mocks.auth.mockResolvedValue(contentViewerSession);
+    const response = await GET();
+    expect(response.status).toBe(200);
   });
 
   it("returns all sections with starter fallbacks for missing rows", async () => {
@@ -157,6 +176,17 @@ describe("GET /api/admin/site-content", () => {
 describe("PUT /api/admin/site-content", () => {
   it("rejects non-admin members", async () => {
     mocks.auth.mockResolvedValue(memberSession);
+    const response = await PUT(
+      putRequest({ key: "FOOTER_BLURB", contentHtml: "<p>Hi</p>" }),
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.siteContentUpsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a content:view-only admin (PUT requires content:edit)", async () => {
+    // The gap #1927 closes: a Read-only Admin (content:view) hitting the
+    // mutating endpoint must 403, never persist.
+    mocks.auth.mockResolvedValue(contentViewerSession);
     const response = await PUT(
       putRequest({ key: "FOOTER_BLURB", contentHtml: "<p>Hi</p>" }),
     );

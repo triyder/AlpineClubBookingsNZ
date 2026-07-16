@@ -49,7 +49,9 @@ function toMediaImageSummary(image: {
 }
 
 export async function GET(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   const parsedQuery = listQuerySchema.safeParse({
@@ -83,7 +85,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
 

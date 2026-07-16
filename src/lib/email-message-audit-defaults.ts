@@ -96,7 +96,7 @@ export const EMAIL_AUDIT_DEFAULTS = {
   },
   "membership-application-approved": {
     "defaultSubject": "Your {{CLUB_NAME}} membership has been approved",
-    "defaultBody": "Membership Approved\n\nHi {{firstName}}, your {{CLUB_NAME}} membership application has been approved.\n\nYour account is ready. Use the button below to set your password and access the bookings system.\n\nSet Up My Account: {{BASE_URL}}/reset-password?token={{token}}\n\nCommittee note: {{adminNotes}} [only when adminNotes exists]\n\nYour entrance fee and any membership charges will be managed separately through the club's normal process.\n\nThis setup link expires in 7 days."
+    "defaultBody": "Membership Approved\n\nHi {{firstName}}, your {{CLUB_NAME}} membership application has been approved.\n\nYour account is ready. Use the button below to set your password and access the bookings system.\n\nSet Up My Account: {{BASE_URL}}/reset-password?token={{token}}\n\nCommittee note: {{adminNotes}} [only when adminNotes exists]\n\nYour joining fee and any membership charges will be managed separately through the club's normal process.\n\nThis setup link expires in 7 days."
   },
   "membership-application-rejected": {
     "defaultSubject": "Update on your {{CLUB_NAME}} membership application",

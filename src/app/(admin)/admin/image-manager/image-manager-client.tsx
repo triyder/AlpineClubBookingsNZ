@@ -24,6 +24,11 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminForbiddenSaveNotice,
+  AdminViewOnlyNotice,
+} from "@/components/admin/view-only-action";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,6 +75,8 @@ function dirDepth(rel: string): number {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function ImageManagerClient() {
+  const canEdit = useAdminAreaEditAccess("content");
+  const [forbidden, setForbidden] = useState(false);
   const [directories, setDirectories] = useState<string[]>([""]);
   const [selectedDir, setSelectedDir] = useState<string>("");
   const [images, setImages] = useState<ImageEntry[]>([]);
@@ -130,6 +137,7 @@ export function ImageManagerClient() {
       if (!fileArray.length) return;
 
       setUploading(true);
+      setForbidden(false);
       const formData = new FormData();
       formData.append("dir", selectedDir);
       for (const f of fileArray) {
@@ -148,6 +156,7 @@ export function ImageManagerClient() {
         // A non-ok response (e.g. storage volume missing/read-only) carries a
         // single { error } message rather than per-file results — surface it.
         if (!res.ok || !data.results) {
+          if (res.status === 403) setForbidden(true);
           throw new Error(data.error ?? "Upload failed");
         }
         const failed = data.results.filter((r) => !r.ok);
@@ -198,6 +207,7 @@ export function ImageManagerClient() {
     e.preventDefault();
     dragCounterRef.current = 0;
     setDragging(false);
+    if (!canEdit) return;
     const files = e.dataTransfer.files;
     if (files.length) uploadFiles(files);
   };
@@ -230,6 +240,7 @@ export function ImageManagerClient() {
   const handleDialogConfirm = async () => {
     if (!dialog) return;
     setDialogBusy(true);
+    setForbidden(false);
 
     try {
       if (dialog.kind === "create-dir") {
@@ -242,6 +253,7 @@ export function ImageManagerClient() {
           }),
         });
         if (!res.ok) {
+          if (res.status === 403) setForbidden(true);
           const d = (await res.json()) as { error?: string };
           throw new Error(d.error ?? "Failed to create directory");
         }
@@ -259,6 +271,7 @@ export function ImageManagerClient() {
           }),
         });
         if (!res.ok) {
+          if (res.status === 403) setForbidden(true);
           const d = (await res.json()) as { error?: string };
           throw new Error(d.error ?? "Failed to rename directory");
         }
@@ -280,6 +293,7 @@ export function ImageManagerClient() {
           body: JSON.stringify({ path: dialog.path }),
         });
         if (!res.ok) {
+          if (res.status === 403) setForbidden(true);
           const d = (await res.json()) as { error?: string };
           throw new Error(d.error ?? "Failed to delete directory");
         }
@@ -300,6 +314,7 @@ export function ImageManagerClient() {
           body: JSON.stringify({ dir: dialog.dir, filename: dialog.filename }),
         });
         if (!res.ok) {
+          if (res.status === 403) setForbidden(true);
           const d = (await res.json()) as { error?: string };
           throw new Error(d.error ?? "Failed to delete image");
         }
@@ -331,6 +346,14 @@ export function ImageManagerClient() {
         </p>
       </div>
 
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view images but cannot upload, delete, or change
+          folders.
+        </AdminViewOnlyNotice>
+      ) : null}
+      {forbidden ? <AdminForbiddenSaveNotice /> : null}
+
       {/* Current directory breadcrumb */}
       <div className="flex items-center gap-1 text-sm text-slate-600">
         <span className="font-medium text-slate-400">Saving to:</span>
@@ -352,16 +375,18 @@ export function ImageManagerClient() {
             <CardTitle className="text-sm font-semibold text-slate-700">
               Directories
             </CardTitle>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 gap-1 text-xs"
-              onClick={openCreateDir}
-              title="New folder in current directory"
-            >
-              <FolderPlus className="h-3.5 w-3.5" />
-              New
-            </Button>
+            {canEdit ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 gap-1 text-xs"
+                onClick={openCreateDir}
+                title="New folder in current directory"
+              >
+                <FolderPlus className="h-3.5 w-3.5" />
+                New
+              </Button>
+            ) : null}
           </CardHeader>
           <CardContent className="px-1 pb-3">
             <ul className="space-y-0.5">
@@ -386,7 +411,7 @@ export function ImageManagerClient() {
                         <Folder className="h-4 w-4 shrink-0 text-slate-400 group-hover:text-amber-400" />
                       )}
                       <span className="flex-1 truncate">{dirLabel(dir)}</span>
-                      {dir && (
+                      {dir && canEdit && (
                         <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100">
                           <button
                             title="Rename"
@@ -424,22 +449,25 @@ export function ImageManagerClient() {
           <div
             role="button"
             tabIndex={0}
+            aria-disabled={!canEdit}
             className={cn(
               "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-10 text-center transition-colors",
               dragging
                 ? "border-blue-400 bg-blue-50 text-blue-700"
                 : "border-slate-200 bg-slate-50 text-slate-500 hover:border-slate-300 hover:bg-slate-100",
-              uploading && "pointer-events-none opacity-60",
+              (uploading || !canEdit) && "pointer-events-none opacity-60",
             )}
             onDragEnter={handleDragEnter}
             onDragLeave={handleDragLeave}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
-            onClick={() => !uploading && fileInputRef.current?.click()}
+            onClick={() =>
+              canEdit && !uploading && fileInputRef.current?.click()
+            }
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                if (!uploading) fileInputRef.current?.click();
+                if (canEdit && !uploading) fileInputRef.current?.click();
               }
             }}
           >
@@ -449,7 +477,11 @@ export function ImageManagerClient() {
                 dragging ? "text-blue-400" : "text-slate-400",
               )}
             />
-            {uploading ? (
+            {!canEdit ? (
+              <p className="text-sm font-medium">
+                Uploading is disabled for your role.
+              </p>
+            ) : uploading ? (
               <p className="text-sm font-medium">Uploading…</p>
             ) : (
               <>
@@ -517,13 +549,15 @@ export function ImageManagerClient() {
                       loading="lazy"
                     />
                     {/* Delete overlay */}
-                    <button
-                      title={`Delete ${img.filename}`}
-                      className="absolute right-1.5 top-1.5 rounded-full bg-white/80 p-1 opacity-0 shadow-sm transition-opacity hover:bg-red-50 group-hover:opacity-100"
-                      onClick={() => openDeleteImage(img.filename)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                    </button>
+                    {canEdit ? (
+                      <button
+                        title={`Delete ${img.filename}`}
+                        className="absolute right-1.5 top-1.5 rounded-full bg-white/80 p-1 opacity-0 shadow-sm transition-opacity hover:bg-red-50 group-hover:opacity-100"
+                        onClick={() => openDeleteImage(img.filename)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                      </button>
+                    ) : null}
                   </div>
 
                   {/* File info */}

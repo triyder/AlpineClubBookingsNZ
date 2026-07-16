@@ -11,7 +11,7 @@ describe("buildXeroEntranceFeeInvoiceOptions", () => {
           amount: "",
           narration: "",
         }),
-      ).toThrow("Enter a reason for not raising the entrance fee invoice.");
+      ).toThrow("Enter a reason for not raising the joining fee invoice.");
     });
 
     it("rejects a whitespace-only skip reason", () => {
@@ -22,7 +22,7 @@ describe("buildXeroEntranceFeeInvoiceOptions", () => {
           amount: "",
           narration: "",
         }),
-      ).toThrow("Enter a reason for not raising the entrance fee invoice.");
+      ).toThrow("Enter a reason for not raising the joining fee invoice.");
     });
 
     it("returns a SKIP decision with the trimmed reason", () => {
@@ -86,7 +86,7 @@ describe("buildXeroEntranceFeeInvoiceOptions", () => {
           amount: "0",
           narration: "",
         }),
-      ).toThrow("Enter a valid entrance fee amount");
+      ).toThrow("Enter a valid joining fee amount");
     });
 
     it("rejects negative amounts", () => {
@@ -97,7 +97,7 @@ describe("buildXeroEntranceFeeInvoiceOptions", () => {
           amount: "-10",
           narration: "",
         }),
-      ).toThrow("Enter a valid entrance fee amount");
+      ).toThrow("Enter a valid joining fee amount");
     });
 
     it("rejects non-numeric amounts", () => {
@@ -108,7 +108,7 @@ describe("buildXeroEntranceFeeInvoiceOptions", () => {
           amount: "abc",
           narration: "",
         }),
-      ).toThrow("Enter a valid entrance fee amount");
+      ).toThrow("Enter a valid joining fee amount");
     });
 
     it("trims and includes narration when provided", () => {

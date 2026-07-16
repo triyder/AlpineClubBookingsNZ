@@ -2175,7 +2175,7 @@ export function membershipApplicationApprovedTemplate(
     ${paragraph("Your account is ready. Use the button below to set your password and access the bookings system.")}
     ${button("Set Up My Account", resetUrl)}
     ${notes}
-    ${paragraph("Your entrance fee and any membership charges will be managed separately through the club's normal process.")}
+    ${paragraph("Your joining fee and any membership charges will be managed separately through the club's normal process.")}
     ${muted("This setup link expires in " + String(MEMBER_SETUP_INVITE_TTL_DAYS) + " days.")}
   `);
 }

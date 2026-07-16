@@ -10,10 +10,8 @@ import {
   MEMBERSHIP_TYPE_BOOKING_BEHAVIORS,
   MEMBERSHIP_TYPE_AGE_TIERS,
   MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS,
-  MEMBERSHIP_TYPE_XERO_RULE_MODES,
   normalizeMembershipTypeAgeTiers,
   normalizeMembershipTypeText,
-  normalizeMembershipTypeXeroRules,
   replaceMembershipTypeRuleConfiguration,
   serializeMembershipType,
   validateMembershipTypeRuleConfiguration,
@@ -39,35 +37,12 @@ const membershipTypeSelect = {
     select: { ageTier: true },
     orderBy: { ageTier: "asc" },
   },
-  xeroContactGroupRules: {
-    select: {
-      id: true,
-      ageTier: true,
-      mode: true,
-      groupId: true,
-      groupName: true,
-      isActive: true,
-      sortOrder: true,
-    },
-    orderBy: [{ sortOrder: "asc" }, { groupName: "asc" }, { groupId: "asc" }],
-  },
   _count: { select: { assignments: true, annualFees: true } },
 } satisfies Prisma.MembershipTypeSelect;
 
 const paramsSchema = z.object({
   id: z.string().min(1),
 });
-
-const xeroRuleSchema = z
-  .object({
-    ageTier: z.enum(MEMBERSHIP_TYPE_AGE_TIERS).nullable().optional(),
-    mode: z.enum(MEMBERSHIP_TYPE_XERO_RULE_MODES),
-    groupId: z.string().trim().min(1).max(200),
-    groupName: z.string().trim().max(200).nullable().optional(),
-    isActive: z.boolean().optional(),
-    sortOrder: z.number().int().min(0).max(100000).optional(),
-  })
-  .strict();
 
 const patchSchema = z
   .object({
@@ -82,7 +57,6 @@ const patchSchema = z
     isActive: z.boolean().optional(),
     sortOrder: z.number().int().min(0).max(100000).optional(),
     allowedAgeTiers: z.array(z.enum(MEMBERSHIP_TYPE_AGE_TIERS)).optional(),
-    xeroContactGroupRules: z.array(xeroRuleSchema).optional(),
   })
   .strict();
 
@@ -214,22 +188,14 @@ export async function PATCH(
     parsed.data.allowedAgeTiers === undefined
       ? existing.allowedAgeTiers.map((item) => item.ageTier)
       : normalizeMembershipTypeAgeTiers(parsed.data.allowedAgeTiers);
-  const xeroContactGroupRules =
-    parsed.data.xeroContactGroupRules === undefined
-      ? normalizeMembershipTypeXeroRules(existing.xeroContactGroupRules)
-      : normalizeMembershipTypeXeroRules(parsed.data.xeroContactGroupRules);
   const configurationError = validateMembershipTypeRuleConfiguration({
     allowedAgeTiers,
-    xeroContactGroupRules,
   });
   if (configurationError) {
     return NextResponse.json({ error: configurationError }, { status: 400 });
   }
   const relationUpdates = {
     ...(parsed.data.allowedAgeTiers !== undefined ? { allowedAgeTiers } : {}),
-    ...(parsed.data.xeroContactGroupRules !== undefined
-      ? { xeroContactGroupRules }
-      : {}),
   };
 
   const auditAction = auditActionForUpdate(existing, parsed.data);
@@ -263,9 +229,6 @@ export async function PATCH(
             ...(data as Record<string, unknown>),
             ...(parsed.data.allowedAgeTiers !== undefined
               ? { allowedAgeTiers }
-              : {}),
-            ...(parsed.data.xeroContactGroupRules !== undefined
-              ? { xeroContactGroupRules }
               : {}),
           }),
           previousMembershipType: serializeMembershipType(existing),

@@ -71,6 +71,12 @@ import {
   tokensForContext,
   type TokenContextId,
 } from "@/lib/token-catalogue";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminForbiddenSaveNotice,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 function stripHtml(html: string): string {
   return html
@@ -199,6 +205,13 @@ export const WysiwygEditor = forwardRef<
      * available in this editor context (from the shared token catalogue).
      */
     tokenHelpContext?: TokenContextId;
+    /**
+     * Renders the editor as honestly read-only for view-only admins (#1927):
+     * the content area is not editable, the formatting toolbar is hidden, and
+     * the HTML fallback textarea is read-only. Viewing controls (HTML source
+     * toggle, token help) stay available.
+     */
+    readOnly?: boolean;
   }
 >(function WysiwygEditor(
   {
@@ -208,6 +221,7 @@ export const WysiwygEditor = forwardRef<
     editorClassName = "min-h-48",
     wrapperClassName,
     tokenHelpContext,
+    readOnly = false,
   },
   ref,
 ) {
@@ -777,12 +791,14 @@ export const WysiwygEditor = forwardRef<
       {confirmDialog}
       <div className="sticky top-0 z-30 rounded-md border border-slate-200 bg-slate-50/95 px-3 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-slate-50/90">
         <p className="text-sm text-slate-600">
-          {showHtmlFallback
-            ? "HTML editor mode is active."
-            : "Visual editor mode is active."}
+          {readOnly
+            ? "View only — your admin role cannot edit this content."
+            : showHtmlFallback
+              ? "HTML editor mode is active."
+              : "Visual editor mode is active."}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {!showHtmlFallback ? (
+          {!showHtmlFallback && !readOnly ? (
             <>
               <Button
                 size="sm"
@@ -1036,17 +1052,18 @@ export const WysiwygEditor = forwardRef<
           onChange={(event) => onChange(event.target.value)}
           className={`${editorClassName} font-mono text-sm`}
           placeholder={placeholder}
+          readOnly={readOnly}
         />
       ) : (
         <div
           ref={setEditorNode}
-          contentEditable
+          contentEditable={!readOnly}
           suppressContentEditableWarning
-          onKeyUp={captureSelection}
-          onMouseUp={captureSelection}
-          onBlur={captureSelection}
-          onInput={onInput}
-          onClick={handleEditorClick}
+          onKeyUp={readOnly ? undefined : captureSelection}
+          onMouseUp={readOnly ? undefined : captureSelection}
+          onBlur={readOnly ? undefined : captureSelection}
+          onInput={readOnly ? undefined : onInput}
+          onClick={readOnly ? undefined : handleEditorClick}
           className={`${editorClassName} overflow-y-auto rounded-md border border-slate-300 bg-white p-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-400 [&_a]:text-blue-700 [&_a]:underline [&_a]:decoration-blue-400 [&_b]:font-bold [&_blockquote]:my-3 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:italic [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_em]:italic [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-2xl [&_h2]:font-bold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-xl [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-slate-300 [&_i]:italic [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-100 [&_pre]:p-3 [&_pre]:font-mono [&_strong]:font-bold [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_u]:underline [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6`}
         />
       )}
@@ -1406,9 +1423,11 @@ export const WysiwygEditor = forwardRef<
 });
 
 export function PageContentPanel() {
+  const canEdit = useAdminAreaEditAccess("content");
   const [pages, setPages] = useState<EditablePageRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
   const [creating, setCreating] = useState(false);
   const [helpDialogOpen, setHelpDialogOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -1463,6 +1482,7 @@ export function PageContentPanel() {
 
   async function togglePublished(page: EditablePageRecord) {
     const nextPublished = !page.published;
+    setForbidden(false);
     try {
       const response = await fetch("/api/admin/page-content", {
         method: "PATCH",
@@ -1472,6 +1492,11 @@ export function PageContentPanel() {
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
+        // The page-content routes' custom forbiddenResponse replies 401
+        // ("Unauthorized") on permission denial, so treat 401 as forbidden
+        // too — only authenticated admins can reach this panel.
+        if (response.status === 403 || response.status === 401)
+          setForbidden(true);
         throw new Error(body?.error ?? "Failed to update page visibility");
       }
       setPages((current) =>
@@ -1518,6 +1543,7 @@ export function PageContentPanel() {
     setDraftHeaderText(currentHeaderText);
 
     setSaving(true);
+    setForbidden(false);
     try {
       const response = await fetch("/api/admin/page-content", {
         method: "PUT",
@@ -1537,6 +1563,11 @@ export function PageContentPanel() {
 
       const body = await response.json().catch(() => null);
       if (!response.ok) {
+        // The page-content routes' custom forbiddenResponse replies 401
+        // ("Unauthorized") on permission denial, so treat 401 as forbidden
+        // too — only authenticated admins can reach this panel.
+        if (response.status === 403 || response.status === 401)
+          setForbidden(true);
         throw new Error(body?.error ?? "Failed to save page content");
       }
 
@@ -1589,6 +1620,7 @@ export function PageContentPanel() {
     }
 
     setCreating(true);
+    setForbidden(false);
     try {
       const response = await fetch("/api/admin/page-content", {
         method: "POST",
@@ -1606,6 +1638,11 @@ export function PageContentPanel() {
 
       const body = await response.json().catch(() => null);
       if (!response.ok) {
+        // The page-content routes' custom forbiddenResponse replies 401
+        // ("Unauthorized") on permission denial, so treat 401 as forbidden
+        // too — only authenticated admins can reach this panel.
+        if (response.status === 403 || response.status === 401)
+          setForbidden(true);
         throw new Error(body?.error ?? "Failed to create page");
       }
 
@@ -1641,6 +1678,13 @@ export function PageContentPanel() {
 
   return (
     <>
+      {!canEdit ? (
+        <AdminViewOnlyNotice className="mb-4">
+          Your admin role can view page content but cannot change it. Pages open
+          read-only and no save control is available.
+        </AdminViewOnlyNotice>
+      ) : null}
+      {forbidden ? <AdminForbiddenSaveNotice className="mb-4" /> : null}
       <div className="mb-4 flex items-center justify-end gap-2">
         <Button
           type="button"
@@ -1652,10 +1696,14 @@ export function PageContentPanel() {
         >
           <CircleHelp className="h-4 w-4" />
         </Button>
-        <Button type="button" onClick={() => setAddDialogOpen(true)}>
+        <ViewOnlyActionButton
+          canEdit={canEdit}
+          type="button"
+          onClick={() => setAddDialogOpen(true)}
+        >
           <Plus className="h-4 w-4" />
           Add Page
-        </Button>
+        </ViewOnlyActionButton>
       </div>
 
       <Dialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen}>
@@ -1800,10 +1848,11 @@ export function PageContentPanel() {
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" onClick={() => openEditor(page)}>
                     <Edit3 className="h-4 w-4" />
-                    Edit {page.title}
+                    {canEdit ? "Edit" : "View"} {page.title}
                   </Button>
                   {canHide && (
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       type="button"
                       variant="outline"
                       onClick={() => togglePublished(page)}
@@ -1819,7 +1868,7 @@ export function PageContentPanel() {
                           Publish
                         </>
                       )}
-                    </Button>
+                    </ViewOnlyActionButton>
                   )}
                 </div>
               </CardContent>
@@ -1905,9 +1954,14 @@ export function PageContentPanel() {
               >
                 Cancel
               </Button>
-              <Button type="button" onClick={createPage} disabled={creating}>
+              <ViewOnlyActionButton
+                canEdit={canEdit}
+                type="button"
+                onClick={createPage}
+                disabled={creating}
+              >
                 {creating ? "Creating..." : "Create Page"}
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           </div>
         </DialogContent>
@@ -1945,9 +1999,9 @@ export function PageContentPanel() {
                       setDraftSlug(event.target.value.trim().toLowerCase())
                     }
                     placeholder="page-slug"
-                    readOnly={isSystemPageSlug(selectedPage.slug)}
+                    readOnly={isSystemPageSlug(selectedPage.slug) || !canEdit}
                     className={
-                      isSystemPageSlug(selectedPage.slug)
+                      isSystemPageSlug(selectedPage.slug) || !canEdit
                         ? "cursor-not-allowed bg-slate-100 opacity-70"
                         : ""
                     }
@@ -1971,9 +2025,9 @@ export function PageContentPanel() {
                       )
                     }
                     min={0}
-                    readOnly={isSystemPageSlug(selectedPage.slug)}
+                    readOnly={isSystemPageSlug(selectedPage.slug) || !canEdit}
                     className={
-                      isSystemPageSlug(selectedPage.slug)
+                      isSystemPageSlug(selectedPage.slug) || !canEdit
                         ? "cursor-not-allowed bg-slate-100 opacity-70"
                         : ""
                     }
@@ -1991,6 +2045,7 @@ export function PageContentPanel() {
                       value={draftCaption}
                       onChange={(event) => setDraftCaption(event.target.value)}
                       placeholder="A practical alpine club"
+                      readOnly={!canEdit}
                     />
                   </label>
                   <label className="space-y-1">
@@ -2003,6 +2058,7 @@ export function PageContentPanel() {
                         setDraftMenuTitle(event.target.value)
                       }
                       placeholder="About"
+                      readOnly={!canEdit}
                     />
                   </label>
                   <label className="space-y-1">
@@ -2013,6 +2069,7 @@ export function PageContentPanel() {
                       value={draftTitle}
                       onChange={(event) => setDraftTitle(event.target.value)}
                       placeholder="Page title"
+                      readOnly={!canEdit}
                     />
                   </label>
                 </div>
@@ -2027,6 +2084,7 @@ export function PageContentPanel() {
                     onChange={setDraftHeaderText}
                     placeholder="Short intro text shown under the title"
                     editorClassName="min-h-28"
+                    readOnly={!canEdit}
                   />
                 </div>
               </div>
@@ -2041,6 +2099,7 @@ export function PageContentPanel() {
                 placeholder="Enter page HTML here"
                 editorClassName="min-h-[320px]"
                 tokenHelpContext="page-content-body"
+                readOnly={!canEdit}
               />
 
               <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
@@ -2075,14 +2134,19 @@ export function PageContentPanel() {
                 >
                   Cancel
                 </Button>
-                <Button type="button" onClick={saveContent} disabled={saving}>
+                <ViewOnlyActionButton
+                  canEdit={canEdit}
+                  type="button"
+                  onClick={saveContent}
+                  disabled={saving}
+                >
                   {saving ? (
                     <FileText className="h-4 w-4 animate-pulse" />
                   ) : (
                     <Save className="h-4 w-4" />
                   )}
                   {saving ? "Saving..." : "Save"}
-                </Button>
+                </ViewOnlyActionButton>
               </div>
             </div>
           ) : null}

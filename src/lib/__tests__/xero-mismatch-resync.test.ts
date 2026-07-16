@@ -42,8 +42,8 @@ vi.mock("@/lib/session-guards", () => ({
 }));
 
 const mockGroupSnapshot = vi.fn();
-vi.mock("@/lib/age-tier-xero-groups", () => ({
-  getXeroContactGroupMismatchSnapshot: (...args: unknown[]) =>
+vi.mock("@/lib/xero-member-grouping-resync", () => ({
+  getXeroMemberGroupingSnapshot: (...args: unknown[]) =>
     mockGroupSnapshot(...args),
 }));
 
@@ -59,10 +59,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { prisma } from "@/lib/prisma";
 import { XeroDailyLimitError } from "@/lib/xero-api-client";
-import {
-  resyncXeroContactCachesByIds,
-  XeroResyncUnavailableError,
-} from "@/lib/xero-mismatch-resync";
+import { resyncXeroContactCachesByIds } from "@/lib/xero-mismatch-resync";
 import { POST as resyncGroupMismatches } from "@/app/api/admin/xero/contact-group-mismatches/route";
 import { POST as resyncLinkMismatches } from "@/app/api/admin/xero/contact-link-mismatches/route";
 
@@ -172,8 +169,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
       .mockResolvedValueOnce({
         cacheReady: true,
         lastRefreshedAt: "2026-07-01T00:00:00.000Z",
-        configuredMappings: [],
-        count: 1,
+        mismatchCount: 1,
         mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
       })
       // Recompute after the resync: the fix made inside Xero has landed in
@@ -181,8 +177,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
       .mockResolvedValueOnce({
         cacheReady: true,
         lastRefreshedAt: "2026-07-01T00:00:00.000Z",
-        configuredMappings: [],
-        count: 0,
+        mismatchCount: 0,
         mismatches: [],
       });
     mockFetchContactsByIds.mockResolvedValue([{ contactID: "xc-1" }]);
@@ -195,7 +190,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json.count).toBe(0);
+    expect(json.mismatchCount).toBe(0);
     expect(json.mismatches).toEqual([]);
     expect(json.resync).toMatchObject({
       requestedContacts: 1,
@@ -212,8 +207,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
     mockGroupSnapshot.mockResolvedValue({
       cacheReady: false,
       lastRefreshedAt: null,
-      configuredMappings: [],
-      count: 0,
+      mismatchCount: 0,
       mismatches: [],
     });
 
@@ -230,8 +224,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
     mockGroupSnapshot.mockResolvedValue({
       cacheReady: true,
       lastRefreshedAt: "2026-07-01T00:00:00.000Z",
-      configuredMappings: [],
-      count: 1,
+      mismatchCount: 1,
       mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
     });
     mockFetchContactsByIds.mockRejectedValue(new XeroDailyLimitError(3600));
@@ -248,8 +241,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
     mockGroupSnapshot.mockResolvedValue({
       cacheReady: true,
       lastRefreshedAt: "2026-07-01T00:00:00.000Z",
-      configuredMappings: [],
-      count: 1,
+      mismatchCount: 1,
       mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
     });
     mockIsXeroConnected.mockResolvedValue(false);

@@ -142,7 +142,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     <Card>
       {confirmDialog}
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><ReceiptText className="h-5 w-5" /> Annual subscription billing</CardTitle>
+        <CardTitle className="flex items-center gap-2"><ReceiptText className="h-5 w-5" /> Annual Membership Fee billing</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
@@ -174,7 +174,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
           </div>
           <p className="text-sm text-muted-foreground">
             {familyBillingMode === "BILL_FAMILY_VIA_BILLING_MEMBER"
-              ? "Each family is invoiced once, to the billing member nominated on Membership & Entrance Fees. Per-family fee schedules are allowed and families without an active billing member are flagged as exceptions."
+              ? "Each family is invoiced once, to the billing member nominated on Membership & Joining Fees. Per-family fee schedules are allowed and families without an active billing member are flagged as exceptions."
               : "Every member is invoiced directly. The family billing members card is hidden, no billing-member exceptions are raised, and per-family fee schedules are disabled."}
           </p>
         </div>

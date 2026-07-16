@@ -142,7 +142,7 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
   {
     token: "entrance-fees",
     kind: "embed",
-    description: "Lists the currently effective public entrance fees.",
+    description: "Lists the currently effective public joining fees.",
     example: "{{entrance-fees}}",
     allowsLegacySingleBrace: false,
     contexts: ["page-content-body"],
@@ -213,9 +213,11 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     token: "hut-leader",
     kind: "text",
     description:
-      "Replaced with the club's configured hut-leader label (default " +
-      '"Hut Leader") when the content renders. Use it for headings or ' +
-      "standalone references.",
+      "Inserts the club's configured hut-leader role label (default " +
+      '"Hut Leader"; some clubs set e.g. "Lodge Leader") when the content ' +
+      "renders. It is the role name only, never a specific person's name. " +
+      "Manage who currently holds the role under Admin > Hut Leaders. Use it " +
+      "for headings or standalone references.",
     example: "{{hut-leader}}",
     allowsLegacySingleBrace: false,
     contexts: ["page-content-body", "lodge-instructions"],
@@ -224,7 +226,8 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     token: "hut-leader-lower",
     kind: "text",
     description:
-      'Lower-cased form of the hut-leader label (default "hut leader"). ' +
+      'Lower-cased form of the configured hut-leader role label (default ' +
+      '"hut leader") — the role name, never a specific person\'s name. ' +
       "Use it mid-sentence so the configured label reads naturally in prose.",
     example: "{{hut-leader-lower}}",
     allowsLegacySingleBrace: false,

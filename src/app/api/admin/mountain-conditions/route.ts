@@ -73,7 +73,9 @@ async function getCurrentRecord() {
 }
 
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "view" },
+  });
   if (!guard.ok) {
     return guard.response;
   }
@@ -84,7 +86,9 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "edit" },
+  });
   if (!guard.ok) {
     return guard.response;
   }
@@ -148,7 +152,9 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function POST() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "edit" },
+  });
   if (!guard.ok) {
     return guard.response;
   }
@@ -190,7 +196,9 @@ export async function POST() {
 }
 
 export async function PATCH(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "edit" },
+  });
   if (!guard.ok) {
     return guard.response;
   }

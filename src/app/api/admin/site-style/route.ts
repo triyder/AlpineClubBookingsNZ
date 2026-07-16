@@ -16,7 +16,9 @@ import {
 } from "@/lib/public-layout-cache";
 
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   const theme = await getClubThemeForAdmin();
@@ -24,7 +26,9 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: unknown;

@@ -65,12 +65,20 @@ function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }
 
-const adminGuardOptions = {
+// Preserve this route's custom 401-shaped forbidden response while making the
+// content-area permission explicit (GET reads with view, mutations with edit).
+const viewGuardOptions = {
   forbiddenResponse: unauthorizedResponse,
-};
+  permission: { area: "content", level: "view" },
+} as const;
+
+const editGuardOptions = {
+  forbiddenResponse: unauthorizedResponse,
+  permission: { area: "content", level: "edit" },
+} as const;
 
 export async function GET() {
-  const guard = await requireAdmin(adminGuardOptions);
+  const guard = await requireAdmin(viewGuardOptions);
   if (!guard.ok) {
     return guard.response;
   }
@@ -80,7 +88,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requireAdmin(adminGuardOptions);
+  const guard = await requireAdmin(editGuardOptions);
   if (!guard.ok) {
     return guard.response;
   }
@@ -198,7 +206,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin(adminGuardOptions);
+  const guard = await requireAdmin(editGuardOptions);
   if (!guard.ok) {
     return guard.response;
   }
@@ -349,7 +357,7 @@ export async function PUT(request: NextRequest) {
 // Toggles a page's public visibility (publish/unpublish). Only admin-created
 // pages can be hidden; system and built-in pages must always stay published.
 export async function PATCH(request: NextRequest) {
-  const guard = await requireAdmin(adminGuardOptions);
+  const guard = await requireAdmin(editGuardOptions);
   if (!guard.ok) {
     return guard.response;
   }

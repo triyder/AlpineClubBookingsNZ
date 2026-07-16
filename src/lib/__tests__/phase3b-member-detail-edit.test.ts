@@ -672,6 +672,52 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     });
   });
 
+  it("syncs managed Xero contact groups when a role change alters the role-default membership type", async () => {
+    const { isXeroConnected, syncManagedXeroContactGroupForMember } = await import("@/lib/xero");
+    vi.mocked(isXeroConnected).mockResolvedValue(true);
+
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      xeroContactId: "xc1",
+      role: "USER",
+    } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      xeroContactId: "xc1",
+      role: "SCHOOL",
+    } as any);
+
+    // USER -> SCHOOL flips the role-default membership type (FULL -> SCHOOL),
+    // which changes the member's effective type for grouping when they have
+    // no current-season assignment (E8, #1934).
+    await updateMember(makePutRequest("m1", { role: "SCHOOL" }), {
+      params: Promise.resolve({ id: "m1" }),
+    });
+
+    expect(syncManagedXeroContactGroupForMember).toHaveBeenCalledWith("m1", {
+      createdByMemberId: "admin1",
+    });
+  });
+
+  it("does not sync contact groups when a role change keeps the same role-default type and Xero is untouched", async () => {
+    const { syncManagedXeroContactGroupForMember } = await import("@/lib/xero");
+
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, xeroContactId: "xc1", role: "USER" } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      role: "ADMIN",
+      xeroContactId: "xc1",
+    } as any);
+
+    // USER and ADMIN both map to the FULL role-default membership type, so
+    // this role change is not grouping-relevant.
+    await updateMember(makePutRequest("m1", { role: "ADMIN" }), { params: Promise.resolve({ id: "m1" }) });
+
+    expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();
+  });
+
   it("blocks self-demotion via the API", async () => {
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, id: "admin1", role: "ADMIN" } as any);
