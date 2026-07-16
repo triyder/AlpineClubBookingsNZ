@@ -708,16 +708,30 @@ export async function confirmSubscriptionBillingPreview(input: {
             ? {}
             : {
                 components: {
-                  create: entry.components.map((component) => ({
-                    label: component.label,
-                    description: component.description,
-                    annualAmountCents: component.annualAmountCents,
-                    chargedAmountCents: component.chargedAmountCents,
-                    prorated: component.prorated,
-                    xeroAccountCode: component.xeroAccountCode ?? entry.xeroAccountCode ?? "",
-                    xeroItemCode: component.xeroItemCode,
-                    sortOrder: component.sortOrder,
-                  })),
+                  create: entry.components.map((component) => {
+                    // Unmapped components are spliced out during the preview
+                    // mapping pass, so this always resolves on the reachable
+                    // path. Fail closed rather than mint a blank-account line if
+                    // a future regression lets an unmapped component through.
+                    const xeroAccountCode = component.xeroAccountCode ?? entry.xeroAccountCode;
+                    if (xeroAccountCode == null) {
+                      throw new Error(
+                        `Annual-fee component "${component.label}" for ${entry.membershipTypeName} ` +
+                          `(recipient ${entry.recipient.id}, season ${entry.seasonYear}) has no resolved ` +
+                          `Xero account code; the preview mapping pass should have removed unmapped components before confirm.`,
+                      );
+                    }
+                    return {
+                      label: component.label,
+                      description: component.description,
+                      annualAmountCents: component.annualAmountCents,
+                      chargedAmountCents: component.chargedAmountCents,
+                      prorated: component.prorated,
+                      xeroAccountCode,
+                      xeroItemCode: component.xeroItemCode,
+                      sortOrder: component.sortOrder,
+                    };
+                  }),
                 },
               }),
         },
