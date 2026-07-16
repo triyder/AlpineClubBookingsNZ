@@ -373,6 +373,8 @@ describe("PUT /api/admin/family-groups/[id]", () => {
           deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
           createMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
+        // #1932 E6 billing-family removal sweep.
+        member: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       };
       return fn(mockTx);
     });
@@ -403,6 +405,8 @@ describe("DELETE /api/admin/family-groups/[id]", () => {
       const mockTx = {
         familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 2 }) },
         familyGroup: { delete: vi.fn().mockResolvedValue({}) },
+        // #1932 E6 billing-family removal sweep.
+        member: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       };
       return fn(mockTx);
     });
