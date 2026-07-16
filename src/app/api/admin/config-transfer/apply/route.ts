@@ -14,7 +14,12 @@ import {
   requireFullAdminForConfigTransfer,
 } from "@/lib/config-transfer/route-helpers";
 import { configTransferErrorResponse } from "@/lib/config-transfer/route-error";
+import { primeEmailPalette } from "@/lib/email-theme";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
+import {
+  invalidatePublicLayoutConfig,
+  PUBLIC_LAYOUT_CACHE_TAGS,
+} from "@/lib/public-layout-cache";
 
 // POST /api/admin/config-transfer/apply — full-admin only.
 // Applies a previewed bundle: backup → one transaction { advisory lock →
@@ -60,6 +65,16 @@ export async function POST(request: Request) {
       resolutions,
     });
     revalidatePublicPageContent();
+    invalidatePublicLayoutConfig(
+      PUBLIC_LAYOUT_CACHE_TAGS.modules,
+      PUBLIC_LAYOUT_CACHE_TAGS.theme,
+      PUBLIC_LAYOUT_CACHE_TAGS.capacity,
+      PUBLIC_LAYOUT_CACHE_TAGS.banners,
+    );
+    // Config transfer can replace ClubTheme outside the site-style route.
+    // Refresh the process-local email palette alongside the public theme tag
+    // so web and email colours converge immediately (#1912/#1915).
+    await primeEmailPalette();
     return NextResponse.json({ result });
   } catch (error) {
     if (error instanceof ConfigImportDriftError) {

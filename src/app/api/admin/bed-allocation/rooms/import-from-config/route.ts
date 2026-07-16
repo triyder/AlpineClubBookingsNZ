@@ -5,6 +5,7 @@ import {
   requireBedAllocationAdmin,
 } from "@/lib/admin-bed-allocation-routes";
 import { logAudit } from "@/lib/audit";
+import { invalidatePublicLodgeCapacity } from "@/lib/public-layout-cache";
 
 // requireAdmin() is enforced by requireBedAllocationAdmin().
 export async function POST() {
@@ -13,6 +14,7 @@ export async function POST() {
 
   try {
     const result = await importRoomsAndBedsFromClubConfig();
+    invalidatePublicLodgeCapacity();
     logAudit({
       action: "BED_ALLOCATION_CONFIG_IMPORTED",
       memberId: guard.session.user.id,

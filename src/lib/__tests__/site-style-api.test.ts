@@ -9,6 +9,12 @@ const mocks = vi.hoisted(() => ({
   auditLogCreate: vi.fn(),
   revalidatePath: vi.fn(),
   primeEmailPalette: vi.fn(),
+  invalidatePublicLayoutConfig: vi.fn(),
+}));
+
+vi.mock("@/lib/public-layout-cache", () => ({
+  PUBLIC_LAYOUT_CACHE_TAGS: { theme: "public-layout:theme" },
+  invalidatePublicLayoutConfig: mocks.invalidatePublicLayoutConfig,
 }));
 
 vi.mock("@/lib/session-guards", () => ({
@@ -136,6 +142,9 @@ describe("site style admin API", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    expect(mocks.invalidatePublicLayoutConfig).toHaveBeenCalledWith(
+      "public-layout:theme",
+    );
     expect(body.theme.completedAt).toEqual(expect.any(String));
     expect(mocks.clubThemeUpsert).toHaveBeenCalledWith(
       expect.objectContaining({

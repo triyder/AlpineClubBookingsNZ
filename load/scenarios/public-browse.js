@@ -18,7 +18,7 @@ import http from "k6/http";
 import { check, sleep } from "k6";
 import { assertSafeTarget } from "../lib/target-guard.js";
 import { loadConfig, rampStages, standardThresholds } from "../lib/config.js";
-import { vuHeaders } from "../lib/session.js";
+import { SCENARIO_IP_OFFSETS, vuHeaders } from "../lib/session.js";
 
 const cfg = loadConfig(__ENV); // init-context guard: aborts unsafe targets
 
@@ -47,7 +47,7 @@ export function setup() {
 const PUBLIC_PAGES = ["/", "/join", "/contact", "/login"];
 
 export default function publicBrowse() {
-  const headers = vuHeaders(0);
+  const headers = vuHeaders(SCENARIO_IP_OFFSETS.publicBrowse);
 
   for (const path of PUBLIC_PAGES) {
     const res = http.get(cfg.baseUrl + path, {

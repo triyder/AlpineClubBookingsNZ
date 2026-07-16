@@ -28,12 +28,26 @@ const SESSION_COOKIE_NAMES = [
   "__Secure-authjs.session-token",
 ];
 
+// Keep fixed-window rate-limit evidence independent when scenarios run back
+// to back on the same throwaway stack. Each offset reserves a separate block
+// of synthetic client IPs; repeated-login iterations advance within the login
+// block. Re-running the same scenario still requires a fresh stack/window.
+export const SCENARIO_IP_OFFSETS = Object.freeze({
+  publicBrowse: 0,
+  login: 100,
+  memberDashboard: 200,
+  bookingContention: 300,
+  capacityProbe: 9000,
+});
+
 /**
  * Deterministic synthetic client IP for this VU (optionally offset per
  * iteration for scenarios that log in repeatedly).
  */
 export function syntheticClientIp(offset) {
-  const n = exec.vu.idInTest + (offset || 0) * 1024;
+  // setup/teardown execute outside a VU, where idInTest is not populated.
+  const vuId = Number(exec.vu.idInTest) || 0;
+  const n = vuId + (offset || 0) * 1024;
   const b = Math.floor(n / 250) % 250;
   const c = n % 250;
   return "10.99." + (b + 1) + "." + (c + 1);
@@ -108,11 +122,15 @@ export function clearSession(cfg) {
   http.cookieJar().clear(cfg.baseUrl + "/");
 }
 
-/** Log in once per VU and remember it (for read scenarios). */
-export function ensureLoggedIn(cfg, email, password, state) {
+/** Log in at most once per VU and remember the outcome (for read scenarios). */
+export function ensureLoggedIn(cfg, email, password, state, ipOffset) {
   if (state.loggedIn && hasSession(cfg.baseUrl)) {
     return true;
   }
-  state.loggedIn = login(cfg, email, password, 0);
+  if (state.loginAttempted) {
+    return false;
+  }
+  state.loginAttempted = true;
+  state.loggedIn = login(cfg, email, password, ipOffset || 0);
   return state.loggedIn;
 }

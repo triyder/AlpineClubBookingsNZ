@@ -22,6 +22,15 @@ const mocks = vi.hoisted(() => ({
     ipAddress: "127.0.0.1",
     userAgent: "vitest",
   })),
+  invalidatePublicLayoutConfig: vi.fn(),
+}));
+
+vi.mock("@/lib/public-layout-cache", () => ({
+  PUBLIC_LAYOUT_CACHE_TAGS: {
+    modules: "public-layout:modules",
+    capacity: "public-layout:capacity",
+  },
+  invalidatePublicLayoutConfig: mocks.invalidatePublicLayoutConfig,
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -301,6 +310,10 @@ describe("Admin modules API", () => {
 
     expect(response.status).toBe(200);
     expect(body.settings).toMatchObject(nextSettings);
+    expect(mocks.invalidatePublicLayoutConfig).toHaveBeenCalledWith(
+      "public-layout:modules",
+      "public-layout:capacity",
+    );
     expect(mocks.clubModuleSettingsUpsert).toHaveBeenCalledWith({
       where: { id: "default" },
       create: {

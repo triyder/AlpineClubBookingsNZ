@@ -21,6 +21,10 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { lodge: { findUnique: mockLodgeFindUnique } },
 }));
 
+vi.mock("@/lib/public-layout-cache", () => ({
+  invalidatePublicLodgeCapacity: vi.fn(),
+}));
+
 vi.mock("@/lib/admin-bed-allocation-routes", () => ({
   requireBedAllocationAdmin: () => mockRequireBedAllocationAdmin(),
   bedAllocationErrorResponse: vi.fn(),
