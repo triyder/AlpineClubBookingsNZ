@@ -55,7 +55,7 @@ export const BUILT_IN_MEMBERSHIP_TYPES = [
     key: "LIFE",
     name: "Life",
     description:
-      "Life membership starts with member booking-rate policy and no annual subscription requirement.",
+      "Life membership starts with member booking-rate policy and no Annual Membership Fee requirement.",
     bookingBehavior: "MEMBER_RATE",
     subscriptionBehavior: "NOT_REQUIRED",
     sortOrder: 2,
@@ -64,7 +64,7 @@ export const BUILT_IN_MEMBERSHIP_TYPES = [
     key: "SCHOOL",
     name: "School",
     description:
-      "School or education-organisation booking contact. Does not grant member access or annual subscription obligations.",
+      "School or education-organisation booking contact. Does not grant member access or Annual Membership Fee obligations.",
     bookingBehavior: "NON_MEMBER_RATE",
     subscriptionBehavior: "NOT_REQUIRED",
     sortOrder: 3,
@@ -73,7 +73,7 @@ export const BUILT_IN_MEMBERSHIP_TYPES = [
     key: "NON_MEMBER",
     name: "Non-Member",
     description:
-      "General public or guest contact. Does not grant member access or annual subscription obligations.",
+      "General public or guest contact. Does not grant member access or Annual Membership Fee obligations.",
     bookingBehavior: "NON_MEMBER_RATE",
     subscriptionBehavior: "NOT_REQUIRED",
     sortOrder: 4,

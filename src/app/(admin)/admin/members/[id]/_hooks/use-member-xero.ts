@@ -125,7 +125,7 @@ export function useMemberXero({
     setXeroDecisionContactId("");
     setXeroDecisionError("");
     toast.success(createEntranceFeeInvoice && data.entranceFeeInvoiceQueued
-        ? "Member created in Xero and entrance fee invoice queued"
+        ? "Member created in Xero and joining fee invoice queued"
         : "Member created in Xero",);
 
     const warning =

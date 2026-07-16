@@ -985,7 +985,7 @@ function buildXeroMappingCheck(
         id: "xero-mappings",
         title: "Xero Mappings",
         description:
-          "Chart of accounts, hut fee item codes, and entrance-fee categories.",
+          "Chart of accounts, hut fee item codes, and joining-fee categories.",
         status: "warning",
         required: false,
         message: "Xero mapping database state was not checked.",
@@ -1007,7 +1007,7 @@ function buildXeroMappingCheck(
       id: "xero-mappings",
       title: "Xero Mappings",
       description:
-        "Chart of accounts, hut fee item codes, and entrance-fee categories.",
+        "Chart of accounts, hut fee item codes, and joining-fee categories.",
       status: complete ? "complete" : "warning",
       required: false,
       message: complete
@@ -1016,7 +1016,7 @@ function buildXeroMappingCheck(
       details: [
         `Account mappings: ${accountMappings}`,
         `Hut fee item mappings: ${hutFeeMappings}`,
-        `Entrance fee mappings: ${entranceFeeMappings}`,
+        `Joining fee mappings: ${entranceFeeMappings}`,
       ],
       href: "/admin/xero#xero-section-mappings",
     },

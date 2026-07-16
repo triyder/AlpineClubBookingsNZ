@@ -71,7 +71,7 @@ export function MemberXeroCreateDialog({
             />
             <div>
               <Label htmlFor="member-detail-xero-create-invoice">
-                Create membership entrance fee invoice after contact creation
+                Create membership joining fee invoice after contact creation
               </Label>
               <p className="text-xs text-muted-foreground">
                 If this is not raised, record why for the audit trail.

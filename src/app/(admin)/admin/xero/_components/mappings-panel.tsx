@@ -345,8 +345,8 @@ function HutFeeTable({ isEditingMappings, items, codes, setCodes }: { isEditingM
 function EntranceFeeTable({ isEditingMappings, items, codes, setCodes }: { isEditingMappings: boolean; items: XeroItem[]; codes: EntranceFeeMap; setCodes: (value: EntranceFeeMap | ((prev: EntranceFeeMap) => EntranceFeeMap)) => void }) {
   return (
     <>
-      <h4 className="text-sm font-semibold text-foreground">Entrance Fee Categories</h4>
-      <p className="text-xs text-muted-foreground">Configure entrance fee amounts and Xero Item codes per membership category.</p>
+      <h4 className="text-sm font-semibold text-foreground">Joining Fee Categories</h4>
+      <p className="text-xs text-muted-foreground">Configure joining fee amounts and Xero Item codes per membership category.</p>
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">
           <thead><tr>{["Category", "Xero Item", "Amount (incl. GST)"].map((heading) => <th key={heading} className="border-b p-2 text-left font-medium text-muted-foreground">{heading}</th>)}</tr></thead>

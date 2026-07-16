@@ -142,7 +142,7 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
   {
     token: "entrance-fees",
     kind: "embed",
-    description: "Lists the currently effective public entrance fees.",
+    description: "Lists the currently effective public joining fees.",
     example: "{{entrance-fees}}",
     allowsLegacySingleBrace: false,
     contexts: ["page-content-body"],

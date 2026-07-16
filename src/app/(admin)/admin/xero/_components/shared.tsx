@@ -324,9 +324,9 @@ export const MAPPING_DESCRIPTIONS: Record<string, string> = {
   hutFeeRefunds: "Account for refund credit notes",
   stripeBankAccount: "Bank account used to record Stripe payments",
   stripeFees: "Expense account for Stripe transaction fees (optional)",
-  subscriptionIncome: "Account code used to detect annual subscription invoices",
+  subscriptionIncome: "Account code used to detect Annual Membership Fee invoices",
   membershipCancellationCredit:
-    "Credit note account and item used to reverse unpaid annual subscription invoices when membership cancellation is approved",
+    "Credit note account and item used to reverse unpaid Annual Membership Fee invoices when membership cancellation is approved",
   hutFeeRefundItem: "Xero Item for refund credit note line items",
 }
 
