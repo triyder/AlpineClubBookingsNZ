@@ -1815,6 +1815,43 @@ no durable booking, financial, family, Xero, or membership-history blockers.
   OAuth codes/states, action tokens, client secrets, or personal data beyond the
   minimum needed for diagnosis.
 
+### Xero member grouping (E8, #1934)
+
+- A single club-level mode governs member auto-grouping: `NONE`,
+  `MEMBERSHIP_TYPE`, or `MEMBERSHIP_TYPE_AND_AGE` (`XeroGroupingSettings`
+  singleton). Grouping rules live in one table, `XeroContactGroupRule`
+  (`MANAGED` = the group the sync adds; `ACCEPTED` = tolerated, never removed).
+- The system NEVER deletes a Xero contact group. It only adds/removes a
+  contact's *membership* of groups in the "managed universe" = groupIds
+  referenced by ACTIVE rules that are applicable under the current mode.
+  Xero groups not referenced by any active rule are never touched.
+- `NONE` mode is a total no-op — the per-member sync short-circuits before any
+  Xero call, and the cancellation path performs no managed removals.
+- Resolution is pure and mode-driven (`resolveMemberGrouping`): most-specific
+  MANAGED match wins (type+tier > type-only > tier-only); ACCEPTED is the union
+  of matching accepted rules plus the matched managed group. The effective
+  membership type is resolved by the ONE shared policy helper
+  (`resolveMembershipTypePolicyForMember`) at the CURRENT season year — pricing
+  resolves per stay-night season, grouping resolves at "now"; the two must not
+  be merged.
+- Add-suppression: the managed group is added only when the contact is in NONE
+  of (matched MANAGED ∪ matched ACCEPTED), so members parked in an accepted
+  group get no spurious add. A member matching no rule is left untouched (no
+  removals) and surfaces in the dry-run snapshot for admin cleanup.
+- Mode/rule changes NEVER auto-resync the population. Deactivating or deleting a
+  rule shrinks the managed universe, so members already in that group are never
+  removed by the system. Members re-group on their next trigger (age-tier
+  change, current-season membership-type change, cron age-up) or via the
+  explicit admin bulk re-sync.
+- The per-member sync keeps Xero calls outside DB transactions, ledgers each
+  operation with an idempotency key, adds before removing, and refreshes the
+  contact cache from the post-write contact. A remove-404 is success (already
+  gone); an add-404 is a ledgered failure.
+- The bulk re-sync is admin-triggered, dry-run-first, cache-pre-filtered to
+  mismatched members, chunked and resumable by member-id cursor, and never
+  advances the CONTACT delta-sync watermark. Members without a Xero contact are
+  reported as skipped, never silently omitted.
+
 ## Operations
 
 - Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md`.
