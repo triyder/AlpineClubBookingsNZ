@@ -427,7 +427,8 @@ interface TeacherCreationPlan {
 
 /**
  * Approve a verified (or priced) SCHOOL request. In a single transaction under
- * the booking advisory lock: create the non-login school Member, a CONFIRMED
+ * the lodge capacity lock (and, when converting an existing hold, the global
+ * lifecycle lock first): create the non-login school Member, a CONFIRMED
  * Booking that holds capacity, a PENDING INTERNET_BANKING Payment, the bulk
  * guests, and a non-login Member + HutLeaderAssignment per teacher. After the
  * commit, queue the Xero invoice (emailed to the school) or, when the Xero
@@ -455,12 +456,13 @@ export async function approveSchoolBookingRequest(input: {
    */
   ownerContactMemberId?: string | null;
 }): Promise<ApproveSchoolBookingRequestOutcome> {
-  const request = await prisma.bookingRequest.findUnique({
+  const initialRequest = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
-  if (!request) {
+  if (!initialRequest) {
     throw new BookingRequestError("Booking request not found", 404);
   }
+  let request = initialRequest;
   if (request.type !== BookingRequestType.SCHOOL) {
     throw new BookingRequestError("This is not a school booking request", 400);
   }
@@ -585,11 +587,45 @@ export async function approveSchoolBookingRequest(input: {
 
   try {
     conversion = await prisma.$transaction(async (tx) => {
-      // Per-lodge advisory lock serialises booking creation at this lodge so
-      // the capacity check below stays safe (same key as booking-create.ts).
-      // A null lodgeId means the club's default lodge.
+      // A held conversion is both a lifecycle transition (the same
+      // AWAITING_REVIEW row can be cancelled/released) and a capacity write.
+      // Compose the canonical locks in global -> lodge order so approval
+      // cannot resurrect a hold that a global-lock cancellation just won.
+      // A fresh approval creates a new booking and therefore remains
+      // lodge-only; do not unnecessarily serialise unrelated lodges.
+      const expectedHeldBookingId = request.heldBookingId ?? null;
+      if (expectedHeldBookingId) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      }
+
+      // BookingRequest.lodgeId is fixed at submission. Resolve its null/default
+      // semantics before taking the per-lodge capacity lock, then re-read all
+      // mutable request state under the applicable lock set below.
       const bookingLodgeId = request.lodgeId ?? (await getDefaultLodgeId(tx));
       await acquireLodgeCapacityLock(tx, bookingLodgeId);
+
+      const lockedRequest = await tx.bookingRequest.findUnique({
+        where: { id: request.id },
+      });
+      if (!lockedRequest) {
+        throw new BookingRequestError("Booking request not found", 404);
+      }
+
+      // Any edit to the approval snapshot (including attaching/detaching a
+      // hold) advances updatedAt. Refuse this stale attempt so every value used
+      // below was validated under the locks; the caller can retry from the new
+      // request state. The explicit held-id comparison also documents the
+      // global-lock decision instead of relying on timestamp comparison alone.
+      if (
+        lockedRequest.updatedAt.getTime() !== request.updatedAt.getTime() ||
+        (lockedRequest.heldBookingId ?? null) !== expectedHeldBookingId
+      ) {
+        throw new BookingRequestError(
+          "This booking request changed while it was being approved; review it and try again",
+          409
+        );
+      }
+      request = lockedRequest;
 
       // Idempotency (#1232 double-charge guard): a prior approve for this
       // request — a concurrent double-accept, or a retry whose caller re-armed
@@ -613,10 +649,25 @@ export async function approveSchoolBookingRequest(input: {
         };
       }
 
+      if (
+        request.type !== BookingRequestType.SCHOOL ||
+        (request.status !== BookingRequestStatus.VERIFIED &&
+          request.status !== BookingRequestStatus.PRICED)
+      ) {
+        throw new BookingRequestError(
+          "This booking request has already been processed",
+          409
+        );
+      }
+
       // Status-claim so two admins cannot approve concurrently.
       const claimed = await tx.bookingRequest.updateMany({
         where: {
           id: request.id,
+          // Optimistic version fence for mutable price/guest/hold state: a
+          // writer that lands after the locked re-read cannot be silently
+          // overwritten by an approval built from the older snapshot.
+          updatedAt: request.updatedAt,
           status: {
             in: [BookingRequestStatus.VERIFIED, BookingRequestStatus.PRICED],
           },
@@ -632,6 +683,30 @@ export async function approveSchoolBookingRequest(input: {
           "This booking request has already been processed",
           409
         );
+      }
+
+      // Re-read and claim the mutable held booking while both locks are held,
+      // before guest/capacity/member/payment work. The guarded
+      // AWAITING_REVIEW -> CONFIRMED transition is the winning lifecycle CAS;
+      // count=0 means cancellation/release won, so the transaction aborts and
+      // no post-commit audit, invoice, or email can run.
+      let held: { id: string; memberId: string; status: BookingStatus } | null = null;
+      if (request.heldBookingId) {
+        held = await tx.booking.findUnique({
+          where: { id: request.heldBookingId },
+          select: { id: true, memberId: true, status: true },
+        });
+        if (!held || held.status !== BookingStatus.AWAITING_REVIEW) {
+          throw new BookingRequestError("Held booking is no longer available", 409);
+        }
+
+        const heldClaim = await tx.booking.updateMany({
+          where: { id: held.id, status: BookingStatus.AWAITING_REVIEW },
+          data: { status: BookingStatus.CONFIRMED },
+        });
+        if (heldClaim.count === 0) {
+          throw new BookingRequestError("Held booking is no longer available", 409);
+        }
       }
 
       const guestCreates = await buildApprovalGuestCreates(tx, {
@@ -651,18 +726,7 @@ export async function approveSchoolBookingRequest(input: {
       // drives a post-commit admin alert.
       let ownerSubstitution: OwnerSubstitution | null = null;
 
-      if (request.heldBookingId) {
-        const held = await tx.booking.findUnique({
-          where: { id: request.heldBookingId },
-          select: { id: true, memberId: true, status: true },
-        });
-        if (!held) {
-          throw new BookingRequestError("Held booking was not found", 409);
-        }
-        if (held.status !== BookingStatus.AWAITING_REVIEW) {
-          throw new BookingRequestError("Held booking is no longer available", 409);
-        }
-
+      if (held) {
         // Re-validate the held school owner at conversion (issue #1255
         // residual-risk decision 1). If it had been MAPPED to a pre-existing
         // contact, that contact could have changed state during the
@@ -735,7 +799,6 @@ export async function approveSchoolBookingRequest(input: {
           data: {
             checkIn: request.checkIn,
             checkOut: request.checkOut,
-            status: BookingStatus.CONFIRMED,
             totalPriceCents,
             finalPriceCents: totalPriceCents,
             hasNonMembers: true,

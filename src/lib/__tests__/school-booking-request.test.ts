@@ -16,7 +16,12 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(),
     },
     member: { create: vi.fn(), findUnique: vi.fn() },
-    booking: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+    booking: {
+      create: vi.fn(),
+      findUnique: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
     bookingGuest: {
       findMany: vi.fn(),
       update: vi.fn(),
@@ -99,6 +104,7 @@ import {
   sendAdminOwnerSubstitutionAlert,
 } from "@/lib/email";
 import {
+  acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
   findOverlappingCapacityHoldingBookings,
 } from "@/lib/capacity";
@@ -125,6 +131,7 @@ const mockedCreate = vi.mocked(prisma.bookingRequest.create);
 const mockedUpdateMany = vi.mocked(prisma.bookingRequest.updateMany);
 const mockedTransaction = vi.mocked(prisma.$transaction);
 const mockedCheckCapacity = vi.mocked(checkCapacityForGuestRanges);
+const mockedAcquireLodgeLock = vi.mocked(acquireLodgeCapacityLock);
 const mockedSeasonFindMany = vi.mocked(prisma.season.findMany);
 const mockedGroupDiscount = vi.mocked(prisma.groupDiscountSetting.findUnique);
 const mockedModuleEnabled = vi.mocked(isEffectiveModuleEnabled);
@@ -427,6 +434,7 @@ describe("approveSchoolBookingRequest", () => {
           } as never);
     }) as never);
     vi.mocked(prisma.booking.create).mockResolvedValue({ id: "booking-1" } as never);
+    vi.mocked(prisma.booking.updateMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
     vi.mocked(prisma.hutLeaderAssignment.create).mockResolvedValue({} as never);
     vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
@@ -534,6 +542,105 @@ describe("approveSchoolBookingRequest", () => {
     expect(mockedSendManualInvoice).not.toHaveBeenCalled();
     // No substitution on a normal conversion → no owner-substitution alert (#1377).
     expect(mockedSendOwnerSubstitution).not.toHaveBeenCalled();
+  });
+
+  it("keeps a fresh-create approval lodge-only while re-reading the request under the lodge lock (#1881)", async () => {
+    const order: string[] = [];
+    let requestReads = 0;
+    mockedFindUnique.mockImplementation((async () => {
+      requestReads += 1;
+      order.push(requestReads === 1 ? "outer-request" : `locked-request-${requestReads}`);
+      return schoolRequest() as never;
+    }) as never);
+    mockedAcquireLodgeLock.mockImplementation(async () => {
+      order.push("lodge-lock");
+    });
+
+    await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    expect(order.indexOf("lodge-lock")).toBeGreaterThan(order.indexOf("outer-request"));
+    expect(order.indexOf("locked-request-2")).toBeGreaterThan(
+      order.indexOf("lodge-lock")
+    );
+    expect(mockedUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ updatedAt: schoolRequest().updatedAt }),
+      })
+    );
+  });
+
+  it("takes global then lodge locks and loses cleanly when cancellation wins the held-booking CAS (#1881)", async () => {
+    const order: string[] = [];
+    const heldRequest = schoolRequest({ heldBookingId: "held-1" });
+    let requestReads = 0;
+    mockedFindUnique.mockImplementation((async () => {
+      requestReads += 1;
+      order.push(requestReads === 1 ? "outer-request" : `locked-request-${requestReads}`);
+      return heldRequest as never;
+    }) as never);
+    vi.mocked(prisma.$executeRaw).mockImplementation((async () => {
+      order.push("global-lock");
+      return 1 as never;
+    }) as never);
+    mockedAcquireLodgeLock.mockImplementation(async () => {
+      order.push("lodge-lock");
+    });
+    vi.mocked(prisma.booking.findUnique).mockImplementation((async () => {
+      order.push("held-reread");
+      return {
+        id: "held-1",
+        memberId: "school-owner",
+        status: BookingStatus.AWAITING_REVIEW,
+      } as never;
+    }) as never);
+    // Model cancellation committing after the approval's fresh read but before
+    // its guarded transition. The CAS sees count=0 and approval must abort.
+    vi.mocked(prisma.booking.updateMany).mockImplementation((async () => {
+      order.push("held-cas-lost");
+      return { count: 0 } as never;
+    }) as never);
+
+    await expect(
+      approveSchoolBookingRequest({
+        requestId: "req-school",
+        adminMemberId: "admin-1",
+      })
+    ).rejects.toMatchObject({ status: 409 });
+
+    expect(order.indexOf("global-lock")).toBeGreaterThan(
+      order.indexOf("outer-request")
+    );
+    expect(order.indexOf("lodge-lock")).toBeGreaterThan(
+      order.indexOf("global-lock")
+    );
+    expect(order.indexOf("locked-request-2")).toBeGreaterThan(
+      order.indexOf("lodge-lock")
+    );
+    expect(order.indexOf("held-reread")).toBeGreaterThan(
+      order.indexOf("locked-request-2")
+    );
+    expect(order.indexOf("held-cas-lost")).toBeGreaterThan(
+      order.indexOf("held-reread")
+    );
+
+    // The losing transaction reaches no guest/capacity/member/payment work,
+    // and every external post-commit effect remains gated off.
+    expect(mockedCheckCapacity).not.toHaveBeenCalled();
+    expect(prisma.bookingGuest.findMany).not.toHaveBeenCalled();
+    expect(prisma.bookingGuest.update).not.toHaveBeenCalled();
+    expect(prisma.bookingGuest.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.bookingGuest.createMany).not.toHaveBeenCalled();
+    expect(prisma.member.create).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+    expect(prisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
+    expect(mockedEnqueueInvoice).not.toHaveBeenCalled();
+    expect(mockedSendPin).not.toHaveBeenCalled();
+    expect(mockedSendManualInvoice).not.toHaveBeenCalled();
+    expect(mockedLogAudit).not.toHaveBeenCalled();
   });
 
   it("sets the exclusive whole-lodge hold on the booking when the request asked for exclusivity (#121)", async () => {
