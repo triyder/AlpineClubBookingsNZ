@@ -41,6 +41,7 @@ import {
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
 import { formatDate } from "./xero-invoice-helpers";
+import { buildJoiningFeeNarration } from "./joining-fee";
 
 export interface CreateXeroEntranceFeeInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -139,7 +140,7 @@ export function buildEntranceFeeLineItem(
       lineItem.description = description;
     }
   } else {
-    lineItem.description = description || `Membership entrance fee (${categoryLabel})`;
+    lineItem.description = description || buildJoiningFeeNarration(categoryLabel);
   }
 
   if (!itemCode || accountCode !== "200" || accountCodeExplicitlyConfigured) {
@@ -189,7 +190,7 @@ export async function createXeroEntranceFeeInvoice(
         status: "SUCCEEDED",
         responsePayload: {
           skipped: true,
-          reason: "No entrance fee is configured for this member category.",
+          reason: "No joining fee is configured for this membership type.",
           category,
         },
       });
@@ -227,7 +228,7 @@ export async function createXeroEntranceFeeInvoice(
       await completeXeroSyncOperation(queuedOperationId, {
         responsePayload: {
           adopted: true,
-          reason: "Entrance fee invoice already linked for this member.",
+          reason: "Joining fee invoice already linked for this member.",
           category,
         },
         xeroObjectType: "INVOICE",

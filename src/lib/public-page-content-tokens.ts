@@ -189,20 +189,44 @@ export async function loadPublicMembershipTypes(): Promise<PublicMembershipType[
 export async function loadPublicEntranceFees(): Promise<PublicEntranceFee[]> {
   if (!(await isPublicContentEnabled("entranceFees"))) return [];
   const today = getTodayDateOnly();
-  const rows = await prisma.entranceFee.findMany({
-    where: {
-      effectiveFrom: { lte: today },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gte: today } }],
+  // Minimal re-key to the JoiningFee model (#1931, E5): the public headline
+  // joining fees come from the built-in FULL type's per-age-tier rows plus the
+  // Family type's flat fee — the same amounts the fan-out backfill carried over
+  // from the old category schedule, so the output is byte-identical. E7 adds
+  // per-type grouping/grammar and new tokens.
+  const activeWindow = {
+    effectiveFrom: { lte: today },
+    OR: [{ effectiveTo: null }, { effectiveTo: { gte: today } }],
+  };
+  const types = await prisma.membershipType.findMany({
+    where: { key: { in: ["FULL", "FAMILY"] } },
+    select: {
+      key: true,
+      joiningFees: {
+        where: activeWindow,
+        orderBy: [{ effectiveFrom: "desc" }],
+        select: { ageTier: true, amountCents: true },
+      },
     },
-    orderBy: [{ category: "asc" }, { effectiveFrom: "desc" }],
-    select: { category: true, amountCents: true },
   });
-  const seen = new Set<string>();
-  return rows.flatMap((row) => {
-    if (seen.has(row.category)) return [];
-    seen.add(row.category);
-    return [{ category: sentenceCase(row.category), fee: money(row.amountCents) }];
-  });
+  const feesByKey = new Map(types.map((type) => [type.key, type.joiningFees]));
+  const fullFees = feesByKey.get("FULL") ?? [];
+  const familyFees = feesByKey.get("FAMILY") ?? [];
+  // Rows are ordered effectiveFrom desc, so the first match per tier is current.
+  const amountForTier = (
+    rows: Array<{ ageTier: string | null; amountCents: number }>,
+    tier: string | null,
+  ): number | null => rows.find((row) => row.ageTier === tier)?.amountCents ?? null;
+
+  const out: PublicEntranceFee[] = [];
+  const push = (category: string, amountCents: number | null) => {
+    if (amountCents != null) out.push({ category, fee: money(amountCents) });
+  };
+  push("Adult", amountForTier(fullFees, "ADULT"));
+  push("Child", amountForTier(fullFees, "CHILD"));
+  push("Family", amountForTier(familyFees, null));
+  push("Youth", amountForTier(fullFees, "YOUTH"));
+  return out;
 }
 
 export async function loadPublicHutFees(slug?: string): Promise<PublicHutFeeLodge[]> {

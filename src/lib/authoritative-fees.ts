@@ -1,4 +1,5 @@
 import type {
+  AgeTier,
   EntranceFeeCategory,
   FamilyBillingMode,
   MembershipFeeBillingBasis,
@@ -110,38 +111,63 @@ export function serializeFeeSchedule<T extends {
   };
 }
 
-export async function getEffectiveEntranceFee(
-  category: EntranceFeeCategory,
-  asOf: Date = getTodayDateOnly(),
-): Promise<{ amountCents: number | null; source: "SCHEDULE" | "LEGACY_MAPPING" | "NONE" }> {
-  const schedule = await prisma.entranceFee.findFirst({
-    where: {
-      category,
-      effectiveFrom: { lte: asOf },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
-    },
-    orderBy: { effectiveFrom: "desc" },
-    select: { amountCents: true },
-  });
-  if (schedule) return { amountCents: schedule.amountCents, source: "SCHEDULE" };
+export type JoiningFeeScheduleSource = "SCHEDULE" | "NONE";
 
-  // One-release compatibility fallback. Item/account codes remain Xero
-  // configuration; only these deprecated amount fields are consulted here.
-  const granular = await prisma.xeroItemCodeMapping.findFirst({
-    where: { category: "ENTRANCE_FEE", entranceFeeCategory: category },
-    select: { amountCents: true },
-  });
-  if (granular?.amountCents != null && Number.isSafeInteger(granular.amountCents) && granular.amountCents >= 0) {
-    return { amountCents: granular.amountCents, source: "LEGACY_MAPPING" };
+export interface EffectiveJoiningFee {
+  amountCents: number | null;
+  effectiveFrom: string | null;
+  source: JoiningFeeScheduleSource;
+}
+
+/**
+ * Resolve the effective joining-fee amount for a membership type x age tier
+ * (#1931, E5). Prefers the exact age-tier row, then the type's flat NULL-tier
+ * row (the built-in Family type is flat-only, so a Family member of any age
+ * resolves the flat family fee). The legacy category-keyed EntranceFee table
+ * and the deprecated mapping-amount fallback are gone — the migration
+ * materialised every legacy amount into JoiningFee, so this reads JoiningFee
+ * only. Accepts an optional transaction client (#1886 contract) so approval can
+ * resolve fees for rows created inside the still-open transaction.
+ */
+export async function getEffectiveJoiningFee(
+  params: { membershipTypeId: string; ageTier: AgeTier | null },
+  asOf: Date = getTodayDateOnly(),
+  store: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<EffectiveJoiningFee> {
+  const activeWindow = {
+    effectiveFrom: { lte: asOf },
+    OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
+  };
+
+  if (params.ageTier) {
+    const tierRow = await store.joiningFee.findFirst({
+      where: { membershipTypeId: params.membershipTypeId, ageTier: params.ageTier, ...activeWindow },
+      orderBy: { effectiveFrom: "desc" },
+      select: { amountCents: true, effectiveFrom: true },
+    });
+    if (tierRow) {
+      return {
+        amountCents: tierRow.amountCents,
+        effectiveFrom: formatDateOnly(tierRow.effectiveFrom),
+        source: "SCHEDULE",
+      };
+    }
   }
-  const legacy = await prisma.xeroAccountMapping.findUnique({
-    where: { key: "entranceFeeAmountCents" },
-    select: { code: true },
+
+  const flatRow = await store.joiningFee.findFirst({
+    where: { membershipTypeId: params.membershipTypeId, ageTier: null, ...activeWindow },
+    orderBy: { effectiveFrom: "desc" },
+    select: { amountCents: true, effectiveFrom: true },
   });
-  const parsed = legacy?.code && /^\d+$/.test(legacy.code) ? Number(legacy.code) : null;
-  return parsed != null && Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 2_147_483_647
-    ? { amountCents: parsed, source: "LEGACY_MAPPING" }
-    : { amountCents: null, source: "NONE" };
+  if (flatRow) {
+    return {
+      amountCents: flatRow.amountCents,
+      effectiveFrom: formatDateOnly(flatRow.effectiveFrom),
+      source: "SCHEDULE",
+    };
+  }
+
+  return { amountCents: null, effectiveFrom: null, source: "NONE" };
 }
 
 export async function getEffectiveMembershipAnnualFee(
@@ -161,7 +187,7 @@ export async function getEffectiveMembershipAnnualFee(
 
 export async function lockFeeSchedule(
   tx: Prisma.TransactionClient,
-  domain: "membership" | "entrance",
+  domain: "membership" | "entrance" | "joining",
   key: string,
 ) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`fee-schedule:${domain}:${key}`}))`;

@@ -124,7 +124,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
 ) {
   // Optional transaction client (#1886, F22) so membership approval can write
   // this outbox row inside the same transaction that creates the member and
-  // approves the application — the entrance fee then commits atomically with
+  // approves the application — the joining fee then commits atomically with
   // the approval instead of riding a post-commit crash window that silently
   // lost the invoice. Every internal read/write goes through the same client
   // (mirroring enqueueXeroRefundCreditNoteOperation, #1357) so the member and
@@ -149,13 +149,13 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
   if (existingLink) {
     return {
       queueOperationId: null,
-      message: "Xero entrance fee invoice already linked for this member.",
+      message: "Xero joining fee invoice already linked for this member.",
     };
   }
 
   const entranceFee = await getEntranceFeeContext(memberId, db);
 
-  // Organisations/schools are exempt from entrance fees (owner decision,
+  // Organisations/schools are exempt from joining fees (owner decision,
   // 2026-07-07) — checked before the amount override so an explicitly
   // entered amount can never bill an organisation.
   if (entranceFee.exempt) {
@@ -172,7 +172,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
   if (!feeAmountCents || feeAmountCents <= 0) {
     return {
       queueOperationId: null,
-      message: "No entrance fee is configured for this member category.",
+      message: "No joining fee is configured for this membership type.",
     };
   }
 
@@ -202,7 +202,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
   if (existingQueuedOperation) {
     return {
       queueOperationId: existingQueuedOperation.id,
-      message: "Xero entrance fee invoice is already queued for background processing.",
+      message: "Xero joining fee invoice is already queued for background processing.",
     };
   }
 
@@ -228,7 +228,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
 
   return {
     queueOperationId: queuedOperation.id,
-    message: "Xero entrance fee invoice queued for background processing.",
+    message: "Xero joining fee invoice queued for background processing.",
   };
 }
 

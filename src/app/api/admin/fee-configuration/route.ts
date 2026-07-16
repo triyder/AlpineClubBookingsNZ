@@ -1,13 +1,12 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { AgeTier } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
 import {
-  ENTRANCE_FEE_CATEGORIES,
   FeeScheduleValidationError,
   MEMBERSHIP_FEE_BILLING_BASES,
   MEMBERSHIP_FEE_PRORATION_RULES,
-  getEffectiveEntranceFee,
   getFamilyBillingMode,
   lockFeeSchedule,
   scheduleOverlapWhere,
@@ -17,6 +16,11 @@ import {
 import { prisma } from "@/lib/prisma";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { requireAdmin } from "@/lib/session-guards";
+
+// A joining-fee row keys on membership type x optional age tier; the flat
+// (NULL) tier is the whole-type fee (used by the Family type).
+const JOINING_FEE_AGE_TIERS = ["INFANT", "CHILD", "YOUTH", "ADULT"] as const;
+const joiningFeeAgeTier = z.enum(JOINING_FEE_AGE_TIERS).nullable();
 
 const dateField = z.string().trim();
 const moneyField = z.number().int().min(0).max(2_147_483_647);
@@ -42,16 +46,17 @@ const mutationSchema = z.discriminatedUnion("action", [
   }).strict(),
   z.object({ action: z.literal("DELETE_MEMBERSHIP_FEE"), id: z.string().min(1) }).strict(),
   z.object({
-    action: z.literal("CREATE_ENTRANCE_FEE"),
-    category: z.enum(ENTRANCE_FEE_CATEGORIES),
+    action: z.literal("CREATE_JOINING_FEE"),
+    membershipTypeId: z.string().min(1),
+    ageTier: joiningFeeAgeTier,
     ...scheduleDates,
   }).strict(),
   z.object({
-    action: z.literal("UPDATE_ENTRANCE_FEE"),
+    action: z.literal("UPDATE_JOINING_FEE"),
     id: z.string().min(1),
     ...scheduleDates,
   }).strict(),
-  z.object({ action: z.literal("DELETE_ENTRANCE_FEE"), id: z.string().min(1) }).strict(),
+  z.object({ action: z.literal("DELETE_JOINING_FEE"), id: z.string().min(1) }).strict(),
   z.object({
     action: z.literal("SET_FAMILY_BILLING_MEMBER"),
     familyGroupId: z.string().min(1),
@@ -60,16 +65,16 @@ const mutationSchema = z.discriminatedUnion("action", [
 ]);
 
 async function loadConfiguration(canEdit: boolean) {
-  const [familyBillingMode, membershipTypes, entranceFees, familyGroups, currentEntranceFees] = await Promise.all([
+  const [familyBillingMode, membershipTypes, familyGroups] = await Promise.all([
     getFamilyBillingMode(),
     prisma.membershipType.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       select: {
         id: true, key: true, name: true, isActive: true,
         annualFees: { orderBy: [{ effectiveFrom: "desc" }], },
+        joiningFees: { orderBy: [{ ageTier: "asc" }, { effectiveFrom: "desc" }] },
       },
     }),
-    prisma.entranceFee.findMany({ orderBy: [{ category: "asc" }, { effectiveFrom: "desc" }] }),
     prisma.familyGroup.findMany({
       where: { memberships: { some: {} } },
       orderBy: [{ name: "asc" }, { createdAt: "asc" }],
@@ -88,10 +93,6 @@ async function loadConfiguration(canEdit: boolean) {
         },
       },
     }),
-    Promise.all(ENTRANCE_FEE_CATEGORIES.map(async (category) => ({
-      category,
-      ...(await getEffectiveEntranceFee(category)),
-    }))),
   ]);
   // Family-billing exceptions only exist when the club bills families via a
   // nominated billing member. When it bills members individually the whole
@@ -103,9 +104,11 @@ async function loadConfiguration(canEdit: boolean) {
     membershipTypes: membershipTypes.map((type) => ({
       ...type,
       annualFees: type.annualFees.map(serializeFeeSchedule),
+      joiningFees: type.joiningFees.map((fee) => ({
+        ...serializeFeeSchedule(fee),
+        ageTier: fee.ageTier,
+      })),
     })),
-    entranceFees: entranceFees.map(serializeFeeSchedule),
-    currentEntranceFees,
     familyGroups: familyGroups.map((group) => ({
       ...group,
       billingMemberId: group.billingMembership?.member.id ?? null,
@@ -179,21 +182,27 @@ export async function POST(request: Request) {
           ? await tx.membershipAnnualFee.update({ where: { id: existing.id }, data: { ...dates, billingBasis: input.billingBasis, prorationRule: input.prorationRule } })
           : await tx.membershipAnnualFee.create({ data: { membershipTypeId, ...dates, billingBasis: input.billingBasis, prorationRule: input.prorationRule } });
         targetId = row.id;
-      } else if (input.action === "CREATE_ENTRANCE_FEE" || input.action === "UPDATE_ENTRANCE_FEE") {
+      } else if (input.action === "CREATE_JOINING_FEE" || input.action === "UPDATE_JOINING_FEE") {
         const dates = validateFeeScheduleInput(input);
-        const existing = input.action === "UPDATE_ENTRANCE_FEE"
-          ? await tx.entranceFee.findUnique({ where: { id: input.id } })
+        const existing = input.action === "UPDATE_JOINING_FEE"
+          ? await tx.joiningFee.findUnique({ where: { id: input.id } })
           : null;
-        if (input.action === "UPDATE_ENTRANCE_FEE" && !existing) throw new FeeScheduleValidationError("Joining fee not found.", 404);
-        const category = input.action === "CREATE_ENTRANCE_FEE" ? input.category : existing!.category;
-        await lockFeeSchedule(tx, "entrance", category);
-        const overlap = await tx.entranceFee.findFirst({
-          where: { category, ...scheduleOverlapWhere({ ...dates, excludeId: existing?.id }) }, select: { id: true },
+        if (input.action === "UPDATE_JOINING_FEE" && !existing) throw new FeeScheduleValidationError("Joining fee not found.", 404);
+        const membershipTypeId = input.action === "CREATE_JOINING_FEE" ? input.membershipTypeId : existing!.membershipTypeId;
+        const ageTier: AgeTier | null = input.action === "CREATE_JOINING_FEE" ? input.ageTier : existing!.ageTier;
+        if (input.action === "CREATE_JOINING_FEE"
+          && !await tx.membershipType.findUnique({ where: { id: membershipTypeId }, select: { id: true } })) {
+          throw new FeeScheduleValidationError("Membership type not found.", 404);
+        }
+        const tierKey = `${membershipTypeId}:${ageTier ?? "FLAT"}`;
+        await lockFeeSchedule(tx, "joining", tierKey);
+        const overlap = await tx.joiningFee.findFirst({
+          where: { membershipTypeId, ageTier, ...scheduleOverlapWhere({ ...dates, excludeId: existing?.id }) }, select: { id: true },
         });
         if (overlap) throw new FeeScheduleValidationError("This joining fee overlaps an existing effective-date range.", 409);
         const row = existing
-          ? await tx.entranceFee.update({ where: { id: existing.id }, data: dates })
-          : await tx.entranceFee.create({ data: { category, ...dates } });
+          ? await tx.joiningFee.update({ where: { id: existing.id }, data: dates })
+          : await tx.joiningFee.create({ data: { membershipTypeId, ageTier, ...dates } });
         targetId = row.id;
       } else if (input.action === "DELETE_MEMBERSHIP_FEE") {
         const existing = await tx.membershipAnnualFee.findUnique({ where: { id: input.id } });
@@ -201,11 +210,11 @@ export async function POST(request: Request) {
         await lockFeeSchedule(tx, "membership", existing.membershipTypeId);
         await tx.membershipAnnualFee.delete({ where: { id: existing.id } });
         targetId = existing.id;
-      } else if (input.action === "DELETE_ENTRANCE_FEE") {
-        const existing = await tx.entranceFee.findUnique({ where: { id: input.id } });
+      } else if (input.action === "DELETE_JOINING_FEE") {
+        const existing = await tx.joiningFee.findUnique({ where: { id: input.id } });
         if (!existing) throw new FeeScheduleValidationError("Joining fee not found.", 404);
-        await lockFeeSchedule(tx, "entrance", existing.category);
-        await tx.entranceFee.delete({ where: { id: existing.id } });
+        await lockFeeSchedule(tx, "joining", `${existing.membershipTypeId}:${existing.ageTier ?? "FLAT"}`);
+        await tx.joiningFee.delete({ where: { id: existing.id } });
         targetId = existing.id;
       } else {
         const group = await tx.familyGroup.findUnique({ where: { id: input.familyGroupId }, select: { id: true } });

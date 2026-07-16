@@ -18,19 +18,28 @@ import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 
 type Fee = { id: string; amountCents: number; effectiveFrom: string; effectiveTo: string | null; billingBasis?: string; prorationRule?: string };
+type JoiningFeeRow = Fee & { ageTier: string | null };
 type Data = {
   canEdit: boolean;
   familyBillingMode: FamilyBillingMode;
-  membershipTypes: Array<{ id: string; name: string; isActive: boolean; annualFees: Fee[] }>;
-  entranceFees: Array<Fee & { category: string }>;
-  currentEntranceFees: Array<{ category: string; amountCents: number | null; source: string }>;
+  membershipTypes: Array<{ id: string; key: string; name: string; isActive: boolean; annualFees: Fee[]; joiningFees: JoiningFeeRow[] }>;
   familyGroups: Array<{
     id: string; name: string | null; billingMemberId: string | null; billingException: boolean;
     members: Array<{ id: string; firstName: string; lastName: string; email: string; active: boolean }>;
   }>;
 };
 
-const categories = ["ADULT", "YOUTH", "CHILD", "FAMILY"] as const;
+// A joining fee keys on membership type x optional age tier; "FLAT" is the
+// whole-type fee (the built-in Family type uses it).
+const JOINING_TIERS = [
+  { value: "FLAT", label: "Flat (all ages)" },
+  { value: "ADULT", label: "Adult" },
+  { value: "YOUTH", label: "Youth" },
+  { value: "CHILD", label: "Child" },
+  { value: "INFANT", label: "Infant" },
+] as const;
+const tierLabel = (tier: string | null) =>
+  JOINING_TIERS.find((option) => option.value === (tier ?? "FLAT"))?.label ?? (tier ?? "Flat");
 const today = formatDateOnly(getTodayDateOnly());
 const dollars = (cents: number | null) => cents == null ? "Not configured" : new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100);
 const memberName = (member: { firstName: string; lastName: string }) => `${member.firstName} ${member.lastName}`.trim();
@@ -45,7 +54,8 @@ export default function FeeConfigurationPage() {
   const [prorationRule, setProrationRule] = useState("NONE");
   const [membershipFrom, setMembershipFrom] = useState(today);
   const [membershipTo, setMembershipTo] = useState("");
-  const [entranceCategory, setEntranceCategory] = useState<string>("ADULT");
+  const [joiningTypeId, setJoiningTypeId] = useState("");
+  const [joiningTier, setJoiningTier] = useState<string>("ADULT");
   const [entranceAmount, setEntranceAmount] = useState("");
   const [entranceFrom, setEntranceFrom] = useState(today);
   const [entranceTo, setEntranceTo] = useState("");
@@ -62,7 +72,7 @@ export default function FeeConfigurationPage() {
   // while editing so the Select no longer writes on change; committed on Save,
   // discarded on Cancel.
   const [stagedBilling, setStagedBilling] = useState<Record<string, string | null>>({});
-  const [deleteTarget, setDeleteTarget] = useState<{ action: "DELETE_MEMBERSHIP_FEE" | "DELETE_ENTRANCE_FEE"; id: string; label: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ action: "DELETE_MEMBERSHIP_FEE" | "DELETE_JOINING_FEE"; id: string; label: string } | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const { scrollToError } = useScrollToFeedback();
 
@@ -75,7 +85,8 @@ export default function FeeConfigurationPage() {
   useEffect(() => { load().catch((cause) => setError(cause instanceof Error ? cause.message : "Failed to load")); }, [load]);
   useEffect(() => {
     if (!membershipTypeId && data?.membershipTypes[0]) setMembershipTypeId(data.membershipTypes[0].id);
-  }, [data, membershipTypeId]);
+    if (!joiningTypeId && data?.membershipTypes[0]) setJoiningTypeId(data.membershipTypes[0].id);
+  }, [data, membershipTypeId, joiningTypeId]);
   useEffect(() => { if (error) scrollToError(errorRef); }, [error, scrollToError]);
 
   const exceptions = useMemo(() => data?.familyGroups.filter((group) => group.billingException) ?? [], [data]);
@@ -112,7 +123,7 @@ export default function FeeConfigurationPage() {
     setProrationRule("NONE"); setMembershipFrom(today); setMembershipTo("");
   }
   function resetEntranceForm() {
-    setEditingEntranceFeeId(null); setEntranceAmount(""); setEntranceFrom(today); setEntranceTo("");
+    setEditingEntranceFeeId(null); setJoiningTier("ADULT"); setEntranceAmount(""); setEntranceFrom(today); setEntranceTo("");
   }
   function cancelMembershipEditing() { resetMembershipForm(); setMembershipEditing(false); }
   function cancelEntranceEditing() { resetEntranceForm(); setEntranceEditing(false); }
@@ -152,8 +163,10 @@ export default function FeeConfigurationPage() {
     const amountCents = parseDecimalDollarsToCents(entranceAmount);
     if (amountCents == null) { setError("Enter an NZD amount with no more than two decimal places."); return; }
     void mutate({
-      action: editingEntranceFeeId ? "UPDATE_ENTRANCE_FEE" : "CREATE_ENTRANCE_FEE",
-      ...(editingEntranceFeeId ? { id: editingEntranceFeeId } : { category: entranceCategory }),
+      action: editingEntranceFeeId ? "UPDATE_JOINING_FEE" : "CREATE_JOINING_FEE",
+      ...(editingEntranceFeeId
+        ? { id: editingEntranceFeeId }
+        : { membershipTypeId: joiningTypeId, ageTier: joiningTier === "FLAT" ? null : joiningTier }),
       amountCents, effectiveFrom: entranceFrom, effectiveTo: entranceTo || null,
     }).then((saved) => { if (saved) resetEntranceForm(); });
   }
@@ -185,17 +198,21 @@ export default function FeeConfigurationPage() {
       <div className="space-y-3">{data?.membershipTypes.map((type) => <div key={type.id} className="rounded-md border p-3"><div className="font-medium">{type.name}</div>{type.annualFees.length === 0 ? <p className="text-sm text-muted-foreground">Not configured</p> : type.annualFees.map((fee) => <div key={fee.id} className="mt-2 flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">{dollars(fee.amountCents)}</Badge><span>{fee.billingBasis?.replaceAll("_", " ")}</span><span>{fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{membershipEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${type.name} fee`} disabled={saving} onClick={() => { setEditingMembershipFeeId(fee.id); setMembershipTypeId(type.id); setMembershipAmount((fee.amountCents / 100).toFixed(2)); setBillingBasis(fee.billingBasis ?? "PER_MEMBER"); setProrationRule(fee.prorationRule ?? "NONE"); setMembershipFrom(fee.effectiveFrom); setMembershipTo(fee.effectiveTo ?? ""); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${type.name} fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_MEMBERSHIP_FEE", id: fee.id, label: `${type.name} annual fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>)}</div>)}</div>
     </CardContent></Card>
 
-    <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Joining fees</CardTitle>{data?.canEdit && !entranceEditing && <Button variant="outline" size="sm" aria-label="Edit joining fees" onClick={() => setEntranceEditing(true)}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
+    <Card><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle>Joining fees</CardTitle><CardDescription>the one-off fee a new member pays to join, per membership type and age tier</CardDescription></div>{data?.canEdit && !entranceEditing && <Button variant="outline" size="sm" aria-label="Edit joining fees" onClick={() => setEntranceEditing(true)}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
+      <Alert>
+        <span>Family joining fees now apply only to members assigned the <strong>Family</strong> membership type. Applicants who previously matched the automatic family heuristic (two adults plus a dependent) are now invoiced their own membership type&apos;s joining fee. A type with no rows raises no joining fee.</span>
+      </Alert>
       {entranceEditing && <>
-        <div className="grid gap-3 md:grid-cols-4">
-          <div><Label htmlFor="entrance-category">Category</Label><Select value={entranceCategory} onValueChange={setEntranceCategory} disabled={!!editingEntranceFeeId}><SelectTrigger id="entrance-category"><SelectValue /></SelectTrigger><SelectContent>{categories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent></Select></div>
+        <div className="grid gap-3 md:grid-cols-5">
+          <div><Label htmlFor="joining-type">Membership type</Label><Select value={joiningTypeId} onValueChange={setJoiningTypeId} disabled={!!editingEntranceFeeId}><SelectTrigger id="joining-type"><SelectValue /></SelectTrigger><SelectContent>{data?.membershipTypes.map((type) => <SelectItem key={type.id} value={type.id}>{type.name}</SelectItem>)}</SelectContent></Select></div>
+          <div><Label htmlFor="joining-tier">Age tier</Label><Select value={joiningTier} onValueChange={setJoiningTier} disabled={!!editingEntranceFeeId}><SelectTrigger id="joining-tier"><SelectValue /></SelectTrigger><SelectContent>{JOINING_TIERS.map((tier) => <SelectItem key={tier.value} value={tier.value}>{tier.label}</SelectItem>)}</SelectContent></Select></div>
           <div><Label htmlFor="entrance-amount">Amount (NZD)</Label><Input id="entrance-amount" inputMode="decimal" value={entranceAmount} onChange={(event) => setEntranceAmount(event.target.value)} placeholder="75.00" /></div>
           <div><Label htmlFor="entrance-from">Effective from</Label><Input id="entrance-from" type="date" value={entranceFrom} onChange={(event) => setEntranceFrom(event.target.value)} /></div>
           <div><Label htmlFor="entrance-to">Effective to (optional)</Label><Input id="entrance-to" type="date" value={entranceTo} onChange={(event) => setEntranceTo(event.target.value)} /></div>
         </div>
-        <div className="flex gap-2"><Button disabled={saving} onClick={saveEntranceFee}>{editingEntranceFeeId ? "Update joining fee" : "Add joining fee"}</Button>{editingEntranceFeeId && <Button variant="outline" onClick={resetEntranceForm}>Cancel edit</Button>}<Button variant="ghost" disabled={saving} onClick={cancelEntranceEditing}>Close section</Button></div>
+        <div className="flex gap-2"><Button disabled={saving || !joiningTypeId} onClick={saveEntranceFee}>{editingEntranceFeeId ? "Update joining fee" : "Add joining fee"}</Button>{editingEntranceFeeId && <Button variant="outline" onClick={resetEntranceForm}>Cancel edit</Button>}<Button variant="ghost" disabled={saving} onClick={cancelEntranceEditing}>Close section</Button></div>
       </>}
-      <div className="grid gap-3 md:grid-cols-2">{categories.map((category) => { const current = data?.currentEntranceFees.find((fee) => fee.category === category); const rows = data?.entranceFees.filter((fee) => fee.category === category) ?? []; return <div key={category} className="rounded-md border p-3"><div className="flex items-center justify-between"><span className="font-medium">{category}</span><Badge variant={current?.source === "SCHEDULE" ? "default" : "outline"}>{current?.source === "LEGACY_MAPPING" ? "Compatibility fallback" : current?.source ?? "None"}</Badge></div><p className="text-sm">Current: {dollars(current?.amountCents ?? null)}</p>{rows.map((fee) => <div key={fee.id} className="mt-2 flex items-center gap-2 text-sm"><span>{dollars(fee.amountCents)} · {fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{entranceEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${category} fee`} disabled={saving} onClick={() => { setEditingEntranceFeeId(fee.id); setEntranceCategory(category); setEntranceAmount((fee.amountCents / 100).toFixed(2)); setEntranceFrom(fee.effectiveFrom); setEntranceTo(fee.effectiveTo ?? ""); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${category} fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_ENTRANCE_FEE", id: fee.id, label: `${category} joining fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>)}</div>; })}</div>
+      <div className="space-y-3">{data?.membershipTypes.map((type) => <div key={type.id} className="rounded-md border p-3"><div className="font-medium">{type.name}{!type.isActive && <span className="ml-2 text-sm text-muted-foreground">(archived)</span>}</div>{type.joiningFees.length === 0 ? <p className="text-sm text-muted-foreground">No joining fee</p> : type.joiningFees.map((fee) => <div key={fee.id} className="mt-2 flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">{tierLabel(fee.ageTier)}</Badge><span>{dollars(fee.amountCents)} · {fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{entranceEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${type.name} ${tierLabel(fee.ageTier)} joining fee`} disabled={saving} onClick={() => { setEditingEntranceFeeId(fee.id); setJoiningTypeId(type.id); setJoiningTier(fee.ageTier ?? "FLAT"); setEntranceAmount((fee.amountCents / 100).toFixed(2)); setEntranceFrom(fee.effectiveFrom); setEntranceTo(fee.effectiveTo ?? ""); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${type.name} ${tierLabel(fee.ageTier)} joining fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_JOINING_FEE", id: fee.id, label: `${type.name} ${tierLabel(fee.ageTier)} joining fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>)}</div>)}</div>
     </CardContent></Card>
 
     {familyBillingActive && <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Family billing members</CardTitle>{data?.canEdit && !familyEditing && <Button variant="outline" size="sm" aria-label="Edit family billing" onClick={startFamilyEditing}>Edit</Button>}</CardHeader><CardContent className="space-y-3">
@@ -206,7 +223,7 @@ export default function FeeConfigurationPage() {
     </CardContent></Card>}
     <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !saving) setDeleteTarget(null); }}>
       <DialogContent showCloseButton={false}>
-        <DialogHeader><DialogTitle>Delete fee schedule?</DialogTitle><DialogDescription>Delete {deleteTarget?.label}? This removes configuration, not historical invoices. A deprecated entrance mapping may become the active compatibility fallback.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Delete fee schedule?</DialogTitle><DialogDescription>Delete {deleteTarget?.label}? This removes configuration, not historical invoices.</DialogDescription></DialogHeader>
         <DialogFooter><Button variant="outline" disabled={saving} onClick={() => setDeleteTarget(null)}>Cancel</Button><Button variant="destructive" disabled={saving || !deleteTarget} onClick={async () => { if (!deleteTarget) return; if (await mutate({ action: deleteTarget.action, id: deleteTarget.id })) setDeleteTarget(null); }}>Delete fee</Button></DialogFooter>
       </DialogContent>
     </Dialog>
