@@ -449,8 +449,23 @@ export default function XeroMemberGroupingPage() {
             <ViewOnlyActionButton
               canEdit={canEdit}
               size="sm"
-              disabled={busy || !snapshot || !dryRunId || snapshot.mismatchCount === 0}
-              title={!snapshot || !dryRunId ? "Run the dry-run first." : undefined}
+              disabled={
+                busy ||
+                !snapshot ||
+                !dryRunId ||
+                snapshot.mismatchCount === 0 ||
+                // Once a run has been initiated from this dry-run, the server
+                // rejects a second initiate (already_started, #1961) — continue
+                // with "Resume re-sync", or re-run the dry-run to start over.
+                Boolean(resyncState)
+              }
+              title={
+                !snapshot || !dryRunId
+                  ? "Run the dry-run first."
+                  : resyncState
+                    ? "This dry-run's re-sync has already started — use Resume re-sync, or re-run the dry-run to start over."
+                    : undefined
+              }
               onClick={() => {
                 if (
                   window.confirm(
