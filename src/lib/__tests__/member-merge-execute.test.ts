@@ -328,6 +328,112 @@ describe("executeMemberMerge", () => {
   });
 });
 
+describe("subscription collision handling at execute time (B1)", () => {
+  /**
+   * memberSubscription delegate: `count` (used for the token collision
+   * summary) stays 0 so validToken() matches; `findMany` distinguishes the
+   * guard's meaningful-loser query (has `OR`) from the resolver's plain
+   * member queries (no `OR`).
+   */
+  function subscriptionDelegate(config: {
+    masterRows: { id: string; seasonYear: number }[];
+    loserRows: { id: string; seasonYear: number }[];
+    loserMeaningfulSeasons: number[];
+  }) {
+    return {
+      ...defaultDelegate(),
+      findMany: vi.fn(({ where }: { where: { memberId?: string; OR?: unknown } }) => {
+        if (where.OR) {
+          return Promise.resolve(
+            where.memberId === LOSER_ID
+              ? config.loserMeaningfulSeasons.map((seasonYear) => ({ seasonYear }))
+              : [],
+          );
+        }
+        if (where.memberId === LOSER_ID) return Promise.resolve(config.loserRows);
+        if (where.memberId === MASTER_ID) return Promise.resolve(config.masterRows);
+        return Promise.resolve([]);
+      }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    };
+  }
+
+  it("blocks in-tx when a meaningful loser subscription collides with ANY master row (no delete, no drop)", async () => {
+    const memberSubscription = subscriptionDelegate({
+      masterRows: [{ id: "MS1", seasonYear: 2026 }], // master's row may be meaningless
+      loserRows: [{ id: "LS1", seasonYear: 2026 }],
+      loserMeaningfulSeasons: [2026], // loser's is PAID/invoiced/covered
+    });
+    const { client, member } = makeClient({ memberSubscription });
+
+    await expect(
+      executeMemberMerge({
+        masterId: MASTER_ID,
+        loserId: LOSER_ID,
+        actorMemberId: ACTOR_ID,
+        previewToken: validToken(),
+        confirmationText: "MERGE Dup Person",
+        db: client as never,
+      }),
+    ).rejects.toMatchObject({ statusCode: 409, code: "merge_blocked" });
+
+    expect(memberSubscription.deleteMany).not.toHaveBeenCalled();
+    const memberSpy = member as { delete: ReturnType<typeof vi.fn> };
+    expect(memberSpy.delete).not.toHaveBeenCalled();
+  });
+
+  it("drops a MEANINGLESS colliding loser subscription row (both-meaningless case)", async () => {
+    const memberSubscription = subscriptionDelegate({
+      masterRows: [{ id: "MS1", seasonYear: 2026 }],
+      loserRows: [{ id: "LS1", seasonYear: 2026 }],
+      loserMeaningfulSeasons: [], // loser row is NOT_INVOICED with no history
+    });
+    const { client } = makeClient({ memberSubscription });
+
+    await executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: validToken(),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+
+    expect(memberSubscription.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["LS1"] } },
+    });
+    expect(memberSubscription.updateMany).toHaveBeenCalledWith({
+      where: { memberId: LOSER_ID },
+      data: { memberId: MASTER_ID },
+    });
+  });
+
+  it("moves a loser-only subscription (even a meaningful one) without dropping anything", async () => {
+    const memberSubscription = subscriptionDelegate({
+      masterRows: [], // master has no row for the season
+      loserRows: [{ id: "LS1", seasonYear: 2026 }],
+      loserMeaningfulSeasons: [2026],
+    });
+    const { client } = makeClient({ memberSubscription });
+
+    await executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: validToken(),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+
+    expect(memberSubscription.deleteMany).not.toHaveBeenCalled();
+    expect(memberSubscription.updateMany).toHaveBeenCalledWith({
+      where: { memberId: LOSER_ID },
+      data: { memberId: MASTER_ID },
+    });
+  });
+});
+
 describe("MemberMergeError", () => {
   it("carries a status code and code", () => {
     const err = new MemberMergeError("nope", 409, "preview_drift", { a: 1 });

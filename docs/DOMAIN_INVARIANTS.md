@@ -1847,11 +1847,15 @@ and is hard-deleted at the end. The merge is **additive and master-wins**:
     `IssueReport.resolvedById`, `AuditLog` columns, …) are **left pointing at the
     loser's id by design** as immutable history; the same historic audit rows
     that reference the loser keep its id and stored names on purpose.
-- **Both-meaningful-subscription blocker.** If both members hold a *meaningful*
-  `MemberSubscription` (any invoice/payment/charge-coverage signal) for the same
-  season, the merge is **blocked** — it must never silently drop immutable charge
-  coverage. A meaningless loser subscription for a season the master also holds is
-  dropped; otherwise it moves.
+- **Subscription-collision blocker.** If the loser holds a *meaningful*
+  `MemberSubscription` (any invoice/payment/charge-coverage signal) for a season
+  the master holds **any** subscription row for — meaningful or not — the merge
+  is **blocked**: the keep-master resolver drops the loser's colliding row, so a
+  paid/invoiced loser row must never collide, even with a meaningless
+  `NOT_INVOICED` master row (dropping it would delete payment history, and a
+  charge-coverage-backed row would fail on its `onDelete: Restrict` FK). A
+  meaningless loser subscription for a season the master also holds is dropped;
+  otherwise it moves.
 - **Xero teardown (ENTRANCE_FEE_INVOICE re-point rule).** Inside the transaction
   and with **no Xero API calls**, the loser's contact-identity `XeroObjectLink`
   rows are deactivated and its `xeroContactId` nulled (mirroring the delete path).

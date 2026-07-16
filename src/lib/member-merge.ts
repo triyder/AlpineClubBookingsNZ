@@ -125,7 +125,7 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
 
   // --- Subscriptions / billing ---
   spec("MemberSubscription", "member", "memberId", "resolve", {
-    note: "@@unique(memberId,seasonYear); both-meaningful same season is a blocker; meaningless loser dropped, else moved",
+    note: "@@unique(memberId,seasonYear); a MEANINGFUL loser row colliding with ANY master row for the season is a blocker (payment history is never dropped); a meaningless colliding loser row is dropped, else moved",
   }),
   spec("MembershipSubscriptionCharge", "recipient", "recipientMemberId", "move"),
   spec("MembershipSubscriptionCharge", "confirmedBy", "confirmedByMemberId", "move"),
@@ -784,15 +784,20 @@ export async function evaluateMemberMergeGuards(params: {
     });
   }
 
-  // Both-meaningful subscription for the same season: never silently drop
-  // immutable charge coverage.
-  const bothMeaningful = await countBothMeaningfulSubscriptionSeasons(db, masterId, loserId);
-  if (bothMeaningful > 0) {
+  // A MEANINGFUL loser subscription (invoiced / paid / charge-covered) that
+  // collides with ANY master row for the same season would be dropped by the
+  // keep-master resolver — deleting payment history (and a coverage-backed row
+  // would surface as a late P2003, MembershipSubscriptionChargeCoverage is
+  // onDelete: Restrict). Block regardless of whether the MASTER's row is
+  // meaningful: a meaningless master row must never absorb a paid loser row.
+  // Only a meaningless colliding loser row may be dropped by the resolver.
+  const blockedSeasons = await countBlockedSubscriptionSeasons(db, masterId, loserId);
+  if (blockedSeasons > 0) {
     blockers.push({
-      code: "both_meaningful_subscription",
+      code: "subscription_collision",
       label:
-        "Both members have a meaningful membership subscription for the same season. Resolve the duplicate subscription before merging.",
-      count: bothMeaningful,
+        "The duplicate has an invoiced/paid membership subscription for a season the master also has a subscription row for. Resolve the duplicate subscription before merging.",
+      count: blockedSeasons,
     });
   }
 
@@ -808,14 +813,21 @@ const MEANINGFUL_SUBSCRIPTION_OR: Prisma.MemberSubscriptionWhereInput["OR"] = [
   { chargeCoverage: { isNot: null } },
 ];
 
-async function countBothMeaningfulSubscriptionSeasons(
+/**
+ * Seasons where a MEANINGFUL loser subscription collides with ANY master
+ * subscription row. The master side is deliberately NOT filtered on
+ * meaningfulness: the keep-master resolver drops the LOSER's colliding row, so
+ * the question is only whether the loser row being dropped carries payment
+ * history — not whether the master's surviving row does.
+ */
+async function countBlockedSubscriptionSeasons(
   db: MergeDbClient,
   masterId: string,
   loserId: string,
 ): Promise<number> {
-  const [masterMeaningful, loserMeaningful] = await Promise.all([
+  const [masterAll, loserMeaningful] = await Promise.all([
     db.memberSubscription.findMany({
-      where: { memberId: masterId, OR: MEANINGFUL_SUBSCRIPTION_OR },
+      where: { memberId: masterId },
       select: { seasonYear: true },
     }),
     db.memberSubscription.findMany({
@@ -823,7 +835,7 @@ async function countBothMeaningfulSubscriptionSeasons(
       select: { seasonYear: true },
     }),
   ]);
-  const masterSeasons = new Set(masterMeaningful.map((s) => s.seasonYear));
+  const masterSeasons = new Set(masterAll.map((s) => s.seasonYear));
   return loserMeaningful.filter((s) => masterSeasons.has(s.seasonYear)).length;
 }
 
