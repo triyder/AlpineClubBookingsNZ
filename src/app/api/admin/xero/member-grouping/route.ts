@@ -110,7 +110,9 @@ async function loadConfig() {
 }
 
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   return NextResponse.json(await loadConfig());
 }
@@ -158,7 +160,13 @@ const duplicateResponse = () =>
   );
 
 export async function POST(request: NextRequest) {
-  const guard = await requireAdmin();
+  // Explicit finance:view guard — the path-inference default would map ANY
+  // POST under /api/admin/xero to finance:edit, which made the dry-run's
+  // view-level exception below unreachable (#1934 review). Mutating actions
+  // are individually re-checked against finance:edit after parsing.
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
 

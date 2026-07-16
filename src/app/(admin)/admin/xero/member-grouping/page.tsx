@@ -16,7 +16,10 @@ import {
   ViewOnlyActionButton,
   AdminViewOnlyNotice,
 } from "@/components/admin/view-only-action";
-import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  useAdminAreaEditAccess,
+  useAdminAreaViewAccess,
+} from "@/hooks/use-admin-area-edit-access";
 import { formatAgeTierName } from "@/lib/use-age-tier-options";
 
 type GroupingMode = "NONE" | "MEMBERSHIP_TYPE" | "MEMBERSHIP_TYPE_AND_AGE";
@@ -93,7 +96,10 @@ async function api(body: unknown) {
 }
 
 export default function XeroMemberGroupingPage() {
+  // Mode/rule/bulk controls need finance:edit; the dry-run is read-only and
+  // matches the API's finance:view guard (E1 pattern, #1934 review).
   const canEdit = useAdminAreaEditAccess("finance");
+  const canView = useAdminAreaViewAccess("finance");
   const [config, setConfig] = useState<Config | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -351,7 +357,8 @@ export default function XeroMemberGroupingPage() {
           </p>
           <div className="flex flex-wrap gap-2">
             <ViewOnlyActionButton
-              canEdit
+              canEdit={canView}
+              readOnlyReason="Your admin role cannot view Xero member grouping."
               variant="outline"
               size="sm"
               disabled={busy}
