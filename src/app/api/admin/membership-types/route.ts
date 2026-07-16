@@ -10,12 +10,10 @@ import {
   MEMBERSHIP_TYPE_BOOKING_BEHAVIORS,
   MEMBERSHIP_TYPE_AGE_TIERS,
   MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS,
-  MEMBERSHIP_TYPE_XERO_RULE_MODES,
   buildUniqueMembershipTypeKey,
   membershipTypeOrderBy,
   normalizeMembershipTypeAgeTiers,
   normalizeMembershipTypeText,
-  normalizeMembershipTypeXeroRules,
   replaceMembershipTypeRuleConfiguration,
   serializeMembershipType,
   validateMembershipTypeRuleConfiguration,
@@ -41,31 +39,8 @@ const membershipTypeSelect = {
     select: { ageTier: true },
     orderBy: { ageTier: "asc" },
   },
-  xeroContactGroupRules: {
-    select: {
-      id: true,
-      ageTier: true,
-      mode: true,
-      groupId: true,
-      groupName: true,
-      isActive: true,
-      sortOrder: true,
-    },
-    orderBy: [{ sortOrder: "asc" }, { groupName: "asc" }, { groupId: "asc" }],
-  },
   _count: { select: { assignments: true } },
 } satisfies Prisma.MembershipTypeSelect;
-
-const xeroRuleSchema = z
-  .object({
-    ageTier: z.enum(MEMBERSHIP_TYPE_AGE_TIERS).nullable().optional(),
-    mode: z.enum(MEMBERSHIP_TYPE_XERO_RULE_MODES),
-    groupId: z.string().trim().min(1).max(200),
-    groupName: z.string().trim().max(200).nullable().optional(),
-    isActive: z.boolean().optional(),
-    sortOrder: z.number().int().min(0).max(100000).optional(),
-  })
-  .strict();
 
 const createSchema = z
   .object({
@@ -78,7 +53,6 @@ const createSchema = z
     isActive: z.boolean().optional().default(true),
     sortOrder: z.number().int().min(0).max(100000).optional(),
     allowedAgeTiers: z.array(z.enum(MEMBERSHIP_TYPE_AGE_TIERS)).optional(),
-    xeroContactGroupRules: z.array(xeroRuleSchema).optional(),
   })
   .strict();
 
@@ -159,12 +133,8 @@ export async function POST(request: Request) {
   const allowedAgeTiers = normalizeMembershipTypeAgeTiers(
     parsed.data.allowedAgeTiers ?? MEMBERSHIP_TYPE_AGE_TIERS,
   );
-  const xeroContactGroupRules = normalizeMembershipTypeXeroRules(
-    parsed.data.xeroContactGroupRules ?? [],
-  );
   const configurationError = validateMembershipTypeRuleConfiguration({
     allowedAgeTiers,
-    xeroContactGroupRules,
   });
   if (configurationError) {
     return NextResponse.json({ error: configurationError }, { status: 400 });
@@ -177,7 +147,6 @@ export async function POST(request: Request) {
     });
     await replaceMembershipTypeRuleConfiguration(tx, membershipType.id, {
       allowedAgeTiers,
-      xeroContactGroupRules,
     });
     const membershipTypeWithRules = await tx.membershipType.findUniqueOrThrow({
       where: { id: membershipType.id },
