@@ -125,6 +125,14 @@ routes, the booking modify/cancel/settlement services, and
 `xero-inbound/invoice-paid-effects.ts`. Skipping step 3 (acting on the pre-lock
 snapshot) is a TOCTOU.
 
+The admin exclusive whole-lodge hold route follows the same rule even though
+the hold flag itself is row-scoped: it reads only immutable `lodgeId`, takes the
+per-lodge lock, then re-reads status, hold state and dates. Both set-time
+conflict queries and their audit metadata consume that post-lock snapshot, so a
+concurrent date move cannot make the hold apply to one range while reporting
+conflicts for an older range. Its status-guarded SET remains necessary because
+cancel writers use the disjoint global lock and may still race the row update.
+
 ### Money / status transition → global `lock(1)`
 
 Cancel (`booking-cancel.ts`), Stripe capture and the capacity-failed void

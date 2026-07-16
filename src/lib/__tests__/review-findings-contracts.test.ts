@@ -534,6 +534,36 @@ describe("review finding source/schema contracts", () => {
     expect(splitChild).toContain("released.count === 0");
     expect(splitChild).toContain("fresh.status !== BookingStatus.PENDING");
 
+    // The exclusive whole-lodge hold is a per-lodge writer added by PR #1911.
+    // Its conflict response and audit dates are part of the safety contract, so
+    // a mutable pre-lock snapshot is not sufficient: immutable key -> lock ->
+    // full re-read -> guarded write -> conflict read.
+    const exclusiveHold = stripComments(
+      readRepoFile("src/app/api/admin/bookings/[id]/exclusive-hold/route.ts")
+    );
+    const exclusivePreReadIdx = exclusiveHold.indexOf("const lockTarget =");
+    const exclusiveLockIdx = exclusiveHold.indexOf(
+      `${PER_LODGE}(tx, lockTarget.lodgeId)`
+    );
+    const exclusiveRereadIdx = exclusiveHold.indexOf(
+      "const booking = await tx.booking.findUnique"
+    );
+    const exclusiveWriteIdx = exclusiveHold.indexOf("tx.booking.updateMany");
+    const exclusiveConflictIdx = exclusiveHold.indexOf(
+      "findOverlappingCapacityHoldingBookings(tx"
+    );
+    const exclusivePreLockRead = exclusiveHold.slice(
+      exclusivePreReadIdx,
+      exclusiveLockIdx
+    );
+    expect(exclusivePreReadIdx).toBeGreaterThanOrEqual(0);
+    expect(exclusivePreLockRead).toContain("select: { lodgeId: true }");
+    expect(exclusivePreLockRead).not.toContain("checkIn");
+    expect(exclusivePreReadIdx).toBeLessThan(exclusiveLockIdx);
+    expect(exclusiveLockIdx).toBeLessThan(exclusiveRereadIdx);
+    expect(exclusiveRereadIdx).toBeLessThan(exclusiveWriteIdx);
+    expect(exclusiveWriteIdx).toBeLessThan(exclusiveConflictIdx);
+
     // (3) confirm-pending-guests: both capacity-claiming branches take BOTH
     // locks (the whole handler is scanned; it contains lock(1) and the per-lodge
     // lock, each ahead of its status-guarded claim). Comment-stripped so a
