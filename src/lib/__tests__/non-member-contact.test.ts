@@ -67,7 +67,7 @@ describe("createNonMemberContact (#1935)", () => {
       email: "Jane@Example.com",
       noEmail: false,
       // Tampering attempt — these are not part of the schema and must be ignored.
-      ...( { role: "ADMIN", canLogin: true, emailVerified: true, ageTier: "CHILD" } as never),
+      ...( { role: "ADMIN", canLogin: true, emailVerified: true, ageTier: "CHILD" } as Record<string, unknown>),
     });
 
     const data = (mockedPrisma.member.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;

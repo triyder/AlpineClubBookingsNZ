@@ -44,7 +44,7 @@ beforeEach(() => {
   mocks.getActiveEmailSuppression.mockResolvedValue(null);
   // Dev short-circuit marks SENT without a real transporter — enough to prove
   // a real recipient reaches the EmailLog + suppression path.
-  process.env.NODE_ENV = "development";
+  vi.stubEnv("NODE_ENV", "development");
 });
 
 describe("sendEmail placeholder recipient suppression (#1935)", () => {
