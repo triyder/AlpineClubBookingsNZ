@@ -51,23 +51,45 @@ function invoiceDueIntervalDays(invoice: Invoice): number | null {
   return (dueMs - issueMs) / (24 * 60 * 60 * 1000);
 }
 
+// One expected invoice line derived from a frozen charge-component snapshot.
+export type SubscriptionInvoiceLine = {
+  amountCents: number;
+  accountCode: string;
+  itemCode: string | null;
+};
+
+function lineCents(line: NonNullable<Invoice["lineItems"]>[number]) {
+  const amount = line.lineAmount ?? ((line.quantity ?? 1) * (line.unitAmount ?? 0));
+  return Math.round(amount * 100);
+}
+
+// Adoption/idempotency guard (#1932, E6): the immutable charge now snapshots one
+// component per invoice line, so the match compares the FULL line array in order
+// (count, per-line amount + account + item + OUTPUT2 tax) plus the invoice-level
+// total, reference, contact, due interval, type, line-amount type and status.
+// A legacy single-line invoice adopts against a backfilled single-component
+// charge because that charge reproduces exactly one line. Line description is
+// deliberately NOT compared — it is derived at build time and must not make a
+// pre-existing AUTHORISED invoice fail to adopt.
 export function subscriptionInvoiceMatchesSnapshot(input: {
   invoice: Invoice;
   contactId: string;
   amountCents: number;
-  accountCode: string;
-  itemCode: string | null;
+  lines: SubscriptionInvoiceLine[];
   dueDays: number;
   reference: string;
 }) {
-  const { invoice, contactId, amountCents, accountCode, itemCode, dueDays, reference } = input;
+  const { invoice, contactId, amountCents, lines, dueDays, reference } = input;
+  const invoiceLines = invoice.lineItems ?? [];
   return invoice.reference === reference
     && invoice.contact?.contactID === contactId
     && invoiceCents(invoice) === amountCents
-    && (invoice.lineItems ?? []).length === 1
-    && invoice.lineItems?.[0]?.accountCode === accountCode
-    && (invoice.lineItems?.[0]?.itemCode ?? null) === itemCode
-    && invoice.lineItems?.[0]?.taxType === "OUTPUT2"
+    && invoiceLines.length === lines.length
+    && lines.every((line, index) =>
+      lineCents(invoiceLines[index]) === line.amountCents
+      && invoiceLines[index]?.accountCode === line.accountCode
+      && (invoiceLines[index]?.itemCode ?? null) === line.itemCode
+      && invoiceLines[index]?.taxType === "OUTPUT2")
     && invoiceDueIntervalDays(invoice) === dueDays
     && invoice.type === Invoice.TypeEnum.ACCREC
     && invoice.lineAmountTypes === LineAmountTypes.Inclusive
@@ -147,7 +169,10 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
 }) {
   const charge = await prisma.membershipSubscriptionCharge.findUnique({
     where: { id: input.chargeId },
-    include: { coverage: { include: { subscription: { select: { id: true } } } } },
+    include: {
+      coverage: { include: { subscription: { select: { id: true } } } },
+      components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] },
+    },
   });
   if (!charge) throw new Error(`Membership subscription charge not found: ${input.chargeId}`);
   if (charge.billingBasis === "NO_INVOICE") {
@@ -176,6 +201,24 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
     return null;
   }
 
+  // One invoice line per frozen component snapshot (#1932, E6), in stable order.
+  // The synthetic fallback reproduces the identical historical single line for
+  // any invoiceable charge minted before the component backfill — the exact same
+  // derivation the backfill used — so there is one line shape forever.
+  const componentLines = charge.components.length > 0
+    ? charge.components.map((component) => ({
+        amountCents: component.chargedAmountCents,
+        accountCode: component.xeroAccountCode,
+        itemCode: component.xeroItemCode,
+        description: component.description,
+      }))
+    : [{
+        amountCents: charge.chargedAmountCents,
+        accountCode,
+        itemCode: charge.xeroItemCode,
+        description: `${charge.membershipTypeName} membership ${charge.seasonYear}/${charge.seasonYear + 1} (${charge.coveredMonths} month${charge.coveredMonths === 1 ? "" : "s"})`,
+      }];
+
   let invoiceId = charge.xeroInvoiceId;
   let invoiceNumber = charge.xeroInvoiceNumber;
   let adopted = charge.xeroInvoiceAdopted;
@@ -193,8 +236,8 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
     if (existing[0]) {
       if (!subscriptionInvoiceMatchesSnapshot({
         invoice: existing[0], contactId, amountCents: charge.chargedAmountCents,
-        accountCode, itemCode: charge.xeroItemCode, dueDays: charge.dueDays,
-        reference: charge.invoiceReference,
+        lines: componentLines.map(({ amountCents, accountCode: code, itemCode }) => ({ amountCents, accountCode: code, itemCode })),
+        dueDays: charge.dueDays, reference: charge.invoiceReference,
       })) {
         await prisma.membershipSubscriptionCharge.update({
           where: { id: charge.id },
@@ -212,14 +255,14 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
       const built: Invoice = {
         type: Invoice.TypeEnum.ACCREC,
         contact: { contactID: contactId },
-        lineItems: [{
+        lineItems: componentLines.map((line) => ({
           quantity: 1,
-          unitAmount: charge.chargedAmountCents / 100,
-          accountCode,
-          ...(charge.xeroItemCode ? { itemCode: charge.xeroItemCode } : {}),
-          description: `${charge.membershipTypeName} membership ${charge.seasonYear}/${charge.seasonYear + 1} (${charge.coveredMonths} month${charge.coveredMonths === 1 ? "" : "s"})`,
+          unitAmount: line.amountCents / 100,
+          accountCode: line.accountCode,
+          ...(line.itemCode ? { itemCode: line.itemCode } : {}),
+          description: line.description,
           taxType: "OUTPUT2",
-        }],
+        })),
         date: formatDate(issueDate),
         dueDate: formatDate(addUtcDays(issueDate, charge.dueDays)),
         reference: charge.invoiceReference,

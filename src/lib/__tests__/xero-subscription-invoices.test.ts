@@ -19,7 +19,13 @@ function invoice(overrides: Partial<Invoice> = {}): Invoice {
 }
 
 describe("Xero membership subscription invoice adoption", () => {
-  const snapshot = { contactId: "contact-1", amountCents: 12_000, accountCode: "203", itemCode: "SUB", dueDays: 30, reference: "MEMSUB-reference" };
+  const snapshot = {
+    contactId: "contact-1",
+    amountCents: 12_000,
+    lines: [{ amountCents: 12_000, accountCode: "203", itemCode: "SUB" as string | null }],
+    dueDays: 30,
+    reference: "MEMSUB-reference",
+  };
 
   it("adopts only an exact reference, recipient, GST-inclusive amount, account and ACCREC match", () => {
     expect(subscriptionInvoiceMatchesSnapshot({ invoice: invoice(), ...snapshot })).toBe(true);
@@ -43,11 +49,61 @@ describe("Xero membership subscription invoice adoption", () => {
   });
 
   it("matches null snapshot item only when the provider item is absent or null", () => {
-    const noItemSnapshot = { ...snapshot, itemCode: null };
+    const noItemSnapshot = { ...snapshot, lines: [{ amountCents: 12_000, accountCode: "203", itemCode: null as string | null }] };
     expect(subscriptionInvoiceMatchesSnapshot({
       invoice: invoice({ lineItems: [{ quantity: 1, unitAmount: 120, lineAmount: 120, accountCode: "203", taxType: "OUTPUT2" }] }),
       ...noItemSnapshot,
     })).toBe(true);
     expect(subscriptionInvoiceMatchesSnapshot({ invoice: invoice(), ...noItemSnapshot })).toBe(false);
+  });
+
+  describe("multi-line component invoices (#1932, E6)", () => {
+    const multi = () => invoice({
+      total: 150,
+      lineItems: [
+        { quantity: 1, unitAmount: 100, lineAmount: 100, accountCode: "203", itemCode: "SUB", taxType: "OUTPUT2" },
+        { quantity: 1, unitAmount: 50, lineAmount: 50, accountCode: "260", itemCode: undefined, taxType: "OUTPUT2" },
+      ],
+    });
+    const multiSnapshot = {
+      contactId: "contact-1",
+      amountCents: 15_000,
+      lines: [
+        { amountCents: 10_000, accountCode: "203", itemCode: "SUB" as string | null },
+        { amountCents: 5_000, accountCode: "260", itemCode: null as string | null },
+      ],
+      dueDays: 30,
+      reference: "MEMSUB-reference",
+    };
+
+    it("adopts an exact full-line-array match in order", () => {
+      expect(subscriptionInvoiceMatchesSnapshot({ invoice: multi(), ...multiSnapshot })).toBe(true);
+    });
+
+    it("rejects when a line count differs", () => {
+      expect(subscriptionInvoiceMatchesSnapshot({ invoice: invoice({ total: 150 }), ...multiSnapshot })).toBe(false);
+    });
+
+    it("rejects when the lines are the same set but out of order", () => {
+      const swapped = invoice({
+        total: 150,
+        lineItems: [
+          { quantity: 1, unitAmount: 50, lineAmount: 50, accountCode: "260", itemCode: undefined, taxType: "OUTPUT2" },
+          { quantity: 1, unitAmount: 100, lineAmount: 100, accountCode: "203", itemCode: "SUB", taxType: "OUTPUT2" },
+        ],
+      });
+      expect(subscriptionInvoiceMatchesSnapshot({ invoice: swapped, ...multiSnapshot })).toBe(false);
+    });
+
+    it("rejects when a single line's account differs but the total still foots", () => {
+      const drifted = invoice({
+        total: 150,
+        lineItems: [
+          { quantity: 1, unitAmount: 100, lineAmount: 100, accountCode: "999", itemCode: "SUB", taxType: "OUTPUT2" },
+          { quantity: 1, unitAmount: 50, lineAmount: 50, accountCode: "260", itemCode: undefined, taxType: "OUTPUT2" },
+        ],
+      });
+      expect(subscriptionInvoiceMatchesSnapshot({ invoice: drifted, ...multiSnapshot })).toBe(false);
+    });
   });
 });
