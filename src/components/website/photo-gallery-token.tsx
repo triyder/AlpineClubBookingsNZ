@@ -178,6 +178,12 @@ export function PhotoGalleryToken({
         // Guarantee a non-empty, non-noisy alt even when the source image has
         // no filename (e.g. a base64 data: URI): fall back to a positional
         // label so screen readers can distinguish gallery items (#1947).
+        // NOTE: this deliberately overrides even an explicit alt="" (which the
+        // data layer preserves as "decorative"). Here each image is the sole
+        // content of an <a> lightbox link, so an empty alt would leave the link
+        // with no accessible name (WCAG 2.4.4 / 4.1.2). A positional name is the
+        // correct trade-off for a linked image; the plain decorative rule only
+        // applies to a non-interactive standalone <img>.
         const altText =
           image.alt ||
           (variant === "slideshow"

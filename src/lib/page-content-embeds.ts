@@ -15,6 +15,7 @@ import {
   getLodgeCapacity,
 } from "@/lib/lodge-capacity";
 import logger from "@/lib/logger";
+import { deriveAltFromImageSrc } from "@/lib/image-alt";
 import { extractImageDimensions } from "@/lib/media-image";
 import {
   embedTokenNames,
@@ -303,33 +304,10 @@ function parseTokenMatch(match: RegExpMatchArray): ParsedEmbedToken {
   };
 }
 
-/**
- * Derive a human-readable alt fallback from an image src filename so a
- * gallery/slideshow image whose author omitted `alt` is still announced by
- * screen readers (WCAG 1.1.1) instead of rendering an empty alt. Mirrors the
- * directory-listing branch, which already uses the file name as alt.
- * `data:` URIs carry no filename — returning "" for them avoids emitting a
- * massive base64 blob as alt text (#1947); the render component supplies a
- * positional fallback for those.
- */
-export function deriveAltFromImageSrc(src: string): string {
-  if (/^data:/i.test(src.trim())) {
-    return "";
-  }
-  const withoutQuery = src.split(/[?#]/)[0];
-  const lastSegment = withoutQuery.split("/").pop() ?? "";
-  let name: string;
-  try {
-    name = decodeURIComponent(lastSegment);
-  } catch {
-    name = lastSegment;
-  }
-  return name
-    .replace(/\.[a-z0-9]+$/i, "")
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+// deriveAltFromImageSrc lives in @/lib/image-alt (a pure, dependency-free
+// module) so the HTML sanitiser can share it without importing this module's
+// server-only graph. Re-exported here for existing importers/tests.
+export { deriveAltFromImageSrc };
 
 function extractInlinePhotoGalleryImages(contentHtml: string): {
   cleanedHtml: string;
@@ -342,9 +320,15 @@ function extractInlinePhotoGalleryImages(contentHtml: string): {
       const altMatch = match.match(/alt=["']([^"']*)["']/i);
       const widthMatch = match.match(/width=["']?(\d+)["']?/i);
       const heightMatch = match.match(/height=["']?(\d+)["']?/i);
-      // A present-but-empty alt="" is an explicit author decorative marker and
-      // is preserved; only a wholly missing alt attribute is backfilled from
-      // the filename so screen readers get a meaningful label (#1947).
+      // Data layer: preserve a present-but-empty alt="" as the author's
+      // explicit decorative marker, and backfill only a wholly missing alt
+      // from the filename (#1947). NOTE: for gallery/slideshow images the
+      // render layer (photo-gallery-token.tsx) deliberately does NOT honour an
+      // empty alt as decorative — each image there is a link's only content, so
+      // an empty alt would be an unnamed link (WCAG 2.4.4/4.1.2). It replaces
+      // the empty string with a positional accessible name. The two layers are
+      // reconciled on purpose: the data layer stays faithful to author intent;
+      // the render layer enforces the stricter linked-image accessible-name rule.
       const alt = altMatch ? altMatch[1] : deriveAltFromImageSrc(src);
       images.push({
         src,

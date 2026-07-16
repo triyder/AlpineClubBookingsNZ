@@ -124,6 +124,31 @@ describe("PhotoGalleryToken", () => {
     );
   });
 
+  it("pins the gallery caption fallback chain: alt as caption, else 'Open image' (#1947)", () => {
+    const { container } = render(
+      <PhotoGalleryToken
+        galleryId="gallery"
+        variant="gallery"
+        images={[
+          // A derived/authored non-empty alt is shown verbatim as the caption.
+          { src: "/api/images/Lodge_Winter.jpg", alt: "Lodge Winter", width: 20, height: 20 },
+          // An empty alt (e.g. a data: image the sanitiser marked decorative)
+          // falls the caption back to "Open image" while the <img> alt still
+          // gets the positional accessible name.
+          { src: "data:image/png;base64,AAAA", alt: "", width: 10, height: 10 },
+        ]}
+      />,
+    );
+
+    const captions = Array.from(
+      container.querySelectorAll<HTMLDivElement>("a > div:last-child"),
+    ).map((node) => node.textContent);
+    expect(captions).toEqual(["Lodge Winter", "Open image"]);
+
+    const imgs = Array.from(container.querySelectorAll("img"));
+    expect(imgs[1]?.getAttribute("alt")).toBe("Gallery image 2");
+  });
+
   it("cancels a pending slideshow auto-open on unmount", async () => {
     const { unmount } = render(
       <PhotoGalleryToken

@@ -154,7 +154,8 @@ describe("buildLayoutRender — display img-src restriction (issue #161)", () =>
     );
 
     expect(render.bodyHtml).not.toContain("evil.example");
-    expect(render.bodyHtml).toContain("<img />");
+    // src stripped; the missing alt is backfilled from the filename (#1947).
+    expect(render.bodyHtml).toContain('<img alt="beacon" />');
     expect(slotHtml(render, "main")).not.toContain("evil.example");
     expect(slotHtml(render, "main")).toBe('<img alt="x" />');
     expect(render.footerHtml).not.toContain("evil.example");
