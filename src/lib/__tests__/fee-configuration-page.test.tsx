@@ -15,11 +15,10 @@ const editableData = {
   canEdit: true,
   familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER",
   membershipTypes: [{
-    id: "type-1", name: "Full", isActive: true,
+    id: "type-1", key: "FULL", name: "Full", isActive: true,
     annualFees: [{ id: "fee-1", amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_MEMBER", prorationRule: "NONE" }],
+    joiningFees: [{ id: "joining-1", ageTier: "ADULT", amountCents: 5000, effectiveFrom: "2026-01-01", effectiveTo: null }],
   }],
-  entranceFees: [{ id: "entrance-1", category: "ADULT", amountCents: 5000, effectiveFrom: "2026-01-01", effectiveTo: null }],
-  currentEntranceFees: [{ category: "ADULT", amountCents: 5000, source: "SCHEDULE" }],
   familyGroups: [{
     id: "family-1", name: "Example family", billingMemberId: "member-1", billingException: false,
     members: [{ id: "member-1", firstName: "Alex", lastName: "Example", email: "alex@example.test", active: true }],
@@ -32,8 +31,6 @@ const multiFamilyData = {
   canEdit: true,
   familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER",
   membershipTypes: editableData.membershipTypes,
-  entranceFees: editableData.entranceFees,
-  currentEntranceFees: editableData.currentEntranceFees,
   familyGroups: [
     {
       id: "family-1", name: "Alpha family", billingMemberId: "m1a", billingException: false,
@@ -211,10 +208,10 @@ describe("fee configuration page", () => {
     render(<FeeConfigurationPage />);
     await screen.findByRole("button", { name: "Edit joining fees" });
     expect(screen.queryByLabelText("Amount (NZD)")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Edit ADULT fee" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit Full Adult joining fee" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Edit joining fees" }));
     expect(screen.getByLabelText("Amount (NZD)")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Edit ADULT fee" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit Full Adult joining fee" })).toBeTruthy();
   });
 
   it("does not call SET_FAMILY_BILLING_MEMBER until the family section Save", async () => {
@@ -339,8 +336,9 @@ describe("fee configuration page", () => {
       ...editableData,
       familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY",
       membershipTypes: [{
-        id: "type-1", name: "Full", isActive: true,
+        id: "type-1", key: "FULL", name: "Full", isActive: true,
         annualFees: [{ id: "fee-1", amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_FAMILY", prorationRule: "NONE" }],
+        joiningFees: [],
       }],
     };
     vi.stubGlobal("fetch", vi.fn(async () => response(true, staleData)));

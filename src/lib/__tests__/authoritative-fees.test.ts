@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  entranceFeeFindFirst: vi.fn(),
+  joiningFeeFindFirst: vi.fn(),
   itemMappingFindFirst: vi.fn(),
   accountMappingFindUnique: vi.fn(),
   membershipAnnualFeeFindFirst: vi.fn(),
@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    entranceFee: { findFirst: mocks.entranceFeeFindFirst },
+    joiningFee: { findFirst: mocks.joiningFeeFindFirst },
     xeroItemCodeMapping: { findFirst: mocks.itemMappingFindFirst },
     xeroAccountMapping: { findUnique: mocks.accountMappingFindUnique },
     membershipAnnualFee: { findFirst: mocks.membershipAnnualFeeFindFirst },
@@ -18,7 +18,7 @@ vi.mock("@/lib/prisma", () => ({
 
 import {
   FeeScheduleValidationError,
-  getEffectiveEntranceFee,
+  getEffectiveJoiningFee,
   getEffectiveMembershipAnnualFee,
   scheduleOverlapWhere,
   validateFeeScheduleInput,
@@ -27,7 +27,7 @@ import {
 describe("authoritative fee schedules", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.entranceFeeFindFirst.mockResolvedValue(null);
+    mocks.joiningFeeFindFirst.mockResolvedValue(null);
     mocks.itemMappingFindFirst.mockResolvedValue(null);
     mocks.accountMappingFindUnique.mockResolvedValue(null);
     mocks.membershipAnnualFeeFindFirst.mockResolvedValue(null);
@@ -64,13 +64,16 @@ describe("authoritative fee schedules", () => {
     });
   });
 
-  it("uses the current authoritative schedule before deprecated mappings", async () => {
-    mocks.entranceFeeFindFirst.mockResolvedValue({ amountCents: 8800 });
-    await expect(getEffectiveEntranceFee("ADULT", new Date("2026-07-13T00:00:00.000Z"))).resolves.toEqual({
-      amountCents: 8800,
-      source: "SCHEDULE",
-    });
+  it("resolves the age-tier joining fee row first (no legacy fallback)", async () => {
+    mocks.joiningFeeFindFirst.mockResolvedValueOnce({ amountCents: 8800, effectiveFrom: new Date("2026-01-01") });
+    await expect(
+      getEffectiveJoiningFee({ membershipTypeId: "type-full", ageTier: "ADULT" }, new Date("2026-07-13T00:00:00.000Z")),
+    ).resolves.toEqual({ amountCents: 8800, effectiveFrom: "2026-01-01", source: "SCHEDULE" });
+    // Age-tier hit means the flat fallback query never runs, and no deprecated
+    // mapping/account table is consulted.
+    expect(mocks.joiningFeeFindFirst).toHaveBeenCalledTimes(1);
     expect(mocks.itemMappingFindFirst).not.toHaveBeenCalled();
+    expect(mocks.accountMappingFindUnique).not.toHaveBeenCalled();
   });
 
   it("resolves a membership fee on inclusive effective boundaries", async () => {
@@ -87,11 +90,18 @@ describe("authoritative fee schedules", () => {
     });
   });
 
-  it("retains granular then flat mapping fallback for one compatibility release", async () => {
-    mocks.itemMappingFindFirst.mockResolvedValueOnce({ amountCents: 7500 }).mockResolvedValueOnce(null);
-    mocks.accountMappingFindUnique.mockResolvedValue({ code: "6400" });
-    await expect(getEffectiveEntranceFee("YOUTH")).resolves.toEqual({ amountCents: 7500, source: "LEGACY_MAPPING" });
-    await expect(getEffectiveEntranceFee("CHILD")).resolves.toEqual({ amountCents: 6400, source: "LEGACY_MAPPING" });
+  it("falls back to the flat NULL-tier row (Family type), then to NONE", async () => {
+    // No age-tier row, but a flat NULL-tier row exists (the Family flat fee).
+    mocks.joiningFeeFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ amountCents: 20000, effectiveFrom: new Date("2026-02-01") });
+    await expect(
+      getEffectiveJoiningFee({ membershipTypeId: "type-family", ageTier: "ADULT" }),
+    ).resolves.toEqual({ amountCents: 20000, effectiveFrom: "2026-02-01", source: "SCHEDULE" });
+
+    // Nothing configured -> NONE (no legacy fallback).
+    mocks.joiningFeeFindFirst.mockResolvedValue(null);
+    await expect(
+      getEffectiveJoiningFee({ membershipTypeId: "type-school", ageTier: "ADULT" }),
+    ).resolves.toEqual({ amountCents: null, effectiveFrom: null, source: "NONE" });
   });
 
   it("exposes the validation error status for API conflict handling", () => {

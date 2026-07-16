@@ -6,8 +6,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    entranceFee: { findFirst: vi.fn().mockResolvedValue(null) },
-    member: { findUnique: vi.fn() },
+    joiningFee: { findFirst: vi.fn().mockResolvedValue(null) },
+    member: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+    seasonalMembershipAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    membershipType: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn() },
     familyGroupMember: { findMany: vi.fn().mockResolvedValue([]) },
     xeroItemCodeMapping: { findFirst: vi.fn() },
     xeroAccountMapping: { findUnique: vi.fn() },
@@ -72,13 +74,22 @@ describe("getEntranceFeeContext for NOT_APPLICABLE members", () => {
     expect(prisma.xeroItemCodeMapping.findFirst).not.toHaveBeenCalled();
   });
 
-  it("leaves person members non-exempt", async () => {
-    vi.mocked(prisma.member.findUnique).mockResolvedValue({
-      ageTier: "ADULT",
+  it("leaves person members non-exempt and resolves the type x tier joining fee", async () => {
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({ ageTier: "ADULT" } as never);
+    // Policy resolution: no season assignment -> role default -> built-in FULL.
+    vi.mocked(prisma.member.findMany).mockResolvedValue([
+      { id: "m1", firstName: "A", lastName: "B", email: "a@b.c", role: "MEMBER", ageTier: "ADULT" },
+    ] as never);
+    vi.mocked(prisma.membershipType.findMany).mockResolvedValue([
+      { id: "type-full", key: "FULL", name: "Full", isActive: true, isBuiltIn: true, bookingBehavior: "MEMBER_RATE", subscriptionBehavior: "REQUIRED" },
+    ] as never);
+    // JoiningFee schedule for (FULL, ADULT).
+    vi.mocked(prisma.joiningFee.findFirst).mockResolvedValue({
+      amountCents: 10000,
+      effectiveFrom: new Date("2026-01-01"),
     } as never);
     vi.mocked(prisma.xeroItemCodeMapping.findFirst).mockResolvedValue({
       itemCode: "ENTRANCE",
-      amountCents: 10000,
     } as never);
 
     const context = await getEntranceFeeContext("m1");
@@ -86,6 +97,8 @@ describe("getEntranceFeeContext for NOT_APPLICABLE members", () => {
     expect(context.exempt).toBeUndefined();
     expect(context.category).toBe("ADULT");
     expect(context.feeMapping.amountCents).toBe(10000);
+    expect(context.feeMapping.itemCode).toBe("ENTRANCE");
+    expect(context.membershipTypeId).toBe("type-full");
   });
 });
 

@@ -13,12 +13,11 @@ const mocks = vi.hoisted(() => {
   membershipFeeCreate: vi.fn(),
   membershipFeeUpdate: vi.fn(),
   membershipFeeDelete: vi.fn(),
-  entranceFeeFindMany: vi.fn(),
-  entranceFeeFindFirst: vi.fn(),
-  entranceFeeFindUnique: vi.fn(),
-  entranceFeeCreate: vi.fn(),
-  entranceFeeUpdate: vi.fn(),
-  entranceFeeDelete: vi.fn(),
+  joiningFeeFindFirst: vi.fn(),
+  joiningFeeFindUnique: vi.fn(),
+  joiningFeeCreate: vi.fn(),
+  joiningFeeUpdate: vi.fn(),
+  joiningFeeDelete: vi.fn(),
   familyGroupFindMany: vi.fn(),
   familyGroupFindUnique: vi.fn(),
   familyGroupUpdate: vi.fn(),
@@ -34,10 +33,10 @@ const mocks = vi.hoisted(() => {
     findFirst: values.membershipFeeFindFirst, findUnique: values.membershipFeeFindUnique,
     create: values.membershipFeeCreate, update: values.membershipFeeUpdate, delete: values.membershipFeeDelete,
   },
-  entranceFee: {
-    findMany: values.entranceFeeFindMany, findFirst: values.entranceFeeFindFirst,
-    findUnique: values.entranceFeeFindUnique, create: values.entranceFeeCreate,
-    update: values.entranceFeeUpdate, delete: values.entranceFeeDelete,
+  joiningFee: {
+    findFirst: values.joiningFeeFindFirst,
+    findUnique: values.joiningFeeFindUnique, create: values.joiningFeeCreate,
+    update: values.joiningFeeUpdate, delete: values.joiningFeeDelete,
   },
   familyGroup: { findMany: values.familyGroupFindMany, findUnique: values.familyGroupFindUnique, update: values.familyGroupUpdate },
   familyGroupMember: { findUnique: values.familyGroupMemberFindUnique },
@@ -78,12 +77,11 @@ describe("fee configuration route", () => {
     mocks.membershipFeeCreate.mockResolvedValue({ id: "fee-1" });
     mocks.membershipFeeUpdate.mockResolvedValue({ id: "fee-1" });
     mocks.membershipFeeDelete.mockResolvedValue({ id: "fee-1" });
-    mocks.entranceFeeFindMany.mockResolvedValue([]);
-    mocks.entranceFeeFindFirst.mockResolvedValue(null);
-    mocks.entranceFeeFindUnique.mockResolvedValue(null);
-    mocks.entranceFeeCreate.mockResolvedValue({ id: "entrance-1" });
-    mocks.entranceFeeUpdate.mockResolvedValue({ id: "entrance-1" });
-    mocks.entranceFeeDelete.mockResolvedValue({ id: "entrance-1" });
+    mocks.joiningFeeFindFirst.mockResolvedValue(null);
+    mocks.joiningFeeFindUnique.mockResolvedValue(null);
+    mocks.joiningFeeCreate.mockResolvedValue({ id: "joining-1" });
+    mocks.joiningFeeUpdate.mockResolvedValue({ id: "joining-1" });
+    mocks.joiningFeeDelete.mockResolvedValue({ id: "joining-1" });
     mocks.familyGroupFindMany.mockResolvedValue([]);
     mocks.familyGroupFindUnique.mockResolvedValue({ id: "family-1" });
     mocks.familyGroupMemberFindUnique.mockResolvedValue({ id: "membership-1", member: { active: true, archivedAt: null } });
@@ -109,7 +107,7 @@ describe("fee configuration route", () => {
   });
 
   it("rejects invalid mutation input", async () => {
-    expect((await post({ action: "CREATE_ENTRANCE_FEE", category: "ADULT", amountCents: 12.5, effectiveFrom: "bad" })).status).toBe(400);
+    expect((await post({ action: "CREATE_JOINING_FEE", membershipTypeId: "type-1", ageTier: "ADULT", amountCents: 12.5, effectiveFrom: "bad" })).status).toBe(400);
   });
 
   it("returns an explicit read-only capability for finance viewers", async () => {
@@ -128,19 +126,19 @@ describe("fee configuration route", () => {
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/", "layout");
   });
 
-  it("updates and deletes an entrance schedule", async () => {
-    mocks.entranceFeeFindUnique.mockResolvedValue({ id: "entrance-1", category: "ADULT" });
-    expect((await post({ action: "UPDATE_ENTRANCE_FEE", id: "entrance-1", amountCents: 5000, effectiveFrom: "2026-08-01", effectiveTo: null })).status).toBe(200);
-    expect(mocks.entranceFeeUpdate).toHaveBeenCalledWith({ where: { id: "entrance-1" }, data: expect.objectContaining({ amountCents: 5000 }) });
-    expect((await post({ action: "DELETE_ENTRANCE_FEE", id: "entrance-1" })).status).toBe(200);
-    expect(mocks.entranceFeeDelete).toHaveBeenCalledWith({ where: { id: "entrance-1" } });
+  it("updates and deletes a joining fee schedule", async () => {
+    mocks.joiningFeeFindUnique.mockResolvedValue({ id: "joining-1", membershipTypeId: "type-1", ageTier: "ADULT" });
+    expect((await post({ action: "UPDATE_JOINING_FEE", id: "joining-1", amountCents: 5000, effectiveFrom: "2026-08-01", effectiveTo: null })).status).toBe(200);
+    expect(mocks.joiningFeeUpdate).toHaveBeenCalledWith({ where: { id: "joining-1" }, data: expect.objectContaining({ amountCents: 5000 }) });
+    expect((await post({ action: "DELETE_JOINING_FEE", id: "joining-1" })).status).toBe(200);
+    expect(mocks.joiningFeeDelete).toHaveBeenCalledWith({ where: { id: "joining-1" } });
   });
 
   it("updates/deletes membership, creates entrance, clears family, and revalidates every action", async () => {
     mocks.membershipFeeFindUnique.mockResolvedValue({ id: "fee-1", membershipTypeId: "type-1" });
     expect((await post({ action: "UPDATE_MEMBERSHIP_FEE", id: "fee-1", amountCents: 2000, billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2026-08-01", effectiveTo: null })).status).toBe(200);
     expect((await post({ action: "DELETE_MEMBERSHIP_FEE", id: "fee-1" })).status).toBe(200);
-    expect((await post({ action: "CREATE_ENTRANCE_FEE", category: "YOUTH", amountCents: 2500, effectiveFrom: "2026-08-01", effectiveTo: null })).status).toBe(200);
+    expect((await post({ action: "CREATE_JOINING_FEE", membershipTypeId: "type-1", ageTier: "YOUTH", amountCents: 2500, effectiveFrom: "2026-08-01", effectiveTo: null })).status).toBe(200);
     expect((await post({ action: "SET_FAMILY_BILLING_MEMBER", familyGroupId: "family-1", billingMemberId: null })).status).toBe(200);
     expect(mocks.familyGroupUpdate).toHaveBeenCalledWith({ where: { id: "family-1" }, data: { billingMembershipId: null } });
     expect(mocks.revalidatePath).toHaveBeenCalledTimes(4);
@@ -148,7 +146,7 @@ describe("fee configuration route", () => {
 
   it("returns not found for stale update and delete targets", async () => {
     expect((await post({ action: "UPDATE_MEMBERSHIP_FEE", id: "missing", amountCents: 2000, billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2026-08-01", effectiveTo: null })).status).toBe(404);
-    expect((await post({ action: "DELETE_ENTRANCE_FEE", id: "missing" })).status).toBe(404);
+    expect((await post({ action: "DELETE_JOINING_FEE", id: "missing" })).status).toBe(404);
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 

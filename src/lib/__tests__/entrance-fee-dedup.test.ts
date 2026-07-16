@@ -199,6 +199,44 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     );
   });
 
+  it("adopts a PRE-RENAME minted invoice by its frozen reference, never re-minting (#1931)", async () => {
+    // The joining-fee rename (E5) keeps the Xero reference format frozen at
+    // `Entrance fee (<Label>) - <memberId>`. A member invoiced BEFORE the rename
+    // holds an AUTHORISED invoice under exactly that reference. After the
+    // rename, if the durable link is missing (crash window), the worker must
+    // look the frozen reference up and adopt that pre-rename invoice rather than
+    // mint a second one.
+    vi.mocked(prisma.xeroObjectLink.findFirst).mockResolvedValue(null);
+    mockFindOrCreateXeroContact.mockResolvedValue("contact-1");
+
+    const preRenameInvoice = providerInvoice({ invoiceID: "inv-pre-rename", invoiceNumber: "INV-PRE" });
+    const getInvoices = vi.fn().mockResolvedValue({ body: { invoices: [preRenameInvoice] } });
+    const createInvoices = vi.fn();
+    mockGetAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi: { getInvoices, createInvoices } },
+      tenantId: "tenant-1",
+    });
+
+    const result = await createXeroEntranceFeeInvoice("member-1", {
+      syncOperationId: "op-post-rename",
+      precomputedEntranceFee: ADULT_FEE,
+    });
+
+    expect(result).toBe("inv-pre-rename");
+    // Looked up the FROZEN reference format (unchanged by the rename).
+    expect(getInvoices).toHaveBeenCalledWith(
+      "tenant-1", undefined, 'Reference=="Entrance fee (Adult) - member-1"',
+      undefined, undefined, undefined, undefined, undefined, 1, false,
+    );
+    // Adopted, not re-minted.
+    expect(mockRetryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    expect(createInvoices).not.toHaveBeenCalled();
+    expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(
+      "op-post-rename",
+      expect.objectContaining({ xeroObjectId: "inv-pre-rename" }),
+    );
+  });
+
   it("mints exactly once when no link and no prior Xero invoice exist", async () => {
     // Baseline: the guards must not block the legitimate first mint.
     vi.mocked(prisma.xeroObjectLink.findFirst).mockResolvedValue(null);
