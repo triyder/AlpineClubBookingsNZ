@@ -260,6 +260,29 @@ describe("partitionKeyedCollisions (collision matrix)", () => {
     expect(moveIds).toEqual(["L3"]);
   });
 
+  it("NULL-distinct: two custom access roles (role=null) never collide (MemberAccessRole)", () => {
+    // Both rows are custom-role rows with role=null but different roleDefinitionId.
+    const loser = [{ id: "L1", role: null, roleDefinitionId: "defX" }];
+    const master = [{ id: "M1", role: null, roleDefinitionId: "defY" }];
+    const { dropIds, moveIds } = partitionKeyedCollisions(loser, master, [
+      ["role"],
+      ["roleDefinitionId"],
+    ]);
+    // role=null must NOT collide; roleDefinitionId differs -> move, not drop.
+    expect(dropIds).toEqual([]);
+    expect(moveIds).toEqual(["L1"]);
+  });
+
+  it("NULL-distinct: same non-null roleDefinitionId still collides", () => {
+    const loser = [{ id: "L1", role: null, roleDefinitionId: "defX" }];
+    const master = [{ id: "M1", role: null, roleDefinitionId: "defX" }];
+    const { dropIds } = partitionKeyedCollisions(loser, master, [
+      ["role"],
+      ["roleDefinitionId"],
+    ]);
+    expect(dropIds).toEqual(["L1"]);
+  });
+
   it("1-1 (empty key spec): a single master row collides with the loser's", () => {
     // NotificationPreference-style: unique on memberId alone -> key = [] (constant).
     const { dropIds, moveIds } = partitionKeyedCollisions(

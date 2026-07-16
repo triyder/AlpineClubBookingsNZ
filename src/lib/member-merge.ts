@@ -1419,14 +1419,28 @@ async function resolveKeyedCollisions(
   return { moved: moveIds.length, dropped: dropIds.length };
 }
 
-function keyOf(row: Record<string, unknown>, fields: readonly string[]): string {
-  return fields.map((f) => String(row[f])).join("\u0000");
+/**
+ * The composite key for one unique over `fields`, or `null` when any component
+ * is null/undefined. A null component means SQL treats the row as distinct on
+ * that unique (NULLs never collide), so such a row is never a duplicate on that
+ * key - critical for `MemberAccessRole`, whose `role`/`roleDefinitionId` are
+ * both nullable (two custom-role rows both carry `role = null` yet are distinct).
+ */
+function keyOf(row: Record<string, unknown>, fields: readonly string[]): string | null {
+  const parts: string[] = [];
+  for (const f of fields) {
+    const v = row[f];
+    if (v === null || v === undefined) return null;
+    parts.push(String(v));
+  }
+  return parts.join("\u0000");
 }
 
 /**
  * Pure keep-master collision partition: a loser row is dropped when it collides
  * with a master row on ANY of the model unique keys (the member column is
  * excluded from the key because it becomes the master's after re-point). Every
+ * with a null component never collides (SQL NULL-distinct semantics). Every
  * other loser row is moved. Covers the collision matrix: both-have (drop),
  * loser-only (move), neither (nothing to do).
  */
@@ -1435,15 +1449,21 @@ export function partitionKeyedCollisions(
   masterRows: readonly Record<string, unknown>[],
   keySpecs: readonly (readonly string[])[],
 ): { dropIds: string[]; moveIds: string[] } {
-  const masterKeySets = keySpecs.map(
-    (fields) => new Set(masterRows.map((r) => keyOf(r, fields))),
-  );
+  const masterKeySets = keySpecs.map((fields) => {
+    const set = new Set<string>();
+    for (const r of masterRows) {
+      const k = keyOf(r, fields);
+      if (k !== null) set.add(k);
+    }
+    return set;
+  });
   const dropIds: string[] = [];
   const moveIds: string[] = [];
   for (const row of loserRows) {
-    const collides = keySpecs.some((fields, i) =>
-      masterKeySets[i].has(keyOf(row, fields)),
-    );
+    const collides = keySpecs.some((fields, i) => {
+      const k = keyOf(row, fields);
+      return k !== null && masterKeySets[i].has(k);
+    });
     if (collides) dropIds.push(row.id as string);
     else moveIds.push(row.id as string);
   }
