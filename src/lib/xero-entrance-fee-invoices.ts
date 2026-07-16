@@ -41,7 +41,7 @@ import {
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
 import { formatDate } from "./xero-invoice-helpers";
-import { buildJoiningFeeNarration } from "./joining-fee";
+import { buildJoiningFeeNarration } from "./joining-fee-narration";
 
 export interface CreateXeroEntranceFeeInvoiceOptions
   extends FindOrCreateXeroContactOptions {

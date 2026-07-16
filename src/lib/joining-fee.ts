@@ -22,6 +22,7 @@
 
 import type { AgeTier, EntranceFeeCategory, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { buildJoiningFeeNarration } from "@/lib/joining-fee-narration";
 import { getEffectiveJoiningFee, type JoiningFeeScheduleSource } from "@/lib/authoritative-fees";
 import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";
 import { computeAgeTier } from "@/lib/age-tier";
@@ -67,15 +68,10 @@ export function joiningFeeCategoryLabel(category: EntranceFeeCategory): string {
         : "Adult";
 }
 
-/**
- * The default joining-fee invoice-line narration. SHARED BY REFERENCE with both
- * the Xero invoice line builder (its default description) and the admin preview
- * endpoint, so the preview never drifts from what invoicing writes (item 15
- * referential-reuse contract).
- */
-export function buildJoiningFeeNarration(categoryLabel: string): string {
-  return `Membership joining fee (${categoryLabel})`;
-}
+// The default narration builder lives in @/lib/joining-fee-narration (see its
+// docblock for the referential-reuse contract); re-exported here so existing
+// importers keep one import site for the joining-fee API surface.
+export { buildJoiningFeeNarration };
 
 export interface MemberJoiningFeeClassification {
   exempt: boolean;

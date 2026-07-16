@@ -140,9 +140,11 @@ describe("getJoiningFeePreviewForMember", () => {
     expect(preview.source).toBe("SCHEDULE");
     expect(preview.effectiveFrom).toBe("2026-01-01");
 
-    // Referential-reuse: the preview narration is byte-for-byte what the Xero
-    // invoice line builder writes for the same category (both call
-    // buildJoiningFeeNarration), not an independently-authored string.
+    // Byte-equality here is the copy-level check; the PROOF that both
+    // surfaces call the same function BY REFERENCE (not two identical
+    // strings) is the sentinel-spy test in
+    // joining-fee-narration-reuse.test.ts, which mocks
+    // @/lib/joining-fee-narration and asserts both outputs are the sentinel.
     const label = joiningFeeCategoryLabel("ADULT");
     const invoiceLine = buildEntranceFeeLineItem(label, 10000);
     expect(invoiceLine.description).toBe(buildJoiningFeeNarration(label));
