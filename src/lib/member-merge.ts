@@ -129,6 +129,7 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   }),
   spec("MembershipSubscriptionCharge", "recipient", "recipientMemberId", "move"),
   spec("MembershipSubscriptionCharge", "confirmedBy", "confirmedByMemberId", "move"),
+  spec("MemberSubscription", "manuallyMarkedPaidBy", "manuallyMarkedPaidByMemberId", "move"),
   spec("MembershipBillingException", "member", "memberId", "move"),
   spec("SeasonalMembershipAssignment", "member", "memberId", "resolve", {
     note: "@@unique(memberId,seasonYear); keep master, move non-colliding",

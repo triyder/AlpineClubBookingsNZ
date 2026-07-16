@@ -21,6 +21,7 @@ import {
 } from "@/lib/email";
 import { createMemberInduction } from "@/lib/induction";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";
 import logger from "@/lib/logger";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
 import { checkNominatorEligibility } from "@/lib/nominator-eligibility";
@@ -337,7 +338,38 @@ async function verifyNominator(email: string): Promise<VerifiedNominator> {
     },
   });
 
-  if (!nominator || nominator.subscriptions.length === 0) {
+  // The identity gates (active / canLogin / member-level role) are enforced by
+  // the query above, so a missing candidate is always a genuinely ineligible
+  // email — reject it before any paid-up reasoning.
+  if (!nominator) {
+    throw new MembershipApplicationError(
+      `${normalizedEmail} is not an active, paid-up ${CLUB_NAME} member`,
+      422
+    );
+  }
+
+  // Paid-up determination aligns the nominator check with the booking side
+  // (E14 #1944): a membership type whose subscriptionBehavior is NOT_REQUIRED
+  // (Life, honorary) is paid-up-equivalent with no PAID subscription row, the
+  // same precedent booking-member-guest-subscriptions.ts already honours via
+  // resolveMembershipTypePoliciesForMembers. Every other type still requires a
+  // current-season PAID subscription exactly as before.
+  //
+  // DELIBERATELY NARROW: the booking side ALSO exempts un-subscribed junior age
+  // tiers (requiresPaidSubscriptionForAgeTier). That exemption is NOT applied to
+  // nominators — nominating is an adult-member act, and widening nomination
+  // eligibility to un-subscribed junior tiers is an owner policy decision that
+  // is out of scope for #1944. Only the membership-type NOT_REQUIRED rule is
+  // extended here.
+  const membershipTypePolicy = await resolveMembershipTypePolicyForMember(prisma, {
+    memberId: nominator.id,
+    seasonYear,
+  });
+  const paidUp =
+    membershipTypePolicy?.subscriptionBehavior === "NOT_REQUIRED" ||
+    nominator.subscriptions.length > 0;
+
+  if (!paidUp) {
     throw new MembershipApplicationError(
       `${normalizedEmail} is not an active, paid-up ${CLUB_NAME} member`,
       422

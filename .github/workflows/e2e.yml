@@ -68,6 +68,10 @@ jobs:
           SEED_ADMIN_EMAIL=e2e-admin@example.org
           SEED_ADMIN_PASSWORD=e2e-ci-seed-password
           SEED_LODGE_PASSWORD=e2e-ci-lodge-password
+          # Stamp the club theme completed so the public site renders its real
+          # header/footer/title chrome (not the "getting ready" holding page);
+          # the club-identity smoke spec asserts on that public chrome.
+          SEED_TOKOROA_THEME_COMPLETE=1
           STRIPE_SECRET_KEY=$STRIPE_SK
           NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$STRIPE_PK
           STRIPE_WEBHOOK_SECRET=whsec_e2e_placeholder
@@ -214,6 +218,11 @@ jobs:
           SEED_ADMIN_EMAIL=e2e-admin@example.org
           SEED_ADMIN_PASSWORD=e2e-ci-seed-password
           SEED_LODGE_PASSWORD=e2e-ci-lodge-password
+          # Keep parity with the single-lodge job: stamp the club theme completed
+          # so the public site renders real chrome rather than the holding page.
+          # The multi-lodge project doesn't run the club-identity smoke, but no
+          # spec asserts the incomplete-theme holding page, so this is inert here.
+          SEED_TOKOROA_THEME_COMPLETE=1
           STRIPE_SECRET_KEY=$STRIPE_SK
           NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$STRIPE_PK
           STRIPE_WEBHOOK_SECRET=whsec_e2e_placeholder

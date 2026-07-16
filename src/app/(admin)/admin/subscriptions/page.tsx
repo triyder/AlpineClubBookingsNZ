@@ -24,6 +24,7 @@ import {
 import {
   TableBody,
   TableCell,
+  TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
@@ -46,10 +47,12 @@ import {
   ExternalLink,
   RefreshCw,
   ShieldCheck,
+  Undo2,
   Users,
   Clock,
   type LucideIcon,
 } from "lucide-react";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { SubscriptionBillingPanel } from "./_components/subscription-billing-panel";
 
 function getSeasonYear(date: Date): number {
@@ -68,6 +71,8 @@ interface Subscription {
   xeroInvoiceId: string | null;
   xeroInvoiceNumber: string | null;
   paidAt: string | null;
+  manuallyMarkedPaidAt: string | null;
+  manualPaymentNote: string | null;
   xeroContactGroupsLoaded: boolean;
   xeroContactGroups: Array<{ id: string; name: string }>;
   member: {
@@ -170,6 +175,7 @@ export default function SubscriptionsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const ageTierOptions = useAgeTierOptions();
+  const canEditFinance = useAdminAreaEditAccess("finance");
   const [seasonYear, setSeasonYear] = useState(() => parseSeasonYearParam(searchParams.get("seasonYear")));
   const [status, setStatus] = useState(searchParams.get("status") || "all");
   const [ageTier, setAgeTier] = useState<AgeTier | "all">(
@@ -219,6 +225,50 @@ export default function SubscriptionsPage() {
       setSyncMessage({ type: "error", text: "Sync failed — check Xero connection" });
     } finally {
       setSyncing(null);
+    }
+  }
+
+  // Manual mark-paid / mark-unpaid (E14 #1944). Finance-edit only — the whole
+  // action column is hidden for finance-view users (E1 gating pattern). The
+  // endpoint never calls Xero; it only writes local status + provenance.
+  const [manualWorkingId, setManualWorkingId] = useState<string | null>(null);
+  async function handleManualPayment(sub: Subscription, direction: "paid" | "unpaid") {
+    // Synthetic NOT_REQUIRED rows have no real subscription row to write to.
+    if (sub.id.startsWith("not-required:")) return;
+    const who = `${sub.member.firstName} ${sub.member.lastName}`.trim();
+    let note: string | null = null;
+    if (direction === "paid") {
+      if (!confirm(`Mark ${who}'s ${sub.seasonYear} subscription as paid (manual)? This records a payment made outside Xero and does not create an invoice.`)) {
+        return;
+      }
+      // Cancelling the note prompt aborts the whole action (F6) — null means
+      // "Cancel", the empty string means "OK with no note". Truncate client-side
+      // to the API cap so a long note never surfaces as a generic 400.
+      const rawNote = window.prompt("Optional note (e.g. cash, cheque #123). Leave blank to skip.");
+      if (rawNote === null) return;
+      note = rawNote.trim().slice(0, 500) || null;
+    } else if (!confirm(`Reverse the manual payment for ${who}? The subscription returns to its unpaid state.`)) {
+      return;
+    }
+    setManualWorkingId(sub.id);
+    setSyncMessage(null);
+    try {
+      const res = await fetch(`/api/admin/subscriptions/${sub.id}/manual-payment`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ direction, note, confirmed: true }),
+      });
+      const json = await res.json();
+      if (res.ok) {
+        setSyncMessage({ type: "success", text: json.message || "Subscription updated." });
+        fetchData();
+      } else {
+        setSyncMessage({ type: "error", text: json.error || "Manual payment failed." });
+      }
+    } catch {
+      setSyncMessage({ type: "error", text: "Manual payment failed." });
+    } finally {
+      setManualWorkingId(null);
     }
   }
 
@@ -273,6 +323,8 @@ export default function SubscriptionsPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
   const totalPages = Math.ceil(total / pageSize);
+  // The manual mark-paid action column only exists for finance-edit users.
+  const columnCount = canEditFinance ? 8 : 7;
 
   function toggleSort(column: SubscriptionSortBy) {
     setPage(1);
@@ -501,12 +553,13 @@ export default function SubscriptionsPage() {
             <SubscriptionSortHeader column="status">Status</SubscriptionSortHeader>
             <SubscriptionSortHeader column="xeroInvoice">Xero Invoice</SubscriptionSortHeader>
             <SubscriptionSortHeader column="paidAt">Paid Date</SubscriptionSortHeader>
+            {canEditFinance ? <TableHead>Actions</TableHead> : null}
           </TableRow>
         </TableHeader>
         <TableBody>
           {loading ? (
             <TableRow>
-              <TableCell colSpan={7} className="py-10 text-center">
+              <TableCell colSpan={columnCount} className="py-10 text-center">
                 <div className="flex justify-center">
                   <Spinner label="Loading subscriptions…" />
                 </div>
@@ -514,7 +567,7 @@ export default function SubscriptionsPage() {
             </TableRow>
           ) : data.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={7} className="p-0">
+              <TableCell colSpan={columnCount} className="p-0">
                 <EmptyState
                   icon={Users}
                   title="No subscriptions found"
@@ -551,7 +604,16 @@ export default function SubscriptionsPage() {
                   )}
                 </TableCell>
                 <TableCell>
-                  <StatusChip kind="subscription" value={sub.status as SubscriptionStatus} />
+                  <StatusChip
+                    kind="subscription"
+                    value={sub.status as SubscriptionStatus}
+                    label={sub.manuallyMarkedPaidAt ? `${subscriptionStatusLabel(sub.status)} (manual)` : undefined}
+                    title={
+                      sub.manuallyMarkedPaidAt
+                        ? `Marked paid manually${sub.manualPaymentNote ? `: ${sub.manualPaymentNote}` : ""}`
+                        : undefined
+                    }
+                  />
                 </TableCell>
                 <TableCell>
                   {sub.xeroInvoiceId ? (
@@ -567,6 +629,40 @@ export default function SubscriptionsPage() {
                   ) : "—"}
                 </TableCell>
                 <TableCell className="text-sm">{sub.paidAt ? format(new Date(sub.paidAt), "d MMM yyyy") : "—"}</TableCell>
+                {canEditFinance ? (
+                  <TableCell>
+                    {sub.id.startsWith("not-required:") ? (
+                      "—"
+                    ) : sub.manuallyMarkedPaidAt ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={manualWorkingId === sub.id}
+                        onClick={() => handleManualPayment(sub, "unpaid")}
+                      >
+                        <Undo2 className="h-4 w-4 mr-1" />
+                        Mark as unpaid
+                      </Button>
+                    ) : sub.status !== "PAID" && sub.status !== "NOT_REQUIRED" && !sub.xeroInvoiceId ? (
+                      // Manual mark-paid is for cash payments where NO Xero
+                      // invoice exists (#1944 owner decision). A row with a Xero
+                      // invoice link must be settled against the invoice in
+                      // Xero, and a NOT_REQUIRED row has nothing to pay, so
+                      // neither offers the action.
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={manualWorkingId === sub.id}
+                        onClick={() => handleManualPayment(sub, "paid")}
+                      >
+                        <CheckCircle2 className="h-4 w-4 mr-1" />
+                        Mark as paid (manual)
+                      </Button>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                ) : null}
               </TableRow>
             ))
           )}

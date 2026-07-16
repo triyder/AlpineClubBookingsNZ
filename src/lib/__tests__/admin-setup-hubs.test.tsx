@@ -141,12 +141,28 @@ describe("admin setup hub pages", () => {
 
     expect(foundationHtml).toContain("Initial Setup");
     expect(foundationHtml).toContain("/admin/modules");
+    // E3 follow-up #1966: foundations cross-links the content-gated Club
+    // Identity cards under Admin > Appearance.
+    expect(foundationHtml).toContain("Club Identity");
+    expect(foundationHtml).toContain("/admin/appearance/identity");
     expect(bookingHtml).toContain("Booking Rules");
     expect(bookingHtml).toContain("/admin/booking-policies");
     expect(integrationsHtml).toContain("Operational Integrations");
     expect(integrationsHtml).toContain("/admin/xero/setup");
     expect(cancellationHtml).toContain("Cancellation");
     expect(cancellationHtml).toContain("/admin/membership-cancellation");
+  });
+
+  it("hides the Club Identity cross-link without content access (#1966)", async () => {
+    vi.mocked(loadAdminSetupPermissionMatrix).mockResolvedValue({
+      ...allAreasView,
+      content: "none",
+    });
+
+    const html = await renderPage(FoundationsSetupHubPage);
+
+    expect(html).not.toContain("Club Identity");
+    expect(html).not.toContain("/admin/appearance/identity");
   });
 
   it("renders a back link to the Setup Wizard on every setup sub-hub", async () => {

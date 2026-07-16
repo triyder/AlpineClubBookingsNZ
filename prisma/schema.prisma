@@ -557,6 +557,7 @@ model Member {
   twoFactorRecoveryCodes                     TwoFactorRecoveryCode[]
   twoFactorSessionChallenges                 TwoFactorSessionChallenge[]
   subscriptions                              MemberSubscription[]
+  memberSubscriptionsManuallyPaid            MemberSubscription[]                    @relation("MemberSubscriptionManualPaidBy")
   membershipChargesReceived                  MembershipSubscriptionCharge[]          @relation("MembershipChargeRecipient")
   membershipChargesConfirmed                 MembershipSubscriptionCharge[]          @relation("MembershipChargeConfirmer")
   membershipBillingExceptions                MembershipBillingException[]            @relation("MembershipBillingExceptionMember")
@@ -868,17 +869,28 @@ model MemberSubscription {
   xeroInvoiceNumber    String?
   xeroOnlineInvoiceUrl String?
   paidAt               DateTime?
+  // E14 (#1944): manual mark-paid provenance for clubs that do not use Xero (or
+  // one-off cash payments). Set together by the finance:edit manual-payment
+  // endpoint when a subscription is marked PAID outside the Xero pipeline, and
+  // cleared together on reversal. Xero sync/webhook paths never touch a row
+  // whose manuallyMarkedPaidAt is set while it carries no Xero invoice link, so
+  // a manual PAID is never silently downgraded.
+  manuallyMarkedPaidAt         DateTime?
+  manuallyMarkedPaidByMemberId String?
+  manualPaymentNote            String?   @db.VarChar(500)
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
   // Relations
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  manuallyMarkedPaidBy Member? @relation("MemberSubscriptionManualPaidBy", fields: [manuallyMarkedPaidByMemberId], references: [id], onDelete: SetNull)
   chargeCoverage MembershipSubscriptionChargeCoverage?
 
   @@unique([memberId, seasonYear])
   @@index([memberId])
   @@index([seasonYear])
   @@index([seasonYear, status])
+  @@index([manuallyMarkedPaidByMemberId])
 }
 
 // Immutable financial snapshot for one membership subscription invoice decision.

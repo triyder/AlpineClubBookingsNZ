@@ -78,6 +78,40 @@ Future reviews and issues should cite this file when proposing changes.
 - Membership approval remains authoritative when billing setup is incomplete:
   billing records a visible post-approval exception/warning and never rolls the
   member transaction back.
+- **Paid-up semantics (three sources, one meaning).** A member counts as
+  paid-up when EITHER their membership-type policy `subscriptionBehavior` is
+  `NOT_REQUIRED` (Life/honorary/operational — no subscription row needed) OR
+  their current-season `MemberSubscription.status` is `PAID`. Booking
+  (`findUnpaidMemberGuests`), nomination eligibility (`verifyNominator`), and the
+  member-facing `/api/member/subscription-status` all resolve paid-up from these
+  same two facts. Nomination deliberately honours ONLY the membership-type
+  `NOT_REQUIRED` rule, NOT the booking side's junior age-tier subscription
+  exemption (`requiresPaidSubscriptionForAgeTier`): nominating is an adult-member
+  act and widening it to un-subscribed junior tiers is an owner policy decision.
+- **Manual mark-paid provenance (non-Xero clubs / cash).** `status = "PAID"` can
+  be set outside the Xero pipeline by an audited finance:edit action, recorded by
+  `manuallyMarkedPaidAt` / `manuallyMarkedPaidByMemberId` / `manualPaymentNote`.
+  This path never calls Xero and never creates or voids an invoice, and it exists
+  only for cash payments where NO Xero invoice exists: marking paid is rejected
+  when the row carries a Xero invoice link (record the payment against the
+  invoice in Xero instead) or is `NOT_REQUIRED`, and both manual writes are
+  status-fenced conditional updates so concurrent actions cannot double-apply.
+  No writer may clobber a manual PAID: the annual-invoice sweep never invoices a
+  subscription already `PAID` (a manual PAID has no charge-coverage row, so the
+  guard keys off status, not coverage); a queued/retrying invoice charge
+  conflicts (`SUBSCRIPTION_ALREADY_PAID`) instead of minting an invoice for a
+  covered subscription that became `PAID`, and its coverage write never
+  downgrades a `PAID` row; Xero discovery/reconciliation
+  (`checkMembershipStatus`) never downgrades a manually marked-paid row that
+  carries no Xero invoice link (a write-time fence, so a manual mark-paid
+  landing mid-sync is also safe); and `flushMemberSubscriptionHistory` treats a
+  manual-PAID row as financial history and never deletes it on contact
+  link/push/unlink. Once a real Xero subscription invoice links to the row,
+  Xero is authoritative again and the linking write clears the manual
+  provenance columns (a row can never read "UNPAID (manual)"). Reversal
+  (finance:edit) restores `NOT_INVOICED` (or `UNPAID` on a legacy row with an
+  invoice link) and clears the provenance columns; both directions are audited
+  with the acting admin, including the previous status.
 - Xero invoice identity is persisted before Xero email. Email retries reuse it.
   Existing invoices are adopted only on an exact `AUTHORISED` snapshot match;
   conflicts are visible and never trigger a silent provider rewrite. Xero

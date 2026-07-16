@@ -194,6 +194,9 @@ function LodgeHeader({ state }: DisplayModuleProps) {
     <div className="display-lodge-header">
       <div className="display-header-brand">
         {state.club.logoDataUrl && (
+          // Decorative: the lodge name (and club name, when set) render as
+          // adjacent visible text below, so an alt here would be redundant.
+          // Empty alt is the correct WCAG treatment (#1947).
           // eslint-disable-next-line @next/next/no-img-element
           <img
             className="display-header-logo"

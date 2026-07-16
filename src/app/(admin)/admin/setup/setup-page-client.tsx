@@ -112,7 +112,7 @@ const setupHubCards: SetupHubCard[] = [
     href: "/admin/setup/foundations",
     title: "Initial Setup",
     description:
-      "Start with the installation checklist, modules, lodge records, and system health.",
+      "Start with the installation checklist, club identity, modules, lodge records, and system health.",
     icon: ListChecks,
     requiredAreas: ["support"],
   },
