@@ -149,10 +149,32 @@ export async function getHutFeeItemCodeMap(): Promise<HutFeeItemCodeResolver> {
 }
 
 /**
+ * Whether the hut-fee resolver is configured at all: it carries membership-type
+ * keyed rows OR the legacy flat `hutFeeItem` code. Mirrors main's
+ * `hutFeeItemCodeMap.size > 0` guard (the legacy map was pre-filled from
+ * `hutFeeItem` when the keyed table was empty), so callers fall back to the
+ * single `hutFeesIncome` item code exactly when main did (#1930, E4).
+ */
+export function isHutFeeResolverConfigured(
+  resolver: HutFeeItemCodeResolver,
+): boolean {
+  return resolver.byKey.size > 0 || resolver.legacyItemCode != null;
+}
+
+/**
  * Resolve one guest's hut-fee Xero item code (#1930, E4). Prefers the guest's
  * rateMembershipType snapshot; a NULL snapshot falls back isMember ->
  * FULL/NON_MEMBER. Within a type, prefers the exact age-tier row then the flat
- * (FLAT) row, then the legacy flat item code.
+ * (FLAT) row.
+ *
+ * Fallback semantics are byte-identical to main's boolean-keyed map:
+ *   - keyed rows exist, lookup misses -> null (the line stays account-coded;
+ *     the legacy `hutFeeItem` is NOT consulted once keyed rows exist),
+ *   - keyed table EMPTY (genuine legacy-only install) -> the flat `hutFeeItem`
+ *     (main pre-filled every key with it),
+ *   - no seasonType -> null; the caller falls back to the single
+ *     `hutFeesIncome` item code (never `hutFeeItem`), matching main's
+ *     `(map && seasonType) ? ... : itemCode` precedence.
  */
 export function resolveHutFeeItemCode(
   resolver: HutFeeItemCodeResolver,
@@ -163,20 +185,17 @@ export function resolveHutFeeItemCode(
   },
   seasonType: string | null | undefined,
 ): string | null {
-  if (seasonType) {
-    const typeId =
-      guest.rateMembershipTypeId ??
-      (guest.isMember ? resolver.fullTypeId : resolver.nonMemberTypeId);
-    if (typeId) {
-      const exact = resolver.byKey.get(
-        hutFeeItemCodeKey(typeId, seasonType, guest.ageTier),
-      );
-      if (exact) return exact;
-      const flat = resolver.byKey.get(hutFeeItemCodeKey(typeId, seasonType, null));
-      if (flat) return flat;
-    }
-  }
-  return resolver.legacyItemCode;
+  if (!seasonType) return null;
+  if (resolver.byKey.size === 0) return resolver.legacyItemCode;
+  const typeId =
+    guest.rateMembershipTypeId ??
+    (guest.isMember ? resolver.fullTypeId : resolver.nonMemberTypeId);
+  if (!typeId) return null;
+  return (
+    resolver.byKey.get(hutFeeItemCodeKey(typeId, seasonType, guest.ageTier)) ??
+    resolver.byKey.get(hutFeeItemCodeKey(typeId, seasonType, null)) ??
+    null
+  );
 }
 
 /**

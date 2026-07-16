@@ -235,6 +235,45 @@ describe("buildInvoiceLineItems with per-guest membership-type item codes (#1930
     }
   });
 
+  it("a miss with keyed rows present yields NO item code even when the legacy hutFeeItem is set (main parity)", () => {
+    // Keyed rows exist (WINTER only) and the legacy flat hutFeeItem is also
+    // configured. A SUMMER lookup misses -> null, exactly like main: once the
+    // keyed table has rows, the legacy flat code is never a per-guest fallback.
+    const items = buildInvoiceLineItems(
+      mixedGuests, checkIn, checkOut, 2, "200", null, false, makeResolver("LEGACY-HUT"), "SUMMER"
+    );
+    for (const item of items) {
+      expect(item.itemCode).toBeUndefined();
+      expect(item.accountCode).toBe("200");
+    }
+  });
+
+  it("a miss with keyed rows present also ignores the hutFeesIncome item code param (main parity)", () => {
+    const items = buildInvoiceLineItems(
+      mixedGuests, checkIn, checkOut, 2, "200", "INCOME-ITEM", false, makeResolver(), "SUMMER"
+    );
+    for (const item of items) {
+      expect(item.itemCode).toBeUndefined();
+      expect(item.accountCode).toBe("200");
+    }
+  });
+
+  it("legacy-only install (keyed table empty) resolves the flat hutFeeItem", () => {
+    const legacyOnlyResolver = {
+      byKey: new Map<string, string>(),
+      fullTypeId: MEMBER_TYPE,
+      nonMemberTypeId: NONMEMBER_TYPE,
+      legacyItemCode: "LEGACY-HUT",
+      size: 0,
+    };
+    const items = buildInvoiceLineItems(
+      mixedGuests, checkIn, checkOut, 2, "200", "INCOME-ITEM", false, legacyOnlyResolver, "WINTER"
+    );
+    for (const item of items) {
+      expect(item.itemCode).toBe("LEGACY-HUT");
+    }
+  });
+
   it("falls back to legacy itemCode when the resolver is undefined", () => {
     const items = buildInvoiceLineItems(
       mixedGuests, checkIn, checkOut, 2, "200", "LEGACY-HUT", false, undefined, "WINTER"
@@ -244,12 +283,22 @@ describe("buildInvoiceLineItems with per-guest membership-type item codes (#1930
     }
   });
 
-  it("falls back to the resolver's legacy itemCode when seasonType is null", () => {
+  it("null seasonType falls back to the hutFeesIncome item code param, never the resolver's hutFeeItem (main parity)", () => {
+    const items = buildInvoiceLineItems(
+      mixedGuests, checkIn, checkOut, 2, "200", "INCOME-ITEM", false, makeResolver("LEGACY-HUT"), null
+    );
+    for (const item of items) {
+      expect(item.itemCode).toBe("INCOME-ITEM");
+    }
+  });
+
+  it("null seasonType with no hutFeesIncome item code yields no item code", () => {
     const items = buildInvoiceLineItems(
       mixedGuests, checkIn, checkOut, 2, "200", null, false, makeResolver("LEGACY-HUT"), null
     );
     for (const item of items) {
-      expect(item.itemCode).toBe("LEGACY-HUT");
+      expect(item.itemCode).toBeUndefined();
+      expect(item.accountCode).toBe("200");
     }
   });
 
