@@ -15,6 +15,28 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: refreshMock }),
 }));
 
+// The wizard now gates its controls on content:edit (#1927); render as a
+// content:edit admin so these existing behaviour tests keep exercising the
+// editable path.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
+
 function responseTheme(values: ClubThemeValues, completedAt: string | null) {
   return {
     theme: {
