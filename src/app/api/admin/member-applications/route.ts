@@ -4,6 +4,7 @@ import {
   parseApplicationFamilyMembers,
 } from "@/lib/nomination";
 import { NOMINATION_AUTOMATIC_REMINDER_LIMIT } from "@/lib/nomination-token-policy";
+import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
@@ -131,7 +132,14 @@ export async function GET(req: NextRequest) {
       applicantFirstName: application.applicantFirstName,
       applicantLastName: application.applicantLastName,
       applicantEmail: application.applicantEmail,
-      applicantDateOfBirth: application.applicantDateOfBirth?.toISOString() ?? null,
+      // NZ date-only (YYYY-MM-DD), not a full ISO datetime: the approval
+      // panel feeds this straight into the joining-fee preview endpoint,
+      // whose schema is strictly date-only (#1931 item 15). Formatting in the
+      // club time zone (rather than .toISOString().slice(0, 10)) is robust to
+      // a DOB stored as either UTC midnight or NZ midnight.
+      applicantDateOfBirth: application.applicantDateOfBirth
+        ? formatDateOnlyForTimeZone(application.applicantDateOfBirth)
+        : null,
       applicantPhone: application.applicantPhone,
       applicantAddress: parseApplicationAddress(application.applicantAddress),
       familyMembers,

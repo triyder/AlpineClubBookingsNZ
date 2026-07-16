@@ -28,6 +28,8 @@ type PanelApplication = {
   applicantFirstName: string;
   applicantLastName: string;
   applicantEmail: string;
+  /** NZ date-only (YYYY-MM-DD) from the applications API — passed verbatim to
+   * the joining-fee preview endpoint, whose schema is strictly date-only. */
   applicantDateOfBirth: string | null;
   familyMembers: ApplicationFamilyMember[];
 };

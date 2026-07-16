@@ -170,4 +170,53 @@ describe("GET /api/admin/member-applications", () => {
       })
     );
   });
+
+  it("serialises applicantDateOfBirth as an NZ date-only string, not a full ISO datetime (#1931 HIGH-2)", async () => {
+    // The approval panel passes this value verbatim into the joining-fee
+    // preview endpoint, whose schema is a strict /^\d{4}-\d{2}-\d{2}$/ — a full
+    // ISO datetime would 400 and the preview/prefill would silently never fire.
+    // Cover both plausible storage shapes: UTC midnight and NZ midnight
+    // (1990-05-14T12:00:00Z is 1990-05-15 00:00 in Pacific/Auckland, where a
+    // naive .toISOString().slice(0, 10) would yield the WRONG day, 05-14).
+    const base = {
+      applicantFirstName: "Pat",
+      applicantLastName: "Applicant",
+      applicantEmail: "pat@example.com",
+      applicantPhone: null,
+      applicantAddress: null,
+      familyMembers: [],
+      nominator1Email: "nom1@example.com",
+      nominator2Email: "nom2@example.com",
+      nominator1Id: null,
+      nominator2Id: null,
+      nominator1ConfirmedAt: null,
+      nominator2ConfirmedAt: null,
+      status: "PENDING_ADMIN",
+      adminNotes: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+    };
+    mocks.memberApplicationFindMany.mockResolvedValue([
+      { ...base, id: "app-utc", applicantDateOfBirth: new Date("1990-05-15T00:00:00.000Z") },
+      { ...base, id: "app-nz", applicantDateOfBirth: new Date("1990-05-14T12:00:00.000Z") },
+    ]);
+    mocks.memberApplicationCount.mockResolvedValueOnce(2).mockResolvedValueOnce(2);
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/member-applications")
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const dobById = new Map(
+      body.applications.map((app: { id: string; applicantDateOfBirth: string }) => [
+        app.id,
+        app.applicantDateOfBirth,
+      ]),
+    );
+    expect(dobById.get("app-utc")).toBe("1990-05-15");
+    expect(dobById.get("app-nz")).toBe("1990-05-15");
+  });
 });
