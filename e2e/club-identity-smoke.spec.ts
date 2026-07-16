@@ -74,17 +74,19 @@ async function expectPublicClubName(page: Page, name: string): Promise<void> {
   const namePattern = new RegExp(escapeRegExp(name));
   await expect(async () => {
     await page.goto("/");
-    await expect(page).toHaveTitle(namePattern);
+    // Short inner timeouts (not the 15s global expect default) so a stale render
+    // fails the iteration fast and re-goto()s promptly within the 20s ceiling.
+    await expect(page).toHaveTitle(namePattern, { timeout: 2_000 });
     // Header branding: WebsiteLogo renders the name as text (no logo) or as an
     // <img> alt (logo present); either way it is the branding link's
     // accessible name (the first link inside the banner landmark).
     await expect(
       page.getByRole("banner").getByRole("link").first(),
-    ).toHaveAccessibleName(namePattern);
+    ).toHaveAccessibleName(namePattern, { timeout: 2_000 });
     // Footer legal row: "© <year> <name> Incorporated. All rights reserved."
     await expect(
       page.getByText(new RegExp(`${escapeRegExp(name)} Incorporated`)),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 2_000 });
   }).toPass({ timeout: 20_000, intervals: [500, 1_000, 2_000, 3_000, 5_000] });
 }
 
@@ -95,8 +97,11 @@ async function expectPublicIdentityRestored(
 ): Promise<void> {
   await expect(async () => {
     await page.goto("/");
-    await expect(page).toHaveTitle(originalTitle);
-    await expect(page.getByText(originalFooter)).toBeVisible();
+    // Short inner timeouts so each miss re-goto()s promptly within the ceiling.
+    await expect(page).toHaveTitle(originalTitle, { timeout: 2_000 });
+    await expect(page.getByText(originalFooter)).toBeVisible({
+      timeout: 2_000,
+    });
   }).toPass({ timeout: 20_000, intervals: [500, 1_000, 2_000, 3_000, 5_000] });
 }
 

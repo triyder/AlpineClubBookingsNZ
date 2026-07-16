@@ -1,4 +1,4 @@
-import { Activity, Building2, Fingerprint, ListChecks, Puzzle } from "lucide-react";
+import { Activity, BadgeInfo, Building2, ListChecks, Puzzle } from "lucide-react";
 import {
   AdminHubPage,
   type AdminHubSection,
@@ -23,8 +23,8 @@ const sections: AdminHubSection[] = [
     href: "/admin/appearance/identity",
     title: "Club Identity",
     description:
-      "Override the club name, short name, and hut-leader label shown across the site and emails.",
-    icon: Fingerprint,
+      "Override the club name, short name, hut-leader label, and your lodge's public details shown across the site and emails.",
+    icon: BadgeInfo,
   },
   {
     href: "/admin/modules",
