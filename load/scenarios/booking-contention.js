@@ -27,6 +27,10 @@
  * The throwaway stack may capture admin-review email in Mailpit. Each VU makes
  * CONTENTION_ATTEMPTS (default 1)
  * attempts, staying under the 20-per-hour per-IP booking-create limiter.
+ * Every VU authenticates once before an absolute write barrier. The default
+ * 60-second auth warmup isolates bcrypt CPU from the tagged booking request
+ * and releases the standard 100 writes together; a late bootstrap fails the
+ * run instead of contaminating the contention evidence.
  *
  * Run (throwaway local stack ONLY — see docs/LOAD_TESTING.md):
  *   BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
@@ -60,6 +64,7 @@ const bookingsCreated = new Counter("bookings_created");
 const capacityRejections = new Counter("booking_capacity_rejections");
 const unexpected = new Rate("booking_unexpected");
 const capacityInvariant = new Rate("capacity_invariant");
+const authReadyBeforeBarrier = new Rate("contention_auth_ready_before_barrier");
 
 function addOneDay(dateOnly) {
   const t = Date.parse(dateOnly + "T00:00:00Z") + 24 * 60 * 60 * 1000;
@@ -85,6 +90,7 @@ export const options = {
       "p(95)<" + cfg.contentionP95Ms,
     ],
     booking_unexpected: ["rate<" + cfg.maxErrorRate],
+    contention_auth_ready_before_barrier: ["rate==1"],
     capacity_invariant: ["rate==1"],
     http_req_failed: ["rate<" + cfg.maxErrorRate],
   },
@@ -122,7 +128,11 @@ export function setup() {
         ". Reset the throwaway stack or set CONTENTION_EXPECTED_BASELINE explicitly."
     );
   }
-  return { baselineOccupied: baselineOccupied };
+  return {
+    baselineOccupied: baselineOccupied,
+    writeBarrierAtMs:
+      Date.now() + cfg.contentionAuthWarmupSeconds * 1000,
+  };
 }
 
 function occupiedBedsForCheckIn() {
@@ -190,7 +200,7 @@ function vuEmail() {
   return pool[(exec.vu.idInTest - 1) % pool.length];
 }
 
-export default function bookingContention() {
+export default function bookingContention(data) {
   if (
     !ensureLoggedIn(
       cfg,
@@ -200,8 +210,23 @@ export default function bookingContention() {
       SCENARIO_IP_OFFSETS.bookingContention
     )
   ) {
+    authReadyBeforeBarrier.add(false);
     unexpected.add(true);
     return;
+  }
+
+  if (__ITER === 0) {
+    const writeBarrierAtMs = Number(data && data.writeBarrierAtMs);
+    const waitMs = writeBarrierAtMs - Date.now();
+    const readyBeforeBarrier = isFinite(writeBarrierAtMs) && waitMs > 0;
+    authReadyBeforeBarrier.add(readyBeforeBarrier);
+    if (!readyBeforeBarrier) {
+      // Do not let a late bcrypt completion overlap and inflate the booking
+      // advisory-lock latency. The strict rate threshold makes the run red.
+      unexpected.add(true);
+      return;
+    }
+    sleep(waitMs / 1000);
   }
 
   const vuId = exec.vu.idInTest;

@@ -78,6 +78,15 @@ export function loadConfig(env) {
     contentionCheckOut: env.CONTENTION_CHECKOUT || "",
     contentionAttempts: intEnv(env, "CONTENTION_ATTEMPTS", 1),
     contentionP95Ms: intEnv(env, "CONTENTION_P95_MS", 5000),
+    // Per-VU bcrypt logins happen before a shared absolute write barrier. The
+    // default leaves ample headroom for the standard 100-VU profile on the
+    // deliberately CPU-constrained evidence stack, so login CPU cannot be
+    // mistaken for advisory-lock queueing in the tagged booking latency.
+    contentionAuthWarmupSeconds: intEnv(
+      env,
+      "CONTENTION_AUTH_WARMUP_SECONDS",
+      60
+    ),
     lodgeCapacity: intEnv(env, "LODGE_CAPACITY", 20),
     contentionExpectedBaseline: nonNegativeIntEnv(
       env,

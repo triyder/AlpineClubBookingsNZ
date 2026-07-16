@@ -22,6 +22,28 @@ describe("load harness semantics", () => {
     expect(scenario).toContain("cfg.contentionExpectedBaseline");
   });
 
+  it("authenticates every contention VU before one synchronized write barrier", () => {
+    const config = read("load/lib/config.js");
+    const scenario = read("load/scenarios/booking-contention.js");
+    expect(config).toContain('"CONTENTION_AUTH_WARMUP_SECONDS",\n      60');
+    expect(scenario).toContain("writeBarrierAtMs:");
+    expect(scenario).toContain("cfg.contentionAuthWarmupSeconds * 1000");
+    expect(scenario).toContain(
+      'contention_auth_ready_before_barrier: ["rate==1"]'
+    );
+    const vuFlow = scenario.slice(
+      scenario.indexOf("export default function bookingContention")
+    );
+    expect(vuFlow).toContain("if (__ITER === 0)");
+    expect(vuFlow.indexOf("ensureLoggedIn(")).toBeLessThan(
+      vuFlow.indexOf("sleep(waitMs / 1000)")
+    );
+    expect(vuFlow.indexOf("sleep(waitMs / 1000)")).toBeLessThan(
+      vuFlow.indexOf('cfg.baseUrl + "/api/bookings"')
+    );
+    expect(config).toContain('intEnv(env, "CONTENTION_P95_MS", 5000)');
+  });
+
   it("scopes dashboard latency separately from bootstrap login", () => {
     const scenario = read("load/scenarios/member-dashboard.js");
     const session = read("load/lib/session.js");

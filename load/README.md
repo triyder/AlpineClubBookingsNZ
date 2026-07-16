@@ -22,8 +22,9 @@ Layout:
   `LOAD_USERS` round-robin when supplied; otherwise an explicit same-account
   contention profile. `LOGIN_ITERATIONS_PER_VU>1` is a separate repeated-login
   stress profile.
-- `scenarios/booking-contention.js` — PEAK_VUS members stampede one lodge +
-  one night through the per-lodge advisory lock; asserts 201s and clean
+- `scenarios/booking-contention.js` — PEAK_VUS members each authenticate once,
+  wait at a shared absolute barrier, then stampede one lodge + one night through
+  the per-lodge advisory lock; asserts 201s and clean
   `409 CAPACITY_EXCEEDED` losses only, then automatically verifies final
   occupancy equals the exact capacity-limited expected delta from a known
   `CONTENTION_EXPECTED_BASELINE`.

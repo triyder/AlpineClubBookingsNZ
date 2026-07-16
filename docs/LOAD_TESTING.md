@@ -103,6 +103,7 @@ It is deliberately **not** an npm dependency and never runs in CI.
 | `CONTENTION_CHECKOUT` | no | check-in + 1 day | Override only for multi-night contention. |
 | `CONTENTION_ATTEMPTS` | no | `1` | Booking attempts per VU. The default makes `PEAK_VUS` equal the number of write attempts. |
 | `CONTENTION_P95_MS` | no | `5000` | p95 budget for the serialised booking write. |
+| `CONTENTION_AUTH_WARMUP_SECONDS` | no | `60` | Seconds from setup to the shared booking-write barrier. Every VU gets one login attempt in this window; a late VU fails the run rather than mixing bcrypt CPU into booking latency. Keep at least 60 seconds for the standard 100-VU constrained-stack profile. |
 | `LODGE_CAPACITY` | no | `20` | Expected capacity of the selected seeded lodge; teardown fails if observed occupancy exceeds it. |
 | `CONTENTION_EXPECTED_BASELINE` | no | `0` | Required occupied-bed baseline for the contention night. A mismatch aborts before writes; reset the stack or set this deliberately for a known non-empty fixture. |
 
@@ -172,7 +173,16 @@ scenario asserts on the **outcome distribution**, not just 200s:
 
 Latency gets a deliberately loose `CONTENTION_P95_MS` (default 5 s) because
 the lock serialises writers **by design**; the run fails on errors, not on
-queueing. Setup requires the observed baseline to equal
+queueing. Before the first booking write, every VU performs its single allowed
+login and waits until the same absolute write barrier. The default
+`CONTENTION_AUTH_WARMUP_SECONDS=60` gives the standard 100-VU constrained-stack
+profile time to finish bcrypt work. If any bootstrap is still late,
+`contention_auth_ready_before_barrier` fails and that VU does not write, so a
+red run cannot pass off auth CPU as advisory-lock latency. Values of
+`CONTENTION_ATTEMPTS` above one remain a separate sequential stress profile;
+the first attempt from every VU is the synchronized headline stampede.
+
+Setup requires the observed baseline to equal
 `CONTENTION_EXPECTED_BASELINE` (default 0), then teardown requires the exact
 final occupancy `min(LODGE_CAPACITY, baseline + PEAK_VUS ×
 CONTENTION_ATTEMPTS)`. A single missing capacity hold fails
