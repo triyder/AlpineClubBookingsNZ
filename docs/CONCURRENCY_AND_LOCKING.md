@@ -196,6 +196,19 @@ switch-to-internet-banking hold, the quote-accept conversion
 `xero-inbound/invoice-paid-effects.ts` is the in-tree precedent for this
 composition.
 
+Generic quote acceptance pre-reads only the held booking's immutable concrete
+`lodgeId`, then takes global -> that lodge and fully re-reads both request and
+hold. It rejects an explicit request/hold lodge mismatch and carries the same
+concrete lodge into policy and email context. A null request lodge is never
+re-resolved through a default that may have changed after hold creation.
+
+School approval has two deliberately different branches. Fresh-create is a
+capacity-only admission and takes only the per-lodge lock. Held-reuse converts
+an existing AWAITING_REVIEW booking that cancellation/release may claim, so it
+takes **global first, then per-lodge**, re-reads the request and hold under both,
+and uses a status-guarded `AWAITING_REVIEW -> CONFIRMED` claim before side
+effects. A lost claim aborts the transaction.
+
 The linked provisional-child sweep after a parent cancellation follows the
 same order. It uses the child's immutable `lodgeId` only to select the lock,
 then re-reads the child and conditionally claims `PENDING -> CANCELLED` under

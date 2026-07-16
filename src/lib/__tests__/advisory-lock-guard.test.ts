@@ -50,6 +50,7 @@ const GLOBAL_BOOKING_MONEY_LOCK_INVENTORY: Record<string, number> = {
   "src/lib/group-settlement.ts": 6,
   "src/lib/internet-banking-payment-cron.ts": 1,
   "src/lib/payment-reconciliation.ts": 1,
+  "src/lib/school-booking-request.ts": 1,
   "src/lib/xero-group-settlement-invoices.ts": 3,
   "src/lib/xero-inbound/invoice-paid-effects.ts": 1,
 };
@@ -168,6 +169,103 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
       "Row-lock sites changed. Inventory their counterpart writers and order " +
         "against advisory and row locks in docs/CONCURRENCY_AND_LOCKING.md.",
     ).toEqual(ROW_LOCK_SITE_INVENTORY);
+  });
+
+  it("keeps school held-reuse on global -> lodge -> re-read -> guarded claim", () => {
+    const school = sources.find(
+      ({ rel }) => rel === "src/lib/school-booking-request.ts",
+    )?.text;
+    expect(school).toBeDefined();
+
+    const approval =
+      school?.slice(
+        school.indexOf("export async function approveSchoolBookingRequest"),
+      ) ?? "";
+    const locator = approval.indexOf("const heldLodgeLocator = expectedHeldBookingId");
+    const transaction = approval.indexOf("conversion = await prisma.$transaction");
+    const conditionalGlobal = approval.indexOf("if (expectedHeldBookingId)");
+    const globalLock = approval.indexOf("pg_advisory_xact_lock(1)", conditionalGlobal);
+    const heldKey = approval.indexOf("expectedHeldLodgeId!", globalLock);
+    const lodgeLock = approval.indexOf("acquireLodgeCapacityLock(tx, bookingLodgeId)");
+    const requestReread = approval.indexOf(
+      "const lockedRequest = await tx.bookingRequest.findUnique",
+    );
+    const heldReread = approval.indexOf("held = await tx.booking.findUnique");
+    const heldClaim = approval.indexOf("const heldClaim = await tx.booking.updateMany");
+    const firstSideEffect = approval.indexOf(
+      "const guestCreates = await buildApprovalGuestCreates",
+    );
+
+    for (const marker of [
+      locator,
+      transaction,
+      conditionalGlobal,
+      globalLock,
+      heldKey,
+      lodgeLock,
+      requestReread,
+      heldReread,
+      heldClaim,
+      firstSideEffect,
+    ]) {
+      expect(marker).toBeGreaterThanOrEqual(0);
+    }
+    expect(locator).toBeLessThan(transaction);
+    expect(transaction).toBeLessThan(conditionalGlobal);
+    expect(conditionalGlobal).toBeLessThan(globalLock);
+    expect(globalLock).toBeLessThan(heldKey);
+    expect(heldKey).toBeLessThan(lodgeLock);
+    expect(globalLock).toBeLessThan(lodgeLock);
+    expect(lodgeLock).toBeLessThan(requestReread);
+    expect(requestReread).toBeLessThan(heldReread);
+    expect(heldReread).toBeLessThan(heldClaim);
+    expect(heldClaim).toBeLessThan(firstSideEffect);
+    expect(approval).toContain("if (heldClaim.count === 0)");
+    expect(approval).toContain("request.lodgeId !== held.lodgeId");
+    expect(approval).toContain("lodgeId: conversion.lodgeId");
+  });
+
+  it("binds generic held conversion to the immutable held-booking lodge", () => {
+    const generic = sources.find(
+      ({ rel }) => rel === "src/lib/booking-request.ts",
+    )?.text;
+    expect(generic).toBeDefined();
+
+    const approval =
+      generic?.slice(
+        generic.indexOf("export async function approveBookingRequest"),
+      ) ?? "";
+    const locator = approval.indexOf("const heldLodgeLocator = expectedHeldBookingId");
+    const transaction = approval.indexOf("conversion = await prisma.$transaction");
+    const globalLock = approval.indexOf("pg_advisory_xact_lock(1)", transaction);
+    const heldKey = approval.indexOf("expectedHeldLodgeId!", globalLock);
+    const lodgeLock = approval.indexOf("acquireLodgeCapacityLock(tx, requestLodgeId)");
+    const requestReread = approval.indexOf(
+      "const lockedRequest = await tx.bookingRequest.findUnique",
+    );
+    const heldReread = approval.indexOf("held = await tx.booking.findUnique");
+    const guardedConversion = approval.indexOf("const converted = await tx.booking.updateMany");
+
+    for (const marker of [
+      locator,
+      transaction,
+      globalLock,
+      heldKey,
+      lodgeLock,
+      requestReread,
+      heldReread,
+      guardedConversion,
+    ]) {
+      expect(marker).toBeGreaterThanOrEqual(0);
+    }
+    expect(locator).toBeLessThan(transaction);
+    expect(globalLock).toBeLessThan(heldKey);
+    expect(heldKey).toBeLessThan(lodgeLock);
+    expect(lodgeLock).toBeLessThan(requestReread);
+    expect(requestReread).toBeLessThan(heldReread);
+    expect(heldReread).toBeLessThan(guardedConversion);
+    expect(approval).toContain("request.lodgeId !== held.lodgeId");
+    expect(approval).toContain("lodgeId: conversion.lodgeId");
   });
 
   it("mints the per-lodge capacity key only in capacity.ts", () => {
