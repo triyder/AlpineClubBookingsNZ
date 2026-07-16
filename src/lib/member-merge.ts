@@ -1006,29 +1006,47 @@ function toGuardMember(
   };
 }
 
+/**
+ * Access roles the master gains from the loser, INCLUDING definition-backed
+ * custom roles (rows with `role = null` and a `roleDefinitionId`), which can
+ * grant finance/membership EDIT and must never be an invisible escalation.
+ * Tokens mirror `accessRoleTokenFromAssignment` / the Full-Admin gate: the
+ * enum value for system/seeded roles, the definition id for custom rows.
+ * Returns human-readable labels for the preview warning.
+ */
 async function loserAccessRolesGainedByMaster(
   db: MergeDbClient,
   masterId: string,
   loserId: string,
 ): Promise<string[]> {
+  const select = {
+    role: true,
+    roleDefinitionId: true,
+    roleDefinition: { select: { label: true } },
+  } as const;
   const [masterRoles, loserRoles] = await Promise.all([
-    db.memberAccessRole.findMany({
-      where: { memberId: masterId },
-      select: { role: true },
-    }),
-    db.memberAccessRole.findMany({
-      where: { memberId: loserId },
-      select: { role: true },
-    }),
+    db.memberAccessRole.findMany({ where: { memberId: masterId }, select }),
+    db.memberAccessRole.findMany({ where: { memberId: loserId }, select }),
   ]);
-  const masterSet = new Set(masterRoles.map((r) => r.role).filter(Boolean));
-  return [
-    ...new Set(
-      loserRoles
-        .map((r) => r.role)
-        .filter((r): r is AccessRole => Boolean(r) && !masterSet.has(r)),
-    ),
-  ];
+  const tokenOf = (r: {
+    role: AccessRole | null;
+    roleDefinitionId: string | null;
+  }): string | null => r.role ?? r.roleDefinitionId;
+  const masterTokens = new Set(
+    masterRoles.map(tokenOf).filter((t): t is string => Boolean(t)),
+  );
+  const gained: string[] = [];
+  const seen = new Set<string>();
+  for (const r of loserRoles) {
+    const token = tokenOf(r);
+    if (!token || masterTokens.has(token) || seen.has(token)) continue;
+    seen.add(token);
+    gained.push(
+      r.role ??
+        `${r.roleDefinition?.label ?? r.roleDefinitionId} (custom role)`,
+    );
+  }
+  return gained;
 }
 
 async function summariseResolveCollisions(
