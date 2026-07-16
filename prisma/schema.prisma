@@ -540,6 +540,15 @@ model Member {
   // Many-to-many family group memberships via join table
   familyGroupMemberships FamilyGroupMember[]
 
+  // Per-member billing-family selection (#1932, E6). When a member belongs to
+  // more than one family group, an admin picks which family's PER_FAMILY fee
+  // covers this member so annual billing no longer stalls on AMBIGUOUS_FAMILY.
+  // onDelete: SetNull so deleting the chosen group clears the selection; the six
+  // FamilyGroupMember removal paths NULL it in-transaction so a stale pointer
+  // surfaces as INVALID_BILLING_FAMILY_SELECTION, never silent misbilling.
+  billingFamilyGroupId String?
+  billingFamilyGroup   FamilyGroup? @relation("MemberBillingFamily", fields: [billingFamilyGroupId], references: [id], onDelete: SetNull)
+
   // Relations
   passwordResetTokens                        PasswordResetToken[]
   emailVerificationTokens                    EmailVerificationToken[]
@@ -612,6 +621,7 @@ model Member {
   @@index([parentMemberId])
   @@index([secondaryParentId])
   @@index([familyGroupId])
+  @@index([billingFamilyGroupId])
   @@index([inheritEmailFromId])
   @@index([detailsConfirmedByMemberId])
   @@index([cancelledViaRequestId])
@@ -918,11 +928,38 @@ model MembershipSubscriptionCharge {
   recipient   Member   @relation("MembershipChargeRecipient", fields: [recipientMemberId], references: [id], onDelete: Restrict)
   confirmedBy Member?  @relation("MembershipChargeConfirmer", fields: [confirmedByMemberId], references: [id], onDelete: SetNull)
   coverage    MembershipSubscriptionChargeCoverage[]
+  components  MembershipSubscriptionChargeComponent[]
 
   @@index([seasonYear, status, createdAt])
   @@index([recipientMemberId, seasonYear])
   @@index([familyGroupId, seasonYear])
   @@unique([seasonYear, membershipTypeId, familyGroupId], map: "MembershipCharge_family_type_year_key")
+}
+
+// Frozen per-line snapshot of an annual-fee component at the moment the charge
+// was confirmed (#1932, E6). One row per Xero invoice line. The immutable-charge
+// invariant EXTENDS to these rows: once written they are never mutated, and the
+// invoice builder emits one line per component in sortOrder. A legacy charge
+// backfilled with a single component reproduces the identical historical
+// single-line invoice on re-drive (adoption / EMAIL_FAILED retry). xeroAccountCode
+// is required because a NO_INVOICE charge has zero components and every invoiceable
+// charge resolves an account (override else the frozen subscriptionIncome mapping).
+model MembershipSubscriptionChargeComponent {
+  id                 String   @id @default(cuid())
+  chargeId           String
+  label              String
+  description        String
+  annualAmountCents  Int
+  chargedAmountCents Int
+  prorated           Boolean
+  xeroAccountCode    String
+  xeroItemCode       String?
+  sortOrder          Int      @default(0)
+  createdAt          DateTime @default(now())
+
+  charge MembershipSubscriptionCharge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+
+  @@index([chargeId, sortOrder])
 }
 
 model MembershipSubscriptionChargeCoverage {
@@ -1028,10 +1065,38 @@ model MembershipAnnualFee {
   createdAt        DateTime                     @default(now())
   updatedAt        DateTime                     @updatedAt
 
-  membershipType MembershipType @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
+  membershipType MembershipType                 @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
+  components     MembershipAnnualFeeComponent[]
 
   @@unique([membershipTypeId, effectiveFrom])
   @@index([membershipTypeId, effectiveFrom, effectiveTo], map: "MembershipAnnualFee_effective_lookup_idx")
+}
+
+// Named components of an annual membership fee (#1932, E6, item 9). Each becomes
+// its own Xero invoice line — e.g. base membership + work party fee + FMC
+// subscription — optionally coded to its own GL account/item, each with its own
+// choice of whether it is prorated for mid-year joiners. INVARIANT: Σ(amountCents)
+// == the parent fee's amountCents, validated server-side in one transaction, so
+// the fee total stays authoritative and existing preview/consumers are unchanged.
+// Every non-NO_INVOICE MembershipAnnualFee carries ≥1 component at all times; a
+// NO_INVOICE fee is a zero total with no components. The default component (label
+// "Annual membership fee", prorate true) is auto-created on fee creation and
+// copied forward when a new effective-dated fee row supersedes a predecessor.
+model MembershipAnnualFeeComponent {
+  id                    String   @id @default(cuid())
+  membershipAnnualFeeId String
+  label                 String
+  amountCents           Int
+  prorate               Boolean  @default(true)
+  xeroAccountCode       String?
+  xeroItemCode          String?
+  sortOrder             Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  membershipAnnualFee MembershipAnnualFee @relation(fields: [membershipAnnualFeeId], references: [id], onDelete: Cascade)
+
+  @@index([membershipAnnualFeeId, sortOrder])
 }
 
 // RETAINED UNUSED (#1931, E5): the joining-fee re-key (JoiningFee, keyed by
@@ -3687,6 +3752,8 @@ model FamilyGroup {
   // @deprecated — legacy single-group FK; use memberships (FamilyGroupMember) instead
   legacyMembers Member[]                 @relation("FamilyGroupLegacy")
   memberships   FamilyGroupMember[]
+  // Members who have selected this group as their per-member billing family (#1932, E6).
+  billingSelectedMembers Member[]        @relation("MemberBillingFamily")
   joinRequests  FamilyGroupJoinRequest[]
   partnerInviteTokens PartnerInviteToken[]
   billingMembershipId String?            @unique
