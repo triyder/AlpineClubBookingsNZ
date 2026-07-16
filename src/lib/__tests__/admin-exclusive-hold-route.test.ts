@@ -213,10 +213,88 @@ describe("POST /api/admin/bookings/[id]/exclusive-hold", () => {
     expect(lockOrder).toBeLessThan(writeOrder);
   });
 
-  it("CAS regression (issue #186): guard passes on the pre-lock snapshot but the conditional write matches zero rows → 409, no fields, no audit", async () => {
-    // The pre-lock findUnique returns a healthy CONFIRMED booking, so the
-    // status guard passes and the route reaches the write. But between the
-    // snapshot and the write a concurrent cancel (serialised on the DISJOINT
+  it("re-reads after the lodge lock and uses refreshed dates for conflicts and audit (#1881)", async () => {
+    const refreshedCheckIn = new Date("2026-10-10T00:00:00.000Z");
+    const refreshedCheckOut = new Date("2026-10-13T00:00:00.000Z");
+    mocks.tx.booking.findUnique
+      // The pre-lock read is deliberately only the immutable lock key. It
+      // represents an earlier snapshot whose mutable dates are unavailable.
+      .mockResolvedValueOnce({ lodgeId: "lodge-1" })
+      // A concurrent date modification commits while this transaction waits
+      // for the lodge lock. The post-lock read must become authoritative.
+      .mockResolvedValueOnce(
+        booking({
+          status: "PAID",
+          checkIn: refreshedCheckIn,
+          checkOut: refreshedCheckOut,
+        }),
+      );
+
+    const response = await POST(holdRequest({ hold: true }), routeParams());
+    expect(response.status).toBe(200);
+
+    expect(mocks.tx.booking.findUnique).toHaveBeenNthCalledWith(1, {
+      where: { id: "booking-1" },
+      select: { lodgeId: true },
+    });
+    expect(mocks.findOverlappingCapacityHoldingBookings).toHaveBeenCalledWith(
+      mocks.tx,
+      expect.objectContaining({
+        lodgeId: "lodge-1",
+        checkIn: refreshedCheckIn,
+        checkOut: refreshedCheckOut,
+      }),
+    );
+    expect(
+      mocks.findOverlappingOverriddenNonHoldingBookings,
+    ).toHaveBeenCalledWith(
+      mocks.tx,
+      expect.objectContaining({
+        lodgeId: "lodge-1",
+        checkIn: refreshedCheckIn,
+        checkOut: refreshedCheckOut,
+      }),
+    );
+
+    const [preLockReadOrder, postLockReadOrder] =
+      mocks.tx.booking.findUnique.mock.invocationCallOrder;
+    const lockOrder =
+      mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0];
+    const writeOrder = mocks.tx.booking.updateMany.mock.invocationCallOrder[0];
+    const conflictReadOrder =
+      mocks.findOverlappingCapacityHoldingBookings.mock.invocationCallOrder[0];
+    expect(preLockReadOrder).toBeLessThan(lockOrder);
+    expect(lockOrder).toBeLessThan(postLockReadOrder);
+    expect(postLockReadOrder).toBeLessThan(writeOrder);
+    expect(writeOrder).toBeLessThan(conflictReadOrder);
+
+    const audit = mocks.tx.auditLog.create.mock.calls[0][0].data;
+    expect(audit.metadata).toMatchObject({
+      bookingStatus: "PAID",
+      checkIn: refreshedCheckIn.toISOString(),
+      checkOut: refreshedCheckOut.toISOString(),
+    });
+  });
+
+  it("honours an exclusive hold that appeared while waiting for the lodge lock", async () => {
+    mocks.tx.booking.findUnique
+      .mockResolvedValueOnce({ lodgeId: "lodge-1" })
+      .mockResolvedValueOnce(booking({ wholeLodgeHold: true }));
+
+    const response = await POST(holdRequest({ hold: true }), routeParams());
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "This booking already has an exclusive whole-lodge hold.",
+    });
+    expect(mocks.tx.booking.updateMany).not.toHaveBeenCalled();
+    expect(mocks.findOverlappingCapacityHoldingBookings).not.toHaveBeenCalled();
+    expect(mocks.tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("CAS regression (issue #186): post-lock guard passes but the conditional write matches zero rows → 409, no fields, no audit", async () => {
+    // The post-lock findUnique returns a healthy CONFIRMED booking, so the
+    // status guard passes and the route reaches the write. But between that
+    // read and the write a concurrent cancel (serialised on the DISJOINT
     // club-wide key, not the per-lodge lock this route holds) moved the row to
     // a terminal, non-capacity-holding status — so the CAS updateMany predicate
     // (id + capacityHoldingBookingFilter) matches nothing and resolves { count:

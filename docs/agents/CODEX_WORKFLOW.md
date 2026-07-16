@@ -48,17 +48,27 @@ available. Review mode should not apply fixes unless the user asks.
 
 ## Subagents
 
-Use subagents mainly for read-only discovery: route/auth mapping, lifecycle
-state tracing, test coverage inventory, UI flow mapping, or provider idempotency
-checks. Do not use subagents for parallel edits unless the human explicitly
-authorizes it and the edit boundaries are independent.
+Follow `AGENTS.md` -> "Orchestration Model". The main session owns issue claims,
+worktrees, GitHub writes, PRs, CI, risk gates, merges, and cross-lane conflict
+checks. Delegate bulk implementation to implementor subagents inside the
+issue's dedicated worktree; they commit locally but never push or touch GitHub.
+Before opening a PR, dispatch separate adversarial-review subagents with
+appropriate correctness, domain-invariant, drift, and UX/security lenses.
 
-Do not use subagents when:
+Parallel implementation lanes are allowed only when their code surfaces do
+not clash. The orchestrator must inspect open work and coordinate before
+claiming a lane. A small in-flight edit may stay with the orchestrator, but
+this does not remove the adversarial-review requirement for gated work.
 
-- The task is a small single-file fix.
-- The issue contains secrets, private data, or sensitive security details that
-  should stay in one controlled context.
-- The needed work is write-heavy and likely to create conflicting edits.
+For concurrency-sensitive work, the orchestrator also reviews the open PRs and
+last 10 merged PRs affecting the subsystem, reconciles their lock/state/provider
+contracts, and records the relevant PR numbers in the PR lock-impact section.
+Root `AGENTS.md` is authoritative if this workflow ever drifts again.
+
+The `agent-workflow-contract.test.ts` verification test pins these entry-point
+links and PR evidence fields. A change that removes or contradicts the shared
+workflow must update the canonical contract deliberately instead of allowing
+agent-specific guidance to drift silently.
 
 ## Stop Conditions
 

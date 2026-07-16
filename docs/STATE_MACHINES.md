@@ -62,10 +62,10 @@ an admin lowers the lodge capacity for those nights below what is booked, the
 deadline (no charge). Only an admin capacity cut can reclaim the bed; competing
 member bookings still cannot. The admin "Confirm pending guests" override
 (`/api/admin/bookings/[id]/confirm-pending-guests`) now runs the same
-global `pg_advisory_xact_lock(1)` then per-lodge capacity-lock re-read and
-capacity re-check before flipping a booking to a capacity-holding status on its
-zero-dollar and charge-saved-card branches,
-returning 409 unless an explicit overbook is requested (#1366). Its
+global `pg_advisory_xact_lock(1)` -> per-lodge capacity-lock -> mutable re-read
+and capacity re-check before flipping a booking to a capacity-holding status on
+its zero-dollar and charge-saved-card branches, returning 409 unless an explicit
+overbook is requested (#1366, #1881). Its
 charge-saved-card branch follows the cron's claim-first shape (#1418): claim
 `PENDING -> CONFIRMED` (hold cleared) under the lock, charge outside it, then
 promote to PAID. A failed or requires-action charge releases the claim back to
@@ -208,6 +208,14 @@ the status is still one of the three no-payment states; if a concurrent accept
 runs no side effects (no status flip, pointer detach, bed reconcile, audit,
 email, or waitlist re-process), so a just-accepted booking is never clobbered
 back to `CANCELLED`.
+
+The linked provisional-child sweep triggered by a successful parent cancel is
+also claim-first (#1881 residual). A pre-lock `PENDING` child is only a
+candidate: cancellation takes global `lock(1)`, then that child's per-lodge
+capacity lock, re-reads it, and conditionally claims `PENDING -> CANCELLED`.
+The hold-resolution cron shares the per-lodge lock. If it has already confirmed
+or charged the child, cancellation loses the claim and emits no stale bed,
+credit, payment-link, audit, event, email, promo, or waitlist side effect.
 
 That under-lock re-guard catches an accept committing AFTER the cancel's
 under-lock read, but the cancel *dispatches its branch* from an earlier OUTER,

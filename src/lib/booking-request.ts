@@ -993,12 +993,13 @@ export async function approveBookingRequest(input: {
    */
   ownerContactMemberId?: string | null;
 }): Promise<ApproveBookingRequestOutcome> {
-  const request = await prisma.bookingRequest.findUnique({
+  const foundRequest = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
-  if (!request) {
+  if (!foundRequest) {
     throw new BookingRequestError("Booking request not found", 404);
   }
+  let request: BookingRequest = foundRequest;
   if (request.status !== BookingRequestStatus.PRICED) {
     throw new BookingRequestError(
       "Only priced booking requests can be approved",
@@ -1012,6 +1013,23 @@ export async function approveBookingRequest(input: {
     );
   }
 
+  // A held booking has already materialised the request's null/default lodge
+  // semantics into an immutable concrete Booking.lodgeId. Read only that lock
+  // key before the transaction; the full request and booking are re-read after
+  // global -> lodge locks below. Fresh conversions need no extra lookup.
+  const expectedHeldBookingId = request.heldBookingId ?? null;
+  const heldLodgeLocator = expectedHeldBookingId
+    ? await prisma.booking.findUnique({
+        where: { id: expectedHeldBookingId },
+        select: { lodgeId: true },
+      })
+    : null;
+  if (expectedHeldBookingId && !heldLodgeLocator) {
+    throw new BookingRequestError("Held booking was not found", 409);
+  }
+  const expectedHeldLodgeId = heldLodgeLocator?.lodgeId ?? null;
+  const approvalLodgeId = expectedHeldLodgeId ?? request.lodgeId ?? null;
+
   const guests = parseBookingRequestGuests(request.guests);
   const linkedMembers = linkedGuestMemberMap(request.linkedGuestMembers);
   const priceCents = request.priceCents;
@@ -1019,7 +1037,7 @@ export async function approveBookingRequest(input: {
   // Non-login members never authenticate; store a random bcrypt hash so the
   // row satisfies the schema without any usable credential.
   const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
-  const holdDays = await getNonMemberHoldDays(request.checkIn, request.lodgeId ?? null);
+  const holdDays = await getNonMemberHoldDays(request.checkIn, approvalLodgeId);
   const reviewedAt = new Date();
   const nonMemberHoldUntil = resolveRequestBookingHoldUntil(
     request.checkIn,
@@ -1038,6 +1056,7 @@ export async function approveBookingRequest(input: {
   let capacityFullNights: string[] | null = null;
   let conversion: {
     bookingId: string;
+    lodgeId: string;
     memberId: string;
     ownerSubstitution:
       | { invalidMemberId: string; substituteMemberId: string; reason: string }
@@ -1058,8 +1077,17 @@ export async function approveBookingRequest(input: {
       // global lock(1) FIRST (consistent global-before-per-lodge order → no
       // deadlock), then the per-lodge capacity lock.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-      const requestLodgeId = request.lodgeId ?? (await getDefaultLodgeId(tx));
+      const requestLodgeId = expectedHeldBookingId
+        ? expectedHeldLodgeId!
+        : request.lodgeId ?? (await getDefaultLodgeId(tx));
       await acquireLodgeCapacityLock(tx, requestLodgeId);
+
+      const lockedRequest = await tx.bookingRequest.findUnique({
+        where: { id: request.id },
+      });
+      if (!lockedRequest) {
+        throw new BookingRequestError("Booking request not found", 404);
+      }
 
       // Idempotency (#1232 double-charge guard): a prior approve for this
       // request — a concurrent double-accept, or a retry whose caller re-armed
@@ -1075,15 +1103,74 @@ export async function approveBookingRequest(input: {
       if (alreadyConverted) {
         return {
           bookingId: alreadyConverted.convertedBookingId,
+          lodgeId: requestLodgeId,
           memberId: alreadyConverted.convertedMemberId,
           ownerSubstitution: null,
           alreadyConverted: true as const,
         };
       }
 
+      // Any edit to the approval snapshot (including attaching/detaching a
+      // hold) advances updatedAt. Refuse this stale attempt so every value used
+      // below was validated under the locks; the caller can retry from the new
+      // request state. The explicit held-id comparison also documents the
+      // global-lock decision instead of relying on timestamp comparison alone.
+      if (
+        lockedRequest.updatedAt.getTime() !== request.updatedAt.getTime() ||
+        (lockedRequest.heldBookingId ?? null) !== expectedHeldBookingId
+      ) {
+        throw new BookingRequestError(
+          "This booking request changed while it was being approved; review it and try again",
+          409
+        );
+      }
+      request = lockedRequest;
+
+      if (request.status !== BookingRequestStatus.PRICED || request.priceCents == null) {
+        throw new BookingRequestError(
+          "This booking request has already been processed",
+          409
+        );
+      }
+
+      // Re-read the complete held booking only after global -> concrete-lodge
+      // locks. Its lodge identity must match the immutable locator used for the
+      // lock; an explicit request lodge must also name that same lodge.
+      let held: {
+        id: string;
+        lodgeId: string;
+        memberId: string;
+        status: BookingStatus;
+      } | null = null;
+      if (request.heldBookingId) {
+        held = await tx.booking.findUnique({
+          where: { id: request.heldBookingId },
+          select: { id: true, lodgeId: true, memberId: true, status: true },
+        });
+        if (!held || held.status !== BookingStatus.AWAITING_REVIEW) {
+          throw new BookingRequestError("Held booking is no longer available", 409);
+        }
+        if (
+          held.lodgeId !== requestLodgeId ||
+          (request.lodgeId != null && request.lodgeId !== held.lodgeId)
+        ) {
+          throw new BookingRequestError(
+            "Held booking lodge no longer matches this booking request",
+            409
+          );
+        }
+      }
+
       // Status-claim so two admins cannot approve concurrently.
       const claimed = await tx.bookingRequest.updateMany({
-        where: { id: request.id, status: BookingRequestStatus.PRICED },
+        where: {
+          id: request.id,
+          // Optimistic version fence for mutable price/guest/hold state: a
+          // writer that lands after the locked re-read cannot be silently
+          // overwritten by an approval built from the older snapshot.
+          updatedAt: request.updatedAt,
+          status: BookingRequestStatus.PRICED,
+        },
         data: {
           status: BookingRequestStatus.APPROVED,
           reviewedByMemberId: input.adminMemberId,
@@ -1115,18 +1202,7 @@ export async function approveBookingRequest(input: {
       // post-commit admin alert.
       let ownerSubstitution: OwnerSubstitution | null = null;
 
-      if (request.heldBookingId) {
-        const held = await tx.booking.findUnique({
-          where: { id: request.heldBookingId },
-          select: { id: true, memberId: true, status: true },
-        });
-        if (!held) {
-          throw new BookingRequestError("Held booking was not found", 409);
-        }
-        if (held.status !== BookingStatus.AWAITING_REVIEW) {
-          throw new BookingRequestError("Held booking is no longer available", 409);
-        }
-
+      if (held) {
         // Re-validate the held owner at conversion (issue #1255 residual-risk
         // decision 1). The owner was materialised earlier (at hold/quote-send).
         // If it had been MAPPED to a pre-existing contact, that contact could
@@ -1302,6 +1378,7 @@ export async function approveBookingRequest(input: {
 
       return {
         bookingId: booking.id,
+        lodgeId: requestLodgeId,
         memberId: member.id,
         ownerSubstitution,
         alreadyConverted: false as const,
@@ -1340,7 +1417,7 @@ export async function approveBookingRequest(input: {
         checkIn: request.checkIn,
         checkOut: request.checkOut,
         guestCount: guests.length,
-        lodgeId: request.lodgeId ?? null,
+        lodgeId: conversion.lodgeId,
         priceCents,
         bookingReference: conversion.bookingId,
         expiresAt: paymentLinkExpiresAt,
