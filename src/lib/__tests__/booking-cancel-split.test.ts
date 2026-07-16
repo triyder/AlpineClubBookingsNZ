@@ -9,9 +9,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
+  txBookingFindUnique: vi.fn(),
   bookingFindMany: vi.fn(),
   bookingUpdate: vi.fn(),
   bookingUpdateMany: vi.fn(),
+  txExecuteRaw: vi.fn(),
+  acquireLodgeCapacityLock: vi.fn(),
   prismaTransaction: vi.fn(),
   promoRedemptionFindUnique: vi.fn(),
   sendBookingCancelledEmail: vi.fn(),
@@ -20,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   revokePaymentLinksForBooking: vi.fn(),
   reconcileBedAllocationsForBooking: vi.fn(),
   restoreCreditFromBooking: vi.fn(),
+  recordBookingEvent: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -47,7 +51,13 @@ vi.mock("@/lib/member-credit", () => ({
   createCancellationCredit: vi.fn(),
   restoreCreditFromBooking: mocks.restoreCreditFromBooking,
 }));
+vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: mocks.acquireLodgeCapacityLock,
+}));
 vi.mock("@/lib/waitlist", () => ({ processWaitlistForDates: mocks.processWaitlistForDates }));
+vi.mock("@/lib/booking-events", () => ({
+  recordBookingEvent: mocks.recordBookingEvent,
+}));
 vi.mock("@/lib/xero", () => ({ isXeroConnected: vi.fn().mockResolvedValue(false) }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroAccountCreditNoteOperation: vi.fn(),
@@ -85,13 +95,9 @@ describe("cancelBooking split cascade (#738)", () => {
       async (fnOrActions: unknown) => {
         if (typeof fnOrActions === "function") {
           return (fnOrActions as (tx: unknown) => Promise<unknown>)({
-            // #1547: the generic PENDING branch is now a claim-first tx that
-            // takes lock(1) and re-reads the booking under it. Wire the under-
-            // lock read to the same outer read so the parent's PENDING claim
-            // commits; the child sweep still only needs booking.update.
-            $executeRaw: vi.fn().mockResolvedValue(undefined),
+            $executeRaw: mocks.txExecuteRaw,
             booking: {
-              findUnique: mocks.bookingFindUnique,
+              findUnique: mocks.txBookingFindUnique,
               update: mocks.bookingUpdate,
               updateMany: mocks.bookingUpdateMany,
             },
@@ -103,12 +109,15 @@ describe("cancelBooking split cascade (#738)", () => {
     );
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.txExecuteRaw.mockResolvedValue(undefined);
+    mocks.acquireLodgeCapacityLock.mockResolvedValue(undefined);
     mocks.restoreCreditFromBooking.mockResolvedValue(0);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
     mocks.promoRedemptionFindUnique.mockResolvedValue(null);
     mocks.revokePaymentLinksForBooking.mockResolvedValue(0);
     mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
     mocks.processWaitlistForDates.mockResolvedValue(undefined);
+    mocks.recordBookingEvent.mockResolvedValue(undefined);
   });
 
   const child = {
@@ -116,6 +125,8 @@ describe("cancelBooking split cascade (#738)", () => {
     memberId: "member_1",
     parentBookingId: "parent_1",
     status: "PENDING",
+    lodgeId: "lodge_1",
+    deletedAt: null,
     checkIn: new Date("2026-07-10"),
     checkOut: new Date("2026-07-12"),
     member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
@@ -123,16 +134,23 @@ describe("cancelBooking split cascade (#738)", () => {
 
   it("cancels the linked provisional child when the member booking is cancelled", async () => {
     // Parent member booking: a simple PENDING member booking (no payment).
-    mocks.bookingFindUnique.mockResolvedValue({
+    const parent = {
       id: "parent_1",
       memberId: "member_1",
       parentBookingId: null,
       status: "PENDING",
+      lodgeId: "lodge_1",
+      deletedAt: null,
       checkIn: new Date("2026-07-10"),
       checkOut: new Date("2026-07-12"),
       member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
       payment: null,
-    });
+    };
+    mocks.bookingFindUnique.mockResolvedValue(parent);
+    mocks.txBookingFindUnique.mockImplementation(
+      async ({ where }: { where: { id: string } }) =>
+        where.id === child.id ? child : parent
+    );
     mocks.bookingFindMany.mockResolvedValue([child]);
 
     const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1");
@@ -144,9 +162,22 @@ describe("cancelBooking split cascade (#738)", () => {
         where: expect.objectContaining({ parentBookingId: "parent_1", status: "PENDING" }),
       })
     );
-    // ...and cancelled the child booking.
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "child_1" },
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(
+      expect.anything(),
+      "lodge_1"
+    );
+    // The child transaction takes global lock(1) before its per-lodge lock.
+    expect(mocks.txExecuteRaw.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]
+    );
+    // ...and conditionally claims only a still-provisional child.
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "child_1",
+        parentBookingId: "parent_1",
+        status: "PENDING",
+        deletedAt: null,
+      },
       data: {
         status: "CANCELLED",
         adminCapacityHoldAt: null,
@@ -156,20 +187,109 @@ describe("cancelBooking split cascade (#738)", () => {
         wholeLodgeHoldByMemberId: null,
       },
     });
+    expect(mocks.reconcileBedAllocationsForBooking).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "child_1" })
+    );
   });
 
-  it("does not cancel a parent when only the non-member child is cancelled", async () => {
-    // Cancelling the child directly: it has no children of its own.
-    mocks.bookingFindUnique.mockResolvedValue({
-      id: "child_1",
+  it("does not overwrite or emit cancellation side effects when cron already confirmed the child", async () => {
+    const parent = {
+      id: "parent_1",
       memberId: "member_1",
-      parentBookingId: "parent_1",
+      parentBookingId: null,
       status: "PENDING",
+      lodgeId: "lodge_1",
+      deletedAt: null,
       checkIn: new Date("2026-07-10"),
       checkOut: new Date("2026-07-12"),
       member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
       payment: null,
-    });
+    };
+    const confirmedChild = { ...child, status: "CONFIRMED" };
+    mocks.bookingFindUnique.mockResolvedValue(parent);
+    mocks.txBookingFindUnique.mockImplementation(
+      async ({ where }: { where: { id: string } }) =>
+        where.id === child.id ? confirmedChild : parent
+    );
+    // The outer sweep saw PENDING before waiting for the locks.
+    mocks.bookingFindMany.mockResolvedValue([child]);
+
+    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1");
+
+    expect(result.status).toBe(200);
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(
+      expect.anything(),
+      "lodge_1"
+    );
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "child_1" }),
+      })
+    );
+    expect(mocks.reconcileBedAllocationsForBooking).not.toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "child_1" })
+    );
+    expect(mocks.restoreCreditFromBooking).not.toHaveBeenCalledWith(
+      "member_1",
+      "child_1",
+      expect.anything()
+    );
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "child_1" })
+    );
+  });
+
+  it("runs no child side effects when the guarded PENDING claim loses", async () => {
+    const parent = {
+      id: "parent_1",
+      memberId: "member_1",
+      parentBookingId: null,
+      status: "PENDING",
+      lodgeId: "lodge_1",
+      deletedAt: null,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
+      payment: null,
+    };
+    mocks.bookingFindUnique.mockResolvedValue(parent);
+    mocks.txBookingFindUnique.mockImplementation(
+      async ({ where }: { where: { id: string } }) =>
+        where.id === child.id ? child : parent
+    );
+    mocks.bookingFindMany.mockResolvedValue([child]);
+    // Parent cancel claims; the child's defense-in-depth CAS loses.
+    mocks.bookingUpdateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+
+    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1");
+
+    expect(result.status).toBe(200);
+    expect(mocks.reconcileBedAllocationsForBooking).not.toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "child_1" })
+    );
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "child_1" })
+    );
+  });
+
+  it("does not cancel a parent when only the non-member child is cancelled", async () => {
+    // Cancelling the child directly: it has no children of its own.
+    const directChild = {
+      id: "child_1",
+      memberId: "member_1",
+      parentBookingId: "parent_1",
+      status: "PENDING",
+      lodgeId: "lodge_1",
+      deletedAt: null,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
+      payment: null,
+    };
+    mocks.bookingFindUnique.mockResolvedValue(directChild);
+    mocks.txBookingFindUnique.mockResolvedValue(directChild);
     mocks.bookingFindMany.mockResolvedValue([]);
 
     const result = await cancelBooking("child_1", "member_1", "MEMBER", "127.0.0.1");

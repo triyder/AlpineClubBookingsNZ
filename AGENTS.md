@@ -64,6 +64,27 @@ before changing Next.js APIs or conventions.
   data-integrity work requires high or xhigh reasoning effort and human review
   before merge.
 
+### Concurrency and lock checklist
+
+Before changing a transaction, booking lifecycle, capacity check, settlement,
+credit writer, webhook, or cron, read `docs/CONCURRENCY_AND_LOCKING.md` and
+classify every mutation it composes:
+
+- booking status or money uses global `pg_advisory_xact_lock(1)`;
+- capacity uses `acquireLodgeCapacityLock` for the immutable lodge key;
+- member-night and credit-ledger invariants use their canonical per-member
+  helpers, with same-family keys sorted;
+- when tiers compose, acquire global -> lodge -> member, re-read mutable state
+  after the locks, and use a status-guarded claim (`updateMany`) before any side
+  effect; a lost claim runs no side effect;
+- keep provider calls outside long transactions unless the locking guide
+  documents the bounded exception.
+
+Update the lock inventory/source-contract tests and the PR's lock-impact
+declaration whenever a lock participant, key, order, or guarded transition
+changes. Do not introduce a new advisory-lock key or copy an old lock pattern
+without reconciling it with all counterpart writers.
+
 ## Orchestration Model
 
 The standard working model for agent sessions (owner directive, 2026-07-11) is

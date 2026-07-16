@@ -170,6 +170,13 @@ switch-to-internet-banking hold, the quote-accept conversion
 `xero-inbound/invoice-paid-effects.ts` is the in-tree precedent for this
 composition.
 
+The linked provisional-child sweep after a parent cancellation follows the
+same order. It uses the child's immutable `lodgeId` only to select the lock,
+then re-reads the child and conditionally claims `PENDING -> CANCELLED` under
+both locks. `cron-confirm-pending` shares the per-lodge lock, so either the
+cancel wins and alone runs cancellation side effects, or the cron's confirmed /
+charged state survives and the stale sweep runs no side effect.
+
 `switch-to-internet-banking` also recomputes both the locked booking price and
 the authoritative `BOOKING_APPLIED` credit aggregate after acquiring global,
 lodge, then `lockMemberCreditLedger(memberId)` locks in that order;

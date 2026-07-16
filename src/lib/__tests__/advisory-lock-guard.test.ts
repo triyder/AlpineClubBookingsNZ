@@ -41,7 +41,10 @@ const LEGACY_CLUB_WIDE_LOCK_INVENTORY: Record<string, number> = {
   "src/app/api/bookings/[id]/waitlist-confirm/route.ts": 1,
   "src/app/api/payments/switch-to-internet-banking/route.ts": 1,
   "src/lib/booking-batch-modification-service.ts": 1,
-  "src/lib/booking-cancel.ts": 4,
+  // #1881 residual: the fifth site protects the linked provisional-child
+  // PENDING -> CANCELLED claim. That path also takes the child's per-lodge lock
+  // so it excludes confirm-pending before deciding whether cancellation won.
+  "src/lib/booking-cancel.ts": 5,
   "src/lib/booking-date-modification-service.ts": 2,
   "src/lib/booking-guest-removal-service.ts": 1,
   "src/lib/booking-request.ts": 1,

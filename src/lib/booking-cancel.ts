@@ -43,6 +43,7 @@ import {
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
+import { acquireLodgeCapacityLock } from "@/lib/capacity";
 
 // Statuses a booking may be cancelled from. Shared by the outer validation
 // guard and the tx1 single-flight re-check so the two can never drift (#1160).
@@ -215,9 +216,12 @@ export async function cancelBooking(
 
 /**
  * Cancel any provisional non-member child bookings linked to a cancelled
- * member booking. Children are always PENDING (uncharged) so this mirrors the
- * no-payment cancel path: status flip, bed-allocation reconcile, promo cleanup,
- * payment-link revocation, audit and a cancellation email.
+ * member booking. A child is only provisional while it remains PENDING: the
+ * confirm-pending cron can concurrently claim and charge it. Each candidate is
+ * therefore re-read and status-claimed under the same global -> per-lodge lock
+ * order as the rest of the booking lifecycle. Only the successful claimant
+ * runs the no-payment side effects (bed reconcile, promo cleanup, link
+ * revocation, audit, event, email and waitlist processing).
  */
 async function cancelLinkedProvisionalChildBookings(
   parentBookingId: string,
@@ -231,27 +235,63 @@ async function cancelLinkedProvisionalChildBookings(
       status: "PENDING",
       deletedAt: null,
     },
-    include: { member: true },
+    // lodgeId is immutable, so it is safe to use this pre-lock snapshot only
+    // to choose the per-lodge lock key. All lifecycle fields are re-read below.
+    select: { id: true, lodgeId: true },
   });
 
-  for (const child of children) {
-    await prisma.$transaction(async (tx) => {
-      await tx.booking.update({
-        where: { id: child.id },
+  for (const candidate of children) {
+    const child = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await acquireLodgeCapacityLock(tx, candidate.lodgeId);
+
+      const fresh = await tx.booking.findUnique({
+        where: { id: candidate.id },
+        include: { member: true },
+      });
+      if (
+        !fresh ||
+        fresh.parentBookingId !== parentBookingId ||
+        fresh.status !== BookingStatus.PENDING ||
+        fresh.deletedAt !== null
+      ) {
+        return null;
+      }
+
+      const released = await tx.booking.updateMany({
+        where: {
+          id: candidate.id,
+          parentBookingId,
+          status: BookingStatus.PENDING,
+          deletedAt: null,
+        },
         data: {
-          status: "CANCELLED",
+          status: BookingStatus.CANCELLED,
           ...RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
           ...RELEASE_WHOLE_LODGE_HOLD_UPDATE,
         },
       });
-      await reconcileCancelledBookingBedAllocations(child, tx);
-      await revokePaymentLinksForBooking(child.id, tx);
+      if (released.count === 0) {
+        return null;
+      }
+
+      await reconcileCancelledBookingBedAllocations(fresh, tx);
+      await revokePaymentLinksForBooking(fresh.id, tx);
       // Split children carry no promo/credit by construction (booking-create),
-      // so this is the same auditable-invariant no-op (#1547). This tx has no
-      // advisory lock, but children are PENDING no-payment rows cancelled once,
-      // together with the parent.
-      await restoreCreditFromBooking(child.memberId, child.id, tx);
+      // so this is the same auditable-invariant no-op (#1547). The guarded
+      // PENDING -> CANCELLED claim makes every in-transaction side effect
+      // single-flight even if another writer somehow misses the lock protocol.
+      await restoreCreditFromBooking(fresh.memberId, fresh.id, tx);
+      return fresh;
     });
+
+    // The cron (or another cancel) won the child claim. Its transition and
+    // side effects are authoritative; never emit a stale cancellation event,
+    // email or waitlist wake-up for this loser.
+    if (!child) {
+      continue;
+    }
+
     await cleanupPromoRedemption(child.id);
 
     logBookingCancellationAudit({

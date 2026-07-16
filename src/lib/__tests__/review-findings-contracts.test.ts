@@ -103,13 +103,11 @@ function sliceFrom(source: string, startMarker: string, endMarker?: string) {
   return source.slice(start, end);
 }
 
-// #1159 (finding F4): the person-night guard is only race-free if every
-// member-linked guest-night writer takes the global booking advisory lock
-// (pg_advisory_xact_lock(1)) BEFORE running the guard
-// (assertNoBookingMemberNightConflicts) in the same transaction. indexOf proves
-// the source ordering (lock text precedes guard text inside the function body);
-// each writer was separately confirmed to run both markers under one
-// prisma.$transaction, so source order reflects execution order.
+// #1159 / #1881: the person-night guard is only race-free across lodges if
+// every member-linked guest-night writer takes its per-lodge capacity lock
+// BEFORE invoking the guard, whose first authoritative action takes sorted
+// per-member locks. indexOf proves the lodge -> member-family source ordering;
+// each writer was separately confirmed to run both markers in one transaction.
 function assertLockBeforeGuard(rawBlock: string, label: string) {
   // #1881 — tightened from "either lock marker" to the SPECIFIC per-lodge
   // capacity lock. Every member-linked guest writer claims beds for a lodge, so
@@ -491,6 +489,13 @@ describe("review finding source/schema contracts", () => {
         "src/app/api/bookings/[id]/waitlist-confirm/route.ts",
         "if (booking.finalPriceCents === 0 && result.newStatus === BookingStatus.PAYMENT_PENDING)",
       ],
+      // Split-child cascade: cancellation moves booking status while the
+      // confirm-pending cron can claim the same child at its lodge.
+      [
+        "src/lib/booking-cancel.ts",
+        "async function cancelLinkedProvisionalChildBookings",
+        "async function performBookingCancellation",
+      ],
     ];
     for (const [file, start, end] of twoLockBlocks) {
       // #1881 — strip comments so neither lock marker can be satisfied by a
@@ -505,6 +510,29 @@ describe("review finding source/schema contracts", () => {
         `${start}: global lock(1) is acquired BEFORE the per-lodge lock`
       ).toBeLessThan(lodgeIdx);
     }
+
+    // The split-child residual must keep the full claim shape, not merely both
+    // lock markers: lock -> re-read -> guarded claim -> side effects.
+    const splitChild = stripComments(
+      sliceFrom(
+        readRepoFile("src/lib/booking-cancel.ts"),
+        "async function cancelLinkedProvisionalChildBookings",
+        "async function performBookingCancellation"
+      )
+    );
+    const splitGlobalIdx = splitChild.indexOf(GLOBAL);
+    const splitLodgeIdx = splitChild.indexOf(PER_LODGE);
+    const splitRereadIdx = splitChild.indexOf("tx.booking.findUnique");
+    const splitClaimIdx = splitChild.indexOf("tx.booking.updateMany");
+    const splitSideEffectIdx = splitChild.indexOf(
+      "reconcileCancelledBookingBedAllocations"
+    );
+    expect(splitGlobalIdx).toBeLessThan(splitLodgeIdx);
+    expect(splitLodgeIdx).toBeLessThan(splitRereadIdx);
+    expect(splitRereadIdx).toBeLessThan(splitClaimIdx);
+    expect(splitClaimIdx).toBeLessThan(splitSideEffectIdx);
+    expect(splitChild).toContain("released.count === 0");
+    expect(splitChild).toContain("fresh.status !== BookingStatus.PENDING");
 
     // (3) confirm-pending-guests: both capacity-claiming branches take BOTH
     // locks (the whole handler is scanned; it contains lock(1) and the per-lodge

@@ -278,12 +278,14 @@ Future reviews and issues should cite this file when proposing changes.
   dependent and spans `BookingGuest` to `Booking`, which a Postgres partial
   unique index cannot reference. It is race-free because every transaction that
   **creates or re-dates** a member-linked `BookingGuest`/`BookingGuestNight`
-  footprint takes the global booking advisory lock (`pg_advisory_xact_lock(1)`)
-  before running the guard (`assertNoBookingMemberNightConflicts`); that
-  lock-before-guard ordering is frozen for every such writer by
-  `review-findings-contracts.test.ts`. (`CONCURRENCY_AND_LOCKING.md` maps this
-  lock alongside the per-lodge capacity and per-member credit locks and the
-  ordering discipline each follows.) Writes that do not change the member-night
+  footprint takes its per-lodge capacity lock before running
+  `assertNoBookingMemberNightConflicts`, whose first authoritative action takes
+  sorted per-member-night advisory locks across lodges (#1881). A writer that
+  also moves booking status or money takes global `lock(1)` before those locks.
+  The lodge-before-member ordering and the guard's self-lock are frozen by
+  `review-findings-contracts.test.ts`. (`CONCURRENCY_AND_LOCKING.md` maps these
+  locks alongside the per-member credit lock and the ordering discipline each
+  follows.) Writes that do not change the member-night
   footprint — re-pricing, name-only guest edits, lodge arrive/depart timestamps,
   and anonymization that clears the member link — legitimately skip the guard, as
   does the non-member group-join path (`verifyAndCreateNonMemberJoin`, which
@@ -306,6 +308,12 @@ Future reviews and issues should cite this file when proposing changes.
   carry a NULL member id and sit outside the constraint.
 - Draft, pending, waitlist, payment-recovery, and review states must have
   expiry, retry, admin visibility, or repair paths.
+- Linked provisional-child cancellation is guarded against the hold-resolution
+  cron (#1881 residual): after a parent cancel, each candidate takes global
+  `lock(1)` then its immutable lodge's per-lodge lock, is re-read, and is
+  conditionally claimed only while still `PENDING`. A child the cron already
+  confirmed or charged is never overwritten, and a lost claim runs none of the
+  cancellation side effects.
 - **Exclusive whole-lodge hold (ADR-001, #118):** a night overlapped by a
   capacity-holding booking with `Booking.wholeLodgeHold = true` admits no
   further capacity from any admission path — the night's `availableBeds` is

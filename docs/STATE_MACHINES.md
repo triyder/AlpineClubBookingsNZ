@@ -208,6 +208,14 @@ runs no side effects (no status flip, pointer detach, bed reconcile, audit,
 email, or waitlist re-process), so a just-accepted booking is never clobbered
 back to `CANCELLED`.
 
+The linked provisional-child sweep triggered by a successful parent cancel is
+also claim-first (#1881 residual). A pre-lock `PENDING` child is only a
+candidate: cancellation takes global `lock(1)`, then that child's per-lodge
+capacity lock, re-reads it, and conditionally claims `PENDING -> CANCELLED`.
+The hold-resolution cron shares the per-lodge lock. If it has already confirmed
+or charged the child, cancellation loses the claim and emits no stale bed,
+credit, payment-link, audit, event, email, promo, or waitlist side effect.
+
 That under-lock re-guard catches an accept committing AFTER the cancel's
 under-lock read, but the cancel *dispatches its branch* from an earlier OUTER,
 un-locked read. So the two callers that exist to release a held request — the
