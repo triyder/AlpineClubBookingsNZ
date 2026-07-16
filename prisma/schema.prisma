@@ -3803,7 +3803,11 @@ model XeroItemCodeMapping {
   updatedAt           DateTime             @updatedAt
 
   @@unique([category, ageTier, seasonType, isMember])
-  @@unique([category, membershipTypeId, seasonType, ageTier])
+  // Explicit map: the Prisma default constraint name (68 bytes) exceeds
+  // Postgres's 63-byte identifier limit and would be silently truncated,
+  // drifting from the migration SQL (#1930, E4). The client API name is
+  // unchanged (category_membershipTypeId_seasonType_ageTier).
+  @@unique([category, membershipTypeId, seasonType, ageTier], map: "XeroItemCodeMapping_category_typeId_seasonType_ageTier_key")
   @@unique([category, entranceFeeCategory])
   @@index([category])
   @@index([membershipTypeId])

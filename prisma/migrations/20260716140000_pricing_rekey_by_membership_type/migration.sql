@@ -67,7 +67,12 @@ ALTER TABLE "BookingGuest"
 ALTER TABLE "XeroItemCodeMapping"
   ADD COLUMN "membershipTypeId" TEXT;
 
-CREATE UNIQUE INDEX "XeroItemCodeMapping_category_membershipTypeId_seasonType_ageTier_key"
+-- Explicit ≤63-byte name: the Prisma default
+-- ("XeroItemCodeMapping_category_membershipTypeId_seasonType_ageTier_key",
+-- 68 bytes) exceeds Postgres's 63-byte identifier limit and would be silently
+-- truncated, drifting from the schema. Matches the @@unique map: in
+-- prisma/schema.prisma.
+CREATE UNIQUE INDEX "XeroItemCodeMapping_category_typeId_seasonType_ageTier_key"
   ON "XeroItemCodeMapping" ("category", "membershipTypeId", "seasonType", "ageTier");
 CREATE INDEX "XeroItemCodeMapping_membershipTypeId_idx"
   ON "XeroItemCodeMapping" ("membershipTypeId");
@@ -90,6 +95,11 @@ ALTER TABLE "GroupDiscountSetting"
 -- 6. Fan-out backfill: MembershipTypeSeasonRate (D4, byte-identical day one)
 -- ---------------------------------------------------------------------------
 -- Member (isMember=true) rows -> every MEMBER_RATE membership type.
+-- NON_MEMBER is excluded by key as well as behavior: if the built-in
+-- NON_MEMBER type was ever flipped to bookingBehavior=MEMBER_RATE it would
+-- otherwise receive rows from BOTH fan-outs and abort the whole migration on
+-- the composite unique. Non-member pricing stays sourced exclusively from the
+-- isMember=false fan-out below.
 INSERT INTO "MembershipTypeSeasonRate"
   ("id", "seasonId", "membershipTypeId", "ageTier", "pricePerNightCents", "createdAt", "updatedAt")
 SELECT
@@ -103,7 +113,8 @@ SELECT
 FROM "SeasonRate" sr
 CROSS JOIN "MembershipType" mt
 WHERE sr."isMember" = true
-  AND mt."bookingBehavior" = 'MEMBER_RATE';
+  AND mt."bookingBehavior" = 'MEMBER_RATE'
+  AND mt."key" <> 'NON_MEMBER';
 
 -- Non-member (isMember=false) rows -> the built-in NON_MEMBER type only.
 INSERT INTO "MembershipTypeSeasonRate"
@@ -124,7 +135,17 @@ WHERE sr."isMember" = false
 -- ---------------------------------------------------------------------------
 -- 7. Fan-out backfill: XeroItemCodeMapping HUT_FEE item codes
 -- ---------------------------------------------------------------------------
--- Member (isMember=true) HUT_FEE codes -> every MEMBER_RATE membership type.
+-- Both HUT_FEE fan-outs guard against legacy duplicate rows: the OLD unique
+-- (category, ageTier, seasonType, isMember) treats NULLs as distinct, so a
+-- legacy install may carry several NULL-ageTier rows for the same
+-- (seasonType, isMember). Fanning each of them out would violate the new
+-- HUT_FEE flat partial unique and abort the migration. ON CONFLICT DO NOTHING
+-- keeps the first row inserted; ORDER BY "createdAt", "id" makes that
+-- precedence deterministic — the OLDEST legacy row's item code wins. It also
+-- keeps the fan-out idempotent against rows that already exist.
+
+-- Member (isMember=true) HUT_FEE codes -> every MEMBER_RATE membership type
+-- (NON_MEMBER excluded by key for the same both-fan-outs hazard as above).
 INSERT INTO "XeroItemCodeMapping"
   ("id", "category", "ageTier", "seasonType", "isMember", "membershipTypeId", "itemCode", "createdAt", "updatedAt")
 SELECT
@@ -141,7 +162,10 @@ FROM "XeroItemCodeMapping" x
 CROSS JOIN "MembershipType" mt
 WHERE x."category" = 'HUT_FEE'
   AND x."isMember" = true
-  AND mt."bookingBehavior" = 'MEMBER_RATE';
+  AND mt."bookingBehavior" = 'MEMBER_RATE'
+  AND mt."key" <> 'NON_MEMBER'
+ORDER BY x."createdAt", x."id"
+ON CONFLICT DO NOTHING;
 
 -- Non-member (isMember=false) HUT_FEE codes -> the built-in NON_MEMBER type.
 INSERT INTO "XeroItemCodeMapping"
@@ -160,7 +184,9 @@ FROM "XeroItemCodeMapping" x
 CROSS JOIN "MembershipType" mt
 WHERE x."category" = 'HUT_FEE'
   AND x."isMember" = false
-  AND mt."key" = 'NON_MEMBER';
+  AND mt."key" = 'NON_MEMBER'
+ORDER BY x."createdAt", x."id"
+ON CONFLICT DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- 8. Seed the group-discount substitution target to the built-in FULL type.
