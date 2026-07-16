@@ -10,7 +10,6 @@ import {
   extractImageDimensions,
 } from "@/lib/media-image";
 import {
-  ALLOWED_MEMBER_PHOTO_CONTENT_TYPES,
   MAX_MEMBER_PHOTO_BYTES,
   MAX_MEMBER_PHOTO_DIMENSION,
   MAX_MEMBER_PHOTO_REQUEST_BYTES,
@@ -105,6 +104,7 @@ export async function GET(
   const member = await prisma.member.findUnique({
     where: { id },
     select: {
+      active: true,
       photoImageId: true,
       committeeAssignments: {
         where: PUBLIC_COMMITTEE_ASSIGNMENT_FILTER,
@@ -118,7 +118,12 @@ export async function GET(
     return notFoundResponse();
   }
 
-  const isCommitteePublic = member.committeeAssignments.length > 0;
+  // Lockstep with /api/committee: the member themselves must be active, not
+  // merely holding a published assignment. A deactivated member with a stale
+  // published assignment is absent from the committee page, so their photo
+  // must not be publicly servable either.
+  const isCommitteePublic =
+    member.active && member.committeeAssignments.length > 0;
 
   if (!isCommitteePublic) {
     // Private photo: only the owning member or a membership viewer/admin.
