@@ -63,6 +63,11 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   "src/lib/config-transfer/apply.ts": 1,
   "src/lib/member-credit.ts": 1,
   "src/lib/member-lifecycle-actions.ts": 2,
+  // #1937: executeMemberMerge takes the shared member-lifecycle:{id} key for
+  // BOTH the master and the loser, in sorted id order (deadlock-free), so a
+  // merge serialises with any concurrent delete/archive/merge touching either
+  // member (same dual-lock pattern as member-lifecycle-actions.ts).
+  "src/lib/member-merge.ts": 2,
   "src/lib/member-partner-link.ts": 1,
   "src/lib/membership-subscription-billing.ts": 1,
   "src/lib/nomination.ts": 2,
