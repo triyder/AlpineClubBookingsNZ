@@ -66,15 +66,27 @@ Future reviews and issues should cite this file when proposing changes.
 - **Manual mark-paid provenance (non-Xero clubs / cash).** `status = "PAID"` can
   be set outside the Xero pipeline by an audited finance:edit action, recorded by
   `manuallyMarkedPaidAt` / `manuallyMarkedPaidByMemberId` / `manualPaymentNote`.
-  This path never calls Xero and never creates or voids an invoice. Two writers
-  must never clobber a manual PAID: the annual-invoice sweep never invoices a
+  This path never calls Xero and never creates or voids an invoice, and it exists
+  only for cash payments where NO Xero invoice exists: marking paid is rejected
+  when the row carries a Xero invoice link (record the payment against the
+  invoice in Xero instead) or is `NOT_REQUIRED`, and both manual writes are
+  status-fenced conditional updates so concurrent actions cannot double-apply.
+  No writer may clobber a manual PAID: the annual-invoice sweep never invoices a
   subscription already `PAID` (a manual PAID has no charge-coverage row, so the
-  guard keys off status, not coverage), and Xero discovery/reconciliation
+  guard keys off status, not coverage); a queued/retrying invoice charge
+  conflicts (`SUBSCRIPTION_ALREADY_PAID`) instead of minting an invoice for a
+  covered subscription that became `PAID`, and its coverage write never
+  downgrades a `PAID` row; Xero discovery/reconciliation
   (`checkMembershipStatus`) never downgrades a manually marked-paid row that
-  carries no Xero invoice link. Once a real Xero subscription invoice links to
-  the row, Xero is authoritative again. Reversal (finance:edit) restores `UNPAID`
-  when a Xero invoice link exists, `NOT_INVOICED` otherwise, and clears the
-  provenance columns; both directions are audited with the acting admin.
+  carries no Xero invoice link (a write-time fence, so a manual mark-paid
+  landing mid-sync is also safe); and `flushMemberSubscriptionHistory` treats a
+  manual-PAID row as financial history and never deletes it on contact
+  link/push/unlink. Once a real Xero subscription invoice links to the row,
+  Xero is authoritative again and the linking write clears the manual
+  provenance columns (a row can never read "UNPAID (manual)"). Reversal
+  (finance:edit) restores `NOT_INVOICED` (or `UNPAID` on a legacy row with an
+  invoice link) and clears the provenance columns; both directions are audited
+  with the acting admin, including the previous status.
 - Xero invoice identity is persisted before Xero email. Email retries reuse it.
   Existing invoices are adopted only on an exact `AUTHORISED` snapshot match;
   conflicts are visible and never trigger a silent provider rewrite. Xero
