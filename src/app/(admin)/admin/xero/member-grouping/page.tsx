@@ -84,6 +84,17 @@ const MODE_HELP: Record<GroupingMode, string> = {
   MEMBERSHIP_TYPE_AND_AGE: "Membership Type + Age: the most specific rule wins — type+tier beats type-only beats tier-only.",
 };
 
+class ApiError extends Error {
+  status: number;
+  reason?: string;
+  constructor(message: string, status: number, reason?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.reason = reason;
+  }
+}
+
 async function api(body: unknown) {
   const res = await fetch("/api/admin/xero/member-grouping", {
     method: "POST",
@@ -91,7 +102,9 @@ async function api(body: unknown) {
     body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error ?? "Request failed");
+  if (!res.ok) {
+    throw new ApiError(json.error ?? "Request failed", res.status, json.reason);
+  }
   return json;
 }
 
@@ -104,6 +117,10 @@ export default function XeroMemberGroupingPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  // The persisted dry-run this UI is authorised against — threaded into the bulk
+  // re-sync so the server can enforce freshness (#1961). Null until a dry-run is
+  // run (or after a stale-dry-run rejection forces a fresh one).
+  const [dryRunId, setDryRunId] = useState<string | null>(null);
   const [resyncState, setResyncState] = useState<{
     status: string;
     nextCursorMemberId: string | null;
@@ -166,26 +183,43 @@ export default function XeroMemberGroupingPage() {
   };
 
   const runBulkResync = useCallback(
-    (afterMemberId?: string) => {
-      void run(
-        {
+    async (afterMemberId?: string) => {
+      if (!dryRunId) {
+        setError("Run the dry-run and review the diff before re-syncing.");
+        return;
+      }
+      setBusy(true);
+      setError(null);
+      try {
+        const json = await api({
           action: "bulk-resync",
+          dryRunId,
           confirmDryRunReviewed: true,
           ...(afterMemberId ? { afterMemberId } : {}),
-        },
-        (json) => {
-          const r = (json as { result: BulkResult }).result;
-          setResyncState({
-            status: `Processed ${r.processed} (added ${r.added}, removed ${r.removed}, failed ${r.failed}).`,
-            nextCursorMemberId: r.done ? null : r.nextCursorMemberId,
-            haltedByDailyLimit: r.haltedByDailyLimit,
-            failures: r.failures,
-          });
-          void load();
-        },
-      );
+        });
+        const r = (json as { result: BulkResult }).result;
+        setResyncState({
+          status: `Processed ${r.processed} (added ${r.added}, removed ${r.removed}, failed ${r.failed}).`,
+          nextCursorMemberId: r.done ? null : r.nextCursorMemberId,
+          haltedByDailyLimit: r.haltedByDailyLimit,
+          failures: r.failures,
+        });
+        void load();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Request failed");
+        // A server-side dry-run freshness rejection (stale/absent dry-run, or a
+        // rule/cache change since review) carries a `reason`. Invalidate the
+        // reviewed diff so the admin must re-run the dry-run before retrying.
+        if (err instanceof ApiError && err.reason) {
+          setSnapshot(null);
+          setDryRunId(null);
+          setResyncState(null);
+        }
+      } finally {
+        setBusy(false);
+      }
     },
-    [load, run],
+    [dryRunId, load],
   );
 
   if (!config) {
@@ -402,7 +436,12 @@ export default function XeroMemberGroupingPage() {
               size="sm"
               disabled={busy}
               onClick={() =>
-                void run({ action: "dry-run" }, (json) => setSnapshot((json as { snapshot: Snapshot }).snapshot))
+                void run({ action: "dry-run" }, (json) => {
+                  const j = json as { snapshot: Snapshot; dryRunId: string | null };
+                  setSnapshot(j.snapshot);
+                  setDryRunId(j.dryRunId);
+                  setResyncState(null);
+                })
               }
             >
               Run dry-run diff
@@ -410,15 +449,30 @@ export default function XeroMemberGroupingPage() {
             <ViewOnlyActionButton
               canEdit={canEdit}
               size="sm"
-              disabled={busy || !snapshot || snapshot.mismatchCount === 0}
-              title={!snapshot ? "Run the dry-run first." : undefined}
+              disabled={
+                busy ||
+                !snapshot ||
+                !dryRunId ||
+                snapshot.mismatchCount === 0 ||
+                // Once a run has been initiated from this dry-run, the server
+                // rejects a second initiate (already_started, #1961) — continue
+                // with "Resume re-sync", or re-run the dry-run to start over.
+                Boolean(resyncState)
+              }
+              title={
+                !snapshot || !dryRunId
+                  ? "Run the dry-run first."
+                  : resyncState
+                    ? "This dry-run's re-sync has already started — use Resume re-sync, or re-run the dry-run to start over."
+                    : undefined
+              }
               onClick={() => {
                 if (
                   window.confirm(
                     `Re-sync ${snapshot?.mismatchCount ?? 0} member(s) to Xero? You have reviewed the dry-run diff.`,
                   )
                 ) {
-                  runBulkResync();
+                  void runBulkResync();
                 }
               }}
             >
@@ -430,7 +484,7 @@ export default function XeroMemberGroupingPage() {
                 variant="outline"
                 size="sm"
                 disabled={busy}
-                onClick={() => runBulkResync(resyncState.nextCursorMemberId ?? undefined)}
+                onClick={() => void runBulkResync(resyncState.nextCursorMemberId ?? undefined)}
               >
                 Resume re-sync
               </ViewOnlyActionButton>

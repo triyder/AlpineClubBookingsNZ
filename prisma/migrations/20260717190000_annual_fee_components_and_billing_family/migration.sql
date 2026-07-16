@@ -50,7 +50,7 @@ CREATE TABLE "MembershipAnnualFeeComponent" (
   CONSTRAINT "MembershipAnnualFeeComponent_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "MembershipAnnualFeeComponent_membershipAnnualFeeId_sortOrder_idx"
+CREATE INDEX "MembershipAnnualFeeComponent_membershipAnnualFeeId_sortOrde_idx"
   ON "MembershipAnnualFeeComponent" ("membershipAnnualFeeId", "sortOrder");
 
 ALTER TABLE "MembershipAnnualFeeComponent"

@@ -1207,6 +1207,39 @@ model XeroGroupingSettings {
   @@index([updatedByMemberId])
 }
 
+// Server-side provenance of a member-grouping dry-run (#1961, follow-up to E8
+// #1934). Persisted whenever an admin runs the dry-run so the bulk re-sync can
+// enforce, server-side and independent of any client-asserted flag, that a
+// recent reviewed diff exists AND still matches the CONTACT_GROUP_FULL_REFRESH
+// group-cache cursor + active grouping rules it was computed against. The bulk
+// re-sync rejects a run whose referenced dry-run is absent, expired, or was
+// computed against a now-changed cache cursor / rule set.
+model XeroMemberGroupingDryRun {
+  id                String                 @id @default(cuid())
+  mode              XeroMemberGroupingMode
+  // The CONTACT_GROUP_FULL_REFRESH cursor lastSuccessfulSyncAt this dry-run was
+  // computed against; the bulk re-sync rejects when the live cursor differs.
+  cacheCursorAt     DateTime
+  // Stable digest of (mode + active rules) at dry-run time; a rule/mode change
+  // moves the live fingerprint and the bulk re-sync rejects.
+  rulesFingerprint  String
+  // Stable digest of the planned add/remove operations the admin reviewed.
+  plannedDigest     String
+  mismatchCount     Int
+  addCount          Int
+  removeCount       Int
+  // Server-set claim marker (#1961): stamped once, atomically, when the bulk
+  // re-sync is INITIATED from this dry-run. Null = never started. A resume is
+  // valid only against a started run; the status-guarded claim rejects
+  // double-initiates.
+  startedAt         DateTime?
+  createdByMemberId String?
+  createdAt         DateTime               @default(now())
+
+  @@index([createdAt])
+  @@index([createdByMemberId])
+}
+
 model SeasonalMembershipAssignment {
   id                 String                     @id @default(cuid())
   memberId           String
