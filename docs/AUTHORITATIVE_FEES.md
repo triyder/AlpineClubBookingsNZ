@@ -1,16 +1,19 @@
 # Authoritative Fee Configuration
 
 Annual membership fees and joining fees are persisted, effective-dated club
-configuration. Hut fees are the lodge-scoped `Season` records managed under
-**Admin > Hut Fees & Seasons**, with per-night rates keyed by **membership
-type** in `MembershipTypeSeasonRate` (#1930, E4). Each `MEMBER_RATE` membership
+configuration. Hut fees are the lodge-scoped `Season` records; their per-night
+rates are edited in the **Hut Fees** section of the consolidated **Admin > Fees**
+page (`/admin/fees`, #1933 E7 — **Admin > Seasons** now holds only the season
+windows), keyed by **membership type** in `MembershipTypeSeasonRate` (#1930, E4). Each `MEMBER_RATE` membership
 type carries its own rate rows; non-members price via the built-in
 `NON_MEMBER` type; `NON_MEMBER_RATE` (except `NON_MEMBER`) and `BLOCK_BOOKING`
 types carry zero own rows. A type prices per age tier when
 `MembershipType.ageGroupsApply` is true (one row per tier) or from a single flat
 rate when false (one `NULL`-ageTier row). The legacy member/non-member
-boolean-keyed `SeasonRate` table is **retained but frozen** — read only by the
-public `{{hut-fees}}` embed until E7 re-keys it, and dropped by E13. Xero
+boolean-keyed `SeasonRate` table is **retained but frozen** — still read by the
+public `{{hut-fees}}` embed (its member/non-member split), and dropped by E13.
+E7 (#1933) added the grouped public presentation and token grammar on top of
+this source, not a re-key. Xero
 hut-fee item codes re-key the same way via `XeroItemCodeMapping.membershipTypeId`
 so an invoice line never disagrees with the rate that priced it.
 
@@ -33,8 +36,8 @@ untouched. A `NULL` snapshot (pre-refactor booking) resolves at read time as
 > heuristic (an adult in a household of ≥2 adults + a dependent resolved the
 > family fee) is **removed**: only members assigned the **Family** membership
 > type get the flat family fee. Applicants who previously matched the heuristic
-> are now invoiced their own membership type's joining fee. This is surfaced on
-> the fee-configuration page and flagged in the PR body.
+> are now invoiced their own membership type's joining fee. This is surfaced in
+> the Joining Fees section of the Fees page and flagged in the PR body.
 >
 > **Frozen Xero idempotency (do not change).** The joining-fee invoice's Xero
 > **reference** stays byte-frozen at `` `Entrance fee (<Label>) - <memberId>` ``
@@ -53,16 +56,27 @@ untouched. A `NULL` snapshot (pre-refactor booking) resolves at read time as
 > re-minted. New mints always carry the current-label frozen-format reference.
 
 Public PageContent blocks are double opt-in: their family is enabled in Admin >
-Page Content and membership types are individually public. Joining-fee blocks
-omit tiers without a current schedule. Hut-rate blocks use active seasons/rates plus configured age-tier
-labels. Visibility writes are audited and invalidate public routes.
+Page Content. The fee embeds draw from these same authoritative schedules:
+`{{joining-fees}}` and `{{hut-fees}}` from the joining/season schedules, and
+`{{annual-fees}}` from the annual-fee schedules (with `{{annual-fees:components}}`
+exposing the E6 per-line breakdown). Joining-fee blocks omit tiers without a
+current schedule; annual-fee blocks omit types with no current invoiceable fee
+and require each type's public-listing flag. `{{annual-fees}}` has its **own**
+dedicated `annualFees` visibility opt-in (default off), separate from the joining
+`entranceFees` gate (D-R4); `{{membership-types}}` and `{{entrance-fees}}` are
+deprecated aliases of `{{annual-fees}}` and `{{joining-fees}}`. Hut-rate blocks
+use active seasons/rates plus configured age-tier labels. Fees are edited on the
+consolidated **Admin > Fees** page (`/admin/fees`); **Admin > Seasons** now holds
+only season windows (name/type/dates/active). Visibility writes are audited and
+invalidate public routes.
 
 ## Operator workflow
 
 1. A Membership editor opens **Admin > Membership Types**, writes a distinct
    public description, and explicitly enables public listing only after review.
    Every migrated and newly created type is hidden by default.
-2. A Finance editor opens **Admin > Membership & Joining Fees** and adds an
+2. A Finance editor opens **Admin > Fees** (Joining Fees and Annual Membership
+   Fees sections) and adds an
    inclusive effective-date range. Annual-fee ranges for the same type, and
    joining-fee ranges for the same type × age tier, cannot overlap. NZD amounts
    are stored as GST-inclusive integer cents. Joining fees are set per
@@ -211,8 +225,8 @@ release. The migration date is the honest effective-from boundary for any
 materialised legacy window. The `ENTRANCE_FEE` Xero item-code rows are re-keyed
 to `JOINING_FEE`, carrying the item codes forward byte-identically; the Xero
 mappings panel is now **item-code-only** for joining fees (the mapping rows'
-`amountCents` is dead at runtime, so amounts are edited solely on the
-fee-configuration page). No live Xero call occurs during migration
+`amountCents` is dead at runtime, so amounts are edited solely in the Joining
+Fees section of the Fees page). No live Xero call occurs during migration
 or configuration.
 
 Resolution reads `JoiningFee` only: pick the type's row for the member's age
