@@ -27,8 +27,8 @@ async function loadDefaultLodgeContact(): Promise<{
   address: string | null;
 } | null> {
   // Default-lodge identity for the contact card (E3 #1929), replacing the old
-  // hardcoded "Waldvogel Lodge…" string. Never throws — a DB miss simply hides
-  // the address block.
+  // hardcoded lodge-address string. Never throws — a DB miss simply hides the
+  // address block.
   try {
     const defaultLodgeId = await getDefaultLodgeId(prisma);
     const lodge = await prisma.lodge.findUnique({
