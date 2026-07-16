@@ -13,6 +13,10 @@ import {
 } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import {
+  invalidatePublicLayoutConfig,
+  PUBLIC_LAYOUT_CACHE_TAGS,
+} from "@/lib/public-layout-cache";
+import {
   CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   MODULE_KEYS,
   type ModuleKey,
@@ -127,6 +131,11 @@ export async function PUT(request: Request) {
           ])
         )[0]
       : await write;
+
+  invalidatePublicLayoutConfig(
+    PUBLIC_LAYOUT_CACHE_TAGS.modules,
+    PUBLIC_LAYOUT_CACHE_TAGS.capacity,
+  );
 
   return NextResponse.json(buildClubModuleSettingsPayload(record));
 }

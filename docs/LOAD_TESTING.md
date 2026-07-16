@@ -31,11 +31,11 @@ In concrete terms for this harness:
   machine) port 5432 is the **live production Postgres**. The harness never
   speaks to a database at all — HTTP to the app only — and its target guard
   hard-refuses any `BASE_URL` mentioning `:5432`.
-- **No live providers.** The scenarios only create PENDING bookings with the
-  default payment method and never call the payment-confirmation, email, or
-  Xero endpoints, so no Stripe/Xero/SES traffic is ever generated. The
-  staging stack additionally runs with `CRON_ENABLED=false` and captures all
-  mail in Mailpit.
+- **No live providers.** The contention scenario creates child-only
+  `AWAITING_REVIEW` bookings so they genuinely hold capacity, but never calls
+  payment-confirmation or Xero endpoints. The staging stack runs with
+  `CRON_ENABLED=false` and captures the resulting admin-review notifications
+  in Mailpit; never point it at live SES.
 - A full 100-VU run is **owner-gated**: agents build and syntax-check this
   harness but do not execute load runs autonomously.
 
@@ -90,7 +90,8 @@ It is deliberately **not** an npm dependency and never runs in CI.
 | `LOAD_TEST_CONFIRM_TARGET` | **yes** | — | Must be exactly `1`. The per-run "I checked the target" opt-in. |
 | `LOAD_USER_EMAIL` | for auth scenarios | `alice@demo.alpineclub.test` | Member to log in as. |
 | `LOAD_USER_PASSWORD` | for auth scenarios | — | That member's password (the staging demo-seed password). Never hardcoded. |
-| `LOAD_USERS` | no | — | Comma-separated extra member emails (same password) so contention VUs spread across accounts. |
+| `LOAD_USERS` | no | — | Comma-separated extra member emails (same password) used round-robin by login, dashboard, and contention VUs. Without it, auth scenarios are explicitly same-account contention tests. |
+| `LOGIN_ITERATIONS_PER_VU` | no | `1` | Cold logins per VU. The primary evidence profile is exactly one; values above one are an explicit repeated-login stress profile. |
 | `PEAK_VUS` | no | `100` | Peak virtual users for the ramp / contention stampede. |
 | `RAMP_UP` / `STEADY` / `RAMP_DOWN` | no | `1m` / `3m` / `30s` | Stage durations for the ramping scenarios. |
 | `P95_MS` | no | `800` | p95 latency budget (ms) for the read scenarios. |
@@ -100,8 +101,11 @@ It is deliberately **not** an npm dependency and never runs in CI.
 | `LODGE_ID` | no | — | Lodge to book/read; empty lets the app resolve the default lodge. |
 | `CONTENTION_CHECKIN` | no | `2026-08-18` | The single night everyone fights over. Must be a bookable (in-season, future) date on the seeded stack. |
 | `CONTENTION_CHECKOUT` | no | check-in + 1 day | Override only for multi-night contention. |
-| `CONTENTION_ATTEMPTS` | no | `3` | Booking attempts per VU (keeps each synthetic IP under the 20/hour booking-create limit). |
+| `CONTENTION_ATTEMPTS` | no | `1` | Booking attempts per VU. The default makes `PEAK_VUS` equal the number of write attempts. |
 | `CONTENTION_P95_MS` | no | `5000` | p95 budget for the serialised booking write. |
+| `CONTENTION_AUTH_WARMUP_SECONDS` | no | `60` | Seconds from setup to the shared booking-write barrier. Every VU gets one login attempt in this window; a late VU fails the run rather than mixing bcrypt CPU into booking latency. Keep at least 60 seconds for the standard 100-VU constrained-stack profile. |
+| `LODGE_CAPACITY` | no | `20` | Expected capacity of the selected seeded lodge; teardown fails if observed occupancy exceeds it. |
+| `CONTENTION_EXPECTED_BASELINE` | no | `0` | Required occupied-bed baseline for the contention night. A mismatch aborts before writes; reset the stack or set this deliberately for a known non-empty fixture. |
 
 ## Scenarios
 
@@ -125,15 +129,26 @@ BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
 
 ### 2. Login — `load/scenarios/login.js`
 
-Every iteration is a full cold login: clear cookies →
+The primary profile starts `PEAK_VUS` together and performs exactly one full
+cold login per VU: clear cookies →
 `GET /api/auth/csrf` → form-`POST /api/auth/callback/credentials` → assert
 a session cookie landed. bcrypt makes this the most CPU-expensive request
 in the app, hence its own `LOGIN_P95_MS` budget and the `login_success`
 rate threshold.
 
+By default this is deliberately a **same-account contention** profile: all
+VUs authenticate as `LOAD_USER_EMAIL`. To measure independent-user login
+throughput instead, seed distinct member accounts with the same throwaway
+password and list them in `LOAD_USERS`; VUs select accounts round-robin. For
+a headline 100-user run, provide at least 100 total accounts (the primary
+account plus `LOAD_USERS`) so concurrent logins are genuinely distinct.
+Set `LOGIN_ITERATIONS_PER_VU` above 1 only for a separately labelled repeated
+cold-login stress run; it is not the headline concurrent-user result.
+
 ```bash
 BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
   LOAD_USER_PASSWORD=<demo seed password> \
+  LOAD_USERS=<comma-separated seeded member emails> \
   k6 run load/scenarios/login.js
 ```
 
@@ -148,20 +163,30 @@ BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
 re-check capacity, and receive the app's normal sold-out answer, so the
 scenario asserts on the **outcome distribution**, not just 200s:
 
-- `201` → counted as `bookings_created` (race winners);
+- `201` + `status: "AWAITING_REVIEW"` → counted as `bookings_created`
+  (race winners); a non-holding 201 is a harness failure;
 - `409` + `code: "CAPACITY_EXCEEDED"` (with `canWaitlist: true` and a
   `fullNights` array) → counted as `booking_capacity_rejections` — this is
   a *pass*, it is the correct answer for a full lodge;
-- `409` + `code: "BOOKING_MEMBER_NIGHT_CONFLICT"` → counted separately
-  (can occur when `LOAD_USERS` members already sit on that night);
 - anything else (5xx, timeout, other 4xx) trips the `booking_unexpected`
   threshold and fails the run.
 
 Latency gets a deliberately loose `CONTENTION_P95_MS` (default 5 s) because
 the lock serialises writers **by design**; the run fails on errors, not on
-queueing. After the run, verify the capacity invariant manually:
-`bookings_created` must not exceed the lodge's bed count for that night
-(default seed lodge: 20 beds).
+queueing. Before the first booking write, every VU performs its single allowed
+login and waits until the same absolute write barrier. The default
+`CONTENTION_AUTH_WARMUP_SECONDS=60` gives the standard 100-VU constrained-stack
+profile time to finish bcrypt work. If any bootstrap is still late,
+`contention_auth_ready_before_barrier` fails and that VU does not write, so a
+red run cannot pass off auth CPU as advisory-lock latency. Values of
+`CONTENTION_ATTEMPTS` above one remain a separate sequential stress profile;
+the first attempt from every VU is the synchronized headline stampede.
+
+Setup requires the observed baseline to equal
+`CONTENTION_EXPECTED_BASELINE` (default 0), then teardown requires the exact
+final occupancy `min(LODGE_CAPACITY, baseline + PEAK_VUS ×
+CONTENTION_ATTEMPTS)`. A single missing capacity hold fails
+`capacity_invariant`; merely staying below capacity is not enough.
 
 ```bash
 BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
@@ -169,18 +194,29 @@ BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
   k6 run load/scenarios/booking-contention.js
 ```
 
-Bookings are created with non-member guests and the default payment method,
-which records a PENDING booking and **touches no payment provider**. Reset
-the stack (`npm run test:e2e:down && npm run test:e2e:prepare`) between
-contention runs so each run starts from a known-empty night.
+Bookings use a non-member child guest plus an explicit review justification.
+That follows the real child-only policy into `AWAITING_REVIEW`, a
+capacity-holding state, and **touches no payment provider**. It can enqueue an
+admin-review email, which the throwaway stack captures in Mailpit. Reset the
+stack (`npm run test:e2e:down && npm run test:e2e:prepare`) between contention
+runs so each run starts from a known-empty night.
 
 ### 4. Member dashboard — `load/scenarios/member-dashboard.js`
 
-Each VU logs in once, then loops the authenticated read paths:
+Each VU logs in once (round-robin across `LOAD_USERS` when supplied), then
+loops the authenticated read paths:
 `/dashboard` (server-rendered), `/api/lodges`, `/api/availability`
 (the calendar month containing `CONTENTION_CHECKIN`, so a side-by-side run
 reads the calendar the write path is contending on), and
 `/api/member/credit-balance`.
+
+Dashboard request latency is thresholded only on
+`{flow:member_dashboard}`. The one-time bcrypt bootstrap is reported by the
+separate `dashboard_bootstrap_login_success` gate, so login time cannot make a
+dashboard-read SLO fail while login failures still fail the run. A failed
+bootstrap is recorded once and is not retried inside the read loop; otherwise
+an unavailable login path would turn the scenario into an accidental login
+storm and stop measuring dashboard reads.
 
 ```bash
 BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
@@ -202,10 +238,12 @@ threshold fails**, which is the pass/fail signal:
   registered via `expectedStatuses` so they do **not** count here.
 - `checks` / `login_success` / `booking_unexpected` — semantic assertions
   (right status *and* right body shape).
-- Contention counters: `bookings_created`, `booking_capacity_rejections`,
-  `booking_member_night_conflicts`. Healthy 100-VU run against a fresh
-  20-bed night: created ≈ 20, capacity rejections ≈ the rest, unexpected 0,
-  and created **never** above the bed count.
+- `dashboard_bootstrap_login_success` / `capacity_invariant` — explicit gates
+  for read-scenario session establishment and the contention occupancy bound.
+- Contention counters: `bookings_created` and `booking_capacity_rejections`.
+  A healthy 100-VU run against a fresh 20-bed night has created exactly 20,
+  capacity rejections exactly 80, unexpected 0, and final occupied beds
+  exactly 20.
 
 A smoke-scale sanity pass (recommended before any full run):
 
@@ -217,6 +255,31 @@ BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
 ```
 
 ## Implementation notes
+
+- Each scenario uses a separate block of synthetic client IPs. This prevents a
+  login run from consuming the dashboard or contention scenario's fixed-window
+  rate-limit budget when the four profiles run back to back on one throwaway
+  stack. Re-running the same scenario still requires a fresh stack or an
+  expired limiter window.
+
+- **Measured baseline and rerun:** the first 100-VU evidence run found public
+  p95 2.24 s, cold-login p95 23.01 s, dashboard aggregate p95 12.5 s, and
+  contention p95 29.18 s. Those results are not a pass: the original harness
+  amplified contention writes, did not hold capacity, and mixed bootstrap
+  login into dashboard latency. Rerun all four scenarios from a freshly reset
+  stack after these corrections. Keep the published thresholds unchanged and
+  attach the k6 summaries to #1884.
+- **Deployment profile remains evidence, not a code workaround:** the measured
+  stack was CPU-bound while the app container was limited below one CPU. A
+  follow-up run may profile roughly 2 app CPUs, but it must be reported as a
+  separate resource profile; do not raise thresholds, reduce bcrypt cost, or
+  silently change the standard profile to manufacture a pass.
+- **Public layout reads:** module flags, theme, lodge capacity, and current
+  banners use independent 15-second caches with tagged invalidation on their
+  admin write paths, including lodge settings and configuration imports.
+  Authentication/session state is deliberately not cached.
+- **Lodge eligibility:** `/api/lodges` resolves member restrictions once per
+  request rather than repeating the same query for each active lodge.
 
 - **Rate limiters vs load:** the app keys its per-IP limiters on the last
   entry of `X-Forwarded-For` (production Caddy appends the real client IP).

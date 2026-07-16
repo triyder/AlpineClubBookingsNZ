@@ -9,6 +9,7 @@ import {
 } from "@/lib/lodge-settings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { invalidatePublicLodgeCapacity } from "@/lib/public-layout-cache";
 
 // Per-lodge scope (lodge-scoping contract): an explicit lodgeId must name
 // an active lodge; omitted keeps the legacy single-row behaviour.
@@ -92,6 +93,7 @@ export async function PUT(request: Request) {
     updatedByMemberId: guard.session.user.id,
     lodgeId: body.data.lodgeId,
   });
+  invalidatePublicLodgeCapacity();
 
   await createAuditLog({
     action: "LODGE_SETTINGS_UPDATED",

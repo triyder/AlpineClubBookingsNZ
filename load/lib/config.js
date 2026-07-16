@@ -18,6 +18,20 @@ function intEnv(env, name, fallback) {
   return value;
 }
 
+function nonNegativeIntEnv(env, name, fallback) {
+  const raw = env[name];
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return fallback;
+  }
+  const value = parseInt(String(raw), 10);
+  if (!isFinite(value) || value < 0) {
+    throw new Error(
+      name + ' must be a non-negative integer, got "' + raw + '"'
+    );
+  }
+  return value;
+}
+
 /**
  * Build the config object every scenario uses. Runs the target-safety
  * guard first, so importing a scenario script already enforces it.
@@ -46,7 +60,7 @@ export function loadConfig(env) {
     userPassword: env.LOAD_USER_PASSWORD || "",
 
     // Optional comma-separated list of extra member emails (all sharing
-    // LOAD_USER_PASSWORD) so contention VUs can spread across accounts.
+    // LOAD_USER_PASSWORD) so login/contention VUs can spread across accounts.
     userPool: (env.LOAD_USERS || "")
       .split(",")
       .map(function (s) {
@@ -54,12 +68,31 @@ export function loadConfig(env) {
       })
       .filter(Boolean),
 
+    // Primary login evidence is one simultaneous cold login per VU. Values
+    // above one opt into a separate repeated-login stress profile.
+    loginIterationsPerVu: intEnv(env, "LOGIN_ITERATIONS_PER_VU", 1),
+
     // Booking-contention knobs.
     lodgeId: env.LODGE_ID || "", // empty → app resolves the default lodge
     contentionCheckIn: env.CONTENTION_CHECKIN || "2026-08-18",
     contentionCheckOut: env.CONTENTION_CHECKOUT || "",
-    contentionAttempts: intEnv(env, "CONTENTION_ATTEMPTS", 3),
+    contentionAttempts: intEnv(env, "CONTENTION_ATTEMPTS", 1),
     contentionP95Ms: intEnv(env, "CONTENTION_P95_MS", 5000),
+    // Per-VU bcrypt logins happen before a shared absolute write barrier. The
+    // default leaves ample headroom for the standard 100-VU profile on the
+    // deliberately CPU-constrained evidence stack, so login CPU cannot be
+    // mistaken for advisory-lock queueing in the tagged booking latency.
+    contentionAuthWarmupSeconds: intEnv(
+      env,
+      "CONTENTION_AUTH_WARMUP_SECONDS",
+      60
+    ),
+    lodgeCapacity: intEnv(env, "LODGE_CAPACITY", 20),
+    contentionExpectedBaseline: nonNegativeIntEnv(
+      env,
+      "CONTENTION_EXPECTED_BASELINE",
+      0
+    ),
   };
 }
 

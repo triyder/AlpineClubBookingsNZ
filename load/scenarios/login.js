@@ -1,8 +1,8 @@
 /**
  * Scenario: login (authenticated session establishment) — issue #1884.
  *
- * VUs ramp to PEAK_VUS (default 100), and every iteration performs a full
- * cold login: clear cookies, fetch the Auth.js CSRF token, POST the
+ * PEAK_VUS (default 100) start together and each performs one full cold login
+ * by default: clear cookies, fetch the Auth.js CSRF token, POST the
  * credentials callback, verify a session cookie landed. bcrypt verification
  * makes this the most CPU-expensive request in the app, so its p95 gets its
  * own (higher) budget via LOGIN_P95_MS.
@@ -21,13 +21,10 @@
 import http from "k6/http";
 import { sleep } from "k6";
 import { Rate } from "k6/metrics";
+import exec from "k6/execution";
 import { assertSafeTarget } from "../lib/target-guard.js";
-import {
-  loadConfig,
-  requireCredentials,
-  rampStages,
-} from "../lib/config.js";
-import { login, clearSession } from "../lib/session.js";
+import { loadConfig, requireCredentials } from "../lib/config.js";
+import { login, clearSession, SCENARIO_IP_OFFSETS } from "../lib/session.js";
 
 const cfg = loadConfig(__ENV); // init-context guard: aborts unsafe targets
 requireCredentials(cfg);
@@ -38,10 +35,10 @@ const loginSuccess = new Rate("login_success");
 export const options = {
   scenarios: {
     login: {
-      executor: "ramping-vus",
-      startVUs: 0,
-      stages: rampStages(cfg),
-      gracefulRampDown: "10s",
+      executor: "per-vu-iterations",
+      vus: cfg.peakVus,
+      iterations: cfg.loginIterationsPerVu,
+      maxDuration: "10m",
     },
   },
   thresholds: {
@@ -65,8 +62,15 @@ export function setup() {
 }
 
 export default function loginFlow() {
+  const accounts = [cfg.userEmail].concat(cfg.userPool);
+  const email = accounts[(exec.vu.idInTest - 1) % accounts.length];
   clearSession(cfg); // every iteration is a cold login
-  const ok = login(cfg, cfg.userEmail, cfg.userPassword, __ITER);
+  const ok = login(
+    cfg,
+    email,
+    cfg.userPassword,
+    SCENARIO_IP_OFFSETS.login + __ITER
+  );
   loginSuccess.add(ok);
   sleep(cfg.thinkTime);
 }

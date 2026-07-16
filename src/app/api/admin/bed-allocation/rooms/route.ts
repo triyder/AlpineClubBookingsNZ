@@ -12,6 +12,7 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
+import { invalidatePublicLodgeCapacity } from "@/lib/public-layout-cache";
 
 // requireAdmin() is enforced by requireBedAllocationAdmin().
 const roomSchema = z
@@ -75,6 +76,7 @@ export async function POST(request: Request) {
     }
 
     const room = await createBedAllocationRoom({ ...body.data, lodgeId });
+    invalidatePublicLodgeCapacity();
     logAudit({
       action: "BED_ALLOCATION_ROOM_CREATED",
       memberId: guard.session.user.id,

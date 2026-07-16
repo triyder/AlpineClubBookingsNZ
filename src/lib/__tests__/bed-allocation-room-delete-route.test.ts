@@ -21,6 +21,9 @@ vi.mock("@/lib/session-guards", () => ({
 vi.mock("@/lib/admin-modules", () => ({
   isEffectiveModuleEnabled: () => Promise.resolve(true),
 }));
+vi.mock("@/lib/public-layout-cache", () => ({
+  invalidatePublicLodgeCapacity: vi.fn(),
+}));
 
 vi.mock("@/lib/admin-bed-allocation", async (importActual) => {
   const actual =

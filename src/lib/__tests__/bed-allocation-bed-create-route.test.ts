@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/public-layout-cache", () => ({
+  invalidatePublicLodgeCapacity: vi.fn(),
+}));
 import { Prisma } from "@prisma/client";
 
 // POST /api/admin/bed-allocation/beds and DELETE /api/admin/bed-allocation/beds/[id]

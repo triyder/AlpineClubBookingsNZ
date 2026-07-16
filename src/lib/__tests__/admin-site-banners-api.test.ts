@@ -19,6 +19,12 @@ const mocks = vi.hoisted(() => ({
     ipAddress: "127.0.0.1",
     userAgent: "vitest",
   })),
+  invalidatePublicLayoutConfig: vi.fn(),
+}));
+
+vi.mock("@/lib/public-layout-cache", () => ({
+  PUBLIC_LAYOUT_CACHE_TAGS: { banners: "public-layout:banners" },
+  invalidatePublicLayoutConfig: mocks.invalidatePublicLayoutConfig,
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -284,6 +290,9 @@ describe("Admin site banners API", () => {
       const body = await response.json();
 
       expect(response.status).toBe(201);
+      expect(mocks.invalidatePublicLayoutConfig).toHaveBeenCalledWith(
+        "public-layout:banners",
+      );
       expect(mocks.siteBannerCreate).toHaveBeenCalledWith({
         data: {
           message: "Mountain closed",
@@ -322,6 +331,9 @@ describe("Admin site banners API", () => {
       const body = await response.json();
 
       expect(response.status).toBe(200);
+      expect(mocks.invalidatePublicLayoutConfig).toHaveBeenCalledWith(
+        "public-layout:banners",
+      );
       expect(mocks.siteBannerUpdate).toHaveBeenCalledWith({
         where: { id: "banner-1" },
         data: {
@@ -374,6 +386,9 @@ describe("Admin site banners API", () => {
       );
 
       expect(response.status).toBe(200);
+      expect(mocks.invalidatePublicLayoutConfig).toHaveBeenCalledWith(
+        "public-layout:banners",
+      );
       expect(mocks.siteBannerDelete).toHaveBeenCalledWith({
         where: { id: "banner-1" },
       });

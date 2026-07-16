@@ -20,15 +20,15 @@ function listSourceFiles(path: string): string[] {
 
 describe("database theme app-shell contract", () => {
   it.each([
-    "src/app/(public)/layout.tsx",
-    "src/app/(authenticated)/layout.tsx",
-    "src/app/(admin)/layout.tsx",
+    ["src/app/(public)/layout.tsx", "getCachedWebsiteThemeRenderState()"],
+    ["src/app/(authenticated)/layout.tsx", "getWebsiteThemeRenderState()"],
+    ["src/app/(admin)/layout.tsx", "getWebsiteThemeRenderState()"],
   ])(
     "injects the sanitized ClubTheme CSS in %s",
-    (path) => {
+    (path, themeLoader) => {
       const layout = readRepoFile(path);
 
-      expect(layout).toContain("getWebsiteThemeRenderState()");
+      expect(layout).toContain(themeLoader);
       expect(layout).toContain('data-site-style="club-theme"');
       expect(layout).toContain(
         "dangerouslySetInnerHTML={{ __html: theme.appCss }}",
@@ -247,12 +247,14 @@ describe("database theme app-shell contract", () => {
       ...listSourceFiles("src/app/(admin)"),
       ...listSourceFiles("src/app/(authenticated)"),
       ...listSourceFiles("src/components"),
-    ].filter(
-      (path) =>
-        !path.includes("/__tests__/") &&
-        !path.includes("/website") &&
-        path !== "src/components/ui/skeleton.tsx",
-    );
+    ].filter((path) => {
+      const normalized = path.replaceAll("\\", "/");
+      return (
+        !normalized.includes("/__tests__/") &&
+        !normalized.includes("/website") &&
+        normalized !== "src/components/ui/skeleton.tsx"
+      );
+    });
     const transparentAppBackground =
       /(?:^|[\s"'`])(?:hover:|active:|focus:|dark:|data-\[[^\]]+\]:)*bg-(?:background|foreground|card|popover|primary|secondary|muted|accent|brand-(?:gold|charcoal|deep|mist|snow))\/\d+/m;
 
