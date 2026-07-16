@@ -112,6 +112,17 @@ afterEach(() => {
 });
 
 describe("fee configuration page", () => {
+  it("shows a friendly read-only notice (not a fetch-failed error) when the finance read is cross-area 403 (E7 Lens-A F1)", async () => {
+    // A bookings-only operator on the shared /admin/fees console gets a 403 from
+    // the finance-gated /api/admin/fee-configuration read.
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ error: "Forbidden" }) } as Response)));
+    render(<FeeConfigurationPage />);
+    expect(await screen.findByText(/don't have permission to view this section/i)).toBeTruthy();
+    // The raw fetch-failed error must NOT surface.
+    expect(screen.queryByText(/failed to load fee configuration/i)).toBeNull();
+    expect(screen.queryByText(/^Forbidden$/)).toBeNull();
+  });
+
   it("renders finance viewers read-only with no edit affordances", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => response(true, { ...editableData, canEdit: false })));
     render(<FeeConfigurationPage />);

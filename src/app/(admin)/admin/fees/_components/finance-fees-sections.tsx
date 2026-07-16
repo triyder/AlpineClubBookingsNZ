@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 
 // The Joining Fees + Annual Membership Fees + Family billing sections of the
 // consolidated /admin/fees console (#1933, E7). Moved verbatim from the former
@@ -59,6 +60,11 @@ const memberName = (member: { firstName: string; lastName: string }) => `${membe
 export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boolean } = {}) {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Cross-area read: /api/admin/fee-configuration is finance-gated, so a
+  // bookings-only operator on the shared /admin/fees console gets a 403 here.
+  // Surface that as a friendly read-only notice instead of a raw fetch-failed
+  // error (E7 review, Lens-A F1). The read API area is intentionally unchanged.
+  const [forbidden, setForbidden] = useState(false);
   const [saving, setSaving] = useState(false);
   const [membershipTypeId, setMembershipTypeId] = useState("");
   const [membershipAmount, setMembershipAmount] = useState("");
@@ -93,8 +99,14 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
 
   const load = useCallback(async () => {
     const response = await fetch("/api/admin/fee-configuration");
+    if (response.status === 403) {
+      setForbidden(true);
+      setError(null);
+      return;
+    }
     const body = await response.json();
     if (!response.ok) throw new Error(body.error ?? "Failed to load fee configuration");
+    setForbidden(false);
     setData(body);
   }, []);
   useEffect(() => { load().catch((cause) => setError(cause instanceof Error ? cause.message : "Failed to load")); }, [load]);
@@ -220,6 +232,16 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
         : { membershipTypeId: joiningTypeId, ageTier: joiningTier === "FLAT" ? null : joiningTier }),
       amountCents, effectiveFrom: entranceFrom, effectiveTo: entranceTo || null,
     }).then((saved) => { if (saved) resetEntranceForm(); });
+  }
+
+  if (forbidden) {
+    return <div className="space-y-6">
+      <AdminViewOnlyNotice>
+        You don&apos;t have permission to view this section. Joining fees and annual
+        membership fees are managed by finance admins; ask a finance admin if you need
+        to see fee schedules.
+      </AdminViewOnlyNotice>
+    </div>;
   }
 
   return <div className="space-y-6">

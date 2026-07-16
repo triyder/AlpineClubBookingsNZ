@@ -104,6 +104,11 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
   const [rateTypes, setRateTypes] = useState<RateType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Cross-area read: /api/admin/seasons is bookings-gated, so a finance-only
+  // operator on the shared /admin/fees console gets a 403 here. Surface that as
+  // a friendly read-only notice instead of a raw fetch-failed error (E7 review,
+  // Lens-A F1). The read API area is intentionally left unchanged.
+  const [forbidden, setForbidden] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const { lodges, loading: lodgesLoading } = useLodgeOptions("admin");
@@ -162,8 +167,14 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
           : "/api/admin/seasons",
         { signal },
       );
+      if (res.status === 403) {
+        setForbidden(true);
+        setError("");
+        return;
+      }
       if (!res.ok) throw new Error("Failed to fetch seasons");
       const data = await res.json();
+      setForbidden(false);
       setSeasons(data);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -315,26 +326,35 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
             (dates/active) are also editable on <Link href="/admin/seasons" className="underline">Seasons</Link>.
           </CardDescription>
         </div>
-        {!showForm && canEdit && <Button onClick={startCreate}>Add season</Button>}
+        {!forbidden && !showForm && canEdit && <Button onClick={startCreate}>Add season</Button>}
       </CardHeader>
       <CardContent className="space-y-6">
-        {!canEdit && (
+        {forbidden && (
+          <AdminViewOnlyNotice>
+            You don&apos;t have permission to view this section. Hut fees are managed by
+            bookings admins; ask a bookings admin if you need to see nightly rates.
+          </AdminViewOnlyNotice>
+        )}
+
+        {!forbidden && !canEdit && (
           <AdminViewOnlyNotice>
             Bookings view access can inspect hut fees. Bookings edit access is required to change nightly rates or seasons.
           </AdminViewOnlyNotice>
         )}
 
+        {!forbidden && (
         <div className="max-w-xs">
           <LodgeSelect lodges={lodges} value={lodgeId} onChange={setLodgeId} loading={lodgesLoading} />
         </div>
+        )}
 
-        {error && (
+        {!forbidden && error && (
           <div role="alert" className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
             {error}
           </div>
         )}
 
-        {loading ? (
+        {forbidden ? null : loading ? (
           <p className="text-sm text-muted-foreground">Loading seasons…</p>
         ) : (
           <>
