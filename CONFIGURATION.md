@@ -184,7 +184,11 @@ menu.
 - Seeding creates starter pages (`home`, `about`, `join`, `join/apply`,
   `rules`, `contact`, `committee`, `privacy`, `terms`, `faq`) only when they
   do not already exist, so re-running the seed never overwrites edited
-  content.
+  content. The seeded copy is fully club-agnostic: the starter privacy policy,
+  booking terms, and FAQ carry no club-specific lodge name or geography and
+  instead resolve the installing club's own identity through the text tokens
+  below (`{{club-name}}`, `{{lodge-name}}`, `{{lodge-capacity}}`). Each club
+  edits the wording in Admin > Page Content.
 - The home route (`/`) renders the `home` page record. `/contact`, `/join`,
   and `/join/apply` are code-backed routes that render their matching record;
   all other records, including `/privacy`, `/terms`, and `/faq`, are served by

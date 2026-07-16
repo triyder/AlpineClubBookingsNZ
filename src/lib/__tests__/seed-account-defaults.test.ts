@@ -41,6 +41,7 @@ import {
   buildSeedLodgeMemberData,
   shouldSkipTokoroaThemeSeed,
 } from "../../../prisma/seed-data";
+import { starterPageContent } from "../../../prisma/starter-page-content";
 import {
   ensureNotRequiredSubscriptionForRole,
   roleNeverRequiresSubscription,
@@ -246,11 +247,23 @@ describe("buildSeedChoreTemplates", () => {
   it("contains no location-specific copy", () => {
     const text = JSON.stringify(buildSeedChoreTemplates());
     // Previously the seed referenced a specific recycling centre and supply days.
-    expect(text).not.toMatch(/Iwikau|Ruapehu|Whakapapa|Tokoroa/i);
+    // Waldvogel is added for symmetry with the starter-page-content guard below.
+    expect(text).not.toMatch(/Waldvogel|Iwikau|Ruapehu|Whakapapa|Tokoroa/i);
   });
 
   it("keeps the full example template set", () => {
     expect(buildSeedChoreTemplates()).toHaveLength(17);
+  });
+});
+
+describe("starterPageContent location scrub (#1945)", () => {
+  it("seeds no club-specific lodge name or geography", () => {
+    // The public repo must not ship the founding club's lodge name/geography in
+    // fresh-install starter pages; content is club-agnostic and token-driven
+    // ({{club-name}} / {{lodge-name}} / {{lodge-capacity}}). This guard fails if
+    // any of those names re-enter the seeded privacy, terms, or FAQ copy.
+    const text = JSON.stringify(starterPageContent);
+    expect(text).not.toMatch(/Waldvogel|Iwikau|Ruapehu|Whakapapa|Tokoroa/i);
   });
 });
 
