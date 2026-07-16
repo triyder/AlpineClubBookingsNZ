@@ -28,6 +28,30 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 
 `config/club.json` is validated by `src/config/schema.ts`.
 
+### DB-first identity (admin-editable)
+
+The club **name**, **short name**, and **hut-leader label** are DB-first: an
+admin edits them under **Admin > Site Appearance & Content > Club Identity** (no
+redeploy). Each field resolves through a per-field fallback chain —
+**database (`ClubIdentitySettings`) → `config/club.json` → hard default** — so an
+empty/absent row keeps working from the file config, and clearing a field in the
+admin UI restores the configured default. Changes propagate to the site header,
+footer, page titles, and emails within a few seconds (a 15s tagged cache; the
+TOTP issuer label used at 2FA enrolment can lag by a short process-cache TTL and
+only affects new enrolments). `config/club.json` is never modified by these
+edits — it remains the seed and the fallback.
+
+The **lodge display name** is not stored in club identity: it always resolves
+from the **default lodge**'s `Lodge.name` (edit it under Club Identity > Lodge
+details, or Admin > Setup > Lodges for multi-lodge clubs). The lodge also carries
+an admin-editable **address** (shown on the public contact page and via the
+`{{lodge-name}}` / `{{lodge-address}}` content tokens).
+
+Email club-name precedence is `EmailMessageSetting.clubName` (Admin > Email
+Messages) → `ClubIdentitySettings.name` → `config/club.json`. Email template
+default subjects keep the config-derived lodge name as their stable search key;
+the live lodge name is substituted at send time.
+
 | Field                                              | Required | Description                                                                                                      |
 | -------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
 | `name`                                             | yes      | Full public club name.                                                                                           |
@@ -160,7 +184,11 @@ menu.
 - Seeding creates starter pages (`home`, `about`, `join`, `join/apply`,
   `rules`, `contact`, `committee`, `privacy`, `terms`, `faq`) only when they
   do not already exist, so re-running the seed never overwrites edited
-  content.
+  content. The seeded copy is fully club-agnostic: the starter privacy policy,
+  booking terms, and FAQ carry no club-specific lodge name or geography and
+  instead resolve the installing club's own identity through the text tokens
+  below (`{{club-name}}`, `{{lodge-name}}`, `{{lodge-capacity}}`). Each club
+  edits the wording in Admin > Page Content.
 - The home route (`/`) renders the `home` page record. `/contact`, `/join`,
   and `/join/apply` are code-backed routes that render their matching record;
   all other records, including `/privacy`, `/terms`, and `/faq`, are served by
@@ -188,7 +216,9 @@ menu.
   data rather than another lodge's fallback. Legal and help-copy pages can also use text
   tokens `{{club-name}}`, `{{currency}}`, `{{lodge-capacity}}`,
   `{{lodge-capacity:lodge-slug}}` (a named lodge's capacity; unknown slug falls
-  back to the default lodge), `{{hut-leader}}`, and `{{hut-leader-lower}}`, which
+  back to the default lodge), `{{lodge-name}}` / `{{lodge-name:lodge-slug}}`,
+  `{{lodge-address}}` / `{{lodge-address:lodge-slug}}` (a lodge's name/address;
+  empty address renders nothing), `{{hut-leader}}`, and `{{hut-leader-lower}}`, which
   are resolved server-side
   from the current club/runtime settings (`{{hut-leader}}` renders the
   configured hut-leader **role label**, default `Hut Leader` — the role name,
@@ -230,6 +260,18 @@ menu.
   Those uploads accept PNG, JPEG, GIF, WebP, and AVIF files up to 10MB. SVG is
   intentionally rejected there because filesystem uploads are served as static
   image assets without the database image route's restrictive CSP.
+
+### Configurable "Book Now" button
+
+The public website header's **Book Now** button is configured on the same
+Admin > Page Content panel (`PublicContentSettings`):
+
+- **Show the button** — off hides it entirely (desktop and mobile).
+- **Target** — *booking flow* (the default: a logged-in member goes to `/book`,
+  a guest is sent through login) or a chosen **published content page**.
+- A page target that becomes unpublished or is deleted **fails open** to the
+  booking flow, so the button is never dead. The authenticated dashboard's own
+  Book Now action is unaffected — a signed-in member can always book.
 
 ## Website Site Content
 
@@ -331,10 +373,13 @@ once a *second active lodge actually exists*.
 
 ### 2. Create the lodge
 
-On the Lodges page, create the new lodge: name, and optionally its door code
-and travel note (these are the per-lodge identity fields used in that lodge's
-confirmation and pre-arrival emails). The club's original lodge already exists
-as the seeded default lodge.
+On the Lodges page, create the new lodge: name, and optionally its address, door
+code, and travel note (the door code and travel note are used in that lodge's
+confirmation and pre-arrival emails; the name and address are also public — the
+contact page and the `{{lodge-name}}` / `{{lodge-address}}` content tokens read
+them). The club's original lodge already exists as the seeded default lodge. For
+a single-lodge club, the same fields are editable under **Admin > Club Identity >
+Lodge details** without opening the multi-lodge management UI.
 
 ### 3. Run the setup wizard
 
@@ -917,6 +962,47 @@ addresses. Existing members keep it off only when a saved postal address has
 material postal fields that differ from the physical address. Server routes
 remain authoritative: when `postalSameAsPhysical` is submitted, physical address
 fields are copied into postal fields before the member or application is saved.
+
+## Merging Duplicate Members
+
+When the same person ends up with two member records (for example one from an old
+import and one from a new application, or a duplicated Book-on-Behalf contact), a
+**Full Admin** can merge them from **Admin > Members > (open the record you want
+to keep) > "Merge a duplicate into this member"**. Only Full Admins see the
+action; scoped admins cannot merge.
+
+- **Who is kept.** The record you open is the **master** and survives. You pick
+  the duplicate to merge in; it is **permanently deleted** at the end (there is no
+  undo). A swap control lets you flip which record is the master before you
+  commit.
+- **What merges.** Blank fields on the master are filled from the duplicate;
+  where both have a value the master's wins. All history — bookings, payments,
+  credits, subscriptions, family/partner links, inductions, committee roles, and
+  so on — moves onto the master. Login details, security settings (password,
+  2FA), and the Xero accounting link always stay the master's and are never
+  taken from the duplicate.
+- **What is blocked.** The merge stops (with a clear reason in the preview) when
+  the master is inactive/archived, the duplicate holds an admin role (demote it
+  first), either record has a pending deletion/archive/family request (including
+  a member's own pending account-deletion request), or the duplicate carries a
+  real (invoiced/paid) membership-subscription for a season the master already
+  has a subscription row for — paid history is never silently dropped.
+- **What is warned.** The preview lists every access role the master will gain
+  from the duplicate — including custom (definition-backed) roles — plus any
+  confirmed-partner link, promo allocation, or group-booking join row that will
+  be dropped as a duplicate, so nothing changes silently.
+- **The manual Xero step.** The system does **not** touch Xero over the network
+  during a merge. The duplicate's Xero *contact* is left in Xero — the preview
+  warns you to **archive or merge it in Xero manually**. The one thing it does
+  re-point in the database is the duplicate's joining-fee (entrance-fee) invoice
+  link, so the master is still recognised as having paid a joining fee and is not
+  re-charged. The duplicate is also signed out on their next request.
+- **Confirming.** Before anything happens you see a full preview: the field-by-
+  field result, how many history rows move, which duplicate rows are de-duplicated,
+  and every warning. You must type `MERGE <duplicate's full name>` to enable the
+  irreversible **Merge and delete duplicate** button. Every merge writes one
+  critical `MEMBER_MERGED` audit record. Historic audit rows that referenced the
+  duplicate keep its id and stored name by design, so the audit trail stays intact.
 
 ## App Defaults
 

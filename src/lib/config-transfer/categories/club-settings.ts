@@ -95,6 +95,14 @@ export const SINGLETONS: SingletonSpec[] = [
     fields: ["holdBedSlots", "holdDays", "minimumDaysBeforeCheckIn"],
   },
   {
+    // DB-first club identity (E3 #1929). Singleton row id="default"; all fields
+    // nullable and served through the runtime fallback chain, so exporting/
+    // importing them moves only the admin-set overrides.
+    entity: "club-identity-settings",
+    delegate: "clubIdentitySettings",
+    fields: ["name", "shortName", "hutLeaderLabel"],
+  },
+  {
     entity: "email-message-setting",
     delegate: "emailMessageSetting",
     // lodgeName / lodgeTravelNote / doorCode were all dropped upstream (fork

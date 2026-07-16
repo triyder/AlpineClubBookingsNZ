@@ -7,7 +7,7 @@ import { buildLoginPath } from "@/lib/auth-redirect";
 import { prisma } from "@/lib/prisma";
 import { getPartnerInviteTokenForClaim } from "@/lib/partner-invite-token";
 import { normalizeInvitedEmail } from "@/lib/partner-invite-token-policy";
-import { CLUB_NAME } from "@/config/club-identity";
+import { getCachedClubIdentity } from "@/lib/public-layout-config";
 
 export const dynamic = "force-dynamic";
 
@@ -38,9 +38,10 @@ export default async function PartnerInvitePage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  const [session, view] = await Promise.all([
+  const [session, view, { name: clubName }] = await Promise.all([
     auth(),
     getPartnerInviteTokenForClaim(token),
+    getCachedClubIdentity(),
   ]);
 
   if (view.status === "invalid") {
@@ -72,7 +73,7 @@ export default async function PartnerInvitePage({
       <Shell title="Invitation already used">
         <p>This invitation has already been accepted.</p>
         <p>
-          If you have a {CLUB_NAME} account, your family group is available from
+          If you have a {clubName} account, your family group is available from
           your profile page.
         </p>
       </Shell>
@@ -100,10 +101,10 @@ export default async function PartnerInvitePage({
       <Shell title="Family group invitation">
         <p>
           You have been invited to join the family group{" "}
-          <strong>{groupName}</strong> at {CLUB_NAME}.
+          <strong>{groupName}</strong> at {clubName}.
         </p>
         <p>
-          To accept, you first need a {CLUB_NAME} membership account. Apply for
+          To accept, you first need a {clubName} membership account. Apply for
           membership using the invited email address
           {" "}
           <strong>{view.invitedEmail}</strong>. Once your login is active,

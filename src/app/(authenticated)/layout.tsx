@@ -9,7 +9,7 @@ import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
-import { clubIdentity } from "@/config/club-identity";
+import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import {
   hasAdminPortalAccess,
@@ -141,13 +141,14 @@ export default async function AuthenticatedLayout({
   const showOnboardingWizard =
     shouldShowMemberOnboarding(member) &&
     !isOnboardingGateExemptPath(requestedPath);
-  const [effectiveModules, lodgeCapacity, siteBanners, theme] = await Promise.all([
+  const [effectiveModules, lodgeCapacity, siteBanners, theme, clubIdentity] = await Promise.all([
     loadEffectiveModuleFlags(),
     // Default lodge: this layout's capacity feeds club identity copy
     // (per-lodge figures come from lodge-scoped surfaces).
     getDefaultLodgeCapacity(),
     getCurrentSiteBanners(),
     getWebsiteThemeRenderState(),
+    getCachedClubIdentity(),
   ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const nonce = requestHeaders.get(CSP_NONCE_HEADER) ?? undefined;

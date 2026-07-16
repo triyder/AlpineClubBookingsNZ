@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => {
   const values = { requireAdmin: vi.fn(), findUnique: vi.fn(), upsert: vi.fn(), auditCreate: vi.fn(), revalidatePath: vi.fn() };
   const prisma = {
     publicContentSettings: { findUnique: values.findUnique, upsert: values.upsert },
+    pageContent: { findMany: vi.fn().mockResolvedValue([]) },
     auditLog: { create: values.auditCreate },
     $transaction: vi.fn(),
   };
@@ -23,6 +24,7 @@ import { GET, PUT } from "@/app/api/admin/public-content-settings/route";
 const existing = {
   id: "default", membershipTypes: true, entranceFees: false, hutFees: true,
   bookingPolicySummary: false, cancellationPolicy: true,
+  showBookNow: true, bookNowTarget: "BOOKING_FLOW" as const, bookNowPageId: null,
   updatedByMemberId: "admin-0", createdAt: new Date(), updatedAt: new Date(),
 };
 
@@ -40,11 +42,12 @@ describe("public content settings route", () => {
     expect(await response.json()).toEqual({ settings: {
       membershipTypes: true, entranceFees: false, hutFees: true,
       bookingPolicySummary: false, cancellationPolicy: true,
-    } });
+      showBookNow: true, bookNowTarget: "BOOKING_FLOW", bookNowPageId: null,
+    }, pages: [] });
   });
 
   it("audits writes and invalidates public routes", async () => {
-    const body = { membershipTypes: true, entranceFees: false, hutFees: true, bookingPolicySummary: false, cancellationPolicy: true };
+    const body = { membershipTypes: true, entranceFees: false, hutFees: true, bookingPolicySummary: false, cancellationPolicy: true, showBookNow: true, bookNowTarget: "BOOKING_FLOW", bookNowPageId: null };
     const response = await PUT(new Request("http://localhost/api/admin/public-content-settings", { method: "PUT", body: JSON.stringify(body) }));
     expect(response.status).toBe(200);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "content", level: "edit" } });

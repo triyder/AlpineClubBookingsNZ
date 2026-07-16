@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
-import { CLUB_NAME } from "@/config/club-identity";
+import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { buildEmbeddedBody } from "@/lib/page-content-embeds";
 import {
   getSanitizedPageContentByPath,
@@ -8,23 +8,29 @@ import {
 } from "@/lib/page-content-html";
 
 export async function generateMetadata(): Promise<Metadata> {
-  const page = await getSanitizedPageContentByPath("/join");
+  const [page, { name: clubName }] = await Promise.all([
+    getSanitizedPageContentByPath("/join"),
+    getCachedClubIdentity(),
+  ]);
   return {
     title: page?.title ?? "Join the Club",
     description:
       pageContentHtmlToPlainText(page?.headerText ?? "") ||
-      `How to become a member of the ${CLUB_NAME}. Nomination by two existing members, joining fee, induction process, and membership details.`,
+      `How to become a member of the ${clubName}. Nomination by two existing members, joining fee, induction process, and membership details.`,
   };
 }
 
 export default async function JoinPage() {
-  const page = await getSanitizedPageContentByPath("/join");
+  const [page, clubIdentity] = await Promise.all([
+    getSanitizedPageContentByPath("/join"),
+    getCachedClubIdentity(),
+  ]);
   const embeddedBody = page ? await buildEmbeddedBody(page.contentHtml) : [];
   const caption = page?.caption || "Join the Club";
   const title = page?.title || "Becoming a Member";
   const headerText =
     page?.headerText ||
-    `How to become a member of the ${CLUB_NAME}. Nomination by two existing members, joining fee, induction process, and membership details.`;
+    `How to become a member of the ${clubIdentity.name}. Nomination by two existing members, joining fee, induction process, and membership details.`;
 
   return (
     <>
@@ -48,6 +54,7 @@ export default async function JoinPage() {
                 parts={embeddedBody}
                 pageSlug="join"
                 keyPrefix="join"
+                clubIdentity={clubIdentity}
               />
             </div>
           ) : (

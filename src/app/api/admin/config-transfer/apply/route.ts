@@ -14,6 +14,7 @@ import {
   requireFullAdminForConfigTransfer,
 } from "@/lib/config-transfer/route-helpers";
 import { configTransferErrorResponse } from "@/lib/config-transfer/route-error";
+import { primeClubIdentitySync } from "@/lib/club-identity-settings";
 import { primeEmailPalette } from "@/lib/email-theme";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import {
@@ -70,11 +71,17 @@ export async function POST(request: Request) {
       PUBLIC_LAYOUT_CACHE_TAGS.theme,
       PUBLIC_LAYOUT_CACHE_TAGS.capacity,
       PUBLIC_LAYOUT_CACHE_TAGS.banners,
+      PUBLIC_LAYOUT_CACHE_TAGS.identity,
     );
     // Config transfer can replace ClubTheme outside the site-style route.
     // Refresh the process-local email palette alongside the public theme tag
     // so web and email colours converge immediately (#1912/#1915).
     await primeEmailPalette();
+    // Likewise, config transfer can replace ClubIdentitySettings / the default
+    // Lodge: refresh the sync identity accessor alongside the identity tag so
+    // sync call sites (TOTP issuer) see the imported identity immediately
+    // (E3 #1929; precedent 5107a136 for the email theme).
+    await primeClubIdentitySync();
     return NextResponse.json({ result });
   } catch (error) {
     if (error instanceof ConfigImportDriftError) {

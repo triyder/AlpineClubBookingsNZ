@@ -89,7 +89,11 @@ recommended reading paths.
 2. Copy `config/club.example.json` to `config/club.json` and replace the club
    name, contact emails, public URL, beds, age tiers, and integer-cent rates.
    If `config/club.json` is absent, the app falls back to
-   `config/club.example.json`.
+   `config/club.example.json`. After seeding, the club **name**, **short name**,
+   and **hut-leader label** are admin-editable under Admin > Site Appearance &
+   Content > Club Identity (DB-first, no redeploy); `config/club.json` stays the
+   seed and fallback. That screen also edits your lodge's public name and
+   address.
 3. Complete `/admin/site-style` after first sign-in to set the shared public,
    member, and admin brand colours and fonts, plus the database-stored public
    logo. Operational success, warning, information, and danger colours remain

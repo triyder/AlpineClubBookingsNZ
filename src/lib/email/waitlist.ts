@@ -3,7 +3,7 @@ import {
   waitlistOfferTemplate,
   waitlistOfferExpiredTemplate,
 } from "../email-templates";
-import { CLUB_LODGE_NAME } from "@/config/club-identity";
+import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import {
   formatNZDate,
   formatNZDateTime,
@@ -25,7 +25,7 @@ export async function sendWaitlistConfirmationEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: `Waitlist Confirmation - ${CLUB_LODGE_NAME}`,
+    subject: `Waitlist Confirmation - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: waitlistConfirmationTemplate(
       firstName,
       checkIn,
@@ -67,7 +67,7 @@ export async function sendWaitlistOfferEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: `Spot Available! - ${CLUB_LODGE_NAME}`,
+    subject: `Spot Available! - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: waitlistOfferTemplate(
       firstName,
       checkIn,
@@ -107,7 +107,7 @@ export async function sendWaitlistOfferExpiredEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: `Waitlist Offer Expired - ${CLUB_LODGE_NAME}`,
+    subject: `Waitlist Offer Expired - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: waitlistOfferExpiredTemplate(firstName, checkIn, checkOut, position),
     templateName: "waitlist-offer-expired",
     templateData: {

@@ -30,6 +30,14 @@ vi.mock("@/lib/session-guards", () => ({
 vi.mock("@/lib/public-content-revalidation", () => ({
   revalidatePublicPageContent: mocks.revalidatePublicPageContent,
 }));
+// E3 #1929: lodge writes also refresh DB-first identity — stub those side effects.
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/public-layout-cache", () => ({
+  invalidatePublicClubIdentity: vi.fn(),
+}));
+vi.mock("@/lib/club-identity-settings", () => ({
+  primeClubIdentitySync: vi.fn(),
+}));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {

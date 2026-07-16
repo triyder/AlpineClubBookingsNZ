@@ -1,0 +1,465 @@
+"use client";
+
+import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
+import { ArrowLeft, ArrowLeftRight, AlertTriangle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { MemberPicker, type PickedMember } from "@/components/admin/member-picker";
+
+type MemberBasic = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  ageTier?: string;
+  active?: boolean;
+  archivedAt?: string | null;
+};
+
+type FieldMergeRow = {
+  field: string;
+  master: unknown;
+  loser: unknown;
+  result: unknown;
+  source: string;
+};
+
+type MergePreview = {
+  masterId: string;
+  loserId: string;
+  masterName: string;
+  loserName: string;
+  confirmationPhrase: string;
+  previewToken: string;
+  fieldMerge: FieldMergeRow[];
+  relationMoves: { model: string; count: number }[];
+  collisions: { model: string; resolution: string; count: number }[];
+  blockers: { code: string; label: string; count?: number }[];
+  warnings: string[];
+};
+
+function display(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    return value.slice(0, 10);
+  }
+  return String(value);
+}
+
+export default function MemberMergePage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id: masterId } = use(params);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const preselectedLoserId = searchParams.get("loser");
+
+  const [master, setMaster] = useState<MemberBasic | null>(null);
+  const [loser, setLoser] = useState<PickedMember | null>(null);
+  const [suggestions, setSuggestions] = useState<MemberBasic[]>([]);
+  const [preview, setPreview] = useState<MergePreview | null>(null);
+  const [confirmationText, setConfirmationText] = useState("");
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [executing, setExecuting] = useState(false);
+  const [error, setError] = useState("");
+
+  // Load the master member.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(`/api/admin/members/${masterId}`);
+      const data = await res.json().catch(() => ({}));
+      if (!cancelled && res.ok) {
+        const m = data.member ?? data;
+        setMaster({
+          id: m.id,
+          firstName: m.firstName,
+          lastName: m.lastName,
+          email: m.email,
+          active: m.active,
+          archivedAt: m.archivedAt ?? null,
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [masterId]);
+
+  // Load duplicate-candidate suggestions (same last name).
+  useEffect(() => {
+    if (!master?.lastName) return;
+    let cancelled = false;
+    (async () => {
+      const qs = new URLSearchParams({
+        q: master.lastName,
+        pageSize: "8",
+        active: "true",
+      });
+      const res = await fetch(`/api/admin/members?${qs.toString()}`);
+      const data = await res.json().catch(() => ({}));
+      if (!cancelled && res.ok) {
+        const members = (data.members ?? []) as MemberBasic[];
+        setSuggestions(members.filter((m) => m.id !== masterId));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [master?.lastName, masterId]);
+
+  // Honour a preselected loser (from a swap).
+  useEffect(() => {
+    if (!preselectedLoserId || loser) return;
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(`/api/admin/members/${preselectedLoserId}`);
+      const data = await res.json().catch(() => ({}));
+      if (!cancelled && res.ok) {
+        const m = data.member ?? data;
+        setLoser({
+          id: m.id,
+          firstName: m.firstName,
+          lastName: m.lastName,
+          email: m.email,
+          ageTier: m.ageTier ?? "",
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [preselectedLoserId, loser]);
+
+  const resetPreview = useCallback(() => {
+    setPreview(null);
+    setConfirmationText("");
+    setError("");
+  }, []);
+
+  const runPreview = useCallback(async () => {
+    if (!loser) return;
+    setLoadingPreview(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/admin/members/${masterId}/merge/preview`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ loserId: loser.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || "Failed to build the merge preview.");
+        setPreview(null);
+        return;
+      }
+      setPreview(data as MergePreview);
+    } finally {
+      setLoadingPreview(false);
+    }
+  }, [loser, masterId]);
+
+  const execute = useCallback(async () => {
+    if (!preview) return;
+    setExecuting(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/admin/members/${masterId}/merge`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          loserId: preview.loserId,
+          previewToken: preview.previewToken,
+          confirmationText,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || "The merge could not be completed.");
+        return;
+      }
+      toast.success("Members merged. The duplicate has been deleted.");
+      router.push(`/admin/members/${masterId}`);
+    } finally {
+      setExecuting(false);
+    }
+  }, [preview, masterId, confirmationText, router]);
+
+  const swap = useCallback(() => {
+    if (!loser) return;
+    router.push(`/admin/members/${loser.id}/merge?loser=${masterId}`);
+  }, [loser, masterId, router]);
+
+  const canExecute = useMemo(
+    () =>
+      Boolean(preview) &&
+      preview!.blockers.length === 0 &&
+      confirmationText.trim().replace(/\s+/g, " ") === preview!.confirmationPhrase,
+    [preview, confirmationText],
+  );
+
+  const changedFields = useMemo(
+    () => preview?.fieldMerge.filter((r) => r.source !== "master") ?? [],
+    [preview],
+  );
+
+  return (
+    <div className="mx-auto max-w-3xl px-4 py-6">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="mb-4"
+        onClick={() => router.push(`/admin/members/${masterId}`)}
+      >
+        <ArrowLeft className="mr-1 h-4 w-4" /> Back to member
+      </Button>
+
+      <h1 className="text-xl font-semibold text-gray-900">Merge duplicate member</h1>
+      <p className="mt-1 text-sm text-gray-500">
+        The master record below survives and keeps its login, security and Xero
+        identity. The duplicate&apos;s history is moved onto the master and the
+        duplicate is permanently deleted.
+      </p>
+
+      {/* Master / loser */}
+      <div className="mt-6 grid gap-4 sm:grid-cols-2">
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+          <p className="text-xs font-semibold uppercase text-blue-700">Master (kept)</p>
+          <p className="mt-1 font-medium text-slate-900">
+            {master ? `${master.firstName} ${master.lastName}` : "Loading…"}
+          </p>
+          <p className="text-xs text-slate-500">{master?.email}</p>
+          {master && (master.active === false || master.archivedAt) && (
+            <p className="mt-2 text-xs font-medium text-red-600">
+              This member is inactive or archived and cannot be a merge master.
+            </p>
+          )}
+        </div>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="text-xs font-semibold uppercase text-amber-700">
+            Duplicate (deleted)
+          </p>
+          {loser ? (
+            <>
+              <p className="mt-1 font-medium text-slate-900">
+                {loser.firstName} {loser.lastName}
+              </p>
+              <p className="text-xs text-slate-500">{loser.email}</p>
+              <div className="mt-2 flex gap-2">
+                <Button variant="outline" size="sm" onClick={swap}>
+                  <ArrowLeftRight className="mr-1 h-3 w-3" /> Swap
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setLoser(null);
+                    resetPreview();
+                  }}
+                >
+                  Clear
+                </Button>
+              </div>
+            </>
+          ) : (
+            <p className="mt-1 text-sm text-slate-500">No duplicate selected.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Picker + suggestions */}
+      {!loser && (
+        <div className="mt-4 space-y-3">
+          <MemberPicker
+            label="Search for the duplicate member to merge in"
+            placeholder="Type a name or email…"
+            onSelect={(m) => {
+              if (m.id === masterId) {
+                toast.error("Pick a different member than the master.");
+                return;
+              }
+              setLoser(m);
+              resetPreview();
+            }}
+          />
+          {suggestions.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-gray-600">
+                Possible duplicates (same last name)
+              </p>
+              <div className="mt-1 flex flex-wrap gap-2">
+                {suggestions.map((s) => (
+                  <button
+                    key={s.id}
+                    className="rounded-full border px-3 py-1 text-xs hover:bg-blue-50"
+                    onClick={() => {
+                      setLoser({
+                        id: s.id,
+                        firstName: s.firstName,
+                        lastName: s.lastName,
+                        email: s.email,
+                        ageTier: s.ageTier ?? "",
+                      });
+                      resetPreview();
+                    }}
+                  >
+                    {s.firstName} {s.lastName} · {s.email}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {loser && !preview && (
+        <Button className="mt-4" onClick={runPreview} disabled={loadingPreview}>
+          {loadingPreview ? "Building preview…" : "Preview merge"}
+        </Button>
+      )}
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {/* Preview panel */}
+      {preview && (
+        <div className="mt-6 space-y-5">
+          {preview.blockers.length > 0 && (
+            <div className="rounded-lg border border-red-300 bg-red-50 p-4">
+              <p className="flex items-center gap-2 text-sm font-semibold text-red-800">
+                <AlertTriangle className="h-4 w-4" /> This merge is blocked
+              </p>
+              <ul className="mt-2 list-disc pl-5 text-sm text-red-700">
+                {preview.blockers.map((b) => (
+                  <li key={b.code}>
+                    {b.label}
+                    {typeof b.count === "number" ? ` (${b.count})` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Field diff */}
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">Field merge</h2>
+            {changedFields.length === 0 ? (
+              <p className="mt-1 text-xs text-gray-500">
+                No blank master fields will be filled — the master keeps all its
+                own values.
+              </p>
+            ) : (
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-left text-gray-500">
+                      <th className="py-1 pr-3">Field</th>
+                      <th className="py-1 pr-3">Master</th>
+                      <th className="py-1 pr-3">Duplicate</th>
+                      <th className="py-1 pr-3">Result</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {changedFields.map((r) => (
+                      <tr key={r.field} className="border-t">
+                        <td className="py-1 pr-3 font-medium">{r.field}</td>
+                        <td className="py-1 pr-3 text-gray-500">{display(r.master)}</td>
+                        <td className="py-1 pr-3 text-gray-500">{display(r.loser)}</td>
+                        <td className="py-1 pr-3 font-medium text-green-700">
+                          {display(r.result)} <span className="text-gray-400">({r.source})</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Relation moves */}
+          {preview.relationMoves.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">History moved</h2>
+              <div className="mt-1 flex flex-wrap gap-2">
+                {preview.relationMoves.map((m) => (
+                  <span key={m.model} className="rounded border bg-gray-50 px-2 py-1 text-xs">
+                    {m.model}: {m.count}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Collisions */}
+          {preview.collisions.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">
+                Duplicate rows resolved
+              </h2>
+              <ul className="mt-1 list-disc pl-5 text-xs text-gray-600">
+                {preview.collisions.map((c) => (
+                  <li key={c.model}>
+                    {c.model} — {c.resolution}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Warnings */}
+          {preview.warnings.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <ul className="list-disc pl-5 text-xs text-amber-800">
+                {preview.warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Irreversible banner + confirmation */}
+          {preview.blockers.length === 0 && (
+            <div className="rounded-lg border-2 border-red-400 bg-red-50 p-4">
+              <p className="flex items-center gap-2 text-sm font-semibold text-red-800">
+                <AlertTriangle className="h-4 w-4" /> This cannot be undone
+              </p>
+              <p className="mt-1 text-xs text-red-700">
+                The duplicate <strong>{preview.loserName}</strong> will be
+                permanently deleted. Type{" "}
+                <code className="rounded bg-white px-1">{preview.confirmationPhrase}</code>{" "}
+                to confirm.
+              </p>
+              <Input
+                className="mt-3"
+                value={confirmationText}
+                onChange={(e) => setConfirmationText(e.target.value)}
+                placeholder={preview.confirmationPhrase}
+              />
+              <div className="mt-3 flex gap-2">
+                <Button
+                  variant="destructive"
+                  disabled={!canExecute || executing}
+                  onClick={execute}
+                >
+                  {executing ? "Merging…" : "Merge and delete duplicate"}
+                </Button>
+                <Button variant="outline" onClick={runPreview} disabled={loadingPreview}>
+                  Refresh preview
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

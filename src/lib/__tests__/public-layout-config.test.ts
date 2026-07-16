@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   modules: vi.fn(async () => ({ analytics: true })),
   banners: vi.fn(async () => []),
   theme: vi.fn(async () => ({ appCss: "" })),
+  clubIdentity: vi.fn(async () => ({ name: "Test Club" })),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -27,6 +28,9 @@ vi.mock("@/lib/site-banners", () => ({
 }));
 vi.mock("@/lib/club-theme", () => ({
   getWebsiteThemeRenderState: mocks.theme,
+}));
+vi.mock("@/lib/club-identity-settings", () => ({
+  getClubIdentity: mocks.clubIdentity,
 }));
 
 import {
@@ -59,6 +63,9 @@ describe("public layout config cache", () => {
       }],
       [mocks.theme, ["public-layout-theme"], {
         tags: [PUBLIC_LAYOUT_CACHE_TAGS.theme], revalidate: 15,
+      }],
+      [mocks.clubIdentity, ["public-layout-club-identity"], {
+        tags: [PUBLIC_LAYOUT_CACHE_TAGS.identity], revalidate: 15,
       }],
     ]);
   });

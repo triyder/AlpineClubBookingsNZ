@@ -24,6 +24,17 @@ const directWriters = [
   "src/app/api/admin/membership-types/[id]/merge/route.ts",
   "src/app/api/admin/membership-types/reorder/route.ts",
   "src/app/api/admin/public-content-settings/route.ts",
+  // E3 #1929: the club-identity PUT also revalidates the public layout.
+  "src/app/api/admin/club-identity/route.ts",
+];
+
+// E3 #1929: the DB-first identity tag must be invalidated on every writer that
+// can change club/lodge identity — the club-identity admin PUT, the lodge write
+// routes (default lodge name feeds identity), and config-transfer apply.
+const identityInvalidators = [
+  "src/app/api/admin/club-identity/route.ts",
+  "src/app/api/admin/lodges/route.ts",
+  "src/app/api/admin/lodges/[id]/route.ts",
 ];
 
 describe("public content authority invalidation contract", () => {
@@ -43,5 +54,17 @@ describe("public content authority invalidation contract", () => {
       .toBeGreaterThan(source.indexOf("await applyConfigImport"));
     expect(source.indexOf("revalidatePublicPageContent()"))
       .toBeLessThan(source.indexOf("return NextResponse.json({ result })"));
+  });
+
+  it.each(identityInvalidators)("invalidates the DB-first club identity in %s", (relativePath) => {
+    const source = fs.readFileSync(path.join(process.cwd(), relativePath), "utf8");
+    expect(source).toContain("invalidatePublicClubIdentity()");
+    expect(source).toContain("primeClubIdentitySync()");
+  });
+
+  it("invalidates the identity tag + primes the sync accessor on config-transfer apply", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/app/api/admin/config-transfer/apply/route.ts"), "utf8");
+    expect(source).toContain("PUBLIC_LAYOUT_CACHE_TAGS.identity");
+    expect(source).toContain("primeClubIdentitySync()");
   });
 });

@@ -14,7 +14,13 @@ export const CLUB_HUT_LEADER_LABEL = clubConfig.hutLeaderLabel ?? "Hut Leader";
 const CLUB_SOCIAL_LINKS = clubConfig.socialLinks ?? {};
 export const CLUB_FACEBOOK_URL = CLUB_SOCIAL_LINKS.facebook;
 export const CLUB_BOOKINGS_NAME = `${clubConfig.name} - Bookings`;
-export const CLUB_LODGE_NAME = `${clubConfig.name} Lodge`;
+// CLUB_LODGE_NAME was retired here (E3 #1929): the lodge display name is now
+// DB-first (the default Lodge.name, resolved via club-identity-settings.ts).
+// The `lodgeName` field on the clubIdentity object below stays the config-
+// derived fallback used only when no Lodge row resolves. Email subject builders
+// that need the STABLE config lodge-name search key import EMAIL_DEFAULT_LODGE_NAME
+// from email-message-settings.ts instead.
+const CLUB_LODGE_NAME_FALLBACK = `${clubConfig.name} Lodge`;
 const CLUB_PUBLIC_HOST = new URL(clubConfig.publicUrl).host;
 const CLUB_EMAIL_DOMAIN = CLUB_PUBLIC_HOST.replace(/^www\./, "");
 
@@ -29,7 +35,7 @@ export const clubIdentity: ClubIdentity = {
   hutLeaderLabel: CLUB_HUT_LEADER_LABEL,
   socialLinks: CLUB_SOCIAL_LINKS,
   bookingsName: CLUB_BOOKINGS_NAME,
-  lodgeName: CLUB_LODGE_NAME,
+  lodgeName: CLUB_LODGE_NAME_FALLBACK,
   publicHost: CLUB_PUBLIC_HOST,
   lodgeCapacity: FALLBACK_LODGE_CAPACITY,
 };

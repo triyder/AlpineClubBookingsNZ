@@ -12,6 +12,15 @@ vi.mock("@/lib/lodge-capacity", () => ({
   // The parameterised {{lodge-capacity:slug}} fallback path (multi-lodge).
   getDefaultLodgeCapacity: vi.fn(async () => 42),
 }));
+vi.mock("@/lib/club-identity-settings", () => ({
+  getClubIdentity: vi.fn(async () => ({
+    name: "Club <Name>",
+    hutLeaderLabel: "Hut Leader",
+  })),
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: { lodge: { findUnique: vi.fn(async () => null) } },
+}));
 
 import {
   EMBED_TOKEN_REGEX,
@@ -63,6 +72,8 @@ describe("token catalogue contents", () => {
       "club-name",
       "currency",
       "lodge-capacity",
+      "lodge-name",
+      "lodge-address",
       "hut-leader",
       "hut-leader-lower",
       "facebook-url",
@@ -96,6 +107,8 @@ describe("token catalogue contents", () => {
       "club-name",
       "currency",
       "lodge-capacity",
+      "lodge-name",
+      "lodge-address",
       "hut-leader",
       "hut-leader-lower",
     ]);
@@ -109,6 +122,8 @@ describe("token catalogue contents", () => {
       "club-name",
       "currency",
       "lodge-capacity",
+      "lodge-name",
+      "lodge-address",
       "facebook-url",
     ]);
   });

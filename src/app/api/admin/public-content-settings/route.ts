@@ -11,14 +11,32 @@ const settingsSchema = z.object({
   hutFees: z.boolean(),
   bookingPolicySummary: z.boolean(),
   cancellationPolicy: z.boolean(),
+  // Configurable public Book Now button (E3 #1929).
+  showBookNow: z.boolean(),
+  bookNowTarget: z.enum(["BOOKING_FLOW", "PAGE"]),
+  bookNowPageId: z.string().min(1).nullable(),
 }).strict();
 
-const defaults = {
+type Settings = {
+  membershipTypes: boolean;
+  entranceFees: boolean;
+  hutFees: boolean;
+  bookingPolicySummary: boolean;
+  cancellationPolicy: boolean;
+  showBookNow: boolean;
+  bookNowTarget: "BOOKING_FLOW" | "PAGE";
+  bookNowPageId: string | null;
+};
+
+const defaults: Settings = {
   membershipTypes: false,
   entranceFees: false,
   hutFees: false,
   bookingPolicySummary: false,
   cancellationPolicy: false,
+  showBookNow: true,
+  bookNowTarget: "BOOKING_FLOW",
+  bookNowPageId: null,
 };
 
 const settingsSelect = {
@@ -27,23 +45,42 @@ const settingsSelect = {
   hutFees: true,
   bookingPolicySummary: true,
   cancellationPolicy: true,
+  showBookNow: true,
+  bookNowTarget: true,
+  bookNowPageId: true,
 } as const;
 
-function serializeSettings(row: typeof defaults): typeof defaults {
+function serializeSettings(row: Settings): Settings {
   return {
     membershipTypes: row.membershipTypes,
     entranceFees: row.entranceFees,
     hutFees: row.hutFees,
     bookingPolicySummary: row.bookingPolicySummary,
     cancellationPolicy: row.cancellationPolicy,
+    showBookNow: row.showBookNow,
+    bookNowTarget: row.bookNowTarget,
+    bookNowPageId: row.bookNowPageId,
   };
+}
+
+// Published pages offered as Book Now targets in the admin select.
+async function loadPublishedPages() {
+  const pages = await prisma.pageContent.findMany({
+    where: { published: true },
+    select: { id: true, title: true, path: true },
+    orderBy: { sortOrder: "asc" },
+  });
+  return pages;
 }
 
 export async function GET() {
   const guard = await requireAdmin({ permission: { area: "content", level: "view" } });
   if (!guard.ok) return guard.response;
-  const settings = await prisma.publicContentSettings.findUnique({ where: { id: "default" }, select: settingsSelect });
-  return NextResponse.json({ settings: settings ? serializeSettings(settings) : defaults });
+  const [settings, pages] = await Promise.all([
+    prisma.publicContentSettings.findUnique({ where: { id: "default" }, select: settingsSelect }),
+    loadPublishedPages(),
+  ]);
+  return NextResponse.json({ settings: settings ? serializeSettings(settings) : defaults, pages });
 }
 
 export async function PUT(request: Request) {
@@ -55,12 +92,32 @@ export async function PUT(request: Request) {
   }
   const parsed = settingsSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid settings" }, { status: 400 });
+
+  // Book Now integrity: a PAGE target must name a published page. (Runtime also
+  // fails open, but reject at write time so the admin gets clear feedback.)
+  if (parsed.data.bookNowTarget === "PAGE") {
+    if (!parsed.data.bookNowPageId) {
+      return NextResponse.json({ error: "Select a published page for the Book Now target." }, { status: 400 });
+    }
+    const page = await prisma.pageContent.findUnique({
+      where: { id: parsed.data.bookNowPageId },
+      select: { published: true },
+    });
+    if (!page?.published) {
+      return NextResponse.json({ error: "The selected Book Now page is not published." }, { status: 400 });
+    }
+  }
+  // Never persist a stray page id when the target is the booking flow.
+  const bookNowPageId = parsed.data.bookNowTarget === "PAGE" ? parsed.data.bookNowPageId : null;
+  const writeData = { ...parsed.data, bookNowPageId };
+
   const settings = await prisma.$transaction(async (tx) => {
     const before = await tx.publicContentSettings.findUnique({ where: { id: "default" }, select: settingsSelect });
     const saved = await tx.publicContentSettings.upsert({
       where: { id: "default" },
-      update: { ...parsed.data, updatedByMemberId: guard.session.user.id },
-      create: { id: "default", ...parsed.data, updatedByMemberId: guard.session.user.id },
+      update: { ...writeData, updatedByMemberId: guard.session.user.id },
+      create: { id: "default", ...writeData, updatedByMemberId: guard.session.user.id },
+      select: settingsSelect,
     });
     await tx.auditLog.create(buildStructuredAuditLogCreateArgs({
       action: "PUBLIC_CONTENT_SETTINGS_UPDATED",
@@ -70,7 +127,7 @@ export async function PUT(request: Request) {
       severity: "important",
       outcome: "success",
       summary: "Public fee and policy content visibility updated",
-      metadata: { before: before ? serializeSettings(before) : defaults, after: parsed.data },
+      metadata: { before: before ? serializeSettings(before) : defaults, after: writeData },
       request: getAuditRequestContext(request),
     }));
     return saved;

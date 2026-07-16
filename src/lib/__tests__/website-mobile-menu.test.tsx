@@ -20,6 +20,7 @@ function renderMenu() {
         { href: "/", label: "Home" },
         { href: "/about", label: "About" },
       ]}
+      showBookNow
       bookingsHref="/login?next=/book"
       dashboardHref="/login"
     />,
@@ -65,11 +66,28 @@ describe("WebsiteMobileMenu", () => {
           { href: "/", label: "Home" },
           { href: "/about", label: "About" },
         ]}
+        showBookNow
         bookingsHref="/login?next=/book"
         dashboardHref="/login"
       />,
     );
 
     await waitFor(() => expect(details.open).toBe(false));
+  });
+
+  it("hides the Book Now button when showBookNow is false", () => {
+    const { container } = render(
+      <WebsiteMobileMenu
+        isAuthenticated={false}
+        clubName="Alpine Club"
+        navLinks={[{ href: "/", label: "Home" }]}
+        showBookNow={false}
+        bookingsHref="/login?next=/book"
+        dashboardHref="/login"
+      />,
+    );
+    const details = getDetails(container);
+    details.open = true;
+    expect(screen.queryByRole("link", { name: "Book Now" })).toBeNull();
   });
 });
