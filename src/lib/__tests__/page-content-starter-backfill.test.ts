@@ -72,7 +72,7 @@ const GENERICISE_LODGE_COPY_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
   "migrations",
-  "20260717170000_genericise_starter_lodge_copy",
+  "20260717180000_genericise_starter_lodge_copy",
   "migration.sql",
 );
 
