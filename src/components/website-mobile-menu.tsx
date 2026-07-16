@@ -17,6 +17,9 @@ interface WebsiteMobileMenuProps {
   clubName: string;
   logoDataUrl?: string | null;
   navLinks: ReadonlyArray<WebsiteNavLink>;
+  // Configurable public Book Now (E3 #1929): hide the button entirely when the
+  // admin has disabled it.
+  showBookNow: boolean;
   bookingsHref: string;
   dashboardHref: string;
 }
@@ -26,6 +29,7 @@ export function WebsiteMobileMenu({
   clubName,
   logoDataUrl,
   navLinks,
+  showBookNow,
   bookingsHref,
   dashboardHref,
 }: WebsiteMobileMenuProps) {
@@ -91,15 +95,17 @@ export function WebsiteMobileMenu({
                   Dashboard
                 </Link>
               </Button>
-              <Button
-                size="sm"
-                asChild
-                className="w-full shadow-lg shadow-brand-gold/20"
-              >
-                <Link href={bookingsHref} onClick={closeMenu}>
-                  Book Now
-                </Link>
-              </Button>
+              {showBookNow ? (
+                <Button
+                  size="sm"
+                  asChild
+                  className="w-full shadow-lg shadow-brand-gold/20"
+                >
+                  <Link href={bookingsHref} onClick={closeMenu}>
+                    Book Now
+                  </Link>
+                </Button>
+              ) : null}
             </>
           ) : (
             <>
@@ -113,15 +119,17 @@ export function WebsiteMobileMenu({
                   Log In
                 </Link>
               </Button>
-              <Button
-                size="sm"
-                asChild
-                className="w-full shadow-lg shadow-brand-gold/20"
-              >
-                <Link href={bookingsHref} onClick={closeMenu}>
-                  Book Now
-                </Link>
-              </Button>
+              {showBookNow ? (
+                <Button
+                  size="sm"
+                  asChild
+                  className="w-full shadow-lg shadow-brand-gold/20"
+                >
+                  <Link href={bookingsHref} onClick={closeMenu}>
+                    Book Now
+                  </Link>
+                </Button>
+              ) : null}
             </>
           )}
         </div>

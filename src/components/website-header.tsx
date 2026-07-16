@@ -6,7 +6,7 @@ import {
   WebsiteMobileMenu,
   type WebsiteNavLink,
 } from "@/components/website-mobile-menu";
-import { buildBookingLoginPath } from "@/lib/auth-redirect";
+import { getBookNowConfig } from "@/lib/book-now-config";
 import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { listWebsiteMenuPages } from "@/lib/page-content-html";
 
@@ -21,9 +21,10 @@ export async function WebsiteHeader({
   isAuthenticated,
   logoDataUrl,
 }: WebsiteHeaderProps) {
-  const [dynamicPages, clubIdentity] = await Promise.all([
+  const [dynamicPages, clubIdentity, bookNow] = await Promise.all([
     listWebsiteMenuPages(),
     getCachedClubIdentity(),
+    getBookNowConfig(isAuthenticated),
   ]);
   const clubName = clubIdentity.name;
   const dynamicNavLinks = dynamicPages.map((page) => ({
@@ -35,7 +36,10 @@ export async function WebsiteHeader({
     ...dynamicNavLinks,
     ...staticNavLinks,
   ];
-  const bookingsHref = isAuthenticated ? "/book" : buildBookingLoginPath();
+  // Configurable public Book Now (E3 #1929): hidden, custom page, or the default
+  // booking flow (fail-open). The authenticated dashboard CTA is out of scope.
+  const bookingsHref = bookNow.href;
+  const showBookNow = bookNow.show;
   const dashboardHref = isAuthenticated ? "/dashboard" : "/login";
 
   return (
@@ -69,13 +73,15 @@ export async function WebsiteHeader({
               >
                 <Link href={dashboardHref}>Dashboard</Link>
               </Button>
-              <Button
-                size="sm"
-                asChild
-                className="shadow-lg shadow-brand-gold/20"
-              >
-                <Link href={bookingsHref}>Book Now</Link>
-              </Button>
+              {showBookNow ? (
+                <Button
+                  size="sm"
+                  asChild
+                  className="shadow-lg shadow-brand-gold/20"
+                >
+                  <Link href={bookingsHref}>Book Now</Link>
+                </Button>
+              ) : null}
             </>
           ) : (
             <>
@@ -87,13 +93,15 @@ export async function WebsiteHeader({
               >
                 <Link href="/login">Log In</Link>
               </Button>
-              <Button
-                size="sm"
-                asChild
-                className="shadow-lg shadow-brand-gold/20"
-              >
-                <Link href={bookingsHref}>Book Now</Link>
-              </Button>
+              {showBookNow ? (
+                <Button
+                  size="sm"
+                  asChild
+                  className="shadow-lg shadow-brand-gold/20"
+                >
+                  <Link href={bookingsHref}>Book Now</Link>
+                </Button>
+              ) : null}
             </>
           )}
         </div>
@@ -103,6 +111,7 @@ export async function WebsiteHeader({
           clubName={clubName}
           logoDataUrl={logoDataUrl}
           navLinks={navLinks}
+          showBookNow={showBookNow}
           bookingsHref={bookingsHref}
           dashboardHref={dashboardHref}
         />
