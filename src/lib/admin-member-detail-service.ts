@@ -46,6 +46,7 @@ import {
 import { nameField } from "@/lib/zod-helpers";
 import { genderEnum, titleEnum } from "@/lib/member-enums-schema";
 import { ROLE_VALUES } from "@/lib/member-roles";
+import { defaultMembershipTypeKeyForRole } from "@/lib/membership-types";
 import {
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
@@ -1274,8 +1275,19 @@ export async function updateAdminMember(params: {
       updated.xeroContactId &&
       (hasMappedContactUpdate || shouldRepairContactNameOrder),
     );
-    const needsContactGroupSync =
-      updated.xeroContactId && existing.ageTier !== updated.ageTier;
+    // Grouping-relevant changes (E8, #1934): an age-tier flip, or a role
+    // change whose role-default membership type key differs (for members
+    // without a current-season assignment the role default IS the effective
+    // membership type, so e.g. USER->SCHOOL re-groups under type-driven
+    // modes). The sync itself is a safe no-op when neither applies.
+    const roleDefaultTypeChanged =
+      existing.role !== updated.role &&
+      defaultMembershipTypeKeyForRole(existing.role) !==
+        defaultMembershipTypeKeyForRole(updated.role);
+    const needsContactGroupSync = Boolean(
+      updated.xeroContactId &&
+        (existing.ageTier !== updated.ageTier || roleDefaultTypeChanged),
+    );
 
     if (
       updated.xeroContactId &&
