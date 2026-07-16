@@ -36,10 +36,6 @@ export function refKey(ref: PersonRef): string {
   return ref.kind === "applicant" ? "applicant" : `family:${ref.index}`;
 }
 
-export function personRefLabel(ref: PersonRef): string {
-  return ref.kind === "applicant" ? "applicant" : `family[${ref.index}]`;
-}
-
 /**
  * Normalize the per-person decisions against the application's family shape.
  * Absent decisions default to all-CREATE (byte-identical current behavior).

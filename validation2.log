@@ -1,0 +1,1757 @@
+
+> alpine-club-bookings-nz@0.11.0 lint
+> eslint
+
+
+C:\Users\jorda\Local_Repos\wt1926\e10-app-mapping\e2e\helpers\stay-dates.ts
+  87:15  warning  'tuesday' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\jorda\Local_Repos\wt1926\e10-app-mapping\src\app\(admin)\admin\display\preview\preview-page.test.tsx
+  27:36  warning  '_url' is defined but never used   @typescript-eslint/no-unused-vars
+  27:50  warning  '_init' is defined but never used  @typescript-eslint/no-unused-vars
+  71:36  warning  '_url' is defined but never used   @typescript-eslint/no-unused-vars
+  71:50  warning  '_init' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\jorda\Local_Repos\wt1926\e10-app-mapping\src\app\(admin)\admin\members\_types.ts
+  9:15  warning  'AppAccessRole' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\jorda\Local_Repos\wt1926\e10-app-mapping\src\lib\__tests__\xero-mismatch-resync.test.ts
+  64:3  warning  'XeroResyncUnavailableError' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\jorda\Local_Repos\wt1926\e10-app-mapping\src\lib\admin-member-detail-service.ts
+  72:8  warning  'AccessRoleDefinitionRecord' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\jorda\Local_Repos\wt1926\e10-app-mapping\src\lib\admin-members-service.ts
+  51:8  warning  'AppAccessRole' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\jorda\Local_Repos\wt1926\e10-app-mapping\src\lib\finance-monthly-balance.ts
+  76:3  warning  'input' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\jorda\Local_Repos\wt1926\e10-app-mapping\src\lib\general-cron-runner.ts
+  13:7  warning  'GENERAL_CRON_JOB_NAMES' is assigned a value but only used as a type  @typescript-eslint/no-unused-vars
+
+C:\Users\jorda\Local_Repos\wt1926\e10-app-mapping\src\lib\member-address.ts
+  29:7  warning  'MEMBER_ADDRESS_FIELDS' is assigned a value but only used as a type  @typescript-eslint/no-unused-vars
+
+✖ 12 problems (0 errors, 12 warnings)
+
+
+> alpine-club-bookings-nz@0.11.0 db:generate
+> prisma generate
+
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma\schema.prisma.
+
+✔ Generated Prisma Client (v7.8.0) to .\node_modules\@prisma\client in 1.17s
+
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+
+
+
+> alpine-club-bookings-nz@0.11.0 typecheck
+> next typegen && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json
+
+Generating route types...
+✓ Types generated successfully
+
+> alpine-club-bookings-nz@0.11.0 test
+> vitest run
+
+
+ RUN  v4.1.10 C:/Users/jorda/Local_Repos/wt1926/e10-app-mapping
+
+ ❯ src/lib/__tests__/load-harness-contract.test.ts (7 tests | 2 failed) 44ms
+     × authenticates every contention VU before one synchronized write barrier 24ms
+     × scopes dashboard latency separately from bootstrap login 10ms
+ ❯ src/lib/__tests__/backup.test.ts (15 tests | 3 failed) 44ms
+     × fails when an S3 upload is configured but denied 15ms
+     × verifies S3 readback after upload before declaring success 7ms
+     × validates a restored backup against a disposable shadow database 4ms
+ ❯ src/lib/__tests__/page-content-starter-backfill.test.ts (16 tests | 3 failed) 137ms
+     × matches every current seed value so edited seeds force a new backfill 10ms
+     × writes the current consent-gated analytics copy from starterPageContent 111ms
+     × writes the current Terms and FAQ non-member policy copy 1ms
+ ❯ src/lib/__tests__/admin-modules-api.test.ts (10 tests | 1 failed) 173ms
+     × persists only activation booleans for supported optional modules 7ms
+{"level":"error","time":1784216838958,"pid":31036,"hostname":"BEX_PC","err":{"name":"TypeError","message":"__vite_ssr_import_0__.prisma.$queryRaw is not a function","stack":"[REDACTED]"},"limiterId":"api","authSensitive":false,"msg":"Shared rate-limit store unavailable; falling back to per-process limiting"}
+Not implemented: Window's scrollTo() method
+Not implemented: Window's scrollTo() method
+Not implemented: Window's scrollTo() method
+Not implemented: Window's scrollTo() method
+{"level":"error","time":1784216850689,"pid":32092,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784216850716,"pid":32092,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784216858245,"pid":15128,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'findUnique')","stack":"[REDACTED]"},"msg":"Failed to load member field settings; using defaults"}
+{"level":"error","time":1784216858260,"pid":15128,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'findUnique')","stack":"[REDACTED]"},"msg":"Failed to load member field settings; using defaults"}
+{"level":"error","time":1784216858263,"pid":15128,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'findUnique')","stack":"[REDACTED]"},"msg":"Failed to load member field settings; using defaults"}
+{"level":"warn","time":1784216867307,"pid":15056,"hostname":"BEX_PC","context":"Xero API call","attempt":1,"maxRetries":3,"waitSec":0,"rateLimitProblem":"minute","msg":"Xero 429 rate limit hit, retrying after backoff"}
+{"level":"warn","time":1784216867314,"pid":15056,"hostname":"BEX_PC","retryAfterSec":34166,"availableAt":"2026-07-17T01:17:13.313Z","msg":"Xero daily API limit reached, suppressing further Xero calls until cooldown expires"}
+{"level":"warn","time":1784216867314,"pid":15056,"hostname":"BEX_PC","retryAfterSec":60,"availableAt":"2026-07-16T15:48:47.314Z","msg":"Xero daily API limit reached, suppressing further Xero calls until cooldown expires"}
+{"level":"warn","time":1784216867316,"pid":15056,"hostname":"BEX_PC","retryAfterSec":60,"availableAt":"2026-07-16T15:48:47.316Z","msg":"Xero daily API limit reached, suppressing further Xero calls until cooldown expires"}
+{"level":"warn","time":1784216867317,"pid":15056,"hostname":"BEX_PC","context":"Xero API call","attempt":1,"maxRetries":2,"waitSec":0,"rateLimitProblem":"minute","msg":"Xero 429 rate limit hit, retrying after backoff"}
+{"level":"warn","time":1784216867323,"pid":15056,"hostname":"BEX_PC","context":"Xero API call","attempt":2,"maxRetries":2,"waitSec":0,"rateLimitProblem":"minute","msg":"Xero 429 rate limit hit, retrying after backoff"}
+{"level":"warn","time":1784216867325,"pid":15056,"hostname":"BEX_PC","context":"Xero API call","attempt":1,"maxRetries":1,"waitSec":0,"rateLimitProblem":"minute","msg":"Xero 429 rate limit hit, retrying after backoff"}
+{"level":"warn","time":1784216867339,"pid":15056,"hostname":"BEX_PC","context":"Xero API call","attempt":1,"maxRetries":1,"waitSec":0,"statusCode":500,"msg":"Xero transient API failure, retrying after backoff"}
+{"level":"warn","time":1784216867357,"pid":15056,"hostname":"BEX_PC","context":"Xero API call","attempt":1,"maxRetries":1,"waitSec":0,"statusCode":503,"msg":"Xero transient API failure, retrying after backoff"}
+{"level":"warn","time":1784216867373,"pid":15056,"hostname":"BEX_PC","retryAfterSec":120,"availableAt":"2026-07-16T15:49:47.373Z","msg":"Xero transient API failures exceeded retry budget, suppressing further Xero calls until cooldown expires"}
+{"level":"warn","time":1784216867375,"pid":15056,"hostname":"BEX_PC","context":"Xero API call","attempt":1,"maxRetries":2,"waitSec":0,"statusCode":500,"msg":"Xero transient API failure, retrying after backoff"}
+{"level":"warn","time":1784216867390,"pid":15056,"hostname":"BEX_PC","context":"Xero API call","attempt":2,"maxRetries":2,"waitSec":0,"statusCode":500,"msg":"Xero transient API failure, retrying after backoff"}
+{"level":"warn","time":1784216867391,"pid":15056,"hostname":"BEX_PC","retryAfterSec":120,"availableAt":"2026-07-16T15:49:47.391Z","msg":"Xero transient API failures exceeded retry budget, suppressing further Xero calls until cooldown expires"}
+{"level":"warn","time":1784216867392,"pid":15056,"hostname":"BEX_PC","context":"syncContacts test","attempt":1,"maxRetries":1,"waitSec":0,"rateLimitProblem":"minute","msg":"Xero 429 rate limit hit, retrying after backoff"}
+{"level":"warn","time":1784216867409,"pid":15056,"hostname":"BEX_PC","retryAfterSec":120,"availableAt":"2026-07-16T15:49:47.409Z","msg":"Xero transient API failures exceeded retry budget, suppressing further Xero calls until cooldown expires"}
+{"level":"warn","time":1784216867410,"pid":15056,"hostname":"BEX_PC","retryAfterSec":120,"availableAt":"2026-07-16T15:49:47.410Z","msg":"Xero transient API failures exceeded retry budget, suppressing further Xero calls until cooldown expires"}
+{"level":"warn","time":1784216867413,"pid":15056,"hostname":"BEX_PC","workflow":"createXeroInvoiceForBooking","memberId":"mem_1","previousContactId":"contact_stale","repairedContactId":"contact_repaired","msg":"Retrying Xero write after repairing a stale contact link"}
+{"level":"error","time":1784216868404,"pid":2480,"hostname":"BEX_PC","err":{"name":"PartialRefundError","message":"Refund failed after 6000 cents were refunded and recorded: card_declined","stack":"[REDACTED]"},"bookingId":"booking_1","actionKey":"late-capture-refund:booking_1:payment_1:13000","actionType":"AUTO_REFUND_LATE_CAPTURED_PAYMENT","msg":"Failed to apply booking/Xero repair action"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'create')","stack":"[REDACTED]"},"bookingId":"b1","type":"BUMPED","msg":"Failed to record booking event"}
+{"level":"info","time":1783555200000,"pid":30436,"hostname":"BEX_PC","bookingId":"b1","job":"confirmPendingBookings","msg":"Xero invoice queued"}
+{"level":"info","time":1783555200000,"pid":30436,"hostname":"BEX_PC","bookingId":"child_1","job":"confirmPendingBookings","msg":"Xero invoice queued"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'create')","stack":"[REDACTED]"},"bookingId":"child_1","type":"BUMPED","msg":"Failed to record booking event"}
+{"level":"info","time":1783555200000,"pid":30436,"hostname":"BEX_PC","bookingId":"b1","job":"confirmPendingBookings","msg":"Booking already processed by another handler"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'create')","stack":"[REDACTED]"},"bookingId":"b1","type":"BUMPED","msg":"Failed to record booking event"}
+{"level":"info","time":1783555200000,"pid":30436,"hostname":"BEX_PC","bookingId":"b1","job":"confirmPendingBookings","msg":"Confirming an over-capacity booking with a persisted capacity override (#1771); skipping the capacity bump"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'create')","stack":"[REDACTED]"},"bookingId":"b1","type":"NON_MEMBER_CONFIRMED","msg":"Failed to record booking event"}
+{"level":"info","time":1783555200000,"pid":30436,"hostname":"BEX_PC","bookingId":"b1","job":"confirmPendingBookings","msg":"Xero invoice queued for $0 booking"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","bookingId":"b1","job":"confirmPendingBookings","msg":"Booking has no saved payment method - cannot auto-confirm"}
+{"level":"info","time":1783555200000,"pid":30436,"hostname":"BEX_PC","bookingId":"b1","job":"confirmPendingBookings","msg":"Xero invoice queued"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'create')","stack":"[REDACTED]"},"bookingId":"b2","type":"BUMPED","msg":"Failed to record booking event"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"Error","message":"Card declined","stack":"[REDACTED]"},"bookingId":"b1","job":"confirmPendingBookings","msg":"Error processing pending booking"}
+{"level":"info","time":1783555200000,"pid":30436,"hostname":"BEX_PC","bookingId":"b1","paymentStatus":"requires_action","job":"confirmPendingBookings","msg":"Booking payment processing"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"Error","message":"DB error","stack":"[REDACTED]"},"bookingId":"b1","job":"confirmPendingBookings","msg":"Error processing pending booking"}
+{"level":"info","time":1783555200000,"pid":30436,"hostname":"BEX_PC","bookingId":"b2","job":"confirmPendingBookings","msg":"Xero invoice queued"}
+{"level":"info","time":1783555200000,"pid":30436,"hostname":"BEX_PC","bookingId":"b1","job":"confirmPendingBookings","msg":"Xero invoice queued"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"Error","message":"Xero unavailable","stack":"[REDACTED]"},"bookingId":"b1","job":"confirmPendingBookings","msg":"Failed to queue Xero invoice"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"Error","message":"Payment update failed","stack":"[REDACTED]"},"bookingId":"b1","job":"confirmPendingBookings","msg":"Error processing pending booking"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","bookingId":"b1","job":"confirmPendingBookings","msg":"Stripe charge succeeded but local booking reconciliation failed; leaving booking claimed for webhook recovery"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'create')","stack":"[REDACTED]"},"bookingId":"b1","type":"BUMPED","msg":"Failed to record booking event"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'create')","stack":"[REDACTED]"},"bookingId":"b1","type":"BUMPED","msg":"Failed to record booking event"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'create')","stack":"[REDACTED]"},"bookingId":"b1","type":"BUMPED","msg":"Failed to record booking event"}
+{"level":"error","time":1783555200000,"pid":30436,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'create')","stack":"[REDACTED]"},"bookingId":"b1","type":"BUMPED","msg":"Failed to record booking event"}
+{"level":"error","time":1784216869807,"pid":30800,"hostname":"BEX_PC","err":{"name":"Error","message":"DB down","stack":"[REDACTED]"},"msg":"Failed to fetch account mappings"}
+{"level":"error","time":1784216869843,"pid":30800,"hostname":"BEX_PC","err":{"name":"Error","message":"Xero not connected","stack":"[REDACTED]"},"msg":"Failed to fetch chart of accounts"}
+{"level":"error","time":1784216877336,"pid":21040,"hostname":"BEX_PC","err":{"name":"Error","message":"Failed to read finance booking metrics","stack":"[REDACTED]"},"msg":"Failed to load finance booking metrics"}
+{"level":"error","time":1784216882848,"pid":16620,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'findMany')","stack":"TypeError: Cannot read properties of undefined (reading 'findMany')\n    at loadSeasonRateData (C:/Users/jorda/Local_Repos/wt1926/e10-app-mapping/src/lib/booking-guest-removal-service.ts:643:35)\n    at repriceWaitlistCandidate (C:/Users/jorda/Local_Repos/wt1926/e10-app-mapping/src/lib/waitlist.ts:118:34)\n    at C:/Users/jorda/Local_Repos/wt1926/e10-app-mapping/src/lib/waitlist.ts:394:35\n    at processTicksAndRejections (node:internal/process/task_queues:105:5)"},"bookingId":"entry-b","msg":"Failed to reprice waitlisted booking at offer time; offering at the stored snapshot"}
+{"level":"error","time":1784216882865,"pid":16620,"hostname":"BEX_PC","err":{"name":"TypeError","message":"Cannot read properties of undefined (reading 'findMany')","stack":"TypeError: Cannot read properties of undefined (reading 'findMany')\n    at loadSeasonRateData (C:/Users/jorda/Local_Repos/wt1926/e10-app-mapping/src/lib/booking-guest-removal-service.ts:643:35)\n    at repriceWaitlistCandidate (C:/Users/jorda/Local_Repos/wt1926/e10-app-mapping/src/lib/waitlist.ts:118:34)\n    at C:/Users/jorda/Local_Repos/wt1926/e10-app-mapping/src/lib/waitlist.ts:394:35\n    at processTicksAndRejections (node:internal/process/task_queues:105:5)"},"bookingId":"entry-b","msg":"Failed to reprice waitlisted booking at offer time; offering at the stored snapshot"}
+{"level":"info","time":1784216886409,"pid":33948,"hostname":"BEX_PC","bookingId":"b1","invoiceId":"inv1","appliedCents":3000,"noteAllocations":1,"mintedRemainderCents":0,"msg":"Allocated existing applied credit against Internet-Banking invoice (#1620)"}
+{"level":"info","time":1784216886415,"pid":33948,"hostname":"BEX_PC","bookingId":"b1","invoiceId":"inv1","appliedCents":3000,"noteAllocations":1,"mintedRemainderCents":0,"msg":"Allocated existing applied credit against Internet-Banking invoice (#1620)"}
+ ❯ src/lib/__tests__/review-findings-contracts.test.ts (63 tests | 2 failed) 236782ms
+     × requires operator acknowledgement for documented destructive contract migrations 5157ms
+     × keeps the committed migration tree covered by the blue/green safety ledger 137821ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 11 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/__tests__/admin-modules-api.test.ts > Admin modules schema contract > persists only activation booleans for supported optional modules
+Error: Could not find schema markers for model ClubModuleSettings
+ ❯ sliceFrom src/lib/__tests__/admin-modules-api.test.ts:102:11
+    100|   const end = source.indexOf(endMarker, start);
+    101|   if (start === -1 || end === -1) {
+    102|     throw new Error(`Could not find schema markers for ${startMarker}`…
+       |           ^
+    103|   }
+    104|   return source.slice(start, end);
+ ❯ src/lib/__tests__/admin-modules-api.test.ts:110:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/11]⎯
+
+ FAIL  src/lib/__tests__/backup.test.ts > backup > fails when an S3 upload is configured but denied
+AssertionError: expected { success: false, …(7) } to match object { success: false, …(4) }
+(3 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "error": "S3 upload/readback failed: AccessDenied",
+    "filename": "tacbookings-2026-07-16T15-47-09-703Z.sql.gz",
+-   "filepath": StringContaining "/tmp/tacbookings-backups/",
++   "filepath": "\\tmp\\tacbookings-backups\\tacbookings-2026-07-16T15-47-09-703Z.sql.gz",
+    "sizeBytes": 1024,
+    "success": false,
+  }
+
+ ❯ src/lib/__tests__/backup.test.ts:175:37
+    173|     });
+    174|
+    175|     await expect(runDatabaseBackup()).resolves.toMatchObject({
+       |                                     ^
+    176|       success: false,
+    177|       filename: expect.stringMatching(/^tacbookings-/),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/11]⎯
+
+ FAIL  src/lib/__tests__/backup.test.ts > backup > verifies S3 readback after upload before declaring success
+AssertionError: expected "vi.fn()" to be called with arguments: [ 'aws', [ 's3', 'cp', …(4) ], …(1) ]
+
+Received:
+
+  1st vi.fn() call:
+
+  [
+-   "aws",
++   "pg_dump",
+    [
+-     "s3",
+-     "cp",
+-     StringContaining "/tmp/tacbookings-backups/",
+-     StringMatching /s3:\/\/tacbookings-backups\/tacbookings_s3backup\/tacbookings-/,
+-     "--region",
+-     "ap-southeast-2",
++     "postgresql://postgres:postgres@postgres:5432/tacbookings",
++   ],
++   {
++     "maxBuffer": 1073741824,
++     "stdio": [
++       "ignore",
++       "pipe",
++       "pipe",
+      ],
+-   Any<Object>,
++     "timeout": 120000,
++   },
+  ]
+
+  2nd vi.fn() call:
+
+  [
+    "aws",
+    [
+      "s3",
+      "cp",
+-     StringContaining "/tmp/tacbookings-backups/",
+-     StringMatching /s3:\/\/tacbookings-backups\/tacbookings_s3backup\/tacbookings-/,
++     "\\tmp\\tacbookings-backups\\tacbookings-2026-07-16T15-47-09-724Z.sql.gz",
++     "s3://tacbookings-backups/tacbookings_s3backup/tacbookings-2026-07-16T15-47-09-724Z.sql.gz",
+      "--region",
+      "ap-southeast-2",
+    ],
+-   Any<Object>,
++   {
++     "env": {
++       "AI_AGENT": "claude-code_2-1-211_agent",
++       "ALLUSERSPROFILE": "C:\\ProgramData",
++       "APPDATA": "C:\\Users\\jorda\\AppData\\Roaming",
++       "AWS_SES_ACCESS_KEY_ID": "test-ses-access-key-id",
++       "AWS_SES_SECRET_ACCESS_KEY": "test-ses-secret-access-key",
++       "BACKUP_ENABLED": "true",
++       "BACKUP_S3_BUCKET": "tacbookings-backups",
++       "BACKUP_S3_REGION": "ap-southeast-2",
++       "BASE_URL": "/",
++       "CLAUDECODE": "1",
++       "CLAUDE_CODE_CHILD_SESSION": "1",
++       "CLAUDE_CODE_ENTRYPOINT": "cli",
++       "CLAUDE_CODE_EXECPATH": "C:\\Users\\jorda\\.local\\bin\\claude.exe",
++       "CLAUDE_CODE_SESSION_ID": "fd35577a-d743-4027-bcb1-2fa6ca09059b",
++       "CLAUDE_CONFIG_DIR": "C:\\Users\\jorda\\.claude-jhs",
++       "CLAUDE_EFFORT": "high",
++       "COLOR": "0",
++       "COMMONPROGRAMFILES": "C:\\Program Files\\Common Files",
++       "COMMONPROGRAMFILES(X86)": "C:\\Program Files (x86)\\Common Files",
++       "COMMONPROGRAMW6432": "C:\\Program Files\\Common Files",
++       "COMPUTERNAME": "BEX_PC",
++       "COMSPEC": "C:\\WINDOWS\\system32\\cmd.exe",
++       "COREPACK_ENABLE_AUTO_PIN": "0",
++       "DATABASE_URL": "postgresql://postgres:postgres@postgres:5432/tacbookings",
++       "DEV": "1",
++       "DRIVERDATA": "C:\\Windows\\System32\\Drivers\\DriverData",
++       "EDITOR": "C:\\WINDOWS\\notepad.exe",
++       "EMAIL_FROM": "support@example.org",
++       "EXEPATH": "C:\\Program Files\\Git\\bin",
++       "FORCE_TTY": "",
++       "GIT_EDITOR": "true",
++       "HOME": "C:\\Users\\jorda",
++       "HOMEDRIVE": "C:",
++       "HOMEPATH": "\\Users\\jorda",
++       "INIT_CWD": "C:\\Users\\jorda\\Local_Repos\\wt1926\\e10-app-mapping",
++       "LEVEL_ZERO_V1_SDK_PATH": "C:\\Program Files\\LevelZeroSDK\\1.24.0\\",
++       "LOCALAPPDATA": "C:\\Users\\jorda\\AppData\\Local",
++       "LOGONSERVER": "\\\\BEX_PC",
++       "MODE": "test",
++       "MSYSTEM": "MINGW64",
++       "NODE": "C:\\Program Files\\nodejs\\node.exe",
++       "NODEFAULTCURRENTDIRECTORYINEXEPATH": "1",
++       "NODE_ENV": "test",
++       "NPM_COMMAND": "test",
++       "NPM_CONFIG_ALLOW_SCRIPTS": "",
++       "NPM_CONFIG_CACHE": "C:\\Users\\jorda\\AppData\\Local\\npm-cache",
++       "NPM_CONFIG_GLOBALCONFIG": "C:\\Users\\jorda\\AppData\\Roaming\\npm\\etc\\npmrc",
++       "NPM_CONFIG_GLOBAL_PREFIX": "C:\\Users\\jorda\\AppData\\Roaming\\npm",
++       "NPM_CONFIG_INIT_MODULE": "C:\\Users\\jorda\\.npm-init.js",
++       "NPM_CONFIG_LOCAL_PREFIX": "C:\\Users\\jorda\\Local_Repos\\wt1926\\e10-app-mapping",
++       "NPM_CONFIG_NODE_GYP": "C:\\Users\\jorda\\AppData\\Roaming\\npm\\node_modules\\npm\\node_modules\\node-gyp\\bin\\node-gyp.js",
++       "NPM_CONFIG_NOPROXY": "",
++       "NPM_CONFIG_NPM_VERSION": "11.16.0",
++       "NPM_CONFIG_PREFIX": "C:\\Users\\jorda\\AppData\\Roaming\\npm",
++       "NPM_CONFIG_USERCONFIG": "C:\\Users\\jorda\\.npmrc",
++       "NPM_CONFIG_USER_AGENT": "npm/11.16.0 node/v22.14.0 win32 x64 workspaces/false",
++       "NPM_EXECPATH": "C:\\Users\\jorda\\AppData\\Roaming\\npm\\node_modules\\npm\\bin\\npm-cli.js",
++       "NPM_LIFECYCLE_EVENT": "test",
++       "NPM_LIFECYCLE_SCRIPT": "vitest run",
++       "NPM_NODE_EXECPATH": "C:\\Program Files\\nodejs\\node.exe",
++       "NPM_PACKAGE_ENGINES_NODE": ">=24.0.0 <25",
++       "NPM_PACKAGE_ENGINES_NPM": ">=11",
++       "NPM_PACKAGE_JSON": "C:\\Users\\jorda\\Local_Repos\\wt1926\\e10-app-mapping\\package.json",
++       "NPM_PACKAGE_NAME": "alpine-club-bookings-nz",
++       "NPM_PACKAGE_VERSION": "0.11.0",
++       "NUMBER_OF_PROCESSORS": "20",
++       "OLDPWD": "C:/Users/jorda/Local_Repos/ALpineClubBookingsNZ",
++       "ONEDRIVE": "C:\\Users\\jorda\\OneDrive",
++       "ONEDRIVECONSUMER": "C:\\Users\\jorda\\OneDrive",
++       "OS": "Windows_NT",
++       "PATH": "C:\\Users\\jorda\\Local_Repos\\wt1926\\e10-app-mapping\\node_modules\\.bin;C:\\Users\\jorda\\Local_Repos\\wt1926\\node_modules\\.bin;C:\\Users\\jorda\\Local_Repos\\node_modules\\.bin;C:\\Users\\jorda\\node_modules\\.bin;C:\\Users\\node_modules\\.bin;C:\\node_modules\\.bin;C:\\Users\\jorda\\AppData\\Roaming\\npm\\node_modules\\npm\\node_modules\\@npmcli\\run-script\\lib\\node-gyp-bin;C:\\Users\\jorda\\bin;C:\\Program Files\\Git\\mingw64\\bin;C:\\Program Files\\Git\\usr\\local\\bin;C:\\Program Files\\Git\\usr\\bin;C:\\Program Files\\Git\\usr\\bin;C:\\Program Files\\Git\\mingw64\\bin;C:\\Program Files\\Git\\usr\\bin;C:\\Users\\jorda\\bin;C:\\WINDOWS\\system32;C:\\WINDOWS;C:\\WINDOWS\\System32\\Wbem;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0;C:\\WINDOWS\\System32\\OpenSSH;C:\\Program Files\\Git\\cmd;C:\\Program Files\\Microsoft SQL Server\\170\\Tools\\Binn;C:\\Program Files\\Microsoft SQL Server\\Client SDK\\ODBC\\170\\Tools\\Binn;C:\\Program Files\\dotnet;C:\\Program Files\\nodejs;C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit;C:\\Program Files\\GitHub CLI;C:\\Program Files\\Docker\\Docker\\resources\\bin;C:\\Users\\jorda\\AppData\\Local\\Programs\\Python\\Python311\\Scripts;C:\\Users\\jorda\\AppData\\Local\\Programs\\Python\\Python311;C:\\Users\\jorda\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\jorda\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\jorda\\.dotnet\\tools;C:\\Users\\jorda\\AppData\\Local\\GitHubDesktop\\bin;C:\\Users\\jorda\\AppData\\Roaming\\npm;C:\\Users\\jorda\\.local\\bin;C:\\Program Files\\Git\\usr\\bin\\vendor_perl;C:\\Program Files\\Git\\usr\\bin\\core_perl;C:\\Users\\jorda\\.claude-jhs\\plugins\\cache\\claude-plugins-official\\frontend-design\\unknown\\bin",
++       "PATHEXT": ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL",
++       "PLINK_PROTOCOL": "ssh",
++       "PROCESSOR_ARCHITECTURE": "AMD64",
++       "PROCESSOR_IDENTIFIER": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel",
++       "PROCESSOR_LEVEL": "6",
++       "PROCESSOR_REVISION": "9702",
++       "PROD": "",
++       "PROGRAMDATA": "C:\\ProgramData",
++       "PROGRAMFILES": "C:\\Program Files",
++       "PROGRAMFILES(X86)": "C:\\Program Files (x86)",
++       "PROGRAMW6432": "C:\\Program Files",
++       "PROMPT": "$P$G",
++       "PSMODULEPATH": "C:\\Users\\jorda\\OneDrive\\Documents\\WindowsPowerShell\\Modules;C:\\Program Files\\WindowsPowerShell\\Modules;C:\\WINDOWS\\system32\\WindowsPowerShell\\v1.0\\Modules",
++       "PUBLIC": "C:\\Users\\Public",
++       "PWD": "C:/Users/jorda/Local_Repos/wt1926/e10-app-mapping",
++       "SESSIONNAME": "Console",
++       "SHELL": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
++       "SHLVL": "2",
++       "SSR": "1",
++       "SYSTEMDRIVE": "C:",
++       "SYSTEMROOT": "C:\\WINDOWS",
++       "TEMP": "C:\\Users\\jorda\\AppData\\Local\\Temp",
++       "TERM": "xterm-256color",
++       "TEST": "true",
++       "TMP": "C:\\Users\\jorda\\AppData\\Local\\Temp",
++       "USERDOMAIN": "BEX_PC",
++       "USERDOMAIN_ROAMINGPROFILE": "BEX_PC",
++       "USERNAME": "jorda",
++       "USERPROFILE": "C:\\Users\\jorda",
++       "VITEST": "true",
++       "VITEST_MODE": "RUN",
++       "VITEST_POOL_ID": "5",
++       "VITEST_WORKER_ID": "4",
++       "WINDIR": "C:\\WINDOWS",
++       "WSLENV": "WT_SESSION:WT_PROFILE_ID:",
++       "WT_PROFILE_ID": "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}",
++       "WT_SESSION": "c0d0e1c9-698e-4f69-96b0-18b769c5bdc3",
++       "ZES_ENABLE_SYSMAN": "1",
++       "_": "C:/Program Files/nodejs/node.exe",
++     },
++     "stdio": [
++       "ignore",
++       "pipe",
++       "pipe",
++     ],
++     "timeout": 120000,
++   },
+  ]
+
+  3rd vi.fn() call:
+
+  [
+    "aws",
+    [
+      "s3",
+      "cp",
+-     StringContaining "/tmp/tacbookings-backups/",
+-     StringMatching /s3:\/\/tacbookings-backups\/tacbookings_s3backup\/tacbookings-/,
++     "s3://tacbookings-backups/tacbookings_s3backup/tacbookings-2026-07-16T15-47-09-724Z.sql.gz",
++     "\\tmp\\tacbookings-backups\\tacbookings-2026-07-16T15-47-09-724Z.sql.gz.s3-readback",
+      "--region",
+      "ap-southeast-2",
+    ],
+-   Any<Object>,
++   {
++     "env": {
++       "AI_AGENT": "claude-code_2-1-211_agent",
++       "ALLUSERSPROFILE": "C:\\ProgramData",
++       "APPDATA": "C:\\Users\\jorda\\AppData\\Roaming",
++       "AWS_SES_ACCESS_KEY_ID": "test-ses-access-key-id",
++       "AWS_SES_SECRET_ACCESS_KEY": "test-ses-secret-access-key",
++       "BACKUP_ENABLED": "true",
++       "BACKUP_S3_BUCKET": "tacbookings-backups",
++       "BACKUP_S3_REGION": "ap-southeast-2",
++       "BASE_URL": "/",
++       "CLAUDECODE": "1",
++       "CLAUDE_CODE_CHILD_SESSION": "1",
++       "CLAUDE_CODE_ENTRYPOINT": "cli",
++       "CLAUDE_CODE_EXECPATH": "C:\\Users\\jorda\\.local\\bin\\claude.exe",
++       "CLAUDE_CODE_SESSION_ID": "fd35577a-d743-4027-bcb1-2fa6ca09059b",
++       "CLAUDE_CONFIG_DIR": "C:\\Users\\jorda\\.claude-jhs",
++       "CLAUDE_EFFORT": "high",
++       "COLOR": "0",
++       "COMMONPROGRAMFILES": "C:\\Program Files\\Common Files",
++       "COMMONPROGRAMFILES(X86)": "C:\\Program Files (x86)\\Common Files",
++       "COMMONPROGRAMW6432": "C:\\Program Files\\Common Files",
++       "COMPUTERNAME": "BEX_PC",
++       "COMSPEC": "C:\\WINDOWS\\system32\\cmd.exe",
++       "COREPACK_ENABLE_AUTO_PIN": "0",
++       "DATABASE_URL": "postgresql://postgres:postgres@postgres:5432/tacbookings",
++       "DEV": "1",
++       "DRIVERDATA": "C:\\Windows\\System32\\Drivers\\DriverData",
++       "EDITOR": "C:\\WINDOWS\\notepad.exe",
++       "EMAIL_FROM": "support@example.org",
++       "EXEPATH": "C:\\Program Files\\Git\\bin",
++       "FORCE_TTY": "",
++       "GIT_EDITOR": "true",
++       "HOME": "C:\\Users\\jorda",
++       "HOMEDRIVE": "C:",
++       "HOMEPATH": "\\Users\\jorda",
++       "INIT_CWD": "C:\\Users\\jorda\\Local_Repos\\wt1926\\e10-app-mapping",
++       "LEVEL_ZERO_V1_SDK_PATH": "C:\\Program Files\\LevelZeroSDK\\1.24.0\\",
++       "LOCALAPPDATA": "C:\\Users\\jorda\\AppData\\Local",
++       "LOGONSERVER": "\\\\BEX_PC",
++       "MODE": "test",
++       "MSYSTEM": "MINGW64",
++       "NODE": "C:\\Program Files\\nodejs\\node.exe",
++       "NODEFAULTCURRENTDIRECTORYINEXEPATH": "1",
++       "NODE_ENV": "test",
++       "NPM_COMMAND": "test",
++       "NPM_CONFIG_ALLOW_SCRIPTS": "",
++       "NPM_CONFIG_CACHE": "C:\\Users\\jorda\\AppData\\Local\\npm-cache",
++       "NPM_CONFIG_GLOBALCONFIG": "C:\\Users\\jorda\\AppData\\Roaming\\npm\\etc\\npmrc",
++       "NPM_CONFIG_GLOBAL_PREFIX": "C:\\Users\\jorda\\AppData\\Roaming\\npm",
++       "NPM_CONFIG_INIT_MODULE": "C:\\Users\\jorda\\.npm-init.js",
++       "NPM_CONFIG_LOCAL_PREFIX": "C:\\Users\\jorda\\Local_Repos\\wt1926\\e10-app-mapping",
++       "NPM_CONFIG_NODE_GYP": "C:\\Users\\jorda\\AppData\\Roaming\\npm\\node_modules\\npm\\node_modules\\node-gyp\\bin\\node-gyp.js",
++       "NPM_CONFIG_NOPROXY": "",
++       "NPM_CONFIG_NPM_VERSION": "11.16.0",
++       "NPM_CONFIG_PREFIX": "C:\\Users\\jorda\\AppData\\Roaming\\npm",
++       "NPM_CONFIG_USERCONFIG": "C:\\Users\\jorda\\.npmrc",
++       "NPM_CONFIG_USER_AGENT": "npm/11.16.0 node/v22.14.0 win32 x64 workspaces/false",
++       "NPM_EXECPATH": "C:\\Users\\jorda\\AppData\\Roaming\\npm\\node_modules\\npm\\bin\\npm-cli.js",
++       "NPM_LIFECYCLE_EVENT": "test",
++       "NPM_LIFECYCLE_SCRIPT": "vitest run",
++       "NPM_NODE_EXECPATH": "C:\\Program Files\\nodejs\\node.exe",
++       "NPM_PACKAGE_ENGINES_NODE": ">=24.0.0 <25",
++       "NPM_PACKAGE_ENGINES_NPM": ">=11",
++       "NPM_PACKAGE_JSON": "C:\\Users\\jorda\\Local_Repos\\wt1926\\e10-app-mapping\\package.json",
++       "NPM_PACKAGE_NAME": "alpine-club-bookings-nz",
++       "NPM_PACKAGE_VERSION": "0.11.0",
++       "NUMBER_OF_PROCESSORS": "20",
++       "OLDPWD": "C:/Users/jorda/Local_Repos/ALpineClubBookingsNZ",
++       "ONEDRIVE": "C:\\Users\\jorda\\OneDrive",
++       "ONEDRIVECONSUMER": "C:\\Users\\jorda\\OneDrive",
++       "OS": "Windows_NT",
++       "PATH": "C:\\Users\\jorda\\Local_Repos\\wt1926\\e10-app-mapping\\node_modules\\.bin;C:\\Users\\jorda\\Local_Repos\\wt1926\\node_modules\\.bin;C:\\Users\\jorda\\Local_Repos\\node_modules\\.bin;C:\\Users\\jorda\\node_modules\\.bin;C:\\Users\\node_modules\\.bin;C:\\node_modules\\.bin;C:\\Users\\jorda\\AppData\\Roaming\\npm\\node_modules\\npm\\node_modules\\@npmcli\\run-script\\lib\\node-gyp-bin;C:\\Users\\jorda\\bin;C:\\Program Files\\Git\\mingw64\\bin;C:\\Program Files\\Git\\usr\\local\\bin;C:\\Program Files\\Git\\usr\\bin;C:\\Program Files\\Git\\usr\\bin;C:\\Program Files\\Git\\mingw64\\bin;C:\\Program Files\\Git\\usr\\bin;C:\\Users\\jorda\\bin;C:\\WINDOWS\\system32;C:\\WINDOWS;C:\\WINDOWS\\System32\\Wbem;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0;C:\\WINDOWS\\System32\\OpenSSH;C:\\Program Files\\Git\\cmd;C:\\Program Files\\Microsoft SQL Server\\170\\Tools\\Binn;C:\\Program Files\\Microsoft SQL Server\\Client SDK\\ODBC\\170\\Tools\\Binn;C:\\Program Files\\dotnet;C:\\Program Files\\nodejs;C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit;C:\\Program Files\\GitHub CLI;C:\\Program Files\\Docker\\Docker\\resources\\bin;C:\\Users\\jorda\\AppData\\Local\\Programs\\Python\\Python311\\Scripts;C:\\Users\\jorda\\AppData\\Local\\Programs\\Python\\Python311;C:\\Users\\jorda\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\jorda\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\jorda\\.dotnet\\tools;C:\\Users\\jorda\\AppData\\Local\\GitHubDesktop\\bin;C:\\Users\\jorda\\AppData\\Roaming\\npm;C:\\Users\\jorda\\.local\\bin;C:\\Program Files\\Git\\usr\\bin\\vendor_perl;C:\\Program Files\\Git\\usr\\bin\\core_perl;C:\\Users\\jorda\\.claude-jhs\\plugins\\cache\\claude-plugins-official\\frontend-design\\unknown\\bin",
++       "PATHEXT": ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL",
++       "PLINK_PROTOCOL": "ssh",
++       "PROCESSOR_ARCHITECTURE": "AMD64",
++       "PROCESSOR_IDENTIFIER": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel",
++       "PROCESSOR_LEVEL": "6",
++       "PROCESSOR_REVISION": "9702",
++       "PROD": "",
++       "PROGRAMDATA": "C:\\ProgramData",
++       "PROGRAMFILES": "C:\\Program Files",
++       "PROGRAMFILES(X86)": "C:\\Program Files (x86)",
++       "PROGRAMW6432": "C:\\Program Files",
++       "PROMPT": "$P$G",
++       "PSMODULEPATH": "C:\\Users\\jorda\\OneDrive\\Documents\\WindowsPowerShell\\Modules;C:\\Program Files\\WindowsPowerShell\\Modules;C:\\WINDOWS\\system32\\WindowsPowerShell\\v1.0\\Modules",
++       "PUBLIC": "C:\\Users\\Public",
++       "PWD": "C:/Users/jorda/Local_Repos/wt1926/e10-app-mapping",
++       "SESSIONNAME": "Console",
++       "SHELL": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
++       "SHLVL": "2",
++       "SSR": "1",
++       "SYSTEMDRIVE": "C:",
++       "SYSTEMROOT": "C:\\WINDOWS",
++       "TEMP": "C:\\Users\\jorda\\AppData\\Local\\Temp",
++       "TERM": "xterm-256color",
++       "TEST": "true",
++       "TMP": "C:\\Users\\jorda\\AppData\\Local\\Temp",
++       "USERDOMAIN": "BEX_PC",
++       "USERDOMAIN_ROAMINGPROFILE": "BEX_PC",
++       "USERNAME": "jorda",
++       "USERPROFILE": "C:\\Users\\jorda",
++       "VITEST": "true",
++       "VITEST_MODE": "RUN",
++       "VITEST_POOL_ID": "5",
++       "VITEST_WORKER_ID": "4",
++       "WINDIR": "C:\\WINDOWS",
++       "WSLENV": "WT_SESSION:WT_PROFILE_ID:",
++       "WT_PROFILE_ID": "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}",
++       "WT_SESSION": "c0d0e1c9-698e-4f69-96b0-18b769c5bdc3",
++       "ZES_ENABLE_SYSMAN": "1",
++       "_": "C:/Program Files/nodejs/node.exe",
++     },
++     "stdio": [
++       "ignore",
++       "pipe",
++       "pipe",
++     ],
++     "timeout": 120000,
++   },
+  ]
+
+
+Number of calls: 3
+
+ ❯ src/lib/__tests__/backup.test.ts:326:30
+    324|     });
+    325|
+    326|     expect(execFileSyncMock).toHaveBeenCalledWith(
+       |                              ^
+    327|       "aws",
+    328|       [
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/11]⎯
+
+ FAIL  src/lib/__tests__/backup.test.ts > backup > validates a restored backup against a disposable shadow database
+AssertionError: expected "vi.fn()" to be called with arguments: [ 'gunzip', …(2) ]
+
+Received:
+
+  1st vi.fn() call:
+
+  [
+-   "gunzip",
++   "pg_dump",
+    [
+-     "-c",
+-     StringContaining "/tmp/tacbookings-backups/",
++     "postgresql://postgres:postgres@postgres:5432/tacbookings",
++   ],
++   {
++     "maxBuffer": 1073741824,
++     "stdio": [
++       "ignore",
++       "pipe",
++       "pipe",
+      ],
+-   Any<Object>,
++     "timeout": 120000,
++   },
+  ]
+
+  2nd vi.fn() call:
+
+  [
+-   "gunzip",
++   "psql",
+    [
++     "postgresql://postgres:postgres@postgres:5432/tacbookings_restore",
++     "-v",
++     "ON_ERROR_STOP=1",
+      "-c",
+-     StringContaining "/tmp/tacbookings-backups/",
++     "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;",
+    ],
+-   Any<Object>,
++   {
++     "stdio": [
++       "ignore",
++       "pipe",
++       "pipe",
++     ],
++     "timeout": 120000,
++   },
+  ]
+
+  3rd vi.fn() call:
+
+  [
+    "gunzip",
+    [
+      "-c",
+-     StringContaining "/tmp/tacbookings-backups/",
++     "\\tmp\\tacbookings-backups\\tacbookings-2026-07-16T15-47-09-731Z.sql.gz",
+    ],
+-   Any<Object>,
++   {
++     "maxBuffer": 1073741824,
++     "stdio": [
++       "ignore",
++       "pipe",
++       "pipe",
++     ],
++     "timeout": 120000,
++   },
+  ]
+
+  4th vi.fn() call:
+
+  [
+-   "gunzip",
++   "psql",
+    [
+-     "-c",
+-     StringContaining "/tmp/tacbookings-backups/",
++     "postgresql://postgres:postgres@postgres:5432/tacbookings_restore",
++     "-v",
++     "ON_ERROR_STOP=1",
++   ],
++   {
++     "input": {
++       "data": [
++         45,
++         45,
++         32,
++         114,
++         101,
++         115,
++         116,
++         111,
++         114,
++         101,
++         100,
++         32,
++         115,
++         113,
++         108,
+        ],
+-   Any<Object>,
++       "type": "Buffer",
++     },
++     "maxBuffer": 1073741824,
++     "stdio": [
++       "pipe",
++       "pipe",
++       "pipe",
++     ],
++     "timeout": 120000,
++   },
+  ]
+
+  5th vi.fn() call:
+
+  [
+-   "gunzip",
++   "psql",
+    [
++     "postgresql://postgres:postgres@postgres:5432/tacbookings_restore",
++     "-v",
++     "ON_ERROR_STOP=1",
++     "-At",
++     "-F",
++     "|",
+      "-c",
+-     StringContaining "/tmp/tacbookings-backups/",
++     "SELECT (SELECT count(*) FROM \"Member\"), (SELECT count(*) FROM \"Booking\"), (SELECT count(*) FROM \"Payment\");",
++   ],
++   {
++     "encoding": "utf8",
++     "stdio": [
++       "ignore",
++       "pipe",
++       "pipe",
+      ],
+-   Any<Object>,
++     "timeout": 120000,
++   },
+  ]
+
+
+Number of calls: 5
+
+ ❯ src/lib/__tests__/backup.test.ts:386:30
+    384|       expect.any(Object)
+    385|     );
+    386|     expect(execFileSyncMock).toHaveBeenCalledWith(
+       |                              ^
+    387|       "gunzip",
+    388|       ["-c", expect.stringContaining("/tmp/tacbookings-backups/")],
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/11]⎯
+
+ FAIL  src/lib/__tests__/load-harness-contract.test.ts > load harness semantics > authenticates every contention VU before one synchronized write barrier
+AssertionError: expected '/**\r\n * Shared env-driven configura…' to contain '"CONTENTION_AUTH_WARMUP_SECONDS",\n  …'
+
+- Expected
++ Received
+
+- "CONTENTION_AUTH_WARMUP_SECONDS",
++ /**
++  * Shared env-driven configuration for the k6 load harness (issue #1884).
++  * All knobs come from `__ENV`; nothing is hardcoded except safe defaults
++  * for the throwaway staging stack. See docs/LOAD_TESTING.md.
++  */
++ 
++ import { assertSafeTarget } from "./target-guard.js";
++ 
++ function intEnv(env, name, fallback) {
++   const raw = env[name];
++   if (raw === undefined || raw === null || String(raw).trim() === "") {
++     return fallback;
++   }
++   const value = parseInt(String(raw), 10);
++   if (!isFinite(value) || value <= 0) {
++     throw new Error(name + ' must be a positive integer, got "' + raw + '"');
++   }
++   return value;
++ }
++ 
++ function nonNegativeIntEnv(env, name, fallback) {
++   const raw = env[name];
++   if (raw === undefined || raw === null || String(raw).trim() === "") {
++     return fallback;
++   }
++   const value = parseInt(String(raw), 10);
++   if (!isFinite(value) || value < 0) {
++     throw new Error(
++       name + ' must be a non-negative integer, got "' + raw + '"'
++     );
++   }
++   return value;
++ }
++ 
++ /**
++  * Build the config object every scenario uses. Runs the target-safety
++  * guard first, so importing a scenario script already enforces it.
++  */
++ export function loadConfig(env) {
++   const baseUrl = assertSafeTarget(env);
++   return {
++     baseUrl,
++ 
++     // Load shape. PEAK_VUS is the headline knob (audit target: 100+).
++     peakVus: intEnv(env, "PEAK_VUS", 100),
++     rampUp: env.RAMP_UP || "1m",
++     steady: env.STEADY || "3m",
++     rampDown: env.RAMP_DOWN || "30s",
++ 
++     // Pass/fail knobs.
++     p95Ms: intEnv(env, "P95_MS", 800),
++     maxErrorRate: parseFloat(env.MAX_ERROR_RATE || "0.01"),
++ 
++     // Seconds of think time between page hits inside one iteration.
++     thinkTime: intEnv(env, "THINK_TIME", 1),
++ 
++     // Test credentials — env only, never committed secrets. The staging
++     // seed personas (docs/LOAD_TESTING.md) are the intended values.
++     userEmail: env.LOAD_USER_EMAIL || "alice@demo.alpineclub.test",
++     userPassword: env.LOAD_USER_PASSWORD || "",
++ 
++     // Optional comma-separated list of extra member emails (all sharing
++     // LOAD_USER_PASSWORD) so login/contention VUs can spread across accounts.
++     userPool: (env.LOAD_USERS || "")
++       .split(",")
++       .map(function (s) {
++         return s.trim();
++       })
++       .filter(Boolean),
++ 
++     // Primary login evidence is one simultaneous cold login per VU. Values
++     // above one opt into a separate repeated-login stress profile.
++     loginIterationsPerVu: intEnv(env, "LOGIN_ITERATIONS_PER_VU", 1),
++ 
++     // Booking-contention knobs.
++     lodgeId: env.LODGE_ID || "", // empty → app resolves the default lodge
++     contentionCheckIn: env.CONTENTION_CHECKIN || "2026-08-18",
++     contentionCheckOut: env.CONTENTION_CHECKOUT || "",
++     contentionAttempts: intEnv(env, "CONTENTION_ATTEMPTS", 1),
++     contentionP95Ms: intEnv(env, "CONTENTION_P95_MS", 5000),
++     // Per-VU bcrypt logins happen before a shared absolute write barrier. The
++     // default leaves ample headroom for the standard 100-VU profile on the
++     // deliberately CPU-constrained evidence stack, so login CPU cannot be
++     // mistaken for advisory-lock queueing in the tagged booking latency.
++     contentionAuthWarmupSeconds: intEnv(
++       env,
++       "CONTENTION_AUTH_WARMUP_SECONDS",
+-       60
++       60
++     ),
++     lodgeCapacity: intEnv(env, "LODGE_CAPACITY", 20),
++     contentionExpectedBaseline: nonNegativeIntEnv(
++       env,
++       "CONTENTION_EXPECTED_BASELINE",
++       0
++     ),
++   };
++ }
++ 
++ /** Require login credentials; call from authenticated scenarios only. */
++ export function requireCredentials(cfg) {
++   if (!cfg.userPassword) {
++     throw new Error(
++       "LOAD_USER_PASSWORD is not set. Authenticated scenarios need the " +
++         "seeded staging password (see docs/LOAD_TESTING.md); credentials " +
++         "are env-only and never hardcoded."
++     );
++   }
++ }
++ 
++ /** Standard ramp: up to peak, hold, down. */
++ export function rampStages(cfg) {
++   return [
++     { duration: cfg.rampUp, target: cfg.peakVus },
++     { duration: cfg.steady, target: cfg.peakVus },
++     { duration: cfg.rampDown, target: 0 },
++   ];
++ }
++ 
++ /** Baseline pass/fail thresholds shared by the read scenarios. */
++ export function standardThresholds(cfg) {
++   return {
++     http_req_duration: ["p(95)<" + cfg.p95Ms],
++     http_req_failed: ["rate<" + cfg.maxErrorRate],
++     checks: ["rate>" + (1 - cfg.maxErrorRate)],
++   };
++ }
++
+
+ ❯ src/lib/__tests__/load-harness-contract.test.ts:28:20
+     26|     const config = read("load/lib/config.js");
+     27|     const scenario = read("load/scenarios/booking-contention.js");
+     28|     expect(config).toContain('"CONTENTION_AUTH_WARMUP_SECONDS",\n     …
+       |                    ^
+     29|     expect(scenario).toContain("writeBarrierAtMs:");
+     30|     expect(scenario).toContain("cfg.contentionAuthWarmupSeconds * 1000…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/11]⎯
+
+ FAIL  src/lib/__tests__/load-harness-contract.test.ts > load harness semantics > scopes dashboard latency separately from bootstrap login
+AssertionError: expected '/**\r\n * Scenario: member dashboard …' to contain 'ensureLoggedIn(\n    cfg,\n    email,'
+
+- Expected
++ Received
+
+- ensureLoggedIn(
+-     cfg,
+-     email,
++ /**
++  * Scenario: member dashboard + availability reads (authenticated) — #1884.
++  *
++  * Each VU logs in once (session cookie is reused across iterations), then
++  * loops the authenticated read paths a member hits while planning a stay:
++  *   GET /dashboard                      server-rendered member landing page
++  *   GET /api/lodges                     lodges this member may book
++  *   GET /api/availability?year&month    calendar occupancy (month 0-indexed)
++  *   GET /api/member/credit-balance      credit widget JSON
++  *
++  * The availability endpoints share a 60-per-minute per-IP limiter; each VU
++  * presents its own synthetic client IP and default think time keeps one VU
++  * well under that budget, so the run measures the app rather than the
++  * limiter.
++  *
++  * Run (throwaway local stack ONLY — see docs/LOAD_TESTING.md):
++  *   BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
++  *     LOAD_USER_EMAIL=alice@demo.alpineclub.test LOAD_USER_PASSWORD=... \
++  *     k6 run load/scenarios/member-dashboard.js
++  */
++ 
++ import http from "k6/http";
++ import { check, sleep } from "k6";
++ import { Rate } from "k6/metrics";
++ import exec from "k6/execution";
++ import { assertSafeTarget } from "../lib/target-guard.js";
++ import {
++   loadConfig,
++   requireCredentials,
++   rampStages,
++ } from "../lib/config.js";
++ import {
++   ensureLoggedIn,
++   SCENARIO_IP_OFFSETS,
++   vuHeaders,
++ } from "../lib/session.js";
++ 
++ const cfg = loadConfig(__ENV); // init-context guard: aborts unsafe targets
++ requireCredentials(cfg);
++ const bootstrapLoginSuccess = new Rate("dashboard_bootstrap_login_success");
++ 
++ export const options = {
++   scenarios: {
++     member_dashboard: {
++       executor: "ramping-vus",
++       startVUs: 0,
++       stages: rampStages(cfg),
++       gracefulRampDown: "10s",
++     },
++   },
++   thresholds: {
++     // Keep the read SLO independent from the deliberately expensive one-time
++     // bcrypt login. Bootstrap login health still has its own explicit gate.
++     "http_req_duration{flow:member_dashboard}": ["p(95)<" + cfg.p95Ms],
++     "http_req_failed{flow:member_dashboard}": ["rate<" + cfg.maxErrorRate],
++     dashboard_bootstrap_login_success: [
++       "rate>" + (1 - cfg.maxErrorRate),
++     ],
++   },
++ };
++ 
++ export function setup() {
++   assertSafeTarget(__ENV); // belt-and-braces re-check
++   const probe = http.get(cfg.baseUrl + "/");
++   if (probe.status !== 200) {
++     throw new Error(
++       "Target probe failed: GET " + cfg.baseUrl + "/ returned " + probe.status
++     );
++   }
++ }
++ 
++ // Per-VU login memo (init context runs once per VU).
++ const vuState = { loggedIn: false, loginAttempted: false };
++ 
++ // Availability month to read: the contention check-in month, so a mixed
++ // run reads the same calendar the write path is contending on.
++ const availYear = parseInt(cfg.contentionCheckIn.slice(0, 4), 10);
++ const availMonth = parseInt(cfg.contentionCheckIn.slice(5, 7), 10) - 1; // 0-indexed
++ 
++ export default function memberDashboard() {
++   const accounts = [cfg.userEmail].concat(cfg.userPool);
++   const email = accounts[(exec.vu.idInTest - 1) % accounts.length];
++   const shouldRecordBootstrap = !vuState.loginAttempted;
++   const loggedIn = ensureLoggedIn(
++     cfg,
++     email,
++     cfg.userPassword,
++     vuState,
++     SCENARIO_IP_OFFSETS.memberDashboard
++   );
++   if (shouldRecordBootstrap) bootstrapLoginSuccess.add(loggedIn);
++   if (!loggedIn) {
++     sleep(cfg.thinkTime);
++     return;
++   }
++   const headers = vuHeaders(SCENARIO_IP_OFFSETS.memberDashboard);
++   const tags = { flow: "member_dashboard" };
++ 
++   const dashboard = http.get(cfg.baseUrl + "/dashboard", {
++     headers: headers,
++     tags: tags,
++   });
++   check(dashboard, {
++     "dashboard 200": function (r) {
++       return r.status === 200;
++     },
++   });
++   sleep(cfg.thinkTime);
++ 
++   const lodges = http.get(cfg.baseUrl + "/api/lodges", {
++     headers: headers,
++     tags: tags,
++   });
++   check(lodges, {
++     "lodges 200 with list": function (r) {
++       if (r.status !== 200) return false;
++       try {
++         return Array.isArray(r.json("lodges"));
++       } catch {
++         return false;
++       }
++     },
++   });
++   sleep(cfg.thinkTime);
++ 
++   const availability = http.get(
++     cfg.baseUrl +
++       "/api/availability?year=" +
++       availYear +
++       "&month=" +
++       availMonth +
++       (cfg.lodgeId ? "&lodgeId=" + cfg.lodgeId : ""),
++     { headers: headers, tags: tags }
++   );
++   check(availability, {
++     "availability 200 with calendar": function (r) {
++       if (r.status !== 200) return false;
++       try {
++         return r.json("availability") !== undefined;
++       } catch {
++         return false;
++       }
++     },
++   });
++   sleep(cfg.thinkTime);
++ 
++   const credit = http.get(cfg.baseUrl + "/api/member/credit-balance", {
++     headers: headers,
++     tags: tags,
++   });
++   check(credit, {
++     "credit balance 200": function (r) {
++       return r.status === 200;
++     },
++   });
++   sleep(cfg.thinkTime);
++ }
++
+
+ ❯ src/lib/__tests__/load-harness-contract.test.ts:54:22
+     52|     expect(scenario).toContain("[cfg.userEmail].concat(cfg.userPool)");
+     53|     expect(scenario).toContain("exec.vu.idInTest");
+     54|     expect(scenario).toContain("ensureLoggedIn(\n    cfg,\n    email,"…
+       |                      ^
+     55|     expect(scenario).toContain("loginAttempted: false");
+     56|     expect(scenario).toContain(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/11]⎯
+
+ FAIL  src/lib/__tests__/page-content-starter-backfill.test.ts > starter page content backfill migration > matches every current seed value so edited seeds force a new backfill
+AssertionError: expected backfill SQL to contain <div class="website-legal-copy">
+<div><h2>1. Who We Are</h2><p>The {{club-name}} Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) is a not-for-profit incorporated society registered in New Zealand. We operate Waldvogel Lodge at Iwikau Village, Mt Ruapehu, and this booking and membership management system (&ldquo;the System&rdquo;).</p><p>We are committed to protecting your personal information and complying with the <strong>New Zealand Privacy Act 2020</strong> and its 13 Information Privacy Principles (IPPs).</p></div>
+<div><h2>2. What Information We Collect</h2><p>We collect the following categories of personal information:</p><ul><li><strong>Identity and contact details:</strong> First and last name, email address, phone number, date of birth.</li><li><strong>Account credentials:</strong> Hashed password (we never store your password in plain text).</li><li><strong>Booking information:</strong> Dates of stay, guest names and age groups, member/non-member status.</li><li><strong>Payment information:</strong> Payment status, Stripe payment reference IDs. We do <em>not</em> store full card numbers &mdash; payment card data is handled directly by Stripe.</li><li><strong>Membership information:</strong> Membership subscription status, season year, Xero invoice references.</li><li><strong>Chore roster data:</strong> Chore assignments linked to your lodge stays.</li><li><strong>Communication records:</strong> Emails sent to you by the system (booking confirmations, reminders, notifications).</li><li><strong>System usage logs:</strong> IP addresses and request logs for security and troubleshooting purposes.</li></ul><p>We collect only the information necessary for managing club membership and lodge bookings (IPP 1 &mdash; Purpose of collection).</p></div>
+<div><h2>3. How We Collect Information</h2><p>We collect your information:</p><ul><li>Directly from you when you register an account, make a booking, or contact us.</li><li>From Xero, our accounting platform, when we import membership and subscription information.</li><li>Automatically through the System when you log in and use the booking features.</li></ul><p>Where we collect information from you, we will tell you why we are collecting it at the point of collection (IPP 3 &mdash; Collection of information from subject).</p></div>
+<div><h2>4. How We Use Your Information</h2><p>We use your personal information to:</p><ul><li>Create and manage your member account.</li><li>Process and manage lodge bookings.</li><li>Process payments and issue refunds through Stripe.</li><li>Manage membership subscriptions and invoicing through Xero.</li><li>Send you booking confirmations, reminders, and other transactional emails.</li><li>Assign chore roster duties during your lodge stays.</li><li>Maintain financial and membership records as required by law.</li><li>Ensure the security and integrity of the System.</li></ul><p>We will only use your information for the purposes for which it was collected, or for directly related purposes (IPP 10 &mdash; Limits on use of personal information).</p></div>
+<div><h2>5. Who We Share Your Information With</h2><p>We share your personal information with the following third-party service providers where necessary to operate the System:</p><ul><li><strong>Stripe Inc.</strong> &mdash; Payment processing. Stripe receives payment card details and processes transactions on our behalf. Stripe is PCI-DSS compliant. See <a href="https://stripe.com/en-nz/privacy" target="_blank" rel="noopener noreferrer">Stripe's Privacy Policy</a>.</li><li><strong>Xero Limited</strong> &mdash; Accounting and invoicing. Your name, email, and membership subscription status are synchronised with Xero to manage invoices and verify membership. Xero is headquartered in New Zealand. See <a href="https://www.xero.com/nz/about/policies/privacy/" target="_blank" rel="noopener noreferrer">Xero's Privacy Policy</a>.</li><li><strong>Amazon Web Services (AWS) &mdash; Simple Email Service (SES)</strong> &mdash; Transactional email delivery. Your email address is used to send you booking confirmations and notifications. AWS SES operates within AWS's secure infrastructure. See <a href="https://aws.amazon.com/privacy/" target="_blank" rel="noopener noreferrer">AWS Privacy Notice</a>.</li><li><strong>Amazon Web Services (AWS) &mdash; Lightsail and S3</strong> &mdash; Our application and database are hosted on AWS Lightsail in the Asia Pacific (Sydney) region. Automated database backups are stored in AWS S3. Your data remains within AWS infrastructure.</li><li><strong>Google Analytics 4</strong> &mdash; Optional aggregate website analytics. GA4 loads only when the club enables the Analytics module and you accept analytics cookies. See <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google's Privacy Policy</a>.</li></ul><p>We do not sell, rent, or trade your personal information to any third party for marketing or other unrelated purposes (IPP 11 &mdash; Limits on disclosure of personal information).</p><p>Where we disclose information to overseas recipients (Stripe, AWS, Google), we take reasonable steps to ensure those recipients are required to protect the information consistently with the Privacy Act 2020 (IPP 12 &mdash; Disclosure of information outside New Zealand).</p></div>
+<div><h2>6. How We Store and Protect Your Information</h2><ul><li>Your data is stored in a PostgreSQL database hosted on AWS Lightsail in the Asia Pacific (Sydney) region.</li><li>Passwords are hashed using bcrypt before storage &mdash; we cannot see your password.</li><li>Sensitive tokens (such as Xero OAuth tokens) are encrypted using AES-256-GCM before storage.</li><li>All communication between your browser and our servers uses HTTPS with automatic TLS certificates.</li><li>Database backups are encrypted and stored in AWS S3 with restricted access.</li><li>We use security headers (Content Security Policy, HSTS, etc.) to protect against common web attacks.</li></ul><p>We take reasonable steps to protect your personal information from unauthorised access, disclosure, or misuse (IPP 5 &mdash; Storage and security of personal information).</p></div>
+<div><h2>7. How Long We Keep Your Information</h2><ul><li><strong>Active member accounts:</strong> Retained for as long as you remain a member or have an active account.</li><li><strong>Booking and payment records:</strong> Retained for 7 years as required by New Zealand tax law (Income Tax Act 2007).</li><li><strong>Email logs:</strong> Retained for 90 days for troubleshooting, then automatically deleted.</li><li><strong>System audit logs:</strong> Retained for 90 days, then automatically pruned.</li><li><strong>Password reset and verification tokens:</strong> Automatically deleted after use or expiry (1&ndash;24 hours).</li></ul><p>We do not keep personal information for longer than is necessary for the purpose for which it was collected (IPP 9 &mdash; Retention of personal information).</p></div>
+<div><h2>8. Your Rights</h2><p>Under the Privacy Act 2020, you have the right to:</p><ul><li><strong>Access your information (IPP 6):</strong> Request a copy of the personal information we hold about you. You can download your data from your <a href="/profile">Profile page</a>.</li><li><strong>Correct your information (IPP 7):</strong> Request that inaccurate information be corrected. You can update your profile details directly, or contact us for assistance.</li><li><strong>Request deletion:</strong> Request deletion of your account and personal data from your Profile page. Note that some financial records must be retained for legal compliance.</li><li><strong>Complain:</strong> If you believe we have breached the Privacy Act 2020, you may complain to us first, or directly to the <a href="https://www.privacy.org.nz/" target="_blank" rel="noopener noreferrer">Office of the Privacy Commissioner</a>.</li></ul></div>
+<div><h2>9. Cookies and Tracking</h2><p>This System uses a session cookie to keep you logged in. This cookie contains an encrypted session token and no personal information. If the club enables Google Analytics, we ask for your consent before loading GA4 analytics cookies. Consent Mode starts with analytics storage denied; GA4 loads only after you accept and is used for aggregate site-use reporting, not advertising. You can decline and keep using the System. The session cookie expires after 8 hours of inactivity or when you sign out.</p><p><strong>Admin note:</strong> Review this section before enabling the Analytics module for your club.</p></div>
+<div><h2>10. Changes to This Policy</h2><p>We may update this Privacy Policy from time to time. When we do, we will update the &ldquo;Last updated&rdquo; date at the top of this page. Continued use of the System after any changes constitutes acceptance of the updated policy.</p></div>
+<div><h2>11. Contact Our Privacy Officer</h2><p>For any questions or concerns about this Privacy Policy, or to exercise your privacy rights, please contact our Privacy Officer:</p><div class="website-legal-callout"><p><strong>Privacy Officer</strong></p><p>{{club-name}} Incorporated</p><p>Please use our <a href="/contact">contact form</a>.</p></div></div>
+</div>: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ expectSqlContainsValue src/lib/__tests__/page-content-starter-backfill.test.ts:127:5
+    125|     sql.includes(sqlQuote(value)) || sql.includes(value),
+    126|     `expected backfill SQL to contain ${value}`,
+    127|   ).toBe(true);
+       |     ^
+    128| }
+    129|
+ ❯ src/lib/__tests__/page-content-starter-backfill.test.ts:166:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/11]⎯
+
+ FAIL  src/lib/__tests__/page-content-starter-backfill.test.ts > starter privacy analytics update migration (#975) > writes the current consent-gated analytics copy from starterPageContent
+AssertionError: expected '-- Issue #975: update only the untouc…' to contain '<div class="website-legal-copy">\n<di…'
+
+- Expected
++ Received
+
+- <div class="website-legal-copy">
++ -- Issue #975: update only the untouched starter privacy PageContent copy so
++ -- admins who already edited their privacy policy keep their wording.
++ UPDATE "PageContent"
++ SET "contentHtml" = $cms$<div class="website-legal-copy">
+- <div><h2>1. Who We Are</h2><p>The {{club-name}} Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) is a not-for-profit incorporated society registered in New Zealand. We operate Waldvogel Lodge at Iwikau Village, Mt Ruapehu, and this booking and membership management system (&ldquo;the System&rdquo;).</p><p>We are committed to protecting your personal information and complying with the <strong>New Zealand Privacy Act 2020</strong> and its 13 Information Privacy Principles (IPPs).</p></div>
++ <div><h2>1. Who We Are</h2><p>The {{club-name}} Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) is a not-for-profit incorporated society registered in New Zealand. We operate Waldvogel Lodge at Iwikau Village, Mt Ruapehu, and this booking and membership management system (&ldquo;the System&rdquo;).</p><p>We are committed to protecting your personal information and complying with the <strong>New Zealand Privacy Act 2020</strong> and its 13 Information Privacy Principles (IPPs).</p></div>
+- <div><h2>2. What Information We Collect</h2><p>We collect the following categories of personal information:</p><ul><li><strong>Identity and contact details:</strong> First and last name, email address, phone number, date of birth.</li><li><strong>Account credentials:</strong> Hashed password (we never store your password in plain text).</li><li><strong>Booking information:</strong> Dates of stay, guest names and age groups, member/non-member status.</li><li><strong>Payment information:</strong> Payment status, Stripe payment reference IDs. We do <em>not</em> store full card numbers &mdash; payment card data is handled directly by Stripe.</li><li><strong>Membership information:</strong> Membership subscription status, season year, Xero invoice references.</li><li><strong>Chore roster data:</strong> Chore assignments linked to your lodge stays.</li><li><strong>Communication records:</strong> Emails sent to you by the system (booking confirmations, reminders, notifications).</li><li><strong>System usage logs:</strong> IP addresses and request logs for security and troubleshooting purposes.</li></ul><p>We collect only the information necessary for managing club membership and lodge bookings (IPP 1 &mdash; Purpose of collection).</p></div>
++ <div><h2>2. What Information We Collect</h2><p>We collect the following categories of personal information:</p><ul><li><strong>Identity and contact details:</strong> First and last name, email address, phone number, date of birth.</li><li><strong>Account credentials:</strong> Hashed password (we never store your password in plain text).</li><li><strong>Booking information:</strong> Dates of stay, guest names and age groups, member/non-member status.</li><li><strong>Payment information:</strong> Payment status, Stripe payment reference IDs. We do <em>not</em> store full card numbers &mdash; payment card data is handled directly by Stripe.</li><li><strong>Membership information:</strong> Membership subscription status, season year, Xero invoice references.</li><li><strong>Chore roster data:</strong> Chore assignments linked to your lodge stays.</li><li><strong>Communication records:</strong> Emails sent to you by the system (booking confirmations, reminders, notifications).</li><li><strong>System usage logs:</strong> IP addresses and request logs for security and troubleshooting purposes.</li></ul><p>We collect only the information necessary for managing club membership and lodge bookings (IPP 1 &mdash; Purpose of collection).</p></div>
+- <div><h2>3. How We Collect Information</h2><p>We collect your information:</p><ul><li>Directly from you when you register an account, make a booking, or contact us.</li><li>From Xero, our accounting platform, when we import membership and subscription information.</li><li>Automatically through the System when you log in and use the booking features.</li></ul><p>Where we collect information from you, we will tell you why we are collecting it at the point of collection (IPP 3 &mdash; Collection of information from subject).</p></div>
++ <div><h2>3. How We Collect Information</h2><p>We collect your information:</p><ul><li>Directly from you when you register an account, make a booking, or contact us.</li><li>From Xero, our accounting platform, when we import membership and subscription information.</li><li>Automatically through the System when you log in and use the booking features.</li></ul><p>Where we collect information from you, we will tell you why we are collecting it at the point of collection (IPP 3 &mdash; Collection of information from subject).</p></div>
+- <div><h2>4. How We Use Your Information</h2><p>We use your personal information to:</p><ul><li>Create and manage your member account.</li><li>Process and manage lodge bookings.</li><li>Process payments and issue refunds through Stripe.</li><li>Manage membership subscriptions and invoicing through Xero.</li><li>Send you booking confirmations, reminders, and other transactional emails.</li><li>Assign chore roster duties during your lodge stays.</li><li>Maintain financial and membership records as required by law.</li><li>Ensure the security and integrity of the System.</li></ul><p>We will only use your information for the purposes for which it was collected, or for directly related purposes (IPP 10 &mdash; Limits on use of personal information).</p></div>
++ <div><h2>4. How We Use Your Information</h2><p>We use your personal information to:</p><ul><li>Create and manage your member account.</li><li>Process and manage lodge bookings.</li><li>Process payments and issue refunds through Stripe.</li><li>Manage membership subscriptions and invoicing through Xero.</li><li>Send you booking confirmations, reminders, and other transactional emails.</li><li>Assign chore roster duties during your lodge stays.</li><li>Maintain financial and membership records as required by law.</li><li>Ensure the security and integrity of the System.</li></ul><p>We will only use your information for the purposes for which it was collected, or for directly related purposes (IPP 10 &mdash; Limits on use of personal information).</p></div>
+- <div><h2>5. Who We Share Your Information With</h2><p>We share your personal information with the following third-party service providers where necessary to operate the System:</p><ul><li><strong>Stripe Inc.</strong> &mdash; Payment processing. Stripe receives payment card details and processes transactions on our behalf. Stripe is PCI-DSS compliant. See <a href="https://stripe.com/en-nz/privacy" target="_blank" rel="noopener noreferrer">Stripe's Privacy Policy</a>.</li><li><strong>Xero Limited</strong> &mdash; Accounting and invoicing. Your name, email, and membership subscription status are synchronised with Xero to manage invoices and verify membership. Xero is headquartered in New Zealand. See <a href="https://www.xero.com/nz/about/policies/privacy/" target="_blank" rel="noopener noreferrer">Xero's Privacy Policy</a>.</li><li><strong>Amazon Web Services (AWS) &mdash; Simple Email Service (SES)</strong> &mdash; Transactional email delivery. Your email address is used to send you booking confirmations and notifications. AWS SES operates within AWS's secure infrastructure. See <a href="https://aws.amazon.com/privacy/" target="_blank" rel="noopener noreferrer">AWS Privacy Notice</a>.</li><li><strong>Amazon Web Services (AWS) &mdash; Lightsail and S3</strong> &mdash; Our application and database are hosted on AWS Lightsail in the Asia Pacific (Sydney) region. Automated database backups are stored in AWS S3. Your data remains within AWS infrastructure.</li><li><strong>Google Analytics 4</strong> &mdash; Optional aggregate website analytics. GA4 loads only when the club enables the Analytics module and you accept analytics cookies. See <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google's Privacy Policy</a>.</li></ul><p>We do not sell, rent, or trade your personal information to any third party for marketing or other unrelated purposes (IPP 11 &mdash; Limits on disclosure of personal information).</p><p>Where we disclose information to overseas recipients (Stripe, AWS, Google), we take reasonable steps to ensure those recipients are required to protect the information consistently with the Privacy Act 2020 (IPP 12 &mdash; Disclosure of information outside New Zealand).</p></div>
++ <div><h2>5. Who We Share Your Information With</h2><p>We share your personal information with the following third-party service providers where necessary to operate the System:</p><ul><li><strong>Stripe Inc.</strong> &mdash; Payment processing. Stripe receives payment card details and processes transactions on our behalf. Stripe is PCI-DSS compliant. See <a href="https://stripe.com/en-nz/privacy" target="_blank" rel="noopener noreferrer">Stripe's Privacy Policy</a>.</li><li><strong>Xero Limited</strong> &mdash; Accounting and invoicing. Your name, email, and membership subscription status are synchronised with Xero to manage invoices and verify membership. Xero is headquartered in New Zealand. See <a href="https://www.xero.com/nz/about/policies/privacy/" target="_blank" rel="noopener noreferrer">Xero's Privacy Policy</a>.</li><li><strong>Amazon Web Services (AWS) &mdash; Simple Email Service (SES)</strong> &mdash; Transactional email delivery. Your email address is used to send you booking confirmations and notifications. AWS SES operates within AWS's secure infrastructure. See <a href="https://aws.amazon.com/privacy/" target="_blank" rel="noopener noreferrer">AWS Privacy Notice</a>.</li><li><strong>Amazon Web Services (AWS) &mdash; Lightsail and S3</strong> &mdash; Our application and database are hosted on AWS Lightsail in the Asia Pacific (Sydney) region. Automated database backups are stored in AWS S3. Your data remains within AWS infrastructure.</li><li><strong>Google Analytics 4</strong> &mdash; Optional aggregate website analytics. GA4 loads only when the club enables the Analytics module and you accept analytics cookies. See <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google's Privacy Policy</a>.</li></ul><p>We do not sell, rent, or trade your personal information to any third party for marketing or other unrelated purposes (IPP 11 &mdash; Limits on disclosure of personal information).</p><p>Where we disclose information to overseas recipients (Stripe, AWS, Google), we take reasonable steps to ensure those recipients are required to protect the information consistently with the Privacy Act 2020 (IPP 12 &mdash; Disclosure of information outside New Zealand).</p></div>
+- <div><h2>6. How We Store and Protect Your Information</h2><ul><li>Your data is stored in a PostgreSQL database hosted on AWS Lightsail in the Asia Pacific (Sydney) region.</li><li>Passwords are hashed using bcrypt before storage &mdash; we cannot see your password.</li><li>Sensitive tokens (such as Xero OAuth tokens) are encrypted using AES-256-GCM before storage.</li><li>All communication between your browser and our servers uses HTTPS with automatic TLS certificates.</li><li>Database backups are encrypted and stored in AWS S3 with restricted access.</li><li>We use security headers (Content Security Policy, HSTS, etc.) to protect against common web attacks.</li></ul><p>We take reasonable steps to protect your personal information from unauthorised access, disclosure, or misuse (IPP 5 &mdash; Storage and security of personal information).</p></div>
++ <div><h2>6. How We Store and Protect Your Information</h2><ul><li>Your data is stored in a PostgreSQL database hosted on AWS Lightsail in the Asia Pacific (Sydney) region.</li><li>Passwords are hashed using bcrypt before storage &mdash; we cannot see your password.</li><li>Sensitive tokens (such as Xero OAuth tokens) are encrypted using AES-256-GCM before storage.</li><li>All communication between your browser and our servers uses HTTPS with automatic TLS certificates.</li><li>Database backups are encrypted and stored in AWS S3 with restricted access.</li><li>We use security headers (Content Security Policy, HSTS, etc.) to protect against common web attacks.</li></ul><p>We take reasonable steps to protect your personal information from unauthorised access, disclosure, or misuse (IPP 5 &mdash; Storage and security of personal information).</p></div>
+- <div><h2>7. How Long We Keep Your Information</h2><ul><li><strong>Active member accounts:</strong> Retained for as long as you remain a member or have an active account.</li><li><strong>Booking and payment records:</strong> Retained for 7 years as required by New Zealand tax law (Income Tax Act 2007).</li><li><strong>Email logs:</strong> Retained for 90 days for troubleshooting, then automatically deleted.</li><li><strong>System audit logs:</strong> Retained for 90 days, then automatically pruned.</li><li><strong>Password reset and verification tokens:</strong> Automatically deleted after use or expiry (1&ndash;24 hours).</li></ul><p>We do not keep personal information for longer than is necessary for the purpose for which it was collected (IPP 9 &mdash; Retention of personal information).</p></div>
++ <div><h2>7. How Long We Keep Your Information</h2><ul><li><strong>Active member accounts:</strong> Retained for as long as you remain a member or have an active account.</li><li><strong>Booking and payment records:</strong> Retained for 7 years as required by New Zealand tax law (Income Tax Act 2007).</li><li><strong>Email logs:</strong> Retained for 90 days for troubleshooting, then automatically deleted.</li><li><strong>System audit logs:</strong> Retained for 90 days, then automatically pruned.</li><li><strong>Password reset and verification tokens:</strong> Automatically deleted after use or expiry (1&ndash;24 hours).</li></ul><p>We do not keep personal information for longer than is necessary for the purpose for which it was collected (IPP 9 &mdash; Retention of personal information).</p></div>
+- <div><h2>8. Your Rights</h2><p>Under the Privacy Act 2020, you have the right to:</p><ul><li><strong>Access your information (IPP 6):</strong> Request a copy of the personal information we hold about you. You can download your data from your <a href="/profile">Profile page</a>.</li><li><strong>Correct your information (IPP 7):</strong> Request that inaccurate information be corrected. You can update your profile details directly, or contact us for assistance.</li><li><strong>Request deletion:</strong> Request deletion of your account and personal data from your Profile page. Note that some financial records must be retained for legal compliance.</li><li><strong>Complain:</strong> If you believe we have breached the Privacy Act 2020, you may complain to us first, or directly to the <a href="https://www.privacy.org.nz/" target="_blank" rel="noopener noreferrer">Office of the Privacy Commissioner</a>.</li></ul></div>
++ <div><h2>8. Your Rights</h2><p>Under the Privacy Act 2020, you have the right to:</p><ul><li><strong>Access your information (IPP 6):</strong> Request a copy of the personal information we hold about you. You can download your data from your <a href="/profile">Profile page</a>.</li><li><strong>Correct your information (IPP 7):</strong> Request that inaccurate information be corrected. You can update your profile details directly, or contact us for assistance.</li><li><strong>Request deletion:</strong> Request deletion of your account and personal data from your Profile page. Note that some financial records must be retained for legal compliance.</li><li><strong>Complain:</strong> If you believe we have breached the Privacy Act 2020, you may complain to us first, or directly to the <a href="https://www.privacy.org.nz/" target="_blank" rel="noopener noreferrer">Office of the Privacy Commissioner</a>.</li></ul></div>
+- <div><h2>9. Cookies and Tracking</h2><p>This System uses a session cookie to keep you logged in. This cookie contains an encrypted session token and no personal information. If the club enables Google Analytics, we ask for your consent before loading GA4 analytics cookies. Consent Mode starts with analytics storage denied; GA4 loads only after you accept and is used for aggregate site-use reporting, not advertising. You can decline and keep using the System. The session cookie expires after 8 hours of inactivity or when you sign out.</p><p><strong>Admin note:</strong> Review this section before enabling the Analytics module for your club.</p></div>
++ <div><h2>9. Cookies and Tracking</h2><p>This System uses a session cookie to keep you logged in. This cookie contains an encrypted session token and no personal information. If the club enables Google Analytics, we ask for your consent before loading GA4 analytics cookies. Consent Mode starts with analytics storage denied; GA4 loads only after you accept and is used for aggregate site-use reporting, not advertising. You can decline and keep using the System. The session cookie expires after 8 hours of inactivity or when you sign out.</p><p><strong>Admin note:</strong> Review this section before enabling the Analytics module for your club.</p></div>
+- <div><h2>10. Changes to This Policy</h2><p>We may update this Privacy Policy from time to time. When we do, we will update the &ldquo;Last updated&rdquo; date at the top of this page. Continued use of the System after any changes constitutes acceptance of the updated policy.</p></div>
++ <div><h2>10. Changes to This Policy</h2><p>We may update this Privacy Policy from time to time. When we do, we will update the &ldquo;Last updated&rdquo; date at the top of this page. Continued use of the System after any changes constitutes acceptance of the updated policy.</p></div>
+- <div><h2>11. Contact Our Privacy Officer</h2><p>For any questions or concerns about this Privacy Policy, or to exercise your privacy rights, please contact our Privacy Officer:</p><div class="website-legal-callout"><p><strong>Privacy Officer</strong></p><p>{{club-name}} Incorporated</p><p>Please use our <a href="/contact">contact form</a>.</p></div></div>
+- </div>
++ <div><h2>11. Contact Our Privacy Officer</h2><p>For any questions or concerns about this Privacy Policy, or to exercise your privacy rights, please contact our Privacy Officer:</p><div class="website-legal-callout"><p><strong>Privacy Officer</strong></p><p>{{club-name}} Incorporated</p><p>Please use our <a href="/contact">contact form</a>.</p></div></div>
++ </div>$cms$,
++     "updatedAt" = CURRENT_TIMESTAMP
++ WHERE "slug" = 'privacy'
++   AND "contentHtml" = $cms$<div class="website-legal-copy">
++ <div><h2>1. Who We Are</h2><p>The {{club-name}} Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) is a not-for-profit incorporated society registered in New Zealand. We operate Waldvogel Lodge at Iwikau Village, Mt Ruapehu, and this booking and membership management system (&ldquo;the System&rdquo;).</p><p>We are committed to protecting your personal information and complying with the <strong>New Zealand Privacy Act 2020</strong> and its 13 Information Privacy Principles (IPPs).</p></div>
++ <div><h2>2. What Information We Collect</h2><p>We collect the following categories of personal information:</p><ul><li><strong>Identity and contact details:</strong> First and last name, email address, phone number, date of birth.</li><li><strong>Account credentials:</strong> Hashed password (we never store your password in plain text).</li><li><strong>Booking information:</strong> Dates of stay, guest names and age groups, member/non-member status.</li><li><strong>Payment information:</strong> Payment status, Stripe payment reference IDs. We do <em>not</em> store full card numbers &mdash; payment card data is handled directly by Stripe.</li><li><strong>Membership information:</strong> Membership subscription status, season year, Xero invoice references.</li><li><strong>Chore roster data:</strong> Chore assignments linked to your lodge stays.</li><li><strong>Communication records:</strong> Emails sent to you by the system (booking confirmations, reminders, notifications).</li><li><strong>System usage logs:</strong> IP addresses and request logs for security and troubleshooting purposes.</li></ul><p>We collect only the information necessary for managing club membership and lodge bookings (IPP 1 &mdash; Purpose of collection).</p></div>
++ <div><h2>3. How We Collect Information</h2><p>We collect your information:</p><ul><li>Directly from you when you register an account, make a booking, or contact us.</li><li>From Xero, our accounting platform, when we import membership and subscription information.</li><li>Automatically through the System when you log in and use the booking features.</li></ul><p>Where we collect information from you, we will tell you why we are collecting it at the point of collection (IPP 3 &mdash; Collection of information from subject).</p></div>
++ <div><h2>4. How We Use Your Information</h2><p>We use your personal information to:</p><ul><li>Create and manage your member account.</li><li>Process and manage lodge bookings.</li><li>Process payments and issue refunds through Stripe.</li><li>Manage membership subscriptions and invoicing through Xero.</li><li>Send you booking confirmations, reminders, and other transactional emails.</li><li>Assign chore roster duties during your lodge stays.</li><li>Maintain financial and membership records as required by law.</li><li>Ensure the security and integrity of the System.</li></ul><p>We will only use your information for the purposes for which it was collected, or for directly related purposes (IPP 10 &mdash; Limits on use of personal information).</p></div>
++ <div><h2>5. Who We Share Your Information With</h2><p>We share your personal information with the following third-party service providers where necessary to operate the System:</p><ul><li><strong>Stripe Inc.</strong> &mdash; Payment processing. Stripe receives payment card details and processes transactions on our behalf. Stripe is PCI-DSS compliant. See <a href="https://stripe.com/en-nz/privacy" target="_blank" rel="noopener noreferrer">Stripe's Privacy Policy</a>.</li><li><strong>Xero Limited</strong> &mdash; Accounting and invoicing. Your name, email, and membership subscription status are synchronised with Xero to manage invoices and verify membership. Xero is headquartered in New Zealand. See <a href="https://www.xero.com/nz/about/policies/privacy/" target="_blank" rel="noopener noreferrer">Xero's Privacy Policy</a>.</li><li><strong>Amazon Web Services (AWS) &mdash; Simple Email Service (SES)</strong> &mdash; Transactional email delivery. Your email address is used to send you booking confirmations and notifications. AWS SES operates within AWS's secure infrastructure. See <a href="https://aws.amazon.com/privacy/" target="_blank" rel="noopener noreferrer">AWS Privacy Notice</a>.</li><li><strong>Amazon Web Services (AWS) &mdash; Lightsail and S3</strong> &mdash; Our application and database are hosted on AWS Lightsail in the Asia Pacific (Sydney) region. Automated database backups are stored in AWS S3. Your data remains within AWS infrastructure.</li></ul><p>We do not sell, rent, or trade your personal information to any third party for marketing or other unrelated purposes (IPP 11 &mdash; Limits on disclosure of personal information).</p><p>Where we disclose information to overseas recipients (Stripe, AWS), we take reasonable steps to ensure those recipients are required to protect the information consistently with the Privacy Act 2020 (IPP 12 &mdash; Disclosure of information outside New Zealand).</p></div>
++ <div><h2>6. How We Store and Protect Your Information</h2><ul><li>Your data is stored in a PostgreSQL database hosted on AWS Lightsail in the Asia Pacific (Sydney) region.</li><li>Passwords are hashed using bcrypt before storage &mdash; we cannot see your password.</li><li>Sensitive tokens (such as Xero OAuth tokens) are encrypted using AES-256-GCM before storage.</li><li>All communication between your browser and our servers uses HTTPS with automatic TLS certificates.</li><li>Database backups are encrypted and stored in AWS S3 with restricted access.</li><li>We use security headers (Content Security Policy, HSTS, etc.) to protect against common web attacks.</li></ul><p>We take reasonable steps to protect your personal information from unauthorised access, disclosure, or misuse (IPP 5 &mdash; Storage and security of personal information).</p></div>
++ <div><h2>7. How Long We Keep Your Information</h2><ul><li><strong>Active member accounts:</strong> Retained for as long as you remain a member or have an active account.</li><li><strong>Booking and payment records:</strong> Retained for 7 years as required by New Zealand tax law (Income Tax Act 2007).</li><li><strong>Email logs:</strong> Retained for 90 days for troubleshooting, then automatically deleted.</li><li><strong>System audit logs:</strong> Retained for 90 days, then automatically pruned.</li><li><strong>Password reset and verification tokens:</strong> Automatically deleted after use or expiry (1&ndash;24 hours).</li></ul><p>We do not keep personal information for longer than is necessary for the purpose for which it was collected (IPP 9 &mdash; Retention of personal information).</p></div>
++ <div><h2>8. Your Rights</h2><p>Under the Privacy Act 2020, you have the right to:</p><ul><li><strong>Access your information (IPP 6):</strong> Request a copy of the personal information we hold about you. You can download your data from your <a href="/profile">Profile page</a>.</li><li><strong>Correct your information (IPP 7):</strong> Request that inaccurate information be corrected. You can update your profile details directly, or contact us for assistance.</li><li><strong>Request deletion:</strong> Request deletion of your account and personal data from your Profile page. Note that some financial records must be retained for legal compliance.</li><li><strong>Complain:</strong> If you believe we have breached the Privacy Act 2020, you may complain to us first, or directly to the <a href="https://www.privacy.org.nz/" target="_blank" rel="noopener noreferrer">Office of the Privacy Commissioner</a>.</li></ul></div>
++ <div><h2>9. Cookies and Tracking</h2><p>This System uses a single session cookie to keep you logged in. This cookie contains an encrypted session token and no personal information. We do not use advertising cookies, third-party tracking, or analytics cookies. The session cookie expires after 8 hours of inactivity or when you sign out.</p></div>
++ <div><h2>10. Changes to This Policy</h2><p>We may update this Privacy Policy from time to time. When we do, we will update the &ldquo;Last updated&rdquo; date at the top of this page. Continued use of the System after any changes constitutes acceptance of the updated policy.</p></div>
++ <div><h2>11. Contact Our Privacy Officer</h2><p>For any questions or concerns about this Privacy Policy, or to exercise your privacy rights, please contact our Privacy Officer:</p><div class="website-legal-callout"><p><strong>Privacy Officer</strong></p><p>{{club-name}} Incorporated</p><p>Please use our <a href="/contact">contact form</a>.</p></div></div>
++ </div>$cms$;
++
+
+ ❯ src/lib/__tests__/page-content-starter-backfill.test.ts:207:17
+    205|     const privacy = starterPageContent.find((page) => page.slug === "p…
+    206|     expect(privacy).toBeDefined();
+    207|     expect(sql).toContain(privacy!.contentHtml);
+       |                 ^
+    208|     expect(sql).toContain("Google Analytics 4");
+    209|     expect(sql).toContain("updatedAt");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/11]⎯
+
+ FAIL  src/lib/__tests__/page-content-starter-backfill.test.ts > starter non-member hold copy update migration (#1287) > writes the current Terms and FAQ non-member policy copy
+AssertionError: expected '-- Add configurable member-priority n…' to contain '<div class="website-legal-copy">\n<di…'
+
+- Expected
++ Received
+
+- <div class="website-legal-copy">
+- <div><h2>1. Agreement to Terms</h2><p>By registering an account or using the {{club-name}} Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) booking and membership system (&ldquo;the System&rdquo;), you agree to be bound by these Terms of Service. If you do not agree, do not use the System.</p><p>These terms apply to all users of the System, including club members, non-member guests, and any other visitors.</p></div>
+- <div><h2>2. Eligibility</h2><ul><li>You must be 18 years or older to create an account.</li><li>Children and youth members must be managed by a parent or guardian who holds an account.</li><li>Membership is subject to approval by the {{club-name}} committee. Creating an account does not constitute membership.</li><li>You must provide accurate and truthful information when registering. False information may result in account suspension.</li></ul></div>
+- <div><h2>3. Booking Rules</h2><ul><li>Lodge bookings are for accommodation at Waldvogel Lodge, Iwikau Village, Mt Ruapehu. The lodge sleeps a maximum of {{lodge-capacity}} guests.</li><li>Bookings must be made through the System. Verbal or informal bookings are not accepted.</li><li>Members may book for themselves and invite non-member guests. The booking member must be present during the stay of any non-member guests.</li><li>The committee configures whether bookings with non-member guests use Members First priority holds or First Paid, First In payment. See Section 5 for details.</li><li>All guests must participate in the lodge chore roster. Chore assignments are allocated by the hut leader for each night.</li><li>Guests must treat the lodge, equipment, and other guests with respect. The committee reserves the right to refuse future bookings to guests who cause damage or behave inappropriately.</li><li>The lodge is a shared facility. Quiet hours are from 10pm to 7am. Alcohol consumption must be responsible and is not permitted in common areas after quiet hours.</li></ul></div>
+- <div><h2>4. Payment Terms</h2><ul><li>Lodge accommodation fees are charged per person per night based on age group and membership status. Current rates are published on the <a href="/join">Join page</a>.</li><li>For confirmed bookings and First Paid, First In bookings, payment is collected immediately via Stripe at the time of booking.</li><li>When Members First priority holds apply, a payment method is saved for the pending non-member portion and is not charged until the booking is confirmed inside the configured threshold before check-in.</li><li>Annual membership subscriptions are invoiced separately through Xero and must be current to access member booking rates.</li><li>All prices are in {{currency}} inclusive of GST where applicable.</li><li>Payment processing is handled by Stripe. {{club-name}} does not store credit card details.</li></ul></div>
+- <div><h2>5. Non-Member Booking Priority</h2><p>The committee can choose the booking policy for stays that include non-member guests:</p><ul><li><strong>Members First:</strong> non-member guests outside the configured confirmation threshold are held as &ldquo;Pending&rdquo;. If a member booking requires that capacity before the hold is confirmed, pending non-member bookings may be cancelled (&ldquo;bumped&rdquo;) until sufficient capacity is available.</li><li><strong>First Paid, First In:</strong> non-member guests are included in the normal booking and payment flow immediately, with no provisional member-priority hold.</li><li>Bumped bookings receive a full refund and immediate email notification.</li><li>{{club-name}} accepts no liability for costs incurred by guests (e.g. travel, equipment hire) as a result of a booking being bumped.</li></ul></div>
+- <div><h2>6. Cancellation and Refunds</h2><p>Refunds are calculated based on the cancellation policy set by the {{club-name}} committee. Current tiers are shown on the <a href="/rules">Club Rules</a> page. General principles:</p><ul><li>Cancellations with 14 or more days' notice: full refund.</li><li>Cancellations with 7 to 13 days' notice: partial refund (as per current policy).</li><li>Cancellations with less than 7 days' notice: no refund.</li><li>A change fee may apply to date modifications made within the late-notice period.</li><li>Refunds are processed to the original payment method within 5&ndash;10 business days.</li><li>{{club-name}} reserves the right to cancel a booking due to circumstances beyond our control (e.g. natural disaster, lodge damage) and will provide a full refund in such cases.</li></ul></div>
+- <div><h2>7. Member Conduct</h2><ul><li>You are responsible for the conduct of all guests on your booking.</li><li>You must not make bookings on behalf of others without their knowledge and consent.</li><li>Any damage to lodge property caused by you or your guests may be invoiced to you.</li><li>Abuse of the booking system (e.g. making and cancelling bookings repeatedly to block dates) may result in account suspension.</li><li>New members must attend their first stay accompanied by their nominating members for lodge induction.</li></ul></div>
+- <div><h2>8. Account Security</h2><ul><li>You are responsible for keeping your account credentials confidential. Do not share your password with others.</li><li>If you suspect your account has been compromised, change your password immediately and contact us.</li><li>{{club-name}} accepts no liability for losses resulting from unauthorised access to your account due to your failure to maintain credential security.</li></ul></div>
+- <div><h2>9. Limitation of Liability</h2><p>The {{club-name}} is a volunteer-run, not-for-profit organisation. To the maximum extent permitted by New Zealand law:</p><ul><li>The System is provided &ldquo;as is&rdquo; without warranties of any kind, express or implied.</li><li>{{club-name}} is not liable for any indirect, incidental, or consequential losses arising from use of the System or the lodge.</li><li>{{club-name}} is not responsible for personal injury, loss of property, or other incidents occurring during your lodge stay. All guests are advised to hold appropriate personal insurance.</li><li>Nothing in these terms excludes any rights you may have under the Consumer Guarantees Act 1993 or the Fair Trading Act 1986.</li></ul></div>
+- <div><h2>10. Account Suspension and Termination</h2><ul><li>{{club-name}} may suspend or terminate an account for breach of these terms, unpaid membership fees, or conduct that is harmful to the club or other members.</li><li>You may request deletion of your account from your Profile page. Deletion will cancel any future bookings (with refunds per the cancellation policy) and anonymise your personal data. Financial records required by law are retained.</li><li>Admin accounts cannot be deleted by the account holder &mdash; contact another administrator.</li></ul></div>
+- <div><h2>11. Changes to These Terms</h2><p>{{club-name}} may update these Terms of Service from time to time. We will update the &ldquo;Last updated&rdquo; date at the top of this page. Continued use of the System after any changes constitutes acceptance of the updated terms.</p></div>
+- <div><h2>12. Governing Law</h2><p>These terms are governed by the laws of New Zealand. Any disputes will be subject to the exclusive jurisdiction of the New Zealand courts.</p></div>
+- <div><h2>13. Contact Us</h2><p>For questions about these terms, please <a href="/contact">contact us</a>.</p></div>
+- </div>
++ -- Add configurable member-priority non-member holds and refresh untouched starter policy copy.
++ ALTER TABLE "BookingDefaults" ADD COLUMN "nonMemberHoldEnabled" BOOLEAN NOT NULL DEFAULT true;
++ ALTER TABLE "BookingPeriod" ADD COLUMN "nonMemberHoldEnabled" BOOLEAN NOT NULL DEFAULT true;
++ 
++ UPDATE "PageContent"
++ SET "contentHtml" = $cms$<div class="website-legal-copy">
++ <div><h2>1. Agreement to Terms</h2><p>By registering an account or using the {{club-name}} Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) booking and membership system (&ldquo;the System&rdquo;), you agree to be bound by these Terms of Service. If you do not agree, do not use the System.</p><p>These terms apply to all users of the System, including club members, non-member guests, and any other visitors.</p></div>
++ <div><h2>2. Eligibility</h2><ul><li>You must be 18 years or older to create an account.</li><li>Children and youth members must be managed by a parent or guardian who holds an account.</li><li>Membership is subject to approval by the {{club-name}} committee. Creating an account does not constitute membership.</li><li>You must provide accurate and truthful information when registering. False information may result in account suspension.</li></ul></div>
++ <div><h2>3. Booking Rules</h2><ul><li>Lodge bookings are for accommodation at Waldvogel Lodge, Iwikau Village, Mt Ruapehu. The lodge sleeps a maximum of {{lodge-capacity}} guests.</li><li>Bookings must be made through the System. Verbal or informal bookings are not accepted.</li><li>Members may book for themselves and invite non-member guests. The booking member must be present during the stay of any non-member guests.</li><li>The committee configures whether bookings with non-member guests use Members First priority holds or First Paid, First In payment. See Section 5 for details.</li><li>All guests must participate in the lodge chore roster. Chore assignments are allocated by the hut leader for each night.</li><li>Guests must treat the lodge, equipment, and other guests with respect. The committee reserves the right to refuse future bookings to guests who cause damage or behave inappropriately.</li><li>The lodge is a shared facility. Quiet hours are from 10pm to 7am. Alcohol consumption must be responsible and is not permitted in common areas after quiet hours.</li></ul></div>
++ <div><h2>4. Payment Terms</h2><ul><li>Lodge accommodation fees are charged per person per night based on age group and membership status. Current rates are published on the <a href="/join">Join page</a>.</li><li>For confirmed bookings and First Paid, First In bookings, payment is collected immediately via Stripe at the time of booking.</li><li>When Members First priority holds apply, a payment method is saved for the pending non-member portion and is not charged until the booking is confirmed inside the configured threshold before check-in.</li><li>Annual membership subscriptions are invoiced separately through Xero and must be current to access member booking rates.</li><li>All prices are in {{currency}} inclusive of GST where applicable.</li><li>Payment processing is handled by Stripe. {{club-name}} does not store credit card details.</li></ul></div>
++ <div><h2>5. Non-Member Booking Priority</h2><p>The committee can choose the booking policy for stays that include non-member guests:</p><ul><li><strong>Members First:</strong> non-member guests outside the configured confirmation threshold are held as &ldquo;Pending&rdquo;. If a member booking requires that capacity before the hold is confirmed, pending non-member bookings may be cancelled (&ldquo;bumped&rdquo;) until sufficient capacity is available.</li><li><strong>First Paid, First In:</strong> non-member guests are included in the normal booking and payment flow immediately, with no provisional member-priority hold.</li><li>Bumped bookings receive a full refund and immediate email notification.</li><li>{{club-name}} accepts no liability for costs incurred by guests (e.g. travel, equipment hire) as a result of a booking being bumped.</li></ul></div>
++ <div><h2>6. Cancellation and Refunds</h2><p>Refunds are calculated based on the cancellation policy set by the {{club-name}} committee. Current tiers are shown on the <a href="/rules">Club Rules</a> page. General principles:</p><ul><li>Cancellations with 14 or more days' notice: full refund.</li><li>Cancellations with 7 to 13 days' notice: partial refund (as per current policy).</li><li>Cancellations with less than 7 days' notice: no refund.</li><li>A change fee may apply to date modifications made within the late-notice period.</li><li>Refunds are processed to the original payment method within 5&ndash;10 business days.</li><li>{{club-name}} reserves the right to cancel a booking due to circumstances beyond our control (e.g. natural disaster, lodge damage) and will provide a full refund in such cases.</li></ul></div>
++ <div><h2>7. Member Conduct</h2><ul><li>You are responsible for the conduct of all guests on your booking.</li><li>You must not make bookings on behalf of others without their knowledge and consent.</li><li>Any damage to lodge property caused by you or your guests may be invoiced to you.</li><li>Abuse of the booking system (e.g. making and cancelling bookings repeatedly to block dates) may result in account suspension.</li><li>New members must attend their first stay accompanied by their nominating members for lodge induction.</li></ul></div>
++ <div><h2>8. Account Security</h2><ul><li>You are responsible for keeping your account credentials confidential. Do not share your password with others.</li><li>If you suspect your account has been compromised, change your password immediately and contact us.</li><li>{{club-name}} accepts no liability for losses resulting from unauthorised access to your account due to your failure to maintain credential security.</li></ul></div>
++ <div><h2>9. Limitation of Liability</h2><p>The {{club-name}} is a volunteer-run, not-for-profit organisation. To the maximum extent permitted by New Zealand law:</p><ul><li>The System is provided &ldquo;as is&rdquo; without warranties of any kind, express or implied.</li><li>{{club-name}} is not liable for any indirect, incidental, or consequential losses arising from use of the System or the lodge.</li><li>{{club-name}} is not responsible for personal injury, loss of property, or other incidents occurring during your lodge stay. All guests are advised to hold appropriate personal insurance.</li><li>Nothing in these terms excludes any rights you may have under the Consumer Guarantees Act 1993 or the Fair Trading Act 1986.</li></ul></div>
++ <div><h2>10. Account Suspension and Termination</h2><ul><li>{{club-name}} may suspend or terminate an account for breach of these terms, unpaid membership fees, or conduct that is harmful to the club or other members.</li><li>You may request deletion of your account from your Profile page. Deletion will cancel any future bookings (with refunds per the cancellation policy) and anonymise your personal data. Financial records required by law are retained.</li><li>Admin accounts cannot be deleted by the account holder &mdash; contact another administrator.</li></ul></div>
++ <div><h2>11. Changes to These Terms</h2><p>{{club-name}} may update these Terms of Service from time to time. We will update the &ldquo;Last updated&rdquo; date at the top of this page. Continued use of the System after any changes constitutes acceptance of the updated terms.</p></div>
++ <div><h2>12. Governing Law</h2><p>These terms are governed by the laws of New Zealand. Any disputes will be subject to the exclusive jurisdiction of the New Zealand courts.</p></div>
++ <div><h2>13. Contact Us</h2><p>For questions about these terms, please <a href="/contact">contact us</a>.</p></div>
++ </div>$cms$,
++     "updatedAt" = NOW()
++ WHERE "slug" = 'terms'
++   AND "contentHtml" = $previous$<div class="website-legal-copy">
++ <div><h2>1. Agreement to Terms</h2><p>By registering an account or using the {{club-name}} Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) booking and membership system (&ldquo;the System&rdquo;), you agree to be bound by these Terms of Service. If you do not agree, do not use the System.</p><p>These terms apply to all users of the System, including club members, non-member guests, and any other visitors.</p></div>
++ <div><h2>2. Eligibility</h2><ul><li>You must be 18 years or older to create an account.</li><li>Children and youth members must be managed by a parent or guardian who holds an account.</li><li>Membership is subject to approval by the {{club-name}} committee. Creating an account does not constitute membership.</li><li>You must provide accurate and truthful information when registering. False information may result in account suspension.</li></ul></div>
++ <div><h2>3. Booking Rules</h2><ul><li>Lodge bookings are for accommodation at Waldvogel Lodge, Iwikau Village, Mt Ruapehu. The lodge sleeps a maximum of {{lodge-capacity}} guests.</li><li>Bookings must be made through the System. Verbal or informal bookings are not accepted.</li><li>Members may book for themselves and invite non-member guests. The booking member must be present during the stay of any non-member guests.</li><li>Non-member bookings more than 7 days in advance are held as &ldquo;Pending&rdquo; and may be bumped if capacity is required for member bookings. See Section 5 for details.</li><li>All guests must participate in the lodge chore roster. Chore assignments are allocated by the hut leader for each night.</li><li>Guests must treat the lodge, equipment, and other guests with respect. The committee reserves the right to refuse future bookings to guests who cause damage or behave inappropriately.</li><li>The lodge is a shared facility. Quiet hours are from 10pm to 7am. Alcohol consumption must be responsible and is not permitted in common areas after quiet hours.</li></ul></div>
++ <div><h2>4. Payment Terms</h2><ul><li>Lodge accommodation fees are charged per person per night based on age group and membership status. Current rates are published on the <a href="/join">Join page</a>.</li><li>For confirmed bookings (members only, or bookings within 7 days of check-in), payment is collected immediately via Stripe at the time of booking.</li><li>For pending bookings (non-member guests, more than 7 days in advance), a payment method is saved but not charged until the booking is confirmed approximately 7 days before check-in.</li><li>Annual membership subscriptions are invoiced separately through Xero and must be current to access member booking rates.</li><li>All prices are in {{currency}} inclusive of GST where applicable.</li><li>Payment processing is handled by Stripe. {{club-name}} does not store credit card details.</li></ul></div>
++ <div><h2>5. Non-Member Priority System</h2><p>The {{club-name}} is a members' club. Members have priority access to the lodge. The following rules apply to bookings that include non-member guests:</p><ul><li>Bookings including non-members made more than 7 days before check-in are held as &ldquo;Pending&rdquo;.</li><li>If a member booking requires capacity that a pending non-member booking occupies, the most recently made pending bookings are cancelled (&ldquo;bumped&rdquo;) until sufficient capacity is available.</li><li>Bumped bookings receive a full refund and immediate email notification.</li><li>{{club-name}} accepts no liability for costs incurred by guests (e.g. travel, equipment hire) as a result of a booking being bumped.</li></ul></div>
++ <div><h2>6. Cancellation and Refunds</h2><p>Refunds are calculated based on the cancellation policy set by the {{club-name}} committee. Current tiers are shown on the <a href="/rules">Club Rules</a> page. General principles:</p><ul><li>Cancellations with 14 or more days' notice: full refund.</li><li>Cancellations with 7 to 13 days' notice: partial refund (as per current policy).</li><li>Cancellations with less than 7 days' notice: no refund.</li><li>A change fee may apply to date modifications made within the late-notice period.</li><li>Refunds are processed to the original payment method within 5&ndash;10 business days.</li><li>{{club-name}} reserves the right to cancel a booking due to circumstances beyond our control (e.g. natural disaster, lodge damage) and will provide a full refund in such cases.</li></ul></div>
++ <div><h2>7. Member Conduct</h2><ul><li>You are responsible for the conduct of all guests on your booking.</li><li>You must not make bookings on behalf of others without their knowledge and consent.</li><li>Any damage to lodge property caused by you or your guests may be invoiced to you.</li><li>Abuse of the booking system (e.g. making and cancelling bookings repeatedly to block dates) may result in account suspension.</li><li>New members must attend their first stay accompanied by their nominating members for lodge induction.</li></ul></div>
++ <div><h2>8. Account Security</h2><ul><li>You are responsible for keeping your account credentials confidential. Do not share your password with others.</li><li>If you suspect your account has been compromised, change your password immediately and contact us.</li><li>{{club-name}} accepts no liability for losses resulting from unauthorised access to your account due to your failure to maintain credential security.</li></ul></div>
++ <div><h2>9. Limitation of Liability</h2><p>The {{club-name}} is a volunteer-run, not-for-profit organisation. To the maximum extent permitted by New Zealand law:</p><ul><li>The System is provided &ldquo;as is&rdquo; without warranties of any kind, express or implied.</li><li>{{club-name}} is not liable for any indirect, incidental, or consequential losses arising from use of the System or the lodge.</li><li>{{club-name}} is not responsible for personal injury, loss of property, or other incidents occurring during your lodge stay. All guests are advised to hold appropriate personal insurance.</li><li>Nothing in these terms excludes any rights you may have under the Consumer Guarantees Act 1993 or the Fair Trading Act 1986.</li></ul></div>
++ <div><h2>10. Account Suspension and Termination</h2><ul><li>{{club-name}} may suspend or terminate an account for breach of these terms, unpaid membership fees, or conduct that is harmful to the club or other members.</li><li>You may request deletion of your account from your Profile page. Deletion will cancel any future bookings (with refunds per the cancellation policy) and anonymise your personal data. Financial records required by law are retained.</li><li>Admin accounts cannot be deleted by the account holder &mdash; contact another administrator.</li></ul></div>
++ <div><h2>11. Changes to These Terms</h2><p>{{club-name}} may update these Terms of Service from time to time. We will update the &ldquo;Last updated&rdquo; date at the top of this page. Continued use of the System after any changes constitutes acceptance of the updated terms.</p></div>
++ <div><h2>12. Governing Law</h2><p>These terms are governed by the laws of New Zealand. Any disputes will be subject to the exclusive jurisdiction of the New Zealand courts.</p></div>
++ <div><h2>13. Contact Us</h2><p>For questions about these terms, please <a href="/contact">contact us</a>.</p></div>
++ </div>$previous$;
++ 
++ UPDATE "PageContent"
++ SET "contentHtml" = $cms$<div class="website-legal-copy">
++ <div><h2>Booking &amp; Stays</h2><details><summary>How do I book a stay at the lodge?</summary><p>Members can book directly through this website. Log in, click "Book a Stay", select your dates and add your guests. The calendar shows available beds for each night. You'll need a current membership subscription to book at member rates.</p></details><details><summary>What is the cancellation policy?</summary><p>Refunds are tiered based on how much notice you give. Generally, cancellations 14 or more days before your stay receive a full refund. Between 7 and 14 days you receive a partial refund, and cancellations with less than 7 days' notice receive no refund. The exact tiers are set by the committee and shown on the Club Rules page. Always cancel as early as possible if your plans change.</p></details><details><summary>What are the nightly rates?</summary><p>Rates vary by season (Winter and Summer) and by age group (Adult, Youth, Child). Members pay a significantly lower rate than non-member guests. Current rates are shown on the Join page. Non-member guests must be accompanied by a financial member.</p></details><details><summary>Can I stay at the lodge as a non-member?</summary><p>Yes, but you must be invited as a guest by a current financial member, who must also be staying at the lodge during your visit. Depending on the club's current Booking Policies, your booking may either be paid and confirmed immediately under First Paid, First In, or held under Members First until the configured non-member confirmation threshold.</p></details><details><summary>How does the non-member priority (bumping) system work?</summary><p>When Members First is enabled, the lodge gives priority to member bookings. Non-member guests booked outside the configured threshold are held as "Pending" until the hold expires. If a member needs those beds and the lodge is at capacity, pending non-member bookings may be bumped to free up space. You'll be notified immediately by email and receive a full refund. Under First Paid, First In, the provisional hold and bumping copy do not apply.</p></details><details><summary>Can I change my booking dates?</summary><p>Yes, members can change their booking dates from the booking detail page, subject to availability. A change fee may apply if you're modifying a booking within the late-notice period. The system will show you the fee before you confirm the change.</p></details></div>
++ <div><h2>Membership</h2><details><summary>How do I become a member?</summary><p>Membership is by nomination. You need to be nominated by two existing financial members. Start by visiting the lodge as someone's guest, get to know some members, and ask if they'd be willing to nominate you. See the Join page for the full process.</p></details><details><summary>What does membership cost?</summary><p>There is a one-off entrance fee for new members, plus an annual subscription. Subscriptions run April to March and are invoiced through Xero. Family memberships cover all household members at a reduced combined rate. Contact the Treasurer for current fee amounts.</p></details><details><summary>When does the membership year run?</summary><p>The membership year runs from 1 April to 31 March. Annual subscriptions are due at the start of each year. Members with unpaid subscriptions lose access to member booking rates until their subscription is paid.</p></details><details><summary>How do I reset my password?</summary><p>Click "Forgot password?" on the login page and enter your email address. You'll receive a password reset link valid for one hour. If you don't receive the email, check your spam folder or contact the Booking Officer.</p></details></div>
++ <div><h2>The Lodge</h2><details><summary>What facilities does the lodge have?</summary><p>Waldvogel Lodge at Iwikau Village, Mt Ruapehu sleeps up to {{lodge-capacity}} guests across 6 rooms. The lodge has a fully equipped communal kitchen, dining area, lounge, drying room, and ski storage. Bedding is provided. The lodge is accessible by 2WD vehicle in summer and requires 4WD or chains in winter snow conditions.</p></details><details><summary>What should I bring?</summary><p>Bring your own sleeping bag or hire one. The lodge provides pillows and mattresses. Pack warm clothing, appropriate footwear for the season, and any personal toiletries. If skiing, you can store your gear in the drying room. Check the weather forecast before your trip &mdash; conditions on the mountain can change quickly.</p></details><details><summary>How do chore rosters work?</summary><p>Every guest staying at the lodge is assigned a chore to help keep it clean and tidy. The hut leader for the night assigns chores (such as cleaning the kitchen, vacuuming, or tidying bathrooms) based on who is staying. You'll receive an email with your assigned chore. Chores are shared fairly and take around 15 to 30 minutes. It's how we keep lodge fees affordable for everyone.</p></details></div>
++ <div><h2>Privacy &amp; Account</h2><details><summary>What personal data does the club hold about me?</summary><p>The club holds your name, email address, phone number, date of birth, booking history, payment records, and chore assignments. This information is used to manage bookings and club membership. See our Privacy Policy for full details on how your data is collected, stored, and used.</p></details><details><summary>How do I update my personal details?</summary><p>Log in and go to your Profile page to update your name, phone number, and date of birth. To change your email address, use the "Change Email" section on your profile &mdash; you'll need to verify the new address. To change your password, use the "Change Password" option.</p></details></div>
++ <div class="website-legal-callout"><h2>Still have a question?</h2><p>Can't find what you're looking for? Get in touch and we'll help.</p><p><a href="/contact">Contact Us</a></p></div>
++ </div>$cms$,
++     "updatedAt" = NOW()
++ WHERE "slug" = 'faq'
++   AND "contentHtml" = $previous$<div class="website-legal-copy">
++ <div><h2>Booking &amp; Stays</h2><details><summary>How do I book a stay at the lodge?</summary><p>Members can book directly through this website. Log in, click "Book a Stay", select your dates and add your guests. The calendar shows available beds for each night. You'll need a current membership subscription to book at member rates.</p></details><details><summary>What is the cancellation policy?</summary><p>Refunds are tiered based on how much notice you give. Generally, cancellations 14 or more days before your stay receive a full refund. Between 7 and 14 days you receive a partial refund, and cancellations with less than 7 days' notice receive no refund. The exact tiers are set by the committee and shown on the Club Rules page. Always cancel as early as possible if your plans change.</p></details><details><summary>What are the nightly rates?</summary><p>Rates vary by season (Winter and Summer) and by age group (Adult, Youth, Child). Members pay a significantly lower rate than non-member guests. Current rates are shown on the Join page. Non-member guests must be accompanied by a financial member.</p></details><details><summary>Can I stay at the lodge as a non-member?</summary><p>Yes, but you must be invited as a guest by a current financial member, who must also be staying at the lodge during your visit. Non-member bookings are subject to a 7-day priority hold: if a member-only booking needs the beds within 7 days of your check-in date, your booking may be bumped. You'll receive immediate notification and a full refund if this happens.</p></details><details><summary>How does the non-member priority (bumping) system work?</summary><p>The lodge gives priority to member bookings. When you book as a guest more than 7 days in advance, your booking is held as "Pending" until 7 days before check-in. If a member needs those beds and the lodge is at capacity, the most recently made non-member bookings are bumped first to free up space. You'll be notified immediately by email and receive a full refund. This system ensures members always have access to the lodge they help maintain.</p></details><details><summary>Can I change my booking dates?</summary><p>Yes, members can change their booking dates from the booking detail page, subject to availability. A change fee may apply if you're modifying a booking within the late-notice period. The system will show you the fee before you confirm the change.</p></details></div>
++ <div><h2>Membership</h2><details><summary>How do I become a member?</summary><p>Membership is by nomination. You need to be nominated by two existing financial members. Start by visiting the lodge as someone's guest, get to know some members, and ask if they'd be willing to nominate you. See the Join page for the full process.</p></details><details><summary>What does membership cost?</summary><p>There is a one-off entrance fee for new members, plus an annual subscription. Subscriptions run April to March and are invoiced through Xero. Family memberships cover all household members at a reduced combined rate. Contact the Treasurer for current fee amounts.</p></details><details><summary>When does the membership year run?</summary><p>The membership year runs from 1 April to 31 March. Annual subscriptions are due at the start of each year. Members with unpaid subscriptions lose access to member booking rates until their subscription is paid.</p></details><details><summary>How do I reset my password?</summary><p>Click "Forgot password?" on the login page and enter your email address. You'll receive a password reset link valid for one hour. If you don't receive the email, check your spam folder or contact the Booking Officer.</p></details></div>
++ <div><h2>The Lodge</h2><details><summary>What facilities does the lodge have?</summary><p>Waldvogel Lodge at Iwikau Village, Mt Ruapehu sleeps up to {{lodge-capacity}} guests across 6 rooms. The lodge has a fully equipped communal kitchen, dining area, lounge, drying room, and ski storage. Bedding is provided. The lodge is accessible by 2WD vehicle in summer and requires 4WD or chains in winter snow conditions.</p></details><details><summary>What should I bring?</summary><p>Bring your own sleeping bag or hire one. The lodge provides pillows and mattresses. Pack warm clothing, appropriate footwear for the season, and any personal toiletries. If skiing, you can store your gear in the drying room. Check the weather forecast before your trip &mdash; conditions on the mountain can change quickly.</p></details><details><summary>How do chore rosters work?</summary><p>Every guest staying at the lodge is assigned a chore to help keep it clean and tidy. The hut leader for the night assigns chores (such as cleaning the kitchen, vacuuming, or tidying bathrooms) based on who is staying. You'll receive an email with your assigned chore. Chores are shared fairly and take around 15 to 30 minutes. It's how we keep lodge fees affordable for everyone.</p></details></div>
++ <div><h2>Privacy &amp; Account</h2><details><summary>What personal data does the club hold about me?</summary><p>The club holds your name, email address, phone number, date of birth, booking history, payment records, and chore assignments. This information is used to manage bookings and club membership. See our Privacy Policy for full details on how your data is collected, stored, and used.</p></details><details><summary>How do I update my personal details?</summary><p>Log in and go to your Profile page to update your name, phone number, and date of birth. To change your email address, use the "Change Email" section on your profile &mdash; you'll need to verify the new address. To change your password, use the "Change Password" option.</p></details></div>
++ <div class="website-legal-callout"><h2>Still have a question?</h2><p>Can't find what you're looking for? Get in touch and we'll help.</p><p><a href="/contact">Contact Us</a></p></div>
++ </div>$previous$;
++
+
+ ❯ src/lib/__tests__/page-content-starter-backfill.test.ts:304:17
+    302|     expect(terms).toBeDefined();
+    303|     expect(faq).toBeDefined();
+    304|     expect(sql).toContain(terms!.contentHtml);
+       |                 ^
+    305|     expect(sql).toContain(faq!.contentHtml);
+    306|     expect(sql).toContain("First Paid, First In");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/11]⎯
+
+ FAIL  src/lib/__tests__/review-findings-contracts.test.ts > review finding source/schema contracts > requires operator acknowledgement for documented destructive contract migrations
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/lib/__tests__/review-findings-contracts.test.ts:985:3
+    983|   });
+    984|
+    985|   it("requires operator acknowledgement for documented destructive con…
+       |   ^
+    986|     const fixture = createTempMigration(
+    987|       'ALTER TABLE "Member" DROP COLUMN "legacyPhone";\n',
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/11]⎯
+
+ FAIL  src/lib/__tests__/review-findings-contracts.test.ts > review finding source/schema contracts > keeps the committed migration tree covered by the blue/green safety ledger
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/lib/__tests__/review-findings-contracts.test.ts:1970:3
+    1968|   });
+    1969|
+    1970|   it(
+       |   ^
+    1971|     "keeps the committed migration tree covered by the blue/green safe…
+    1972|     // Shells out over the full committed migration tree; under a load…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/11]⎯
+
+
+ Test Files  5 failed | 684 passed | 2 skipped (691)
+      Tests  11 failed | 7985 passed | 17 skipped (8013)
+   Start at  03:47:08
+   Duration  237.82s (transform 112.47s, setup 99.17s, import 376.38s, tests 426.71s, environment 244.55s)
+
+
+> alpine-club-bookings-nz@0.11.0 build
+> prisma generate && next build
+
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma\schema.prisma.
+
+✔ Generated Prisma Client (v7.8.0) to .\node_modules\@prisma\client in 1.30s
+
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+
+
+▲ Next.js 16.2.10 (Turbopack)
+- Experiments (use with caution):
+  · clientTraceMetadata
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 18.6s
+  Running next.config.js provided runAfterProductionCompile ...
+✓ Completed runAfterProductionCompile in 1130ms
+  Running TypeScript ...
+  Finished TypeScript in 65s ...
+  Collecting page data using 19 workers ...
+  Generating static pages using 19 workers (0/350) ...
+  Generating static pages using 19 workers (87/350) 
+  Generating static pages using 19 workers (174/350) 
+{"level":"error","time":1784217170716,"pid":31824,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217170942,"pid":29448,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171003,"pid":16608,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171287,"pid":16608,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171300,"pid":30064,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+  Generating static pages using 19 workers (262/350) 
+{"level":"error","time":1784217171364,"pid":12772,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171294,"pid":16608,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171399,"pid":12772,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171432,"pid":12772,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171435,"pid":12772,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171437,"pid":12772,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171438,"pid":12772,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171440,"pid":12772,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171578,"pid":29448,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171598,"pid":31824,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is not set
+{"level":"error","time":1784217171599,"pid":31824,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171606,"pid":31824,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171674,"pid":31824,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+{"level":"error","time":1784217171725,"pid":30064,"hostname":"BEX_PC","err":{"name":"PrismaClientKnownRequestError","message":"\nInvalid `prisma.clubModuleSettings.findUnique()` invocation:\n\n\nCan't reach database server at 127.0.0.1:6543","stack":"[REDACTED]"},"msg":"Failed to load club module settings; disabling optional modules"}
+✓ Generating static pages using 19 workers (350/350) in 3.0s
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /[...slug]
+├ ƒ /admin/access-roles
+├ ƒ /admin/age-tier-settings
+├ ƒ /admin/appearance
+├ ƒ /admin/audit-log
+├ ƒ /admin/background-jobs
+├ ƒ /admin/bed-allocation
+├ ƒ /admin/book
+├ ƒ /admin/booking-approvals
+├ ƒ /admin/booking-change-requests
+├ ƒ /admin/booking-messages
+├ ƒ /admin/booking-policies
+├ ƒ /admin/booking-policies/cancellation
+├ ƒ /admin/booking-policies/group-discount
+├ ƒ /admin/booking-policies/minimum-stay
+├ ƒ /admin/booking-policies/periods
+├ ƒ /admin/booking-policies/public-requests
+├ ƒ /admin/booking-requests
+├ ƒ /admin/bookings
+├ ƒ /admin/bookings-setup
+├ ƒ /admin/chores
+├ ƒ /admin/committee
+├ ƒ /admin/communications
+├ ƒ /admin/config-transfer
+├ ƒ /admin/dashboard
+├ ƒ /admin/deletion-requests
+├ ƒ /admin/display
+├ ƒ /admin/display/devices
+├ ƒ /admin/display/layouts
+├ ƒ /admin/display/preview
+├ ƒ /admin/display/reference
+├ ƒ /admin/display/settings
+├ ƒ /admin/display/templates
+├ ƒ /admin/email-deliverability
+├ ƒ /admin/email-messages
+├ ƒ /admin/family-groups
+├ ƒ /admin/family-suggestions
+├ ƒ /admin/fee-configuration
+├ ƒ /admin/health
+├ ƒ /admin/hut-leaders
+├ ƒ /admin/image-manager
+├ ƒ /admin/induction
+├ ƒ /admin/induction/[id]/print
+├ ƒ /admin/induction/settings
+├ ƒ /admin/integrations
+├ ƒ /admin/internet-banking
+├ ƒ /admin/issue-reports
+├ ƒ /admin/lockers
+├ ƒ /admin/lodge
+├ ƒ /admin/lodge-instructions
+├ ƒ /admin/lodges
+├ ƒ /admin/lodges/[id]
+├ ƒ /admin/lodges/[id]/display
+├ ƒ /admin/lodges/[id]/setup
+├ ƒ /admin/member-applications
+├ ƒ /admin/member-fields
+├ ƒ /admin/members
+├ ƒ /admin/members/[id]
+├ ƒ /admin/membership-cancellation
+├ ƒ /admin/membership-cancellations
+├ ƒ /admin/membership-setup
+├ ƒ /admin/membership-types
+├ ƒ /admin/modules
+├ ƒ /admin/mountain-conditions
+├ ƒ /admin/notification-recipients
+├ ƒ /admin/notification-rules
+├ ƒ /admin/notifications
+├ ƒ /admin/page-content
+├ ƒ /admin/payments
+├ ƒ /admin/promo-codes
+├ ƒ /admin/refund-requests
+├ ƒ /admin/reports
+├ ƒ /admin/rooms-beds
+├ ƒ /admin/roster
+├ ƒ /admin/roster/[date]/print
+├ ƒ /admin/seasons
+├ ƒ /admin/setup
+├ ƒ /admin/setup/booking-rules
+├ ƒ /admin/setup/cancellation
+├ ƒ /admin/setup/finance
+├ ƒ /admin/setup/foundations
+├ ƒ /admin/setup/integrations
+├ ƒ /admin/site-banners
+├ ƒ /admin/site-content
+├ ƒ /admin/site-style
+├ ƒ /admin/stuck-states
+├ ƒ /admin/subscription-lockout
+├ ƒ /admin/subscriptions
+├ ƒ /admin/waitlist
+├ ƒ /admin/work-parties
+├ ƒ /admin/xero
+├ ƒ /admin/xero/records/[localModel]/[localId]
+├ ƒ /admin/xero/setup
+├ ƒ /api/address-autocomplete/details/[id]
+├ ƒ /api/address-autocomplete/search
+├ ƒ /api/admin/access-roles
+├ ƒ /api/admin/access-roles/[id]
+├ ƒ /api/admin/age-tier-settings
+├ ƒ /api/admin/audit-log
+├ ƒ /api/admin/bed-allocation
+├ ƒ /api/admin/bed-allocation/allocations
+├ ƒ /api/admin/bed-allocation/allocations/[id]
+├ ƒ /api/admin/bed-allocation/allocations/bulk
+├ ƒ /api/admin/bed-allocation/approve
+├ ƒ /api/admin/bed-allocation/auto-allocate
+├ ƒ /api/admin/bed-allocation/beds
+├ ƒ /api/admin/bed-allocation/beds/[id]
+├ ƒ /api/admin/bed-allocation/rooms
+├ ƒ /api/admin/bed-allocation/rooms/[id]
+├ ƒ /api/admin/bed-allocation/rooms/bulk
+├ ƒ /api/admin/bed-allocation/rooms/import-from-config
+├ ƒ /api/admin/bed-allocation/settings
+├ ƒ /api/admin/booking-change-requests
+├ ƒ /api/admin/booking-change-requests/[id]
+├ ƒ /api/admin/booking-messages
+├ ƒ /api/admin/booking-messages/preview
+├ ƒ /api/admin/booking-messages/reset
+├ ƒ /api/admin/booking-policies/cancellation
+├ ƒ /api/admin/booking-policies/group-discount
+├ ƒ /api/admin/booking-policies/minimum-stay
+├ ƒ /api/admin/booking-policies/minimum-stay/[id]
+├ ƒ /api/admin/booking-policies/periods
+├ ƒ /api/admin/booking-policies/periods/[id]
+├ ƒ /api/admin/booking-requests
+├ ƒ /api/admin/booking-requests/[id]/approve
+├ ƒ /api/admin/booking-requests/[id]/contacts
+├ ƒ /api/admin/booking-requests/[id]/decline
+├ ƒ /api/admin/booking-requests/[id]/hold
+├ ƒ /api/admin/booking-requests/[id]/link-conflicts
+├ ƒ /api/admin/booking-requests/[id]/price
+├ ƒ /api/admin/booking-requests/[id]/quote
+├ ƒ /api/admin/booking-requests/[id]/release-hold
+├ ƒ /api/admin/booking-requests/[id]/resend-attendee-confirmation
+├ ƒ /api/admin/booking-requests/[id]/send-quote
+├ ƒ /api/admin/booking-requests/settings
+├ ƒ /api/admin/booking-reviews
+├ ƒ /api/admin/bookings
+├ ƒ /api/admin/bookings/[id]/capacity-hold
+├ ƒ /api/admin/bookings/[id]/confirm-pending-guests
+├ ƒ /api/admin/bookings/[id]/copy
+├ ƒ /api/admin/bookings/[id]/eligible-family
+├ ƒ /api/admin/bookings/[id]/exclusive-hold
+├ ƒ /api/admin/bookings/[id]/force-confirm
+├ ƒ /api/admin/bookings/[id]/requested-room
+├ ƒ /api/admin/bookings/[id]/review
+├ ƒ /api/admin/bookings/eligible-family
+├ ƒ /api/admin/bookings/search
+├ ƒ /api/admin/chores
+├ ƒ /api/admin/chores/[id]
+├ ƒ /api/admin/committee/assignments
+├ ƒ /api/admin/committee/assignments/[id]
+├ ƒ /api/admin/committee/roles
+├ ƒ /api/admin/committee/roles/[id]
+├ ƒ /api/admin/communications/history
+├ ƒ /api/admin/communications/send
+├ ƒ /api/admin/config-transfer/apply
+├ ƒ /api/admin/config-transfer/export
+├ ƒ /api/admin/config-transfer/plan
+├ ƒ /api/admin/config-transfer/reseal
+├ ƒ /api/admin/credit-approvals
+├ ƒ /api/admin/deletion-requests
+├ ƒ /api/admin/deletion-requests/[id]
+├ ƒ /api/admin/display/devices
+├ ƒ /api/admin/display/devices/[id]
+├ ƒ /api/admin/display/devices/[id]/pairing
+├ ƒ /api/admin/display/devices/[id]/revoke
+├ ƒ /api/admin/display/layouts
+├ ƒ /api/admin/display/layouts/[id]
+├ ƒ /api/admin/display/lodge-config
+├ ƒ /api/admin/display/preview
+├ ƒ /api/admin/display/preview-grant
+├ ƒ /api/admin/display/reference/conditions
+├ ƒ /api/admin/display/templates
+├ ƒ /api/admin/display/templates/[id]
+├ ƒ /api/admin/email-failures/[id]/reissue-token
+├ ƒ /api/admin/email-failures/[id]/review
+├ ƒ /api/admin/email-settings
+├ ƒ /api/admin/email-suppressions
+├ ƒ /api/admin/email-suppressions/[id]/clear
+├ ƒ /api/admin/email-templates
+├ ƒ /api/admin/email-templates/preview
+├ ƒ /api/admin/email-templates/reset
+├ ƒ /api/admin/family-groups
+├ ƒ /api/admin/family-groups/[id]
+├ ƒ /api/admin/family-groups/[id]/login-holder
+├ ƒ /api/admin/family-groups/partner-invites
+├ ƒ /api/admin/family-groups/requests
+├ ƒ /api/admin/family-suggestions
+├ ƒ /api/admin/family-suggestions/hide
+├ ƒ /api/admin/family-suggestions/reset
+├ ƒ /api/admin/fee-configuration
+├ ƒ /api/admin/health
+├ ƒ /api/admin/hut-leaders
+├ ƒ /api/admin/hut-leaders/[id]
+├ ƒ /api/admin/hut-leaders/[id]/pin
+├ ƒ /api/admin/hut-leaders/eligible-members
+├ ƒ /api/admin/hut-leaders/unassigned-dates
+├ ƒ /api/admin/image-library
+├ ƒ /api/admin/image-library/[id]
+├ ƒ /api/admin/image-manager/directories
+├ ƒ /api/admin/image-manager/images
+├ ƒ /api/admin/image-manager/upload
+├ ƒ /api/admin/induction-templates
+├ ƒ /api/admin/induction-templates/[id]
+├ ƒ /api/admin/inductions
+├ ƒ /api/admin/inductions/[id]
+├ ƒ /api/admin/internet-banking-settings
+├ ƒ /api/admin/issue-reports
+├ ƒ /api/admin/issue-reports/[id]
+├ ƒ /api/admin/lockers
+├ ƒ /api/admin/lockers/[id]
+├ ƒ /api/admin/lockers/bulk
+├ ƒ /api/admin/lodge
+├ ƒ /api/admin/lodge-instructions
+├ ƒ /api/admin/lodge-settings
+├ ƒ /api/admin/lodges
+├ ƒ /api/admin/lodges/[id]
+├ ƒ /api/admin/member-applications
+├ ƒ /api/admin/member-applications/[id]
+├ ƒ /api/admin/member-applications/[id]/approval-preview
+├ ƒ /api/admin/member-applications/[id]/nominations/refresh
+├ ƒ /api/admin/member-applications/[id]/nominators/[slot]/replace
+├ ƒ /api/admin/member-fields
+├ ƒ /api/admin/member-lifecycle-action-requests
+├ ƒ /api/admin/member-lifecycle-action-requests/[requestId]
+├ ƒ /api/admin/members
+├ ƒ /api/admin/members/[id]
+├ ƒ /api/admin/members/[id]/audit-log
+├ ƒ /api/admin/members/[id]/credits
+├ ƒ /api/admin/members/[id]/credits/[requestId]
+├ ƒ /api/admin/members/[id]/dependents/[dependentId]
+├ ƒ /api/admin/members/[id]/dependents/link
+├ ƒ /api/admin/members/[id]/family
+├ ƒ /api/admin/members/[id]/lifecycle/archive
+├ ƒ /api/admin/members/[id]/lifecycle/delete
+├ ƒ /api/admin/members/[id]/lodge-access
+├ ƒ /api/admin/members/[id]/membership-cancellation
+├ ƒ /api/admin/members/[id]/partner-link
+├ ƒ /api/admin/members/[id]/seasonal-membership
+├ ƒ /api/admin/members/[id]/seasonal-membership/preview
+├ ƒ /api/admin/members/[id]/xero-link
+├ ƒ /api/admin/members/[id]/xero-push
+├ ƒ /api/admin/members/[id]/xero-unlink
+├ ƒ /api/admin/members/bulk-update
+├ ƒ /api/admin/members/export
+├ ƒ /api/admin/members/import
+├ ƒ /api/admin/members/send-password-reset
+├ ƒ /api/admin/members/send-setup-invite
+├ ƒ /api/admin/membership-cancellation-requests
+├ ƒ /api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]
+├ ƒ /api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]/resend-confirmation
+├ ƒ /api/admin/membership-cancellation-settings
+├ ƒ /api/admin/membership-lockout-settings
+├ ƒ /api/admin/membership-nomination-settings
+├ ƒ /api/admin/membership-types
+├ ƒ /api/admin/membership-types/[id]
+├ ƒ /api/admin/membership-types/[id]/merge
+├ ƒ /api/admin/membership-types/reorder
+├ ƒ /api/admin/membership-types/roll-forward
+├ ƒ /api/admin/modules
+├ ƒ /api/admin/mountain-conditions
+├ ƒ /api/admin/notification-delivery-policies
+├ ƒ /api/admin/notifications
+├ ƒ /api/admin/occupancy
+├ ƒ /api/admin/page-content
+├ ƒ /api/admin/payments
+├ ƒ /api/admin/payments/[id]/generate-invoice
+├ ƒ /api/admin/pending-counts
+├ ƒ /api/admin/promo-codes
+├ ƒ /api/admin/promo-codes/[id]
+├ ƒ /api/admin/public-content-settings
+├ ƒ /api/admin/refund-requests
+├ ƒ /api/admin/refund-requests/[id]
+├ ƒ /api/admin/reports
+├ ƒ /api/admin/roster/[date]
+├ ƒ /api/admin/roster/status
+├ ƒ /api/admin/runtime-status
+├ ƒ /api/admin/seasons
+├ ƒ /api/admin/seasons/[id]
+├ ƒ /api/admin/setup
+├ ƒ /api/admin/setup/finance-report-mappings
+├ ƒ /api/admin/setup/finance-report-mappings/backfill
+├ ƒ /api/admin/setup/progress
+├ ƒ /api/admin/setup/provider-test
+├ ƒ /api/admin/site-banners
+├ ƒ /api/admin/site-banners/[id]
+├ ƒ /api/admin/site-content
+├ ƒ /api/admin/site-images
+├ ƒ /api/admin/site-style
+├ ƒ /api/admin/stuck-states
+├ ƒ /api/admin/subscription-billing
+├ ƒ /api/admin/subscriptions
+├ ƒ /api/admin/waitlist
+├ ƒ /api/admin/work-parties
+├ ƒ /api/admin/work-parties/[id]
+├ ƒ /api/admin/xero/account-mappings
+├ ƒ /api/admin/xero/callback
+├ ƒ /api/admin/xero/chart-of-accounts
+├ ƒ /api/admin/xero/connect
+├ ƒ /api/admin/xero/contact-group-mismatches
+├ ƒ /api/admin/xero/contact-groups
+├ ƒ /api/admin/xero/contact-link-mismatches
+├ ƒ /api/admin/xero/disconnect
+├ ƒ /api/admin/xero/duplicate-contacts
+├ ƒ /api/admin/xero/force-sync
+├ ƒ /api/admin/xero/health
+├ ƒ /api/admin/xero/import-member-contact
+├ ƒ /api/admin/xero/import-members
+├ ƒ /api/admin/xero/inbound-events
+├ ƒ /api/admin/xero/inbound-events/[id]/replay
+├ ƒ /api/admin/xero/item-code-mappings
+├ ƒ /api/admin/xero/items
+├ ƒ /api/admin/xero/link-maintenance
+├ ƒ /api/admin/xero/missing-invoices
+├ ƒ /api/admin/xero/operations
+├ ƒ /api/admin/xero/operations/[id]/mark-non-replayable
+├ ƒ /api/admin/xero/operations/[id]/requeue
+├ ƒ /api/admin/xero/operations/[id]/resolve
+├ ƒ /api/admin/xero/operations/[id]/retry
+├ ƒ /api/admin/xero/operations/reset-stale-running
+├ ƒ /api/admin/xero/operations/retry-all
+├ ƒ /api/admin/xero/organisation
+├ ƒ /api/admin/xero/records/[localModel]/[localId]
+├ ƒ /api/admin/xero/search-contacts
+├ ƒ /api/admin/xero/status
+├ ƒ /api/admin/xero/sync-contacts
+├ ƒ /api/admin/xero/sync-memberships
+├ ƒ /api/admin/xero/usage
+├ ƒ /api/age-tier-settings
+├ ƒ /api/applications
+├ ƒ /api/applications/nominate
+├ ƒ /api/auth/[...nextauth]
+├ ƒ /api/auth/2fa/email/send
+├ ƒ /api/auth/2fa/enroll/email
+├ ƒ /api/auth/2fa/enroll/totp
+├ ƒ /api/auth/2fa/recovery/regenerate
+├ ƒ /api/auth/2fa/status
+├ ƒ /api/auth/2fa/totp/setup
+├ ƒ /api/auth/2fa/verify
+├ ƒ /api/auth/change-password
+├ ƒ /api/auth/confirm-email-change
+├ ƒ /api/auth/forgot-password
+├ ƒ /api/auth/register
+├ ƒ /api/auth/request-email-change
+├ ƒ /api/auth/resend-verification
+├ ƒ /api/auth/reset-password
+├ ƒ /api/auth/verify-email
+├ ƒ /api/availability
+├ ƒ /api/availability/check
+├ ƒ /api/booking-messages
+├ ƒ /api/booking-policies/check
+├ ƒ /api/booking-requests
+├ ƒ /api/booking-requests/quote
+├ ƒ /api/booking-requests/respond/[token]
+├ ƒ /api/booking-requests/school
+├ ƒ /api/booking-requests/settings
+├ ƒ /api/booking-requests/verify/[token]
+├ ƒ /api/bookings
+├ ƒ /api/bookings/[id]
+├ ƒ /api/bookings/[id]/additional-payment-secret
+├ ƒ /api/bookings/[id]/arrival-time
+├ ƒ /api/bookings/[id]/cancel
+├ ƒ /api/bookings/[id]/cancel-preview
+├ ƒ /api/bookings/[id]/change-requests
+├ ƒ /api/bookings/[id]/confirm-draft
+├ ƒ /api/bookings/[id]/confirm-modification-payment
+├ ƒ /api/bookings/[id]/confirm-payment
+├ ƒ /api/bookings/[id]/guests
+├ ƒ /api/bookings/[id]/guests/[guestId]
+├ ƒ /api/bookings/[id]/modify
+├ ƒ /api/bookings/[id]/modify-dates
+├ ƒ /api/bookings/[id]/modify-quote
+├ ƒ /api/bookings/[id]/notes
+├ ƒ /api/bookings/[id]/refund-request
+├ ƒ /api/bookings/[id]/requested-room
+├ ƒ /api/bookings/[id]/waitlist-confirm
+├ ƒ /api/bookings/drafts
+├ ƒ /api/bookings/quote
+├ ƒ /api/bookings/rooms
+├ ƒ /api/chores/[token]
+├ ƒ /api/chores/roster/[date]/print
+├ ƒ /api/committee
+├ ƒ /api/contact
+├ ƒ /api/cron
+├ ƒ /api/cron/issue-reports
+├ ƒ /api/cron/payments
+├ ƒ /api/cron/xero
+├ ƒ /api/deploy/runtime-status
+├ ƒ /api/display/heartbeat
+├ ƒ /api/display/pair
+├ ƒ /api/display/state
+├ ƒ /api/finance/bookings/metrics
+├ ƒ /api/finance/legacy-dashboard/auth
+├ ƒ /api/finance/legacy-dashboard/bookings
+├ ƒ /api/finance/sync/backfill-monthly-facts
+├ ƒ /api/finance/sync/run
+├ ƒ /api/finance/sync/status
+├ ƒ /api/group-bookings
+├ ƒ /api/group-bookings/[code]
+├ ƒ /api/group-bookings/[code]/join
+├ ƒ /api/group-bookings/[code]/join-request
+├ ƒ /api/group-bookings/[code]/settle
+├ ƒ /api/group-bookings/join/verify/[token]
+├ ƒ /api/health
+├ ƒ /api/health/ready
+├ ƒ /api/images/[id]
+├ ƒ /api/images/uploaded/[...path]
+├ ƒ /api/inductions
+├ ƒ /api/inductions/[id]
+├ ƒ /api/inductions/[id]/sign-off
+├ ƒ /api/issue-reports
+├ ƒ /api/lodge-instructions
+├ ƒ /api/lodge/access
+├ ƒ /api/lodge/guests/[date]
+├ ƒ /api/lodge/guests/[date]/arrive
+├ ƒ /api/lodge/guests/[date]/depart
+├ ƒ /api/lodge/instructions
+├ ƒ /api/lodge/instructions/preview
+├ ƒ /api/lodge/pin-login
+├ ƒ /api/lodge/roster/[date]
+├ ƒ /api/lodge/roster/[date]/chores
+├ ƒ /api/lodge/roster/[date]/confirm
+├ ƒ /api/lodge/roster/[date]/frequency-info
+├ ƒ /api/lodge/roster/[date]/generate
+├ ƒ /api/lodge/week
+├ ƒ /api/lodges
+├ ƒ /api/member/audit-log
+├ ƒ /api/member/credit-balance
+├ ƒ /api/member/data-export
+├ ƒ /api/member/membership-cancellation-requests
+├ ƒ /api/member/membership-cancellation-requests/confirm
+├ ƒ /api/member/onboarding
+├ ƒ /api/member/onboarding/confirm
+├ ƒ /api/member/request-deletion
+├ ƒ /api/member/subscription-status
+├ ƒ /api/members/family
+├ ƒ /api/members/family/[memberId]/details
+├ ƒ /api/members/family/create-group
+├ ƒ /api/members/family/invitations
+├ ƒ /api/members/family/invite
+├ ƒ /api/members/family/partner-invite/claim
+├ ƒ /api/members/family/request-adult
+├ ƒ /api/members/family/request-child
+├ ƒ /api/members/family/request-join
+├ ƒ /api/members/family/request-removal
+├ ƒ /api/members/partner-link
+├ ƒ /api/notifications/preferences
+├ ƒ /api/pay/[token]
+├ ƒ /api/pay/[token]/payment-intent
+├ ƒ /api/pay/[token]/refresh
+├ ƒ /api/payments/charge-saved-method
+├ ƒ /api/payments/create-payment-intent
+├ ƒ /api/payments/create-setup-intent
+├ ƒ /api/payments/options
+├ ƒ /api/payments/switch-to-internet-banking
+├ ƒ /api/profile
+├ ƒ /api/promo-codes/available
+├ ƒ /api/promo-codes/validate
+├ ƒ /api/school-bookings/confirm-attendees
+├ ƒ /api/skifield-conditions
+├ ƒ /api/skifield-whakapapa
+├ ƒ /api/webhooks/ses-sns
+├ ƒ /api/webhooks/stripe
+├ ƒ /api/webhooks/xero
+├ ƒ /api/work-parties/active
+├ ƒ /book
+├ ƒ /booking-requests
+├ ƒ /booking-requests/respond/[token]
+├ ƒ /booking-requests/verify/[token]
+├ ƒ /bookings
+├ ƒ /bookings/[id]
+├ ƒ /change-password
+├ ƒ /chores/[token]
+├ ƒ /confirm-email-change
+├ ƒ /contact
+├ ƒ /dashboard
+├ ƒ /display
+├ ƒ /family-invite/[token]
+├ ƒ /finance
+├ ƒ /forgot-password
+├ ƒ /hut-leader-instructions
+├ ƒ /induction
+├ ƒ /join
+├ ƒ /join/[code]
+├ ƒ /join/apply
+├ ƒ /join/verify/[token]
+├ ƒ /lodge
+├ ƒ /lodge-instructions
+├ ƒ /lodge/kiosk
+├ ƒ /lodge/roster/[date]/setup
+├ ƒ /login
+├ ƒ /login/enroll
+├ ƒ /login/verify
+├ ƒ /membership-cancellation/[token]
+├ ƒ /nominations/[token]
+├ ƒ /pay/[token]
+├ ƒ /profile
+├ ƒ /register
+├ ƒ /reset-password
+├ ƒ /school-bookings
+├ ƒ /school-bookings/confirm/[token]
+├ ○ /sitemap.xml
+└ ƒ /verify-email
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

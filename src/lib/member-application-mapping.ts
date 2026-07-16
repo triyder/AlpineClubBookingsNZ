@@ -34,7 +34,6 @@ export {
   personDecisionsSchema,
   personDecisionSchema,
   refKey,
-  personRefLabel,
   resolvePersonDecisions,
   type PersonRef,
   type PersonDecisionInput,
