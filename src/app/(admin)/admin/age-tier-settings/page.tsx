@@ -23,10 +23,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  applyPrimaryXeroContactGroupSelection,
-  buildAvailableAcceptedXeroContactGroups,
-} from "@/lib/age-tier-settings-xero-groups";
 
 type AgeTierRow = {
   tier: AgeTier;
@@ -35,19 +31,7 @@ type AgeTierRow = {
   label: string;
   subscriptionRequiredForBooking: boolean;
   familyGroupRequestCreateMemberAllowed: boolean;
-  xeroContactGroupId: string | null;
-  xeroContactGroupName: string | null;
-  xeroAcceptedContactGroups: Array<{
-    groupId: string;
-    groupName: string | null;
-  }>;
   sortOrder: number;
-};
-
-type XeroContactGroup = {
-  id: string;
-  name: string;
-  contactCount: number;
 };
 
 const DEFAULT_SETTINGS: AgeTierRow[] = [
@@ -58,9 +42,6 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
     label: "Infant (under 5)",
     subscriptionRequiredForBooking: false,
     familyGroupRequestCreateMemberAllowed: true,
-    xeroContactGroupId: null,
-    xeroContactGroupName: null,
-    xeroAcceptedContactGroups: [],
     sortOrder: 0,
   },
   {
@@ -70,9 +51,6 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
     label: "Child (5-9)",
     subscriptionRequiredForBooking: false,
     familyGroupRequestCreateMemberAllowed: true,
-    xeroContactGroupId: null,
-    xeroContactGroupName: null,
-    xeroAcceptedContactGroups: [],
     sortOrder: 1,
   },
   {
@@ -82,9 +60,6 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
     label: "Youth (10-17)",
     subscriptionRequiredForBooking: true,
     familyGroupRequestCreateMemberAllowed: false,
-    xeroContactGroupId: null,
-    xeroContactGroupName: null,
-    xeroAcceptedContactGroups: [],
     sortOrder: 2,
   },
   {
@@ -94,9 +69,6 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
     label: "Adult (18+)",
     subscriptionRequiredForBooking: true,
     familyGroupRequestCreateMemberAllowed: false,
-    xeroContactGroupId: null,
-    xeroContactGroupName: null,
-    xeroAcceptedContactGroups: [],
     sortOrder: 3,
   },
 ];
@@ -107,9 +79,6 @@ function normalizeAgeTierRows(rows: AgeTierRow[]): AgeTierRow[] {
     subscriptionRequiredForBooking: row.subscriptionRequiredForBooking ?? true,
     familyGroupRequestCreateMemberAllowed:
       row.familyGroupRequestCreateMemberAllowed ?? false,
-    xeroAcceptedContactGroups: Array.isArray(row.xeroAcceptedContactGroups)
-      ? row.xeroAcceptedContactGroups
-      : [],
   }));
 }
 
@@ -121,39 +90,6 @@ export default function AgeTierSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [xeroGroups, setXeroGroups] = useState<XeroContactGroup[]>([]);
-  const [loadingXeroGroups, setLoadingXeroGroups] = useState(true);
-  const [refreshingXeroGroups, setRefreshingXeroGroups] = useState(false);
-  const [xeroGroupsError, setXeroGroupsError] = useState<string | null>(null);
-
-  async function loadXeroGroups(refreshFromXero = false) {
-    if (refreshFromXero) {
-      setRefreshingXeroGroups(true);
-    } else {
-      setLoadingXeroGroups(true);
-    }
-    setXeroGroupsError(null);
-
-    try {
-      const res = await fetch(
-        `/api/admin/xero/contact-groups${refreshFromXero ? "?refresh=1" : ""}`
-      );
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        throw new Error(data?.error ?? "Failed to load Xero contact groups");
-      }
-      setXeroGroups(data?.groups ?? []);
-    } catch (loadError) {
-      setXeroGroupsError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Failed to load Xero contact groups"
-      );
-    } finally {
-      setLoadingXeroGroups(false);
-      setRefreshingXeroGroups(false);
-    }
-  }
 
   useEffect(() => {
     fetch("/api/admin/age-tier-settings")
@@ -166,8 +102,6 @@ export default function AgeTierSettingsPage() {
       })
       .catch(() => setError("Failed to load settings"))
       .finally(() => setLoading(false));
-
-    void loadXeroGroups();
   }, []);
 
   const sorted = [...settings].sort((a, b) => a.sortOrder - b.sortOrder);
@@ -182,62 +116,6 @@ export default function AgeTierSettingsPage() {
       prev.map((setting) =>
         setting.tier === tier ? { ...setting, [field]: value } : setting
       )
-    );
-    setSuccess(false);
-    setError(null);
-  }
-
-  function updateXeroContactGroup(tier: AgeTier, groupId: string) {
-    const existingGroup = settings.find((setting) => setting.tier === tier);
-    const selectedGroup =
-      groupId === "__none__"
-        ? null
-        : xeroGroups.find((group) => group.id === groupId) ??
-          (existingGroup?.xeroContactGroupId === groupId
-            ? {
-                id: existingGroup.xeroContactGroupId,
-                name:
-                  existingGroup.xeroContactGroupName ?? existingGroup.xeroContactGroupId,
-              }
-            : null);
-
-    setSettings((prev) =>
-      applyPrimaryXeroContactGroupSelection(prev, tier, selectedGroup)
-    );
-    setSuccess(false);
-    setError(null);
-  }
-
-  function toggleAcceptedXeroContactGroup(
-    tier: AgeTier,
-    groupId: string,
-    checked: boolean
-  ) {
-    const selectedGroup = xeroGroups.find((group) => group.id === groupId) ?? null;
-
-    setSettings((prev) =>
-      prev.map((setting) => {
-        if (setting.tier !== tier) {
-          return setting;
-        }
-
-        const nextAcceptedGroups = checked
-          ? [
-              ...setting.xeroAcceptedContactGroups.filter((group) => group.groupId !== groupId),
-              {
-                groupId,
-                groupName: selectedGroup?.name ?? groupId,
-              },
-            ]
-          : setting.xeroAcceptedContactGroups.filter((group) => group.groupId !== groupId);
-
-        return {
-          ...setting,
-          xeroAcceptedContactGroups: nextAcceptedGroups.sort((left, right) =>
-            (left.groupName ?? left.groupId).localeCompare(right.groupName ?? right.groupId)
-          ),
-        };
-      })
     );
     setSuccess(false);
     setError(null);
@@ -294,9 +172,7 @@ export default function AgeTierSettingsPage() {
           <>
             Configure the age boundaries for each membership tier. The highest
             tier has no upper limit. MaxAge for each tier is automatically set to
-            the next tier&apos;s MinAge minus 1. Optional Xero contact-group
-            mappings drive managed Xero contact-group allocation for linked
-            members.
+            the next tier&apos;s MinAge minus 1.
           </>
         }
       />
@@ -322,44 +198,7 @@ export default function AgeTierSettingsPage() {
             <p className="text-sm text-muted-foreground">Loading settings...</p>
           ) : null}
 
-          <div className="flex flex-col gap-3 rounded-md border bg-muted p-4 md:flex-row md:items-center md:justify-between">
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-foreground">Xero Contact Groups</p>
-              <p className="text-sm text-muted-foreground">
-                Choose one primary group per age tier for outbound sync, then optionally
-                add extra accepted groups that should also count as valid for mismatch
-                checks.
-              </p>
-              {loadingXeroGroups ? (
-                <p className="text-xs text-muted-foreground">Loading cached Xero contact groups...</p>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  {xeroGroups.length > 0
-                    ? `${xeroGroups.length} cached Xero group${xeroGroups.length === 1 ? "" : "s"} available.`
-                    : "No cached Xero contact groups available yet."}
-                </p>
-              )}
-              {xeroGroupsError ? (
-                <p className="text-xs text-danger">{xeroGroupsError}</p>
-              ) : null}
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void loadXeroGroups(true)}
-              disabled={refreshingXeroGroups}
-            >
-              {refreshingXeroGroups ? "Refreshing..." : "Refresh Xero Groups"}
-            </Button>
-          </div>
-
           {sorted.map((setting) => {
-            const availableAcceptedGroups = buildAvailableAcceptedXeroContactGroups(
-              settings,
-              setting.tier,
-              xeroGroups
-            );
             const isLastTier = lastTier && setting.tier === lastTier.tier;
             const maxAgeDisplay = isLastTier
               ? "No limit"
@@ -370,7 +209,6 @@ export default function AgeTierSettingsPage() {
             const labelInputId = `age-tier-label-${setting.tier}`;
             const minAgeInputId = `age-tier-min-age-${setting.tier}`;
             const maxAgeInputId = `age-tier-max-age-${setting.tier}`;
-            const primaryGroupInputId = `age-tier-primary-group-${setting.tier}`;
             const subscriptionInputId = `subscription-required-${setting.tier}`;
             const familyRequestCreateInputId =
               `family-request-create-member-${setting.tier}`;
@@ -437,46 +275,9 @@ export default function AgeTierSettingsPage() {
                       <p className="text-xs text-muted-foreground">From next min age</p>
                     ) : null}
                   </div>
-                  <div className="space-y-1">
-                    <Label htmlFor={primaryGroupInputId}>
-                      Primary Xero Contact Group
-                    </Label>
-                    <Select
-                      value={setting.xeroContactGroupId ?? "__none__"}
-                      onValueChange={(value) => updateXeroContactGroup(setting.tier, value)}
-                      disabled={!editing || loadingXeroGroups || refreshingXeroGroups}
-                    >
-                      <SelectTrigger
-                        id={primaryGroupInputId}
-                        className={!editing ? "bg-muted text-foreground" : ""}
-                      >
-                        <SelectValue placeholder="Not mapped" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">Not mapped</SelectItem>
-                        {setting.xeroContactGroupId &&
-                        !xeroGroups.some(
-                          (group) => group.id === setting.xeroContactGroupId
-                        ) ? (
-                          <SelectItem value={setting.xeroContactGroupId}>
-                            {setting.xeroContactGroupName ?? setting.xeroContactGroupId}
-                          </SelectItem>
-                        ) : null}
-                        {xeroGroups.map((group) => (
-                          <SelectItem key={group.id} value={group.id}>
-                            {group.name} ({group.contactCount})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Linked members without any accepted tier group will be added to this
-                      group by default.
-                    </p>
-                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(16rem,20rem)_minmax(16rem,22rem)_1fr]">
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                   <div className="flex items-start gap-3 rounded-md border bg-muted p-3">
                     <Checkbox
                       id={subscriptionInputId}
@@ -525,62 +326,6 @@ export default function AgeTierSettingsPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-md border bg-muted p-3">
-                    <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="space-y-1">
-                        <Label>Additional Accepted Xero Groups</Label>
-                        <p className="text-xs text-muted-foreground">
-                          Special-purpose groups that still count as valid for this tier.
-                        </p>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {setting.xeroAcceptedContactGroups.length} accepted
-                      </p>
-                    </div>
-                    {availableAcceptedGroups.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">
-                        No other eligible Xero contact groups available.
-                      </p>
-                    ) : (
-                      <div className="max-h-36 overflow-y-auto pr-1">
-                        <div className="flex flex-wrap gap-2">
-                          {availableAcceptedGroups.map((group) => {
-                            const checked = setting.xeroAcceptedContactGroups.some(
-                              (candidate) => candidate.groupId === group.id
-                            );
-                            const acceptedGroupInputId = `accepted-group-${setting.tier}-${group.id}`;
-
-                            return (
-                              <label
-                                key={group.id}
-                                htmlFor={acceptedGroupInputId}
-                                className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-md border bg-card px-2.5 py-1.5 text-sm text-card-foreground"
-                              >
-                                <Checkbox
-                                  id={acceptedGroupInputId}
-                                  checked={checked}
-                                  onCheckedChange={(nextChecked) =>
-                                    toggleAcceptedXeroContactGroup(
-                                      setting.tier,
-                                      group.id,
-                                      nextChecked === true
-                                    )
-                                  }
-                                  disabled={!editing || loadingXeroGroups || refreshingXeroGroups}
-                                />
-                                <span className="min-w-0 truncate text-foreground">
-                                  {group.name}
-                                  {group.contactCount > 0
-                                    ? ` (${group.contactCount})`
-                                    : ""}
-                                </span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
                 </div>
               </div>
             );
@@ -623,7 +368,6 @@ export default function AgeTierSettingsPage() {
                 <TableHead>Age Range</TableHead>
                 <TableHead>Booking Subscription</TableHead>
                 <TableHead>Family Request Creation</TableHead>
-                <TableHead>Xero Group</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -643,24 +387,6 @@ export default function AgeTierSettingsPage() {
                     {setting.familyGroupRequestCreateMemberAllowed
                       ? "Allowed"
                       : "Link existing only"}
-                  </TableCell>
-                  <TableCell>
-                    {setting.xeroContactGroupName ?? setting.xeroContactGroupId ? (
-                      <span>
-                        {setting.xeroContactGroupName ?? setting.xeroContactGroupId} (default)
-                        {setting.xeroAcceptedContactGroups.length > 0
-                          ? `; accepts ${setting.xeroAcceptedContactGroups
-                              .map((group) => group.groupName ?? group.groupId)
-                              .join(", ")}`
-                          : ""}
-                      </span>
-                    ) : setting.xeroAcceptedContactGroups.length > 0 ? (
-                      setting.xeroAcceptedContactGroups
-                        .map((group) => group.groupName ?? group.groupId)
-                        .join(", ")
-                    ) : (
-                      "Not mapped"
-                    )}
                   </TableCell>
                 </TableRow>
               ))}
