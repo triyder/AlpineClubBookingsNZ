@@ -3002,7 +3002,7 @@ model Lodge {
   doorCode   String?  @db.VarChar(80)
   travelNote String?
   // Postal / physical address of the lodge, admin-editable (E3 #1929). Feeds the
-  // {{lodge-address}} content token and the public contact page's lodge block.
+  // {{lodge-address}} content placeholder and the public contact page's lodge block.
   // Nullable: fresh installs seed no address (the seed-account-defaults guard
   // keeps geography out of seeds); the additive migration backfills only the
   // existing default lodge with the historical hardcoded string.
