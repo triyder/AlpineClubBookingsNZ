@@ -8,7 +8,7 @@ import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -166,7 +166,7 @@ export default function FeeConfigurationPage() {
       <span>{exceptions.length} membered {exceptions.length === 1 ? "family has" : "families have"} no billing member. They will be omitted from family invoice generation.</span>
     </Alert>}
 
-    <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Annual membership fees</CardTitle>{data?.canEdit && !membershipEditing && <Button variant="outline" size="sm" aria-label="Edit membership fees" onClick={() => setMembershipEditing(true)}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
+    <Card><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle>Annual membership fees</CardTitle><CardDescription>the fee to be a paid-up member of the club</CardDescription></div>{data?.canEdit && !membershipEditing && <Button variant="outline" size="sm" aria-label="Edit membership fees" onClick={() => setMembershipEditing(true)}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
       <p className="text-sm text-muted-foreground">Amounts are GST-inclusive integer cents after saving. Effective ranges are inclusive and may not overlap for one membership type.</p>
       {!familyBillingActive && hasPerFamilySchedule && <Alert variant="warning">
         <span>This club bills members individually, but one or more schedules still use the per-family basis. Those schedules cannot be invoiced and are not reinterpreted; edit each one to a per-member or no-invoice basis. Per-family can only be chosen after switching the family billing mode on the subscription billing settings.</span>
