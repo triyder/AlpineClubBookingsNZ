@@ -28,10 +28,14 @@ import { RowValidator, nz, readCsvRows } from "../values";
 // the rest of the category, so it only exists when Xero is exported); the plan
 // warns on an org mismatch so codes are verified before applying (ADR-002).
 //
-// Item-code identity: the FULL natural key (category, ageTier, seasonType,
-// isMember, entranceFeeCategory) INCLUDING nulls, matched via an in-memory map
-// — never the compound unique with a null coerced to false, which could not
-// match a null row and duplicated it on every import.
+// Item-code identity: the FULL natural key (category, membershipTypeKey,
+// ageTier, seasonType, entranceFeeCategory) INCLUDING nulls, matched via an
+// in-memory map — never the compound unique with a null coerced to false, which
+// could not match a null row and duplicated it on every import. HUT_FEE codes
+// are keyed by membership type (#1930, E4); OLD bundles carrying the legacy
+// `isMember` column are still accepted (true -> FULL, false -> NON_MEMBER,
+// documented lossy compat). The frozen legacy isMember-keyed rows are not
+// exported.
 
 const ACCOUNT_FILE = "xero-config/account-mappings.csv";
 const ITEM_FILE = "xero-config/item-code-mappings.csv";
@@ -40,9 +44,14 @@ const XERO_SOURCE_FILE = "xero-config/source.json";
 
 const ACCOUNT_FIELDS = ["key", "code", "itemCode"] as const;
 const ITEM_FIELDS = [
-  "category", "ageTier", "seasonType", "isMember", "entranceFeeCategory",
+  "category", "membershipTypeKey", "ageTier", "seasonType", "entranceFeeCategory",
   "itemCode", "amountCents",
 ] as const;
+/** Legacy isMember -> membershipTypeKey mapping for OLD import bundles. */
+const LEGACY_IS_MEMBER_TYPE_KEY: Record<"true" | "false", string> = {
+  true: "FULL",
+  false: "NON_MEMBER",
+};
 
 /** XeroItemCodeMapping.category is a plain string column with two known values. */
 const ITEM_CATEGORIES = new Set(["HUT_FEE", "ENTRANCE_FEE"]);
@@ -92,7 +101,7 @@ registerEntity({
   tier: "key-strong",
   format: "csv",
   file: ITEM_FILE,
-  naturalKey: ["category", "ageTier", "seasonType", "isMember", "entranceFeeCategory"],
+  naturalKey: ["category", "membershipTypeKey", "ageTier", "seasonType", "entranceFeeCategory"],
   singleton: false,
   fields: [...ITEM_FIELDS],
 });
@@ -102,12 +111,12 @@ registerEntity({
 /** Null-honest natural key for an item-code row ("-" marks null). */
 function itemKeyOf(parts: {
   category: string;
+  membershipTypeKey: string | null;
   ageTier: string | null;
   seasonType: string | null;
-  isMember: boolean | null;
   entranceFeeCategory: string | null;
 }): string {
-  return [parts.category, parts.ageTier, parts.seasonType, parts.isMember, parts.entranceFeeCategory]
+  return [parts.category, parts.membershipTypeKey, parts.ageTier, parts.seasonType, parts.entranceFeeCategory]
     .map((v) => (v === null || v === undefined ? "-" : String(v)))
     .join("/");
 }
@@ -117,9 +126,9 @@ interface ParsedItemRow {
   key: string;
   identity: {
     category: string;
+    membershipTypeKey: string | null;
     ageTier: string | null;
     seasonType: string | null;
-    isMember: boolean | null;
     entranceFeeCategory: string | null;
   };
   data: { itemCode: string | null; amountCents: number | null };
@@ -129,6 +138,7 @@ function parseItemRow(
   index: number,
   raw: Record<string, string>,
   errors: string[],
+  membershipTypeIdByKey: Map<string, string>,
 ): ParsedItemRow | null {
   const v = new RowValidator(ITEM_FILE, index, errors);
   const category = v.required("category", raw.category);
@@ -138,11 +148,28 @@ function parseItemRow(
     );
     return null;
   }
+
+  // Membership-type key (HUT_FEE only). OLD bundles carry `isMember` instead:
+  // true -> FULL, false -> NON_MEMBER (documented lossy compat, #1930 E4).
+  let membershipTypeKey: string | null = null;
+  if (nz(raw.membershipTypeKey) !== null) {
+    membershipTypeKey = String(nz(raw.membershipTypeKey));
+  } else if (nz(raw.isMember) !== null) {
+    const isMember = v.bool("isMember", raw.isMember);
+    membershipTypeKey = LEGACY_IS_MEMBER_TYPE_KEY[String(isMember) as "true" | "false"];
+  }
+  if (membershipTypeKey !== null && !membershipTypeIdByKey.has(membershipTypeKey)) {
+    errors.push(
+      `${ITEM_FILE} row ${index + 2}: membershipTypeKey — unknown membership type "${membershipTypeKey}"`,
+    );
+    return null;
+  }
+
   const identity = {
     category,
+    membershipTypeKey,
     ageTier: v.enumOrNull("ageTier", "AgeTier", raw.ageTier),
     seasonType: v.enumOrNull("seasonType", "SeasonType", raw.seasonType),
-    isMember: nz(raw.isMember) === null ? null : v.bool("isMember", raw.isMember),
     entranceFeeCategory: v.enumOrNull("entranceFeeCategory", "EntranceFeeCategory", raw.entranceFeeCategory),
   };
   const data = {
@@ -156,28 +183,46 @@ function parseItemRow(
 interface XeroBatch {
   accounts: Map<string, { id: string; key: string; code: string | null; itemCode: string | null }>;
   items: Map<string, { id: string; itemCode: string | null; amountCents: number | null }>;
+  membershipTypeIdByKey: Map<string, string>;
+  membershipTypeKeyById: Map<string, string>;
 }
 
 async function loadXeroBatch(db: ReadDb): Promise<XeroBatch> {
-  const [accountRows, itemRows] = await Promise.all([
+  const [accountRows, itemRows, membershipTypeRows] = await Promise.all([
     db.xeroAccountMapping.findMany({
       select: { id: true, key: true, code: true, itemCode: true },
     }),
     db.xeroItemCodeMapping.findMany({
       select: {
         id: true, category: true, ageTier: true, seasonType: true,
-        isMember: true, entranceFeeCategory: true, itemCode: true, amountCents: true,
+        membershipTypeId: true, entranceFeeCategory: true, itemCode: true, amountCents: true,
       },
     }),
+    db.membershipType.findMany({ select: { id: true, key: true } }),
   ]);
+  const membershipTypeIdByKey = new Map(membershipTypeRows.map((t) => [t.key, t.id]));
+  const membershipTypeKeyById = new Map(membershipTypeRows.map((t) => [t.id, t.key]));
   const items = new Map<string, { id: string; itemCode: string | null; amountCents: number | null }>();
   for (const row of itemRows) {
-    const key = itemKeyOf(row);
+    // Skip frozen legacy HUT_FEE rows (isMember-keyed, no membershipTypeId): the
+    // editor and config transfer operate only on the new membership-type key.
+    if (row.category === "HUT_FEE" && !row.membershipTypeId) continue;
+    const key = itemKeyOf({
+      category: row.category,
+      membershipTypeKey: row.membershipTypeId
+        ? membershipTypeKeyById.get(row.membershipTypeId) ?? null
+        : null,
+      ageTier: row.ageTier,
+      seasonType: row.seasonType,
+      entranceFeeCategory: row.entranceFeeCategory,
+    });
     if (!items.has(key)) items.set(key, row); // first match wins on duplicates
   }
   return {
     accounts: new Map(accountRows.map((r) => [r.key, r])),
     items,
+    membershipTypeIdByKey,
+    membershipTypeKeyById,
   };
 }
 
@@ -190,13 +235,32 @@ export const xeroConfigExporter: CategoryExporter = {
       orderBy: { key: "asc" },
       select: { key: true, code: true, itemCode: true },
     });
-    const items = await ctx.db.xeroItemCodeMapping.findMany({
-      orderBy: { category: "asc" },
-      select: {
-        category: true, ageTier: true, seasonType: true, isMember: true,
-        entranceFeeCategory: true, itemCode: true, amountCents: true,
-      },
-    });
+    const [itemRows, membershipTypeRows] = await Promise.all([
+      ctx.db.xeroItemCodeMapping.findMany({
+        orderBy: { category: "asc" },
+        select: {
+          category: true, ageTier: true, seasonType: true, membershipTypeId: true,
+          entranceFeeCategory: true, itemCode: true, amountCents: true,
+        },
+      }),
+      ctx.db.membershipType.findMany({ select: { id: true, key: true } }),
+    ]);
+    const membershipTypeKeyById = new Map(membershipTypeRows.map((t) => [t.id, t.key]));
+    // Emit membership-type-keyed HUT_FEE rows and all ENTRANCE_FEE rows; the
+    // frozen legacy isMember-keyed HUT_FEE rows are skipped (#1930, E4).
+    const items = itemRows
+      .filter((r) => !(r.category === "HUT_FEE" && !r.membershipTypeId))
+      .map((r) => ({
+        category: r.category,
+        membershipTypeKey: r.membershipTypeId
+          ? membershipTypeKeyById.get(r.membershipTypeId) ?? null
+          : null,
+        ageTier: r.ageTier,
+        seasonType: r.seasonType,
+        entranceFeeCategory: r.entranceFeeCategory,
+        itemCode: r.itemCode,
+        amountCents: r.amountCents,
+      }));
 
     const entries: BundleEntry[] = [];
     if (accounts.length > 0 || items.length > 0) {
@@ -244,7 +308,7 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
   });
 
   readCsvRows(ctx.files, ITEM_FILE).forEach((raw, i) => {
-    const parsed = parseItemRow(i, raw, errors);
+    const parsed = parseItemRow(i, raw, errors, batch.membershipTypeIdByKey);
     if (!parsed) return;
     const current = batch.items.get(parsed.key) ?? null;
     fingerprintParts.push(
@@ -285,9 +349,12 @@ async function applyXeroConfig(ctx: ApplyContext): Promise<CategoryApplyResult> 
   }
 
   for (const [i, raw] of readCsvRows(ctx.files, ITEM_FILE).entries()) {
-    const parsed = parseItemRow(i, raw, errors);
+    const parsed = parseItemRow(i, raw, errors, batch.membershipTypeIdByKey);
     if (!parsed) { result.skipped += 1; continue; }
     const current = batch.items.get(parsed.key) ?? null;
+    const membershipTypeId = parsed.identity.membershipTypeKey
+      ? batch.membershipTypeIdByKey.get(parsed.identity.membershipTypeKey) ?? null
+      : null;
     await applyRow({
       mode: ctx.mode,
       raw,
@@ -299,7 +366,9 @@ async function applyXeroConfig(ctx: ApplyContext): Promise<CategoryApplyResult> 
             category: parsed.identity.category,
             ageTier: parsed.identity.ageTier as never,
             seasonType: parsed.identity.seasonType as never,
-            isMember: parsed.identity.isMember,
+            // isMember stays null on the new membership-type key; membershipTypeId
+            // carries the HUT_FEE identity (#1930, E4).
+            membershipTypeId,
             entranceFeeCategory: parsed.identity.entranceFeeCategory as never,
             ...data,
           },
