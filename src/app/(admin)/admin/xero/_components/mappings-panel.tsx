@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
@@ -39,7 +38,20 @@ import type {
 
 type AccountsResponse = { accounts?: XeroAccount[]; cache?: XeroReferenceCacheMeta | null }
 type ItemsResponse = { items?: XeroItem[]; cache?: XeroReferenceCacheMeta | null }
-type ItemCodeResponse = { hutFees?: HutFeeMap; entranceFees?: EntranceFeeMap }
+// The GET/PUT responses still carry the historical amountCents column on
+// joining-fee rows; this panel is item-code-only since #1931 (amounts live in
+// the JoiningFee schedule), so the amounts are stripped on load and never
+// round-tripped in a PUT.
+type ItemCodeResponse = {
+  hutFees?: HutFeeMap
+  entranceFees?: Record<string, { itemCode: string | null; amountCents?: number | null }>
+}
+
+function toItemCodeOnly(entranceFees: ItemCodeResponse["entranceFees"]): EntranceFeeMap {
+  return Object.fromEntries(
+    Object.entries(entranceFees ?? {}).map(([key, value]) => [key, { itemCode: value.itemCode ?? null }]),
+  )
+}
 type MembershipTypesResponse = {
   membershipTypes?: Array<HutFeeRateType & { isActive: boolean }>
 }
@@ -112,8 +124,8 @@ export function MappingsPanel({
       setItemCacheMeta(items.cache ?? null)
       setHutFeeItemCodes(itemCodes.hutFees ?? {})
       setSavedHutFeeItemCodes(itemCodes.hutFees ?? {})
-      setEntranceFeeItemCodes(itemCodes.entranceFees ?? {})
-      setSavedEntranceFeeItemCodes(itemCodes.entranceFees ?? {})
+      setEntranceFeeItemCodes(toItemCodeOnly(itemCodes.entranceFees))
+      setSavedEntranceFeeItemCodes(toItemCodeOnly(itemCodes.entranceFees))
       setRateTypes(filterHutFeeRateTypes(membershipTypes.membershipTypes ?? []))
       const bookableTierSettings = (ageTierSettings.settings ?? []).filter(
         // NOT_APPLICABLE is the organisation/school classification — never a
@@ -175,8 +187,8 @@ export function MappingsPanel({
       setSavedMappings(savedAccounts)
       setHutFeeItemCodes(savedItemCodes.hutFees ?? {})
       setSavedHutFeeItemCodes(savedItemCodes.hutFees ?? {})
-      setEntranceFeeItemCodes(savedItemCodes.entranceFees ?? {})
-      setSavedEntranceFeeItemCodes(savedItemCodes.entranceFees ?? {})
+      setEntranceFeeItemCodes(toItemCodeOnly(savedItemCodes.entranceFees))
+      setSavedEntranceFeeItemCodes(toItemCodeOnly(savedItemCodes.entranceFees))
       setEditing(false)
       setSaved(true)
       window.setTimeout(() => setSaved(false), 3000)
@@ -438,42 +450,30 @@ function HutFeeTable({
   )
 }
 
+// Item-code-only since #1931 (E5): joining-fee AMOUNTS live in the JoiningFee
+// schedule (fee configuration page) — the amountCents column on these mapping
+// rows is no longer read at runtime, so an editable amount here would accept a
+// change that silently has no effect (the wrong-fee trap).
 function EntranceFeeTable({ isEditingMappings, items, codes, setCodes }: { isEditingMappings: boolean; items: XeroItem[]; codes: EntranceFeeMap; setCodes: (value: EntranceFeeMap | ((prev: EntranceFeeMap) => EntranceFeeMap)) => void }) {
   return (
     <>
       <h4 className="text-sm font-semibold text-foreground">Joining Fee Categories</h4>
-      <p className="text-xs text-muted-foreground">Configure joining fee amounts and Xero Item codes per membership category.</p>
+      <p className="text-xs text-muted-foreground">
+        Map each joining fee category to a Xero Item. Joining fee <strong>amounts</strong> are
+        not configured here — they are managed per membership type on the{" "}
+        <a href="/admin/fee-configuration" className="underline underline-offset-2">fee configuration</a> page.
+      </p>
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">
-          <thead><tr>{["Category", "Xero Item", "Amount (incl. GST)"].map((heading) => <th key={heading} className="border-b p-2 text-left font-medium text-muted-foreground">{heading}</th>)}</tr></thead>
+          <thead><tr>{["Category", "Xero Item"].map((heading) => <th key={heading} className="border-b p-2 text-left font-medium text-muted-foreground">{heading}</th>)}</tr></thead>
           <tbody>
             {([{ key: "ADULT", label: "Adult" }, { key: "YOUTH", label: "Youth" }, { key: "CHILD", label: "Child" }, { key: "FAMILY", label: "Family" }] as const).map(({ key, label }) => {
-              const entry = codes[key]
-              const currentCode = entry?.itemCode ?? null
-              const currentAmountCents = entry?.amountCents ?? null
+              const currentCode = codes[key]?.itemCode ?? null
               const matchedItem = items.find((item) => item.code === currentCode)
               return (
                 <tr key={key} className="border-b last:border-0">
                   <td className="p-2 font-medium text-foreground">{label}</td>
                   <td className="p-2">{isEditingMappings ? <ItemSelect currentCode={currentCode} items={items} onChange={(value) => setCodes((prev) => updateEntranceItem(prev, key, value))} /> : <span className={currentCode ? "text-foreground" : "text-muted-foreground"}>{matchedItem ? matchedItem.code : currentCode || "Not set"}</span>}</td>
-                  <td className="p-2">
-                    {isEditingMappings ? (
-                      <div className="flex items-center gap-1">
-                        <span className="text-sm">$</span>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="0.00"
-                          value={currentAmountCents != null && currentAmountCents > 0 ? (currentAmountCents / 100).toFixed(2) : ""}
-                          onChange={(event) => setCodes((prev) => updateEntranceAmount(prev, key, event.target.value))}
-                          className="w-24"
-                        />
-                      </div>
-                    ) : (
-                      <span className={currentAmountCents ? "text-foreground" : "text-muted-foreground"}>{currentAmountCents ? `$${(currentAmountCents / 100).toFixed(2)}` : "Not set"}</span>
-                    )}
-                  </td>
                 </tr>
               )
             })}
@@ -506,15 +506,9 @@ function updateHutFeeMap(prev: HutFeeMap, mapKey: string, value: string): HutFee
 function updateEntranceItem(prev: EntranceFeeMap, key: string, value: string): EntranceFeeMap {
   const next = { ...prev }
   if (value === "__none__") {
-    if (next[key]) next[key] = { ...next[key], itemCode: null }
+    if (next[key]) next[key] = { itemCode: null }
   } else {
-    next[key] = { itemCode: value, amountCents: next[key]?.amountCents ?? null }
+    next[key] = { itemCode: value }
   }
   return next
-}
-
-function updateEntranceAmount(prev: EntranceFeeMap, key: string, value: string): EntranceFeeMap {
-  const dollars = Number.parseFloat(value)
-  const cents = Number.isNaN(dollars) || dollars <= 0 ? null : Math.round(dollars * 100)
-  return { ...prev, [key]: { itemCode: prev[key]?.itemCode ?? null, amountCents: cents } }
 }

@@ -105,9 +105,14 @@ const HutFeeEntrySchema = z.object({
   itemCode: z.string().min(1, "Item code is required"),
 });
 
+// amountCents is OPTIONAL and deprecated (#1931, E5): joining-fee amounts are
+// authoritative in the JoiningFee schedule and this column is no longer read
+// at runtime. The admin panel is item-code-only and omits it; when omitted the
+// stored value is left untouched (never silently written), and the explicit
+// null/null pair keeps its historical "clear the row" meaning.
 const EntranceFeeEntrySchema = z.object({
   itemCode: z.string().min(1, "Item code is required").nullable(),
-  amountCents: z.number().int().min(0).nullable(),
+  amountCents: z.number().int().min(0).nullable().optional(),
 });
 
 const UpdateItemCodeMappingsSchema = z.object({
@@ -126,14 +131,17 @@ const UpdateItemCodeMappingsSchema = z.object({
  * {
  *   hutFees: { "<membershipTypeId>_WINTER_ADULT": { itemCode: "HUTFEE-001" },
  *              "<membershipTypeId>_SUMMER_FLAT": { itemCode: "HUTFEE-002" }, ... },
- *   entranceFees: { "ADULT": { itemCode: "ENTFEE-001" | null, amountCents: 5000 }, ... }
+ *   entranceFees: { "ADULT": { itemCode: "ENTFEE-001" | null }, ... }
  * }
  *
  * Hut-fee keys must reference a rate-bearing membership type (a MEMBER_RATE
  * type or the built-in NON_MEMBER type — the D2 invariant). The `FLAT` tier is
  * the single all-ages cell of an ageGroupsApply=false type. Sending null for a
- * key deletes that mapping. For entrance fees, sending both `itemCode` and
- * `amountCents` as null also clears the row.
+ * key deletes that mapping. For joining fees, `amountCents` is optional and
+ * deprecated (#1931 — amounts are authoritative in the JoiningFee schedule):
+ * omitting it leaves the stored value untouched; sending both `itemCode` and
+ * `amountCents` as explicit nulls clears the row; a null `itemCode` with no
+ * `amountCents` blanks only the code.
  */
 export async function PUT(request: NextRequest) {
   const guard = await requireAdmin();
@@ -269,7 +277,10 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    // Entrance fee entries (unchanged by the #1930 re-key).
+    // Joining fee entries: item-code writes only unless an amount is sent
+    // explicitly (#1931, E5 — amounts are authoritative in JoiningFee and the
+    // panel no longer edits them; an omitted amountCents must never overwrite
+    // the stored historical value).
     for (const [category, value] of Object.entries(entranceFees ?? {})) {
       const entranceFeeCategory = category as typeof ENTRANCE_FEE_CATEGORIES[number];
       if (!ENTRANCE_FEE_CATEGORIES.includes(entranceFeeCategory)) continue;
@@ -278,7 +289,18 @@ export async function PUT(request: NextRequest) {
         await prisma.xeroItemCodeMapping.deleteMany({
           where: { category: "JOINING_FEE", entranceFeeCategory },
         });
+      } else if (value.itemCode === null && value.amountCents === undefined) {
+        // Item-code-only clear: blank the code but keep the row (and its
+        // frozen historical amount, still exported by config transfer).
+        await prisma.xeroItemCodeMapping.updateMany({
+          where: { category: "JOINING_FEE", entranceFeeCategory },
+          data: { itemCode: null },
+        });
       } else {
+        const write: { itemCode: string | null; amountCents?: number | null } = {
+          itemCode: value.itemCode,
+        };
+        if (value.amountCents !== undefined) write.amountCents = value.amountCents;
         await prisma.xeroItemCodeMapping.upsert({
           where: {
             category_entranceFeeCategory: {
@@ -286,15 +308,11 @@ export async function PUT(request: NextRequest) {
               entranceFeeCategory,
             },
           },
-          update: {
-            itemCode: value.itemCode,
-            amountCents: value.amountCents,
-          },
+          update: write,
           create: {
             category: "JOINING_FEE",
             entranceFeeCategory,
-            itemCode: value.itemCode,
-            amountCents: value.amountCents,
+            ...write,
           },
         });
       }

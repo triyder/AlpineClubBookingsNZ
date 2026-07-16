@@ -397,11 +397,12 @@ export type AccountMappings = {
   hutFeeItem: MappingValue
   hutFeeRefundItem: MappingValue
   entranceFeeItem: MappingValue
-  entranceFeeAmountCents: MappingValue
 }
 
 export type HutFeeMap = Record<string, { itemCode: string }>
-export type EntranceFeeMap = Record<string, { itemCode: string | null; amountCents: number | null }>
+// Item-code-only since #1931 (E5): joining-fee amounts live in the JoiningFee
+// schedule (fee-configuration page), not on Xero item-code mapping rows.
+export type EntranceFeeMap = Record<string, { itemCode: string | null }>
 
 export type AccountMappingKey =
   | "hutFeesIncome"

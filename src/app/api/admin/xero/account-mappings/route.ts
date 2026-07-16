@@ -5,9 +5,14 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 
+// entranceFeeAmountCents is intentionally absent (#1931, E5): the legacy flat
+// joining-fee amount is no longer read at runtime (amounts are authoritative
+// in the JoiningFee schedule, migrated on upgrade), so exposing it as a
+// writable mapping would accept edits that silently have no effect. The
+// stored row (if any) is retained untouched for provenance until E13.
 const VALID_KEYS = [
   "hutFeesIncome", "hutFeeRefunds", "stripeBankAccount", "stripeFees", "subscriptionIncome",
-  "membershipCancellationCredit", "hutFeeItem", "hutFeeRefundItem", "entranceFeeItem", "entranceFeeAmountCents",
+  "membershipCancellationCredit", "hutFeeItem", "hutFeeRefundItem", "entranceFeeItem",
 ] as const;
 
 /**
@@ -53,7 +58,6 @@ const UpdateMappingsSchema = z.object({
   hutFeeItem: MappingValueSchema.optional(),
   hutFeeRefundItem: MappingValueSchema.optional(),
   entranceFeeItem: MappingValueSchema.optional(),
-  entranceFeeAmountCents: MappingValueSchema.optional(),
 });
 
 /**
