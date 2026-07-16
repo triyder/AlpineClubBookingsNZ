@@ -103,6 +103,27 @@ describe("PhotoGalleryToken", () => {
     expect(mocks.loadAndOpen).not.toHaveBeenCalled();
   });
 
+  it("gives gallery images with no alt a positional fallback instead of empty alt (#1947)", () => {
+    const { container } = render(
+      <PhotoGalleryToken
+        galleryId="gallery"
+        variant="gallery"
+        images={[
+          { src: "data:image/png;base64,AAAA", alt: "", width: 10, height: 10 },
+          { src: "/api/images/lodge.jpg", alt: "Lodge front", width: 20, height: 20 },
+        ]}
+      />,
+    );
+
+    const imgs = Array.from(container.querySelectorAll("img"));
+    expect(imgs[0]?.getAttribute("alt")).toBe("Gallery image 1");
+    expect(imgs[1]?.getAttribute("alt")).toBe("Lodge front");
+    // No gallery image renders an empty alt.
+    expect(imgs.every((img) => (img.getAttribute("alt") ?? "").length > 0)).toBe(
+      true,
+    );
+  });
+
   it("cancels a pending slideshow auto-open on unmount", async () => {
     const { unmount } = render(
       <PhotoGalleryToken

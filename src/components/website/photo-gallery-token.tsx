@@ -174,9 +174,18 @@ export function PhotoGalleryToken({
 
   return (
     <div id={galleryId} className={containerClassName}>
-      {images.map((image) => (
+      {images.map((image, index) => {
+        // Guarantee a non-empty, non-noisy alt even when the source image has
+        // no filename (e.g. a base64 data: URI): fall back to a positional
+        // label so screen readers can distinguish gallery items (#1947).
+        const altText =
+          image.alt ||
+          (variant === "slideshow"
+            ? `Slide ${index + 1}`
+            : `Gallery image ${index + 1}`);
+        return (
         <a
-          key={`${image.src}-${image.alt}`}
+          key={`${image.src}-${image.alt}-${index}`}
           href={image.src}
           data-pswp-width={image.width ?? undefined}
           data-pswp-height={image.height ?? undefined}
@@ -186,7 +195,7 @@ export function PhotoGalleryToken({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={image.src}
-              alt={image.alt}
+              alt={altText}
               width={image.width ?? undefined}
               height={image.height ?? undefined}
               className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
@@ -199,7 +208,8 @@ export function PhotoGalleryToken({
             </div>
           ) : null}
         </a>
-      ))}
+        );
+      })}
     </div>
   );
 }
