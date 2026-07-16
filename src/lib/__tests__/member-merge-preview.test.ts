@@ -137,4 +137,70 @@ describe("buildMemberMergePreview warnings", () => {
     expect(warning).toContain("FINANCE_ADMIN");
     expect(warning).toContain("Custom Ops (custom role)");
   });
+
+  it("surfaces the CONFIRMED partner-link drop warning and counts memberB-side loser links (M3/m2)", async () => {
+    // The loser sits on the memberB side of its link (A < B canonical order),
+    // which the old memberA-only count missed entirely.
+    const loserLinks = [
+      { id: "L1", memberAId: "aaa-third", memberBId: LOSER_ID, status: "CONFIRMED" },
+    ];
+    const masterLinks = [
+      { id: "M1", memberAId: MASTER_ID, memberBId: "zzz-partner", status: "CONFIRMED" },
+    ];
+    const memberPartnerLink = {
+      ...defaultDelegate(),
+      findMany: vi.fn(
+        ({ where }: { where: { OR: { memberAId?: string; memberBId?: string }[] } }) =>
+          Promise.resolve(
+            where.OR?.[0]?.memberAId === LOSER_ID ? loserLinks : masterLinks,
+          ),
+      ),
+    };
+    const result = await preview({ overrides: { memberPartnerLink } });
+    expect(
+      result.warnings.some((w) => w.includes("confirmed partner link dropped")),
+    ).toBe(true);
+    const collision = result.collisions.find(
+      (c) => c.model === "MemberPartnerLink.memberA/memberB",
+    );
+    expect(collision?.count).toBe(1);
+  });
+
+  it("adds a specific note when duplicate promo-money allocation rows will be dropped (m5)", async () => {
+    const promoRedemptionAllocation = {
+      ...defaultDelegate(),
+      findMany: vi.fn(({ where }: { where: { memberId: string } }) =>
+        Promise.resolve(
+          where.memberId === LOSER_ID
+            ? [{ id: "pa-L", promoRedemptionId: "pr1", promoCodeId: "pc1", bookingId: "b1" }]
+            : [{ id: "pa-M", promoRedemptionId: "pr1", promoCodeId: "pcM", bookingId: "bM" }],
+        ),
+      ),
+    };
+    const result = await preview({ overrides: { promoRedemptionAllocation } });
+    expect(
+      result.warnings.some((w) =>
+        w.includes("promo redemption allocation row(s) will be dropped"),
+      ),
+    ).toBe(true);
+  });
+
+  it("adds a specific note when duplicate group-booking join rows will be dropped (m5)", async () => {
+    const groupBookingJoin = {
+      ...defaultDelegate(),
+      findMany: vi.fn(({ where }: { where: { joinerMemberId: string } }) =>
+        Promise.resolve(
+          where.joinerMemberId === LOSER_ID
+            ? [{ id: "gj-L", groupBookingId: "gb1" }]
+            : [{ id: "gj-M", groupBookingId: "gb1" }],
+        ),
+      ),
+    };
+    const result = await preview({ overrides: { groupBookingJoin } });
+    expect(
+      result.warnings.some((w) =>
+        w.includes("group-booking join row(s) will be dropped"),
+      ),
+    ).toBe(true);
+  });
 });

@@ -524,10 +524,15 @@ export function planPartnerLinkMerge(
 
   // Track master's partners (pairs already present) and confirmed state, folding
   // in each re-pointed loser link so later loser links see the new reality.
+  // The master<->loser pair itself is excluded: it becomes a self-pair and is
+  // deleted, so a CONFIRMED master<->loser link must NOT count as the master's
+  // confirmed partner (a loser's genuine CONFIRMED link to a third member is
+  // re-pointed, not dropped).
   const masterPartners = new Set<string>();
   let masterHasConfirmed = false;
   for (const link of masterLinks) {
     const other = link.memberAId === masterId ? link.memberBId : link.memberAId;
+    if (other === loserId) continue;
     masterPartners.add(other);
     if (link.status === "CONFIRMED") masterHasConfirmed = true;
   }
@@ -1049,6 +1054,58 @@ async function loserAccessRolesGainedByMaster(
   return gained;
 }
 
+/**
+ * Generic keep-master resolver table, shared by the execute-time resolvers and
+ * the preview drop-note summariser so the two can never disagree on keys.
+ */
+const GENERIC_KEYED_RESOLVERS: readonly {
+  spec: string;
+  delegate: string;
+  memberColumn: string;
+  keys: string[][];
+}[] = [
+  { spec: "MemberAccessRole.member", delegate: "memberAccessRole", memberColumn: "memberId", keys: [["role"], ["roleDefinitionId"]] },
+  { spec: "MemberSubscription.member", delegate: "memberSubscription", memberColumn: "memberId", keys: [["seasonYear"]] },
+  { spec: "SeasonalMembershipAssignment.member", delegate: "seasonalMembershipAssignment", memberColumn: "memberId", keys: [["seasonYear"]] },
+  { spec: "MembershipCancellationRequestParticipant.member", delegate: "membershipCancellationRequestParticipant", memberColumn: "memberId", keys: [["requestId"]] },
+  { spec: "GroupBookingJoin.joinerMember", delegate: "groupBookingJoin", memberColumn: "joinerMemberId", keys: [["groupBookingId"]] },
+  { spec: "PromoRedemptionAllocation.member", delegate: "promoRedemptionAllocation", memberColumn: "memberId", keys: [["promoRedemptionId"], ["promoCodeId", "bookingId"]] },
+  { spec: "PromoCodeAssignment.member", delegate: "promoCodeAssignment", memberColumn: "memberId", keys: [["promoCodeId"]] },
+  { spec: "MemberLodgeAccess.member", delegate: "memberLodgeAccess", memberColumn: "memberId", keys: [["lodgeId", "kind"]] },
+  { spec: "CommitteeAssignment.member", delegate: "committeeAssignment", memberColumn: "memberId", keys: [["committeeRoleId"]] },
+  { spec: "MemberInductionAssignedSigner.member", delegate: "memberInductionAssignedSigner", memberColumn: "memberId", keys: [["inductionId"]] },
+  { spec: "NotificationPreference.member", delegate: "notificationPreference", memberColumn: "memberId", keys: [[]] },
+];
+
+/**
+ * Money/roster resolvers whose dropped duplicates deserve a SPECIFIC preview
+ * note: a dropped PromoRedemptionAllocation removes a promo money-allocation
+ * row; a dropped GroupBookingJoin removes a group-roster row.
+ */
+const MONEY_ROSTER_DROP_NOTES: Record<string, string> = {
+  "PromoRedemptionAllocation.member":
+    "duplicate promo redemption allocation row(s) will be dropped (the master already holds the same allocation) — the dropped rows' promo money history is removed.",
+  "GroupBookingJoin.joinerMember":
+    "duplicate group-booking join row(s) will be dropped (both members joined the same group booking) — the dropped rows leave that group's roster.",
+};
+
+/** Fetch both members' partner links and plan the merge (read-only). */
+async function loadPartnerLinkPlan(
+  db: MergeDbClient,
+  masterId: string,
+  loserId: string,
+): Promise<PartnerLinkPlan> {
+  const [loserLinks, masterLinks] = await Promise.all([
+    db.memberPartnerLink.findMany({
+      where: { OR: [{ memberAId: loserId }, { memberBId: loserId }] },
+    }),
+    db.memberPartnerLink.findMany({
+      where: { OR: [{ memberAId: masterId }, { memberBId: masterId }] },
+    }),
+  ]);
+  return planPartnerLinkMerge(loserLinks, masterLinks, masterId, loserId);
+}
+
 async function summariseResolveCollisions(
   db: MergeDbClient,
   masterId: string,
@@ -1056,15 +1113,52 @@ async function summariseResolveCollisions(
 ): Promise<{ collisions: { model: string; resolution: string; count: number }[]; warnings: string[] }> {
   const collisions: { model: string; resolution: string; count: number }[] = [];
   const warnings: string[] = [];
-  for (const s of MEMBER_MERGE_RELATION_SPECS) {
-    if (s.bucket !== "resolve") continue;
-    // memberB is summarised together with memberA; skip the paired spec.
-    if (s.key === "MemberPartnerLink.memberB") continue;
-    const count = await countLoserRows(db, s.delegate, s.column, loserId);
-    if (count > 0) {
-      collisions.push({ model: s.key, resolution: s.note ?? "dedupe on unique key", count });
+
+  const specs = MEMBER_MERGE_RELATION_SPECS.filter(
+    // Both partner-link sides are summarised together via the planner below.
+    (s) => s.bucket === "resolve" && s.model !== "MemberPartnerLink",
+  );
+  const counts = await Promise.all(
+    specs.map((s) => countLoserRows(db, s.delegate, s.column, loserId)),
+  );
+  specs.forEach((s, i) => {
+    if (counts[i] > 0) {
+      collisions.push({ model: s.key, resolution: s.note ?? "dedupe on unique key", count: counts[i] });
+    }
+  });
+
+  // Specific drop notes for money/roster rows (actual collisions, not just
+  // loser-row counts).
+  for (const g of GENERIC_KEYED_RESOLVERS) {
+    const note = MONEY_ROSTER_DROP_NOTES[g.spec];
+    if (!note) continue;
+    const delegate = (db as unknown as Record<string, {
+      findMany: (a: unknown) => Promise<Record<string, unknown>[]>;
+    }>)[g.delegate];
+    const [loserRows, masterRows] = await Promise.all([
+      delegate.findMany({ where: { [g.memberColumn]: loserId } }),
+      delegate.findMany({ where: { [g.memberColumn]: masterId } }),
+    ]);
+    if (loserRows.length === 0) continue;
+    const { dropIds } = partitionKeyedCollisions(loserRows, masterRows, g.keys);
+    if (dropIds.length > 0) {
+      warnings.push(`${dropIds.length} ${note}`);
     }
   }
+
+  // Partner links: run the planner read-only so BOTH sides of the pair are
+  // counted and CONFIRMED-drop warnings surface in the preview.
+  const partnerPlan = await loadPartnerLinkPlan(db, masterId, loserId);
+  const partnerTotal = partnerPlan.updates.length + partnerPlan.deleteIds.length;
+  if (partnerTotal > 0) {
+    collisions.push({
+      model: "MemberPartnerLink.memberA/memberB",
+      resolution: `re-point ${partnerPlan.updates.length}, drop ${partnerPlan.deleteIds.length} (self-pair/duplicate/confirmed)`,
+      count: partnerTotal,
+    });
+  }
+  warnings.push(...partnerPlan.warnings);
+
   return { collisions, warnings };
 }
 
@@ -1214,6 +1308,7 @@ export async function executeMemberMerge(params: {
           fieldsChanged,
           relationMoves,
           collisions: resolveResults.collisions,
+          resolutionWarnings: resolveResults.warnings,
           xeroTeardown,
           movedIdSample: movedIdSample.sample,
           movedIdSampleTruncated: movedIdSample.truncated,
@@ -1342,7 +1437,10 @@ async function applyMoves(
 // Collision resolvers (execute-time)
 // ---------------------------------------------------------------------------
 
-type ResolveOutcome = { collisions: { model: string; resolution: string; count: number }[] };
+type ResolveOutcome = {
+  collisions: { model: string; resolution: string; count: number }[];
+  warnings: string[];
+};
 
 async function resolveAllCollisions(
   tx: Prisma.TransactionClient,
@@ -1350,28 +1448,12 @@ async function resolveAllCollisions(
   loserId: string,
 ): Promise<ResolveOutcome> {
   const collisions: { model: string; resolution: string; count: number }[] = [];
+  const warnings: string[] = [];
 
-  // Generic keep-master resolvers keyed by the non-member part of a unique.
-  const generic: { spec: string; delegate: string; keys: string[][] }[] = [
-    { spec: "MemberAccessRole.member", delegate: "memberAccessRole", keys: [["role"], ["roleDefinitionId"]] },
-    { spec: "MemberSubscription.member", delegate: "memberSubscription", keys: [["seasonYear"]] },
-    { spec: "SeasonalMembershipAssignment.member", delegate: "seasonalMembershipAssignment", keys: [["seasonYear"]] },
-    { spec: "MembershipCancellationRequestParticipant.member", delegate: "membershipCancellationRequestParticipant", keys: [["requestId"]] },
-    { spec: "GroupBookingJoin.joinerMember", delegate: "groupBookingJoin", keys: [["groupBookingId"]], },
-    { spec: "PromoRedemptionAllocation.member", delegate: "promoRedemptionAllocation", keys: [["promoRedemptionId"], ["promoCodeId", "bookingId"]] },
-    { spec: "PromoCodeAssignment.member", delegate: "promoCodeAssignment", keys: [["promoCodeId"]] },
-    { spec: "MemberLodgeAccess.member", delegate: "memberLodgeAccess", keys: [["lodgeId", "kind"]] },
-    { spec: "CommitteeAssignment.member", delegate: "committeeAssignment", keys: [["committeeRoleId"]] },
-    { spec: "MemberInductionAssignedSigner.member", delegate: "memberInductionAssignedSigner", keys: [["inductionId"]] },
-    { spec: "NotificationPreference.member", delegate: "notificationPreference", keys: [[]] },
-  ];
-
-  for (const g of generic) {
-    const memberColumn =
-      g.spec === "GroupBookingJoin.joinerMember" ? "joinerMemberId" : "memberId";
+  for (const g of GENERIC_KEYED_RESOLVERS) {
     const res = await resolveKeyedCollisions(tx, {
       delegate: g.delegate,
-      memberColumn,
+      memberColumn: g.memberColumn,
       keySpecs: g.keys,
       masterId,
       loserId,
@@ -1414,8 +1496,9 @@ async function resolveAllCollisions(
       count: partner.updated + partner.deleted,
     });
   }
+  warnings.push(...partner.warnings);
 
-  return { collisions };
+  return { collisions, warnings };
 }
 
 async function resolveKeyedCollisions(
@@ -1587,16 +1670,8 @@ async function resolvePartnerLinks(
   tx: Prisma.TransactionClient,
   masterId: string,
   loserId: string,
-): Promise<{ updated: number; deleted: number }> {
-  const [loserLinks, masterLinks] = await Promise.all([
-    tx.memberPartnerLink.findMany({
-      where: { OR: [{ memberAId: loserId }, { memberBId: loserId }] },
-    }),
-    tx.memberPartnerLink.findMany({
-      where: { OR: [{ memberAId: masterId }, { memberBId: masterId }] },
-    }),
-  ]);
-  const plan = planPartnerLinkMerge(loserLinks, masterLinks, masterId, loserId);
+): Promise<{ updated: number; deleted: number; warnings: string[] }> {
+  const plan = await loadPartnerLinkPlan(tx, masterId, loserId);
   if (plan.deleteIds.length > 0) {
     await tx.memberPartnerLink.deleteMany({ where: { id: { in: plan.deleteIds } } });
   }
@@ -1606,7 +1681,11 @@ async function resolvePartnerLinks(
       data: { memberAId: u.memberAId, memberBId: u.memberBId },
     });
   }
-  return { updated: plan.updates.length, deleted: plan.deleteIds.length };
+  return {
+    updated: plan.updates.length,
+    deleted: plan.deleteIds.length,
+    warnings: plan.warnings,
+  };
 }
 
 // ---------------------------------------------------------------------------

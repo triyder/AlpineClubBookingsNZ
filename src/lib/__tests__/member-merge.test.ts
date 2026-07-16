@@ -219,6 +219,20 @@ describe("planPartnerLinkMerge", () => {
     expect(plan.updates).toHaveLength(1);
     expect(plan.deleteIds).toEqual([]);
   });
+
+  it("a CONFIRMED master<->loser link (deleted as self-pair) does not block re-pointing loser's genuine CONFIRMED link to a third member", () => {
+    const selfPair = link("ML", M, L, "CONFIRMED");
+    const toThird = link("LC", L, "third", "CONFIRMED");
+    const plan = planPartnerLinkMerge([selfPair, toThird], [selfPair], M, L);
+    // The master<->loser pair is deleted, NOT treated as master's confirmed
+    // partner, so the loser's confirmed link to `third` is re-pointed.
+    expect(plan.deleteIds).toEqual(["ML"]);
+    expect(plan.updates).toHaveLength(1);
+    expect(plan.updates[0].id).toBe("LC");
+    expect([plan.updates[0].memberAId, plan.updates[0].memberBId].sort()).toEqual(
+      [M, "third"].sort(),
+    );
+  });
 });
 
 describe("partitionKeyedCollisions (collision matrix)", () => {

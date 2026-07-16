@@ -434,6 +434,73 @@ describe("subscription collision handling at execute time (B1)", () => {
   });
 });
 
+describe("partner-link warnings reach the audit metadata (M3)", () => {
+  it("records the CONFIRMED-drop warning in the MEMBER_MERGED audit", async () => {
+    const loserLinks = [
+      { id: "L1", memberAId: LOSER_ID, memberBId: "zzz-third", status: "CONFIRMED" },
+    ];
+    const masterLinks = [
+      { id: "M1", memberAId: MASTER_ID, memberBId: "yyy-partner", status: "CONFIRMED" },
+    ];
+    const memberPartnerLink = {
+      ...defaultDelegate(),
+      findMany: vi.fn(
+        ({ where }: { where: { OR?: { memberAId?: string }[] } }) =>
+          Promise.resolve(
+            where.OR?.[0]?.memberAId === LOSER_ID ? loserLinks : masterLinks,
+          ),
+      ),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      update: vi.fn().mockResolvedValue({}),
+    };
+    const { client, auditLog } = makeClient({ memberPartnerLink });
+
+    // The token digest includes the partner collision summary, so build it
+    // exactly as the execute path will compute it pre-mutation.
+    const core: MemberMergePreviewCore = {
+      fieldMerge: mergeMemberFields(
+        master as unknown as Record<string, unknown>,
+        loser as unknown as Record<string, unknown>,
+      ).diff,
+      relationMoves: [],
+      collisions: [
+        {
+          model: "MemberPartnerLink.memberA/memberB",
+          resolution: "re-point 0, drop 1 (self-pair/duplicate/confirmed)",
+          count: 1,
+        },
+      ],
+      blockers: [],
+      warnings: [],
+    };
+    const token = buildMemberMergePreviewToken(
+      MASTER_ID,
+      LOSER_ID,
+      master.updatedAt,
+      loser.updatedAt,
+      core,
+    );
+
+    await executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: token,
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+
+    expect(memberPartnerLink.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["L1"] } },
+    });
+    const auditSpy = auditLog as { create: ReturnType<typeof vi.fn> };
+    expect(auditSpy.create).toHaveBeenCalledTimes(1);
+    const serialized = JSON.stringify(auditSpy.create.mock.calls[0][0]);
+    expect(serialized).toContain("resolutionWarnings");
+    expect(serialized).toContain("confirmed partner link dropped");
+  });
+});
+
 describe("MemberMergeError", () => {
   it("carries a status code and code", () => {
     const err = new MemberMergeError("nope", 409, "preview_drift", { a: 1 });
