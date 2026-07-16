@@ -50,7 +50,11 @@ vi.mock("@/lib/public-page-content-tokens", () => ({
 }));
 // sanitizePageContentHtml is pure but its module imports the prisma client.
 
-import { buildEmbeddedBody, resolveTextTokens } from "../page-content-embeds";
+import {
+  buildEmbeddedBody,
+  deriveAltFromImageSrc,
+  resolveTextTokens,
+} from "../page-content-embeds";
 import { sanitizePageContentHtml } from "../page-content-html";
 import { starterSiteContent } from "../../../prisma/starter-site-content";
 import logger from "@/lib/logger";
@@ -125,6 +129,59 @@ describe("buildEmbeddedBody", () => {
             width: 800,
             height: 600,
           },
+        ],
+      },
+    ]);
+  });
+
+  it("backfills a filename-derived alt for gallery images with no alt attribute (#1947)", async () => {
+    const parts = await buildEmbeddedBody(
+      '<p>Before</p><img src="/api/images/uploaded/Lodge_Winter-Sunset.jpg" width="640" height="480" />{{photo-gallery}}',
+    );
+
+    expect(parts).toEqual([
+      { type: "html", value: "<p>Before</p>" },
+      {
+        type: "photo-gallery",
+        images: [
+          {
+            src: "/api/images/uploaded/Lodge_Winter-Sunset.jpg",
+            alt: "Lodge Winter Sunset",
+            width: 640,
+            height: 480,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("preserves an explicit empty alt (decorative marker) on gallery images (#1947)", async () => {
+    const parts = await buildEmbeddedBody(
+      '<p>Before</p><img src="/api/images/uploaded/gallery.jpg" alt="" width="640" height="480" />{{photo-gallery}}',
+    );
+
+    expect(parts).toEqual([
+      { type: "html", value: "<p>Before</p>" },
+      {
+        type: "photo-gallery",
+        images: [
+          { src: "/api/images/uploaded/gallery.jpg", alt: "", width: 640, height: 480 },
+        ],
+      },
+    ]);
+  });
+
+  it("leaves the alt empty for a base64 data: gallery image with no alt (#1947)", async () => {
+    const parts = await buildEmbeddedBody(
+      '<p>Before</p><img src="data:image/png;base64,iVBORw0KGgoAAAANSU" width="10" height="10" />{{photo-gallery}}',
+    );
+
+    expect(parts).toEqual([
+      { type: "html", value: "<p>Before</p>" },
+      {
+        type: "photo-gallery",
+        images: [
+          { src: "data:image/png;base64,iVBORw0KGgoAAAANSU", alt: "", width: 10, height: 10 },
         ],
       },
     ]);
@@ -281,5 +338,32 @@ describe("resolveTextTokens URL scheme validation", () => {
 
     expect(resolved).not.toContain("javascript:");
     expect(resolved).toContain('href="https://club.example.org"');
+  });
+});
+
+describe("deriveAltFromImageSrc (#1947)", () => {
+  it("humanises a path-based image filename", () => {
+    expect(deriveAltFromImageSrc("/api/images/uploaded/Lodge_Winter.jpg")).toBe(
+      "Lodge Winter",
+    );
+    expect(deriveAltFromImageSrc("/images/mt-ruapehu-sunset.PNG")).toBe(
+      "mt ruapehu sunset",
+    );
+  });
+
+  it("strips query and hash before deriving the name", () => {
+    expect(deriveAltFromImageSrc("/images/gallery.webp?v=3#frag")).toBe("gallery");
+  });
+
+  it("decodes percent-encoded filenames", () => {
+    expect(deriveAltFromImageSrc("/images/Whakapapa%20Lodge.jpg")).toBe(
+      "Whakapapa Lodge",
+    );
+  });
+
+  it("returns empty for a base64 data: URI (no filename to derive)", () => {
+    expect(
+      deriveAltFromImageSrc("data:image/png;base64,iVBORw0KGgoAAAANSU"),
+    ).toBe("");
   });
 });

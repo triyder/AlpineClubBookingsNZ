@@ -78,11 +78,13 @@ describe("sanitizePageContentHtml", () => {
   });
 
   it("rejects protocol-relative image sources", () => {
+    // The protocol-relative src is stripped; the alt is backfilled from the
+    // filename (#1947), so a stripped-src image is not announced as its raw src.
     expect(sanitizePageContentHtml('<img src="//evil.example/x.png" />')).toBe(
-      "<img />",
+      '<img alt="x" />',
     );
     expect(sanitizePageContentHtml('<img src="/branding/lodge.jpg" />')).toBe(
-      '<img src="/branding/lodge.jpg" />',
+      '<img src="/branding/lodge.jpg" alt="lodge" />',
     );
   });
 
@@ -143,6 +145,47 @@ describe("sanitizePageContentHtml", () => {
     expect(sanitizePageContentHtml(sanitized)).toBe(sanitized);
   });
 });
+
+// Every <img> reaching the DOM through sanitised page content — the
+// standalone-<img> html parts (dangerouslySetInnerHTML) and page.headerText —
+// must carry an alt attribute so screen readers never fall back to announcing
+// the raw src (e.g. a base64 hero/logo). The {{photo-gallery}} token path is
+// covered separately by the embeds/photo-gallery-token suites.
+describe("sanitizePageContentHtml — alt-text backfill (#1947)", () => {
+  it("backfills a missing alt from the src filename", () => {
+    expect(
+      sanitizePageContentHtml('<img src="/api/images/Lodge_Winter-Sunset.jpg" />'),
+    ).toBe('<img src="/api/images/Lodge_Winter-Sunset.jpg" alt="Lodge Winter Sunset" />');
+  });
+
+  it("backfills an explicit empty alt for a data: <img> with no filename (decorative, not the src)", () => {
+    // A base64 hero/logo has no filename to derive; an explicit alt="" marks it
+    // decorative and silences the screen reader, rather than reading the blob.
+    // (The CMS default separately strips the data: src.)
+    expect(
+      sanitizePageContentHtml(
+        '<img src="data:image/png;base64,iVBORw0KGgoAAAANSU" />',
+      ),
+    ).toBe('<img alt="" />');
+    // With the display variant that keeps data: srcs, the alt="" is still added.
+    expect(
+      sanitizePageContentHtml(
+        '<img src="data:image/png;base64,iVBORw0KGgoAAAANSU" />',
+        { restrictImgSrc: true },
+      ),
+    ).toBe('<img src="data:image/png;base64,iVBORw0KGgoAAAANSU" alt="" />');
+  });
+
+  it("leaves an existing alt untouched, including an explicit empty alt", () => {
+    expect(
+      sanitizePageContentHtml('<img src="/api/images/hut.jpg" alt="Hut at dusk" />'),
+    ).toBe('<img src="/api/images/hut.jpg" alt="Hut at dusk" />');
+    // Present-but-empty alt is the author's decorative decision — preserved.
+    expect(
+      sanitizePageContentHtml('<img src="/api/images/divider.png" alt="" />'),
+    ).toBe('<img src="/api/images/divider.png" alt="" />');
+  });
+});
 // Issue #161 (ADR-003 residual): the lobby display's img-src CSP is tightened
 // to 'self' data:, so its authoring/render path opts into a stricter <img> src
 // constraint via { restrictImgSrc: true }. The CMS's own default (this option
@@ -169,11 +212,12 @@ describe("sanitizePageContentHtml — display img-src restriction (issue #161)",
   });
 
   it("blocks a protocol-relative <img> src", () => {
+    // src stripped; alt backfilled from the filename (#1947).
     expect(
       sanitizePageContentHtml('<img src="//evil.example/beacon.gif" />', {
         restrictImgSrc: true,
       }),
-    ).toBe("<img />");
+    ).toBe('<img alt="beacon" />');
   });
 
   it("keeps a relative / root-absolute <img> src (matches img-src 'self')", () => {
@@ -237,7 +281,10 @@ describe("getSanitizedPageContentByPath", () => {
     const page = await getSanitizedPageContentByPath("/about");
 
     expect(page?.contentHtml).toBe("<p>ok</p>");
-    expect(page?.headerText).toBe('<img src="x" />Welcome');
+    // The header <img> loses its onerror handler; its missing alt is backfilled
+    // from the src filename ("x") so screen readers do not announce the raw src
+    // on the header image path (#1947).
+    expect(page?.headerText).toBe('<img src="x" alt="x" />Welcome');
   });
 });
 

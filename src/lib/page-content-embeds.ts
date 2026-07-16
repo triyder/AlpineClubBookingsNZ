@@ -15,6 +15,7 @@ import {
   getLodgeCapacity,
 } from "@/lib/lodge-capacity";
 import logger from "@/lib/logger";
+import { deriveAltFromImageSrc } from "@/lib/image-alt";
 import { extractImageDimensions } from "@/lib/media-image";
 import {
   embedTokenNames,
@@ -303,6 +304,11 @@ function parseTokenMatch(match: RegExpMatchArray): ParsedEmbedToken {
   };
 }
 
+// deriveAltFromImageSrc lives in @/lib/image-alt (a pure, dependency-free
+// module) so the HTML sanitiser can share it without importing this module's
+// server-only graph. Re-exported here for existing importers/tests.
+export { deriveAltFromImageSrc };
+
 function extractInlinePhotoGalleryImages(contentHtml: string): {
   cleanedHtml: string;
   images: PhotoGalleryImage[];
@@ -314,9 +320,19 @@ function extractInlinePhotoGalleryImages(contentHtml: string): {
       const altMatch = match.match(/alt=["']([^"']*)["']/i);
       const widthMatch = match.match(/width=["']?(\d+)["']?/i);
       const heightMatch = match.match(/height=["']?(\d+)["']?/i);
+      // Data layer: preserve a present-but-empty alt="" as the author's
+      // explicit decorative marker, and backfill only a wholly missing alt
+      // from the filename (#1947). NOTE: for gallery/slideshow images the
+      // render layer (photo-gallery-token.tsx) deliberately does NOT honour an
+      // empty alt as decorative — each image there is a link's only content, so
+      // an empty alt would be an unnamed link (WCAG 2.4.4/4.1.2). It replaces
+      // the empty string with a positional accessible name. The two layers are
+      // reconciled on purpose: the data layer stays faithful to author intent;
+      // the render layer enforces the stricter linked-image accessible-name rule.
+      const alt = altMatch ? altMatch[1] : deriveAltFromImageSrc(src);
       images.push({
         src,
-        alt: altMatch?.[1] ?? "",
+        alt,
         width: widthMatch ? Number.parseInt(widthMatch[1], 10) : null,
         height: heightMatch ? Number.parseInt(heightMatch[1], 10) : null,
       });
