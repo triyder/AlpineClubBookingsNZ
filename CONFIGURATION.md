@@ -569,6 +569,19 @@ Xero contact-group rules, and committee assignment are separate axes:
   club-created categories live in `MembershipType`. `financeAccessLevel`
   remains synchronized for compatibility/export visibility, but does not grant
   runtime finance access.
+- Access is resolved per area (Overview, Bookings, Membership, Finance, Lodge,
+  Content, Support & System) at one of three levels — none, view, or edit —
+  and multiple roles merge to the highest level per area. **View grants
+  read-only access; edit is required to change anything.** The admin screens
+  honour this in the UI as well as on the server: a **content:view** admin
+  (for example a Read-only Admin, whose roles merge to `content:view`) opens
+  the content editors — Page Content, Site Content, Site Banners, Site Style,
+  Image Manager, and Mountain Conditions — as **read-only**, with disabled
+  editors and a "view only" notice instead of a working Save button; only a
+  **content:edit** admin can save. Lodge Instructions gate the same way on the
+  **Lodge** area. The matching route handlers require `content` (or `lodge`)
+  `view` on reads and `edit` on writes, so a stale-tab save is rejected with a
+  visible error even if the editors were still on screen.
 - `MembershipType` stores admin-configurable seasonal categories and policy:
   Full, Associate (renameable, including Reserve naming), Life, School,
   Non-Member, Family, or club-created types. The `/admin/membership-types`
