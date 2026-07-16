@@ -421,6 +421,43 @@ rule per document.
 Every one of these follows the single-lodge presentation rule: with only one
 active lodge, none of the selectors, columns, or lodge names appear, and the
 club behaves exactly as it does today.
+## Book on Behalf
+
+Book on Behalf (`/admin/book`) lets a Booking Officer (anyone with the
+**bookings:edit** permission — no membership permission required) create a
+booking for someone other than themselves. The owner can be either an existing
+member (search the MemberPicker) or a **non-member**.
+
+**Non-member bookings.** Choose "Non-member booking" beside the member search
+and enter the guest's first/last name, email and phone. The system creates a
+lightweight, **non-login** contact — exactly the kind of record an approved
+public booking request already creates — and the booking then proceeds at
+non-member rates through the normal dates → guests → quote → confirm flow.
+
+- The record is always `NON_MEMBER`, can never sign in, is created with its
+  email **unverified** (an officer-typed address is not a verified one), and is
+  billed identically to a public booking-request non-member.
+- The endpoint is `POST /api/admin/bookings/non-member-contact`, gated on
+  **bookings:edit** (the same scope as the rest of Book on Behalf).
+
+**Reuse instead of duplicating (suggest-and-pick).** As you type an email or
+name, existing non-login contacts are suggested so a repeat guest is reused
+rather than duplicated. Reuse is always an explicit pick ("Use existing") — the
+system never silently attaches a booking to an existing contact by email,
+because several walk-in contacts can legitimately share one email. If the email
+belongs to a **real member who can sign in**, creation is blocked with a pointer
+to search for them in the member picker instead. (Duplicate non-member contacts
+that do accumulate over time are cleaned up with the member-merge tool.)
+
+**Walk-ins with no email.** Tick "No email address" for a phone/walk-in guest.
+The contact is stored with a club-internal placeholder address, and that owner
+is **never emailed** (no booking confirmation, no hold email) and the
+placeholder is **never shared with Xero** as a real address.
+
+**Notifying the owner.** On confirm you choose whether the owner is emailed the
+standard confirmation/hold email; for a non-member owner this defaults to *not*
+emailing. A no-email (walk-in) owner is never emailed regardless of the choice.
+An Internet Banking (Xero) invoice email, when applicable, is still sent.
 ## Hut Leaders
 
 A hut-leader assignment (`/admin/hut-leaders`) is a date-ranged roster record
