@@ -4197,6 +4197,10 @@ model PublicContentSettings {
   hutFees              Boolean  @default(false)
   bookingPolicySummary Boolean  @default(false)
   cancellationPolicy   Boolean  @default(false)
+  // Dedicated double-opt-in gate for the {{annual-fees}} embed (#1933, E7).
+  // Annual membership fees are more sensitive than the entrance/joining headline
+  // (D-R4), so they get their own visibility flag rather than reusing entranceFees.
+  annualFees           Boolean  @default(false)
   // Configurable public "Book Now" button (E3 #1929). Default preserves the
   // historical behaviour: shown, pointing at the booking flow. When target is
   // PAGE, bookNowPageId names a published PageContent; getBookNowConfig() fails
