@@ -21,11 +21,16 @@
 -- amount is byte-identical on day one (the family fee becoming strictly
 -- type-driven is the one deliberate behaviour change, surfaced in code/docs).
 --
--- Migration pre-check (narrowed): where an install still depends on a legacy
--- mapping amount for a category with NO EntranceFee schedule row, that amount is
--- MATERIALISED here into JoiningFee (an open window) rather than left to a
--- runtime fallback (the runtime fallback is removed in this release). Categories
--- that legitimately have no fee simply produce no rows.
+-- Migration pre-check (coverage-based): where an install still depends on a
+-- legacy mapping amount for a category with NO EntranceFee window COVERING the
+-- migration day (none at all, all lapsed, or all future), that amount is
+-- MATERIALISED here into JoiningFee rather than left to a runtime fallback
+-- (the runtime fallback is removed in this release). The removed fallback
+-- applied whenever no window was ACTIVE as-of today — so a lapsed-window-plus-
+-- legacy-amount install must keep billing, not just a row-less one. The
+-- materialised window opens on the migration day and is bounded to the day
+-- before the category's earliest FUTURE window (if any) so it never overlaps a
+-- scheduled fee. Categories that legitimately have no fee produce no rows.
 
 -- ---------------------------------------------------------------------------
 -- 1. JoiningFee table
@@ -107,16 +112,31 @@ src AS (
     e."effectiveTo" AS "effectiveTo"
   FROM "EntranceFee" e
   UNION ALL
-  -- Legacy materialisation for categories with no schedule row.
+  -- Legacy materialisation for categories with no window COVERING the
+  -- migration day (none, all lapsed, or all future) — the removed runtime
+  -- fallback applied whenever no window was ACTIVE as-of today, so this keeps
+  -- a lapsed-window-plus-legacy-amount install billing. The new open window
+  -- is bounded to the day before the category's earliest FUTURE window so it
+  -- never overlaps a scheduled fee.
   SELECT
     c.category,
     COALESCE(lm.amount, lg.amount)::integer AS amount,
     timezone('Pacific/Auckland', statement_timestamp())::date AS "effectiveFrom",
-    NULL::date AS "effectiveTo"
+    (SELECT MIN(e3."effectiveFrom") - 1
+       FROM "EntranceFee" e3
+      WHERE e3."category" = c.category
+        AND e3."effectiveFrom" > timezone('Pacific/Auckland', statement_timestamp())::date
+    ) AS "effectiveTo"
   FROM cats c
   LEFT JOIN legacy_mapping lm ON lm.category = c.category
   LEFT JOIN legacy_global lg ON TRUE
-  WHERE NOT EXISTS (SELECT 1 FROM "EntranceFee" e2 WHERE e2."category" = c.category)
+  WHERE NOT EXISTS (
+      SELECT 1 FROM "EntranceFee" e2
+      WHERE e2."category" = c.category
+        AND e2."effectiveFrom" <= timezone('Pacific/Auckland', statement_timestamp())::date
+        AND (e2."effectiveTo" IS NULL
+             OR e2."effectiveTo" >= timezone('Pacific/Auckland', statement_timestamp())::date)
+    )
     AND COALESCE(lm.amount, lg.amount) IS NOT NULL
     AND COALESCE(lm.amount, lg.amount) > 0
 ),
@@ -188,15 +208,27 @@ src AS (
     e."effectiveTo" AS "effectiveTo"
   FROM "EntranceFee" e
   UNION ALL
+  -- Same coverage-based legacy materialisation as the per-tier statement
+  -- above (see that comment for the rationale).
   SELECT
     c.category,
     COALESCE(lm.amount, lg.amount)::integer AS amount,
     timezone('Pacific/Auckland', statement_timestamp())::date AS "effectiveFrom",
-    NULL::date AS "effectiveTo"
+    (SELECT MIN(e3."effectiveFrom") - 1
+       FROM "EntranceFee" e3
+      WHERE e3."category" = c.category
+        AND e3."effectiveFrom" > timezone('Pacific/Auckland', statement_timestamp())::date
+    ) AS "effectiveTo"
   FROM cats c
   LEFT JOIN legacy_mapping lm ON lm.category = c.category
   LEFT JOIN legacy_global lg ON TRUE
-  WHERE NOT EXISTS (SELECT 1 FROM "EntranceFee" e2 WHERE e2."category" = c.category)
+  WHERE NOT EXISTS (
+      SELECT 1 FROM "EntranceFee" e2
+      WHERE e2."category" = c.category
+        AND e2."effectiveFrom" <= timezone('Pacific/Auckland', statement_timestamp())::date
+        AND (e2."effectiveTo" IS NULL
+             OR e2."effectiveTo" >= timezone('Pacific/Auckland', statement_timestamp())::date)
+    )
     AND COALESCE(lm.amount, lg.amount) IS NOT NULL
     AND COALESCE(lm.amount, lg.amount) > 0
 )
