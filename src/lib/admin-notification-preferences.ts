@@ -34,7 +34,7 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
   adminFamilyGroupRequest: {
     label: "Member requests",
     description:
-      "Alerts when a member request needs admin review, including membership applications, family groups, cancellation, archive, and safe-delete requests.",
+      "Alerts when a member request needs admin review, including membership applications, family groups, cancellation, archive, and self-service account-deletion requests.",
   },
   adminBookingChangeRequest: {
     label: "Booking change requests",
