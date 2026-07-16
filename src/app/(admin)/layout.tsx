@@ -20,6 +20,7 @@ import {
   hasAdminAreaAccess,
   hasAdminPortalAccess,
   hasFinanceViewerAccess,
+  isConsolidatedFeesPath,
 } from "@/lib/admin-permissions";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
@@ -87,13 +88,22 @@ export default async function AdminLayout({
     );
   }
 
+  const requestedForGuard = requestedPath ?? "/admin/dashboard";
   const adminRequirement =
-    getAdminRouteRequirement(requestedPath ?? "/admin/dashboard", "GET") ?? {
+    getAdminRouteRequirement(requestedForGuard, "GET") ?? {
       area: "overview" as const,
       level: "view" as const,
     };
 
-  if (!hasAdminAreaAccess(member, adminRequirement)) {
+  // /admin/fees admits on view of EITHER bookings or finance (#1933, E7); its
+  // prefix resolves to bookings for the single-area drift guard, so the generic
+  // check would wrongly lock out a finance-only editor. Short-circuit here.
+  const admitted = isConsolidatedFeesPath(requestedForGuard)
+    ? hasAdminAreaAccess(member, { area: "bookings", level: "view" }) ||
+      hasAdminAreaAccess(member, { area: "finance", level: "view" })
+    : hasAdminAreaAccess(member, adminRequirement);
+
+  if (!admitted) {
     redirect(getFirstAccessibleAdminHref(member) ?? "/dashboard");
   }
 
