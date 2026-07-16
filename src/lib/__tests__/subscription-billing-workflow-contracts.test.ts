@@ -62,6 +62,9 @@ function charge(overrides: Record<string, unknown> = {}) {
     coveredMonths: 12,
     dueDays: 30,
     coverage: [{ subscription: { id: "subscription-1" } }],
+    // The prod query includes charge components (#1932, E6); a legacy charge
+    // with none takes the synthetic single-line fallback these tests assert.
+    components: [],
     ...overrides,
   };
 }

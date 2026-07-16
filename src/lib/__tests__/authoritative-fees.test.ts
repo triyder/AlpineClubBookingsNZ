@@ -87,6 +87,8 @@ describe("authoritative fee schedules", () => {
         OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
       },
       orderBy: { effectiveFrom: "desc" },
+      // Components are the invoice lines (#1932, E6), resolved in stable order.
+      include: { components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
     });
   });
 
