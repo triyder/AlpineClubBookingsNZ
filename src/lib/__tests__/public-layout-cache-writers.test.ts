@@ -31,5 +31,9 @@ describe("public layout cache writer invalidation", () => {
     expect(route.indexOf("invalidatePublicLayoutConfig(")).toBeGreaterThan(
       route.indexOf("await applyConfigImport"),
     );
+    expect(route).toContain("await primeEmailPalette();");
+    expect(route.indexOf("await primeEmailPalette();")).toBeGreaterThan(
+      route.indexOf("await applyConfigImport"),
+    );
   });
 });
