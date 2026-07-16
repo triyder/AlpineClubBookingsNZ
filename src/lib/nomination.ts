@@ -39,15 +39,17 @@ import {
 import { nameField } from "@/lib/zod-helpers";
 import { CLUB_NAME } from "@/config/club-identity";
 import {
+  refKey,
+  resolvePersonDecisions,
+  type PersonDecisions,
+} from "@/lib/member-application-decisions";
+import {
   computeApprovalMappingOutcomes,
   getLoginHolderIdForEmail,
   loadApprovalMappingTargets,
-  refKey,
-  resolvePersonDecisions,
   verifyApprovalMappingPreviewToken,
   type MappingApplicationInput,
   type MappingTargetRecord,
-  type PersonDecisions,
   type PersonOutcome,
 } from "@/lib/member-application-mapping";
 import {

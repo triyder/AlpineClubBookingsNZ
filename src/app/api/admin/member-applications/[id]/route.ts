@@ -5,7 +5,7 @@ import {
   MembershipApplicationError,
   rejectMemberApplication,
 } from "@/lib/nomination";
-import { personDecisionsSchema } from "@/lib/member-application-mapping";
+import { personDecisionsSchema } from "@/lib/member-application-decisions";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 

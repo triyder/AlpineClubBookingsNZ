@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import {
-  buildApprovalMappingPreview,
-  personDecisionsSchema,
-} from "@/lib/member-application-mapping";
+import { buildApprovalMappingPreview } from "@/lib/member-application-mapping";
+import { personDecisionsSchema } from "@/lib/member-application-decisions";
 import { requireAdmin } from "@/lib/session-guards";
 import { getSeasonYear } from "@/lib/utils";
 import logger from "@/lib/logger";

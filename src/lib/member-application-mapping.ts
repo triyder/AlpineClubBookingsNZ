@@ -2,15 +2,33 @@ import "server-only";
 
 import { createHmac, timingSafeEqual } from "crypto";
 import type { AgeTier, Prisma } from "@prisma/client";
-import { z } from "zod";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { prisma } from "@/lib/prisma";
+import {
+  resolvePersonDecisions,
+  type NormalizedPersonDecision,
+  type PersonDecisions,
+  type PersonRef,
+} from "@/lib/member-application-decisions";
 import {
   parseApplicantPhone,
   parseApplicationAddress,
   parseApplicationFamilyMembers,
   type ApplicationFamilyMember,
 } from "@/lib/nomination";
+
+export {
+  personDecisionsSchema,
+  personDecisionSchema,
+  refKey,
+  personRefLabel,
+  resolvePersonDecisions,
+  type PersonRef,
+  type PersonDecisionInput,
+  type PersonDecisions,
+  type NormalizedPersonDecision,
+  type DecisionResolution,
+} from "@/lib/member-application-decisions";
 
 // ---------------------------------------------------------------------------
 // E10 (#1936): map membership applicants onto existing member records at
@@ -23,29 +41,6 @@ import {
 // ---------------------------------------------------------------------------
 
 const PREVIEW_TOKEN_VERSION = 1;
-
-export type PersonRef = { kind: "applicant" } | { kind: "family"; index: number };
-
-export type PersonDecisionInput =
-  | { mode: "CREATE" }
-  | { mode: "MAP"; memberId: string };
-
-export const personDecisionSchema = z.discriminatedUnion("mode", [
-  z.object({ mode: z.literal("CREATE") }),
-  z.object({ mode: z.literal("MAP"), memberId: z.string().min(1) }),
-]);
-
-export const personDecisionsSchema = z.object({
-  applicant: personDecisionSchema,
-  family: z.array(personDecisionSchema),
-});
-
-export type PersonDecisions = z.infer<typeof personDecisionsSchema>;
-
-export type NormalizedPersonDecision = {
-  ref: PersonRef;
-  decision: PersonDecisionInput;
-};
 
 export type FieldDiff = {
   field: string;
@@ -264,14 +259,6 @@ function makeDiff(
 function dateOnly(value: Date | null | undefined): string | null {
   if (!value) return null;
   return value.toISOString().slice(0, 10);
-}
-
-function personRefLabel(ref: PersonRef): string {
-  return ref.kind === "applicant" ? "applicant" : `family[${ref.index}]`;
-}
-
-function refKey(ref: PersonRef): string {
-  return ref.kind === "applicant" ? "applicant" : `family:${ref.index}`;
 }
 
 function targetSummary(target: MappingTargetRecord): MappingTargetSummary {
@@ -766,56 +753,6 @@ export function verifyApprovalMappingPreviewToken(
 }
 
 // ---------------------------------------------------------------------------
-// Decision normalization
-// ---------------------------------------------------------------------------
-
-export type DecisionResolution =
-  | { ok: true; decisions: NormalizedPersonDecision[]; mapTargetIds: string[] }
-  | { ok: false; status: number; error: string };
-
-/**
- * Normalize the per-person decisions against the application's family shape.
- * Absent decisions default to all-CREATE (byte-identical current behavior).
- */
-export function resolvePersonDecisions(
-  familyCount: number,
-  personDecisions: PersonDecisions | null | undefined,
-): DecisionResolution {
-  if (!personDecisions) {
-    const decisions: NormalizedPersonDecision[] = [
-      { ref: { kind: "applicant" }, decision: { mode: "CREATE" } },
-      ...Array.from({ length: familyCount }, (_, index) => ({
-        ref: { kind: "family" as const, index },
-        decision: { mode: "CREATE" as const },
-      })),
-    ];
-    return { ok: true, decisions, mapTargetIds: [] };
-  }
-
-  if (personDecisions.family.length !== familyCount) {
-    return {
-      ok: false,
-      status: 422,
-      error: `Family decision count (${personDecisions.family.length}) does not match the application's ${familyCount} family member(s).`,
-    };
-  }
-
-  const decisions: NormalizedPersonDecision[] = [
-    { ref: { kind: "applicant" }, decision: personDecisions.applicant },
-    ...personDecisions.family.map((decision, index) => ({
-      ref: { kind: "family" as const, index },
-      decision,
-    })),
-  ];
-
-  const mapTargetIds = decisions
-    .map(({ decision }) => (decision.mode === "MAP" ? decision.memberId : null))
-    .filter((value): value is string => Boolean(value));
-
-  return { ok: true, decisions, mapTargetIds: [...new Set(mapTargetIds)].sort() };
-}
-
-// ---------------------------------------------------------------------------
 // Candidate suggestions (advisory; NOT part of the token)
 // ---------------------------------------------------------------------------
 
@@ -984,5 +921,3 @@ export async function buildApprovalMappingPreview(params: {
 
   return jsonResult({ preview });
 }
-
-export { refKey, personRefLabel };
