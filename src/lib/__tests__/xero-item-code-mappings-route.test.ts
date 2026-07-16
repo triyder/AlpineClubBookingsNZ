@@ -4,8 +4,12 @@ import { NextRequest } from "next/server";
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { count: vi.fn() },
+    membershipType: { findMany: vi.fn() },
     xeroItemCodeMapping: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
       upsert: vi.fn(),
       deleteMany: vi.fn(),
     },
@@ -32,8 +36,14 @@ const mockPrisma = prisma as unknown as {
   member: {
     count: ReturnType<typeof vi.fn>;
   };
+  membershipType: {
+    findMany: ReturnType<typeof vi.fn>;
+  };
   xeroItemCodeMapping: {
     findMany: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
     upsert: ReturnType<typeof vi.fn>;
     deleteMany: ReturnType<typeof vi.fn>;
   };
@@ -53,12 +63,48 @@ function makePutRequest(body: unknown): NextRequest {
   });
 }
 
+const FULL_TYPE = {
+  id: "type-full",
+  key: "FULL",
+  name: "Full Member",
+  bookingBehavior: "MEMBER_RATE",
+};
+const NON_MEMBER_TYPE = {
+  id: "type-nonmember",
+  key: "NON_MEMBER",
+  name: "Non-Member",
+  bookingBehavior: "NON_MEMBER_RATE",
+};
+const SCHOOL_FLAT_TYPE = {
+  id: "type-school",
+  key: "SCHOOL_GROUP",
+  name: "School Group",
+  bookingBehavior: "MEMBER_RATE",
+};
+const BLOCKED_TYPE = {
+  id: "type-blocked",
+  key: "SOCIAL",
+  name: "Social",
+  bookingBehavior: "BLOCK_BOOKING",
+};
+
 describe("Xero item-code mappings route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue(adminSession());
     mockPrisma.member.count.mockResolvedValue(1);
+    mockPrisma.membershipType.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: string[] } } }) => {
+        const ids = args?.where?.id?.in ?? [];
+        return [FULL_TYPE, NON_MEMBER_TYPE, SCHOOL_FLAT_TYPE, BLOCKED_TYPE].filter((type) =>
+          ids.includes(type.id)
+        );
+      }
+    );
     mockPrisma.xeroItemCodeMapping.upsert.mockResolvedValue({});
+    mockPrisma.xeroItemCodeMapping.findFirst.mockResolvedValue(null);
+    mockPrisma.xeroItemCodeMapping.create.mockResolvedValue({});
+    mockPrisma.xeroItemCodeMapping.update.mockResolvedValue({});
     mockPrisma.xeroItemCodeMapping.deleteMany.mockResolvedValue({ count: 1 });
     mockPrisma.xeroItemCodeMapping.findMany.mockResolvedValue([]);
   });
@@ -126,5 +172,224 @@ describe("Xero item-code mappings route", () => {
       where: { category: "ENTRANCE_FEE", entranceFeeCategory: "ADULT" },
     });
     expect(mockPrisma.xeroItemCodeMapping.upsert).not.toHaveBeenCalled();
+  });
+
+  // ── HUT_FEE re-key (#1930, E4): keys are `${membershipTypeId}_${seasonType}_${ageTier|FLAT}` ──
+
+  it("GET returns membership-type-keyed hut fees and hides frozen legacy isMember rows", async () => {
+    mockPrisma.xeroItemCodeMapping.findMany.mockResolvedValue([
+      {
+        category: "HUT_FEE",
+        membershipTypeId: FULL_TYPE.id,
+        seasonType: "WINTER",
+        ageTier: "ADULT",
+        isMember: null,
+        entranceFeeCategory: null,
+        itemCode: "HUTFEE-FULL-WIN-AD",
+        amountCents: null,
+      },
+      {
+        category: "HUT_FEE",
+        membershipTypeId: SCHOOL_FLAT_TYPE.id,
+        seasonType: "SUMMER",
+        ageTier: null,
+        isMember: null,
+        entranceFeeCategory: null,
+        itemCode: "HUTFEE-SCHOOL-FLAT",
+        amountCents: null,
+      },
+      // Frozen legacy isMember-keyed row (no membershipTypeId): hidden.
+      {
+        category: "HUT_FEE",
+        membershipTypeId: null,
+        seasonType: "WINTER",
+        ageTier: "ADULT",
+        isMember: true,
+        entranceFeeCategory: null,
+        itemCode: "LEGACY-ADULT-WIN-MEM",
+        amountCents: null,
+      },
+    ]);
+
+    const res = await getItemCodeMappings();
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.hutFees).toEqual({
+      [`${FULL_TYPE.id}_WINTER_ADULT`]: { itemCode: "HUTFEE-FULL-WIN-AD" },
+      [`${SCHOOL_FLAT_TYPE.id}_SUMMER_FLAT`]: { itemCode: "HUTFEE-SCHOOL-FLAT" },
+    });
+  });
+
+  it("PUT upserts a tiered hut fee on the membership-type composite unique", async () => {
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        hutFees: {
+          [`${FULL_TYPE.id}_WINTER_ADULT`]: { itemCode: "HUTFEE-001" },
+        },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroItemCodeMapping.upsert).toHaveBeenCalledWith({
+      where: {
+        category_membershipTypeId_seasonType_ageTier: {
+          category: "HUT_FEE",
+          membershipTypeId: FULL_TYPE.id,
+          seasonType: "WINTER",
+          ageTier: "ADULT",
+        },
+      },
+      update: { itemCode: "HUTFEE-001" },
+      create: {
+        category: "HUT_FEE",
+        membershipTypeId: FULL_TYPE.id,
+        seasonType: "WINTER",
+        ageTier: "ADULT",
+        itemCode: "HUTFEE-001",
+      },
+    });
+  });
+
+  it("PUT writes a FLAT hut fee via find-then-create (NULL ageTier cannot use the compound unique)", async () => {
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        hutFees: {
+          [`${SCHOOL_FLAT_TYPE.id}_SUMMER_FLAT`]: { itemCode: "HUTFEE-FLAT" },
+        },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroItemCodeMapping.findFirst).toHaveBeenCalledWith({
+      where: {
+        category: "HUT_FEE",
+        membershipTypeId: SCHOOL_FLAT_TYPE.id,
+        seasonType: "SUMMER",
+        ageTier: null,
+      },
+      select: { id: true },
+    });
+    expect(mockPrisma.xeroItemCodeMapping.create).toHaveBeenCalledWith({
+      data: {
+        category: "HUT_FEE",
+        membershipTypeId: SCHOOL_FLAT_TYPE.id,
+        seasonType: "SUMMER",
+        ageTier: null,
+        itemCode: "HUTFEE-FLAT",
+      },
+    });
+    expect(mockPrisma.xeroItemCodeMapping.upsert).not.toHaveBeenCalled();
+  });
+
+  it("PUT updates an existing FLAT hut fee row in place", async () => {
+    mockPrisma.xeroItemCodeMapping.findFirst.mockResolvedValue({ id: "row-1" });
+
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        hutFees: {
+          [`${SCHOOL_FLAT_TYPE.id}_SUMMER_FLAT`]: { itemCode: "HUTFEE-FLAT-2" },
+        },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroItemCodeMapping.update).toHaveBeenCalledWith({
+      where: { id: "row-1" },
+      data: { itemCode: "HUTFEE-FLAT-2" },
+    });
+    expect(mockPrisma.xeroItemCodeMapping.create).not.toHaveBeenCalled();
+  });
+
+  it("PUT deletes a hut fee mapping when the value is null", async () => {
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        hutFees: {
+          [`${FULL_TYPE.id}_WINTER_ADULT`]: null,
+          [`${SCHOOL_FLAT_TYPE.id}_SUMMER_FLAT`]: null,
+        },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroItemCodeMapping.deleteMany).toHaveBeenCalledWith({
+      where: {
+        category: "HUT_FEE",
+        membershipTypeId: FULL_TYPE.id,
+        seasonType: "WINTER",
+        ageTier: "ADULT",
+      },
+    });
+    expect(mockPrisma.xeroItemCodeMapping.deleteMany).toHaveBeenCalledWith({
+      where: {
+        category: "HUT_FEE",
+        membershipTypeId: SCHOOL_FLAT_TYPE.id,
+        seasonType: "SUMMER",
+        ageTier: null,
+      },
+    });
+  });
+
+  it("PUT accepts hut fees for the built-in NON_MEMBER type (the non-member rate holder)", async () => {
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        hutFees: {
+          [`${NON_MEMBER_TYPE.id}_WINTER_ADULT`]: { itemCode: "HUTFEE-NON" },
+        },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroItemCodeMapping.upsert).toHaveBeenCalled();
+  });
+
+  it("PUT rejects the frozen legacy isMember-shaped key with a friendly 400", async () => {
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        hutFees: {
+          ADULT_WINTER_true: { itemCode: "LEGACY-001" },
+        },
+      })
+    );
+
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("Invalid hut fee mapping key");
+    expect(mockPrisma.xeroItemCodeMapping.upsert).not.toHaveBeenCalled();
+    expect(mockPrisma.xeroItemCodeMapping.create).not.toHaveBeenCalled();
+    expect(mockPrisma.xeroItemCodeMapping.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("PUT rejects an unknown membership type with a friendly 400 and writes nothing", async () => {
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        hutFees: {
+          ["type-missing_WINTER_ADULT"]: { itemCode: "HUTFEE-001" },
+        },
+      })
+    );
+
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("Unknown membership type");
+    expect(mockPrisma.xeroItemCodeMapping.upsert).not.toHaveBeenCalled();
+    expect(mockPrisma.xeroItemCodeMapping.create).not.toHaveBeenCalled();
+  });
+
+  it("PUT rejects a non-rate-bearing membership type (D2 invariant) and writes nothing", async () => {
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        hutFees: {
+          [`${FULL_TYPE.id}_WINTER_ADULT`]: { itemCode: "HUTFEE-001" },
+          [`${BLOCKED_TYPE.id}_WINTER_ADULT`]: { itemCode: "HUTFEE-002" },
+        },
+      })
+    );
+
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("does not carry its own hut fees");
+    expect(mockPrisma.xeroItemCodeMapping.upsert).not.toHaveBeenCalled();
+    expect(mockPrisma.xeroItemCodeMapping.create).not.toHaveBeenCalled();
   });
 });

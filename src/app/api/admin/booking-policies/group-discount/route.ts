@@ -46,11 +46,32 @@ export async function PUT(req: NextRequest) {
     );
   }
 
+  // The substitution target a qualifying discount applies to true non-members
+  // (#1930, E4). A row created here (post-migration) must not carry a NULL
+  // target — that would leave the discount inert but for the read-time
+  // fallback — so seed it to the built-in FULL type, exactly like the
+  // migration backfill. An admin-configured non-null target is never
+  // overwritten; an existing NULL is healed in place.
+  const fullType = await prisma.membershipType.findFirst({
+    where: { key: "FULL" },
+    select: { id: true },
+  });
   const result = await prisma.groupDiscountSetting.upsert({
     where: { id: "default" },
     update: parsed.data,
-    create: { id: "default", ...parsed.data },
+    create: {
+      id: "default",
+      ...parsed.data,
+      rateMembershipTypeId: fullType?.id ?? null,
+    },
   });
+  if (result.rateMembershipTypeId === null && fullType) {
+    const healed = await prisma.groupDiscountSetting.update({
+      where: { id: "default" },
+      data: { rateMembershipTypeId: fullType.id },
+    });
+    result.rateMembershipTypeId = healed.rateMembershipTypeId;
+  }
 
   logAudit({
     action: "group-discount.update",

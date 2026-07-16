@@ -104,7 +104,7 @@ export async function quoteWaitlistEntryAtLodge(
       endDate: { gte: entry.checkIn },
       ...lodgeNullTolerantScope(lodgeId),
     },
-    include: { rates: true },
+    include: { membershipTypeRates: true },
   });
   if (seasons.length === 0) {
     return { offerable: false, reason: "unpriceable" };

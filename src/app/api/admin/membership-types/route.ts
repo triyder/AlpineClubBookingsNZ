@@ -32,6 +32,7 @@ const membershipTypeSelect = {
   isBuiltIn: true,
   bookingBehavior: true,
   subscriptionBehavior: true,
+  ageGroupsApply: true,
   sortOrder: true,
   createdAt: true,
   updatedAt: true,

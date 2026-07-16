@@ -25,6 +25,17 @@ vi.mock("@/lib/prisma", () => ({
     member: {
       create: vi.fn(),
       findUnique: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    // Rate resolver (#1930, E4): approval snapshots each guest's rate
+    // membership type at conversion time (linked members via assignments;
+    // unlinked guests resolve to the built-in NON_MEMBER type).
+    seasonalMembershipAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "type-full", key: "FULL" },
+        { id: "type-nonmember", key: "NON_MEMBER" },
+      ]),
     },
     booking: {
       create: vi.fn(),
@@ -1584,6 +1595,119 @@ describe("approveBookingRequest", () => {
       stayStart: new Date("2026-08-01T00:00:00.000Z"),
       stayEnd: new Date("2026-08-03T00:00:00.000Z"),
     });
+  });
+
+  it("persists the linked custom-type member's rate snapshot at conversion (#1930, E4)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 12000,
+        guests: [
+          { firstName: "Linked", lastName: "Member", ageTier: "ADULT" as const },
+          { firstName: "Uma", lastName: "Unlinked", ageTier: "ADULT" as const },
+        ],
+        linkedGuestMembers: [{ guestIndex: 0, memberId: "member-42" }],
+      }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as never);
+    // The admin-linked member carries a CUSTOM MEMBER_RATE type via its
+    // seasonal assignment; its snapshot must record that type's id.
+    vi.mocked(prisma.member.findMany).mockResolvedValue([
+      {
+        id: "member-42",
+        firstName: "Linked",
+        lastName: "Member",
+        email: "linked@example.test",
+        role: "MEMBER",
+        ageTier: "ADULT",
+      },
+    ] as never);
+    vi.mocked(prisma.seasonalMembershipAssignment.findMany).mockResolvedValue([
+      {
+        memberId: "member-42",
+        seasonYear: 2026,
+        membershipType: {
+          id: "type-club",
+          key: "CLUB",
+          name: "Club",
+          isActive: true,
+          isBuiltIn: false,
+          bookingBehavior: "MEMBER_RATE",
+          subscriptionBehavior: "REQUIRED",
+        },
+      },
+    ] as never);
+    vi.mocked(prisma.member.create).mockResolvedValue({ id: "member-1" } as never);
+    vi.mocked(prisma.booking.create).mockResolvedValue({ id: "booking-1" } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    await approveBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" });
+
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    const created = (bookingArgs.guests as { create: Array<Record<string, unknown>> })
+      .create;
+    // Snapshot-only: the admin-set price split stays exactly as stored.
+    expect(created[0]).toMatchObject({
+      memberId: "member-42",
+      isMember: true,
+      rateMembershipTypeId: "type-club",
+      priceCents: 6000,
+    });
+    expect(created[1]).toMatchObject({
+      isMember: false,
+      rateMembershipTypeId: "type-nonmember",
+      priceCents: 6000,
+    });
+
+    // Restore the suite defaults (clearAllMocks does not reset implementations).
+    vi.mocked(prisma.member.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.seasonalMembershipAssignment.findMany).mockResolvedValue([] as never);
+  });
+
+  it("overwrites the hold-time snapshot when the reuse path swaps guest rows in place (#1930, E4)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 12000,
+        heldBookingId: "held-1",
+      }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      id: "held-1",
+      lodgeId: "lodge-1",
+      memberId: "held-member",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "held-member",
+      canLogin: false,
+      role: "NON_MEMBER",
+      archivedAt: null,
+      active: true,
+    } as never);
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([{ id: "g1" }] as never);
+    vi.mocked(prisma.bookingGuest.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.booking.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    await approveBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" });
+
+    // The in-place guest swap writes the approval-time snapshot: the unlinked
+    // guest resolves to the built-in NON_MEMBER type.
+    const updateData = vi.mocked(prisma.bookingGuest.update).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(updateData.rateMembershipTypeId).toBe("type-nonmember");
   });
 
   it("blocks approval and creates nothing when a linked member double-books (issue #1158)", async () => {

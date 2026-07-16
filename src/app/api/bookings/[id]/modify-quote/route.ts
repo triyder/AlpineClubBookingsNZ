@@ -12,7 +12,7 @@ import {
   type SeasonRateData,
 } from "@/lib/pricing";
 import {
-  applyMembershipTypeRatePolicyToGuests,
+  resolveGuestRateMembershipTypes,
   assertMembershipTypeBookingAllowed,
   getMembershipTypeBookingPolicyErrorBody,
   MembershipTypeBookingPolicyError,
@@ -823,16 +823,16 @@ export async function POST(
   // Load seasons for pricing
   const seasons = await prisma.season.findMany({
     where: { active: true, ...lodgeNullTolerantScope(bookingLodgeId) },
-    include: { rates: true },
+    include: { membershipTypeRates: true },
   });
 
   const seasonRateData: SeasonRateData[] = seasons.map((s) => ({
     seasonId: s.id,
     startDate: s.startDate,
     endDate: s.endDate,
-    rates: s.rates.map((r) => ({
+    rates: s.membershipTypeRates.map((r) => ({
+      membershipTypeId: r.membershipTypeId,
       ageTier: r.ageTier,
-      isMember: r.isMember,
       pricePerNightCents: r.pricePerNightCents,
     })),
   }));
@@ -843,17 +843,19 @@ export async function POST(
     await prisma.groupDiscountSetting.findUnique({ where: { id: "default" } }),
   );
 
-  const policyAdjustedGuestsForPricing = await applyMembershipTypeRatePolicyToGuests(prisma, {
+  // Resolve each guest's rate membership type + rateSource once (#1930, E4);
+  // the rated guests feed every pricing pass below and carry the snapshot.
+  const policyAdjustedGuestsForPricing = await resolveGuestRateMembershipTypes(prisma, {
     seasonYear,
     guests: guestsForPricing,
   });
   const policyAdjustedAddGuests = normalizedAddGuestsWithRanges
-    ? await applyMembershipTypeRatePolicyToGuests(prisma, {
+    ? await resolveGuestRateMembershipTypes(prisma, {
         seasonYear,
         guests: normalizedAddGuestsWithRanges,
       })
     : undefined;
-  const policyAdjustedExistingGuests = await applyMembershipTypeRatePolicyToGuests(prisma, {
+  const policyAdjustedExistingGuests = await resolveGuestRateMembershipTypes(prisma, {
     seasonYear,
     guests: booking.guests.map((guest) => ({
       ...guest,

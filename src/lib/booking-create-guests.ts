@@ -94,6 +94,11 @@ export type PricedGuest = {
   priceCents: number;
   perNightCents: number[];
   nightDates: Date[];
+  // Rate-membership-type snapshot resolved at pricing time (#1930, E4).
+  // Persisted on the BookingGuest so Xero line building picks the matching
+  // item code. Optional so pre-refactor callers/tests still compile; a missing
+  // value stores NULL and the Xero read falls back isMember -> FULL/NON_MEMBER.
+  rateMembershipTypeId?: string | null;
 };
 
 /**
@@ -126,6 +131,7 @@ export function buildGuestCreateData(
       stayStart,
       stayEnd,
       priceCents: priced.priceCents,
+      rateMembershipTypeId: priced.rateMembershipTypeId ?? null,
       nights: {
         create: nightDates.map((stayDate, k) => ({
           stayDate,

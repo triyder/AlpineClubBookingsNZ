@@ -14,6 +14,10 @@ import {
 const CHECK_IN = new Date("2026-07-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-07-05T00:00:00.000Z"); // 4 nights
 
+// Rates keyed by membership type (#1930, E4).
+const MEMBER_TYPE = "type-member";
+const NONMEMBER_TYPE = "type-nonmember";
+
 function season(adultMemberRate: number): SeasonRateData[] {
   return [
     {
@@ -21,8 +25,8 @@ function season(adultMemberRate: number): SeasonRateData[] {
       startDate: new Date("2026-06-01T00:00:00.000Z"),
       endDate: new Date("2026-08-31T00:00:00.000Z"),
       rates: [
-        { ageTier: "ADULT", isMember: true, pricePerNightCents: adultMemberRate },
-        { ageTier: "ADULT", isMember: false, pricePerNightCents: adultMemberRate + 2000 },
+        { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: adultMemberRate },
+        { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: adultMemberRate + 2000 },
       ],
     },
   ];
@@ -34,6 +38,8 @@ function lockedGuest() {
     ageTier: "ADULT" as const,
     isMember: true,
     memberId: "m1",
+    rateMembershipTypeId: MEMBER_TYPE,
+    rateSource: "OWN_TYPE" as const,
     lockedNightPrices: [
       { stayDate: new Date("2026-07-01T00:00:00.000Z"), priceCents: 5000 },
       { stayDate: new Date("2026-07-02T00:00:00.000Z"), priceCents: 5000 },
@@ -56,7 +62,7 @@ describe.each([
       [
         lockedGuest(),
         lockedGuest(),
-        { ageTier: "ADULT", isMember: true, memberId: "m3" }, // new guest
+        { ageTier: "ADULT", isMember: true, memberId: "m3", rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" as const }, // new guest
       ],
       seasons,
     );
@@ -112,7 +118,7 @@ describe("locked night pricing edge cases", () => {
     const price = calculateBookingPrice(
       CHECK_IN,
       CHECK_OUT,
-      [{ ageTier: "ADULT", isMember: true, memberId: "m1" }],
+      [{ ageTier: "ADULT", isMember: true, memberId: "m1", rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" as const }],
       season(6000),
     );
 
@@ -147,6 +153,8 @@ describe("locked night pricing edge cases", () => {
       ageTier: "ADULT" as const,
       isMember: false,
       memberId: null,
+      rateMembershipTypeId: NONMEMBER_TYPE,
+      rateSource: "NON_MEMBER_DEFAULT" as const,
       lockedNightPrices: lockedGuest().lockedNightPrices,
     };
     const price = calculateBookingPrice(
@@ -172,6 +180,8 @@ describe("locked night pricing edge cases", () => {
           ageTier: "ADULT" as const,
           isMember: true,
           memberId: "m1",
+          rateMembershipTypeId: MEMBER_TYPE,
+          rateSource: "OWN_TYPE" as const,
           nights: [
             new Date("2026-07-01T00:00:00.000Z"),
             new Date("2026-07-03T00:00:00.000Z"),

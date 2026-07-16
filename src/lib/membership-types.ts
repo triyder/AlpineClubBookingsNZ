@@ -162,6 +162,7 @@ type MembershipTypeWithAssignmentCount = {
   isBuiltIn: boolean;
   bookingBehavior: MembershipTypeBookingBehavior;
   subscriptionBehavior: MembershipTypeSubscriptionBehavior;
+  ageGroupsApply?: boolean;
   sortOrder: number;
   createdAt: Date;
   updatedAt: Date;
@@ -231,6 +232,7 @@ export function serializeMembershipType(type: MembershipTypeWithAssignmentCount)
     isBuiltIn: type.isBuiltIn,
     bookingBehavior: type.bookingBehavior,
     subscriptionBehavior: type.subscriptionBehavior,
+    ageGroupsApply: type.ageGroupsApply ?? true,
     sortOrder: type.sortOrder,
     createdAt: type.createdAt.toISOString(),
     updatedAt: type.updatedAt.toISOString(),

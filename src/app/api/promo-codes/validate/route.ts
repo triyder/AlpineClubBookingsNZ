@@ -200,7 +200,7 @@ export async function POST(req: NextRequest) {
       endDate: { gte: checkIn },
       ...lodgeNullTolerantScope(quoteLodgeId),
     },
-    include: { rates: true },
+    include: { membershipTypeRates: true },
   });
 
   const seasonData: SeasonRateData[] = seasons.map((s) => ({
@@ -208,9 +208,9 @@ export async function POST(req: NextRequest) {
     startDate: s.startDate,
     endDate: s.endDate,
     type: s.type,
-    rates: s.rates.map((r) => ({
+    rates: s.membershipTypeRates.map((r) => ({
+      membershipTypeId: r.membershipTypeId,
       ageTier: r.ageTier,
-      isMember: r.isMember,
       pricePerNightCents: r.pricePerNightCents,
     })),
   }));
@@ -224,6 +224,9 @@ export async function POST(req: NextRequest) {
       minGroupSize: gds.minGroupSize,
       summerOnly: gds.summerOnly,
       enabled: true,
+      // Group discount substitutes this rate membership type for true
+      // non-members (#1930, E4).
+      rateMembershipTypeId: gds.rateMembershipTypeId,
     };
   }
 

@@ -13,6 +13,10 @@ import {
 } from "../pricing"
 
 // --- Test fixtures ---
+// Rates are keyed by membership type (#1930, E4): old member rows map to
+// MEMBER_TYPE, non-member rows to NONMEMBER_TYPE.
+const MEMBER_TYPE = "type-member"
+const NONMEMBER_TYPE = "type-nonmember"
 
 function makeSeason(overrides: Partial<SeasonRateData> = {}): SeasonRateData {
   return {
@@ -20,12 +24,12 @@ function makeSeason(overrides: Partial<SeasonRateData> = {}): SeasonRateData {
     startDate: new Date(2026, 5, 1),  // June 1
     endDate: new Date(2026, 8, 30),   // Sep 30
     rates: [
-      { ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
-      { ageTier: "ADULT", isMember: false, pricePerNightCents: 6500 },
-      { ageTier: "YOUTH", isMember: true, pricePerNightCents: 3000 },
-      { ageTier: "YOUTH", isMember: false, pricePerNightCents: 4500 },
-      { ageTier: "CHILD", isMember: true, pricePerNightCents: 1500 },
-      { ageTier: "CHILD", isMember: false, pricePerNightCents: 2500 },
+      { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 4500 },
+      { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 6500 },
+      { ageTier: "YOUTH", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 3000 },
+      { ageTier: "YOUTH", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 4500 },
+      { ageTier: "CHILD", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 1500 },
+      { ageTier: "CHILD", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 2500 },
     ],
     ...overrides,
   }
@@ -37,12 +41,12 @@ function makeSummerSeason(): SeasonRateData {
     startDate: new Date(2026, 10, 1),  // Nov 1
     endDate: new Date(2027, 2, 31),    // Mar 31
     rates: [
-      { ageTier: "ADULT", isMember: true, pricePerNightCents: 3500 },
-      { ageTier: "ADULT", isMember: false, pricePerNightCents: 5000 },
-      { ageTier: "YOUTH", isMember: true, pricePerNightCents: 2500 },
-      { ageTier: "YOUTH", isMember: false, pricePerNightCents: 3500 },
-      { ageTier: "CHILD", isMember: true, pricePerNightCents: 1000 },
-      { ageTier: "CHILD", isMember: false, pricePerNightCents: 2000 },
+      { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 3500 },
+      { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 5000 },
+      { ageTier: "YOUTH", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 2500 },
+      { ageTier: "YOUTH", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 3500 },
+      { ageTier: "CHILD", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 1000 },
+      { ageTier: "CHILD", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 2000 },
     ],
   }
 }
@@ -127,30 +131,30 @@ describe("findSeasonForDate", () => {
 
 describe("getNightlyRate", () => {
   it("returns adult member rate", () => {
-    const result = getNightlyRate(new Date("2026-07-15"), "ADULT", true, allSeasons)
+    const result = getNightlyRate(new Date("2026-07-15"), "ADULT", MEMBER_TYPE, allSeasons)
     expect(result?.priceCents).toBe(4500)
     expect(result?.seasonId).toBe("season-winter-2026")
   })
 
   it("returns adult non-member rate", () => {
-    const result = getNightlyRate(new Date("2026-07-15"), "ADULT", false, allSeasons)
+    const result = getNightlyRate(new Date("2026-07-15"), "ADULT", NONMEMBER_TYPE, allSeasons)
     expect(result?.priceCents).toBe(6500)
   })
 
   it("returns child member rate", () => {
-    const result = getNightlyRate(new Date("2026-07-15"), "CHILD", true, allSeasons)
+    const result = getNightlyRate(new Date("2026-07-15"), "CHILD", MEMBER_TYPE, allSeasons)
     expect(result?.priceCents).toBe(1500)
   })
 
   it("returns null for date outside season", () => {
-    const result = getNightlyRate(new Date("2026-10-15"), "ADULT", true, allSeasons)
+    const result = getNightlyRate(new Date("2026-10-15"), "ADULT", MEMBER_TYPE, allSeasons)
     expect(result).toBeNull()
   })
 })
 
 describe("calculateBookingPrice - single guest", () => {
   it("calculates 3-night adult member stay", () => {
-    const guests: GuestInput[] = [{ ageTier: "ADULT", isMember: true }]
+    const guests: GuestInput[] = [{ ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" }]
     const result = calculateBookingPrice(
       new Date("2026-07-10"),
       new Date("2026-07-13"),
@@ -163,7 +167,7 @@ describe("calculateBookingPrice - single guest", () => {
   })
 
   it("calculates youth non-member price", () => {
-    const guests: GuestInput[] = [{ ageTier: "YOUTH", isMember: false }]
+    const guests: GuestInput[] = [{ ageTier: "YOUTH", isMember: false, rateMembershipTypeId: NONMEMBER_TYPE, rateSource: "NON_MEMBER_DEFAULT" }]
     const result = calculateBookingPrice(
       new Date("2026-07-10"),
       new Date("2026-07-12"),
@@ -174,7 +178,7 @@ describe("calculateBookingPrice - single guest", () => {
   })
 
   it("throws error for date outside any season", () => {
-    const guests: GuestInput[] = [{ ageTier: "ADULT", isMember: true }]
+    const guests: GuestInput[] = [{ ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" }]
     expect(() =>
       calculateBookingPrice(
         new Date("2026-10-10"),
@@ -190,7 +194,7 @@ describe("calculateBookingPrice - single guest", () => {
       startDate: new Date("2026-07-04T00:00:00.000Z"),
       endDate: new Date("2026-09-30T00:00:00.000Z"),
     })
-    const guests: GuestInput[] = [{ ageTier: "ADULT", isMember: true }]
+    const guests: GuestInput[] = [{ ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" }]
 
     const result = calculateBookingPrice(
       new Date("2026-07-03T12:00:00.000Z"),
@@ -207,9 +211,9 @@ describe("calculateBookingPrice - single guest", () => {
 describe("calculateBookingPrice - multiple guests", () => {
   it("calculates total for multiple guests", () => {
     const guests: GuestInput[] = [
-      { ageTier: "ADULT", isMember: true },
-      { ageTier: "ADULT", isMember: false },
-      { ageTier: "CHILD", isMember: true },
+      { ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" },
+      { ageTier: "ADULT", isMember: false, rateMembershipTypeId: NONMEMBER_TYPE, rateSource: "NON_MEMBER_DEFAULT" },
+      { ageTier: "CHILD", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" },
     ]
 
     const result = calculateBookingPrice(
@@ -229,7 +233,7 @@ describe("calculateBookingPrice - multiple guests", () => {
   })
 
   it("handles single guest single night", () => {
-    const guests: GuestInput[] = [{ ageTier: "ADULT", isMember: true }]
+    const guests: GuestInput[] = [{ ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" }]
     const { totalPriceCents } = calculateBookingPrice(
       new Date("2026-07-10"),
       new Date("2026-07-11"),
@@ -244,18 +248,24 @@ describe("calculateBookingPrice - multiple guests", () => {
       {
         ageTier: "ADULT",
         isMember: true,
+        rateMembershipTypeId: MEMBER_TYPE,
+        rateSource: "OWN_TYPE",
         stayStart: new Date("2026-07-10"),
         stayEnd: new Date("2026-07-13"),
       },
       {
         ageTier: "ADULT",
         isMember: true,
+        rateMembershipTypeId: MEMBER_TYPE,
+        rateSource: "OWN_TYPE",
         stayStart: new Date("2026-07-10"),
         stayEnd: new Date("2026-07-14"),
       },
       {
         ageTier: "CHILD",
         isMember: true,
+        rateMembershipTypeId: MEMBER_TYPE,
+        rateSource: "OWN_TYPE",
         stayStart: new Date("2026-07-11"),
         stayEnd: new Date("2026-07-14"),
       },
@@ -282,12 +292,16 @@ describe("calculateBookingPrice - multiple guests", () => {
       {
         ageTier: "ADULT",
         isMember: false,
+        rateMembershipTypeId: NONMEMBER_TYPE,
+        rateSource: "NON_MEMBER_DEFAULT",
         stayStart: new Date("2026-07-10"),
         stayEnd: new Date("2026-07-12"),
       },
       {
         ageTier: "ADULT",
         isMember: false,
+        rateMembershipTypeId: NONMEMBER_TYPE,
+        rateSource: "NON_MEMBER_DEFAULT",
         stayStart: new Date("2026-07-11"),
         stayEnd: new Date("2026-07-12"),
       },
@@ -298,7 +312,7 @@ describe("calculateBookingPrice - multiple guests", () => {
       new Date("2026-07-12"),
       guests,
       allSeasons,
-      { enabled: true, minGroupSize: 2, summerOnly: false }
+      { enabled: true, minGroupSize: 2, summerOnly: false, rateMembershipTypeId: MEMBER_TYPE }
     )
 
     expect(result.guests[0].perNightCents).toEqual([6500, 4500])

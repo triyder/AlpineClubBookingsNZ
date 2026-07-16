@@ -23,6 +23,15 @@ const mocks = vi.hoisted(() => ({
       count: vi.fn(),
       findMany: vi.fn(),
     },
+    // Rate resolver (#1930, E4) delegates.
+    member: { findMany: vi.fn().mockResolvedValue([]) },
+    seasonalMembershipAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "type-nonmember", key: "NON_MEMBER" },
+        { id: "type-full", key: "FULL" },
+      ]),
+    },
   },
 }));
 
@@ -66,7 +75,12 @@ describe("POST /api/promo-codes/validate - work party events", () => {
         startDate: new Date("2026-01-01"),
         endDate: new Date("2026-12-31"),
         type: "WINTER",
-        rates: [{ ageTier: "ADULT", isMember: true, pricePerNightCents: 5000 }],
+        // Membership-type-keyed rates (#1930, E4); both types at 5000 so the
+        // guest prices identically regardless of resolved rate type.
+        membershipTypeRates: [
+          { membershipTypeId: "type-full", ageTier: "ADULT", pricePerNightCents: 5000 },
+          { membershipTypeId: "type-nonmember", ageTier: "ADULT", pricePerNightCents: 5000 },
+        ],
       },
     ]);
     mocks.prisma.groupDiscountSetting.findUnique.mockResolvedValue(null);

@@ -213,7 +213,7 @@ export async function POST(request: NextRequest) {
       endDate: { gte: checkIn },
       ...lodgeNullTolerantScope(quoteLodgeId),
     },
-    include: { rates: true },
+    include: { membershipTypeRates: true },
   });
 
   const seasonData = toSeasonRateData(seasons);

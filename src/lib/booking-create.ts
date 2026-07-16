@@ -282,7 +282,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         endDate: { gte: checkIn },
         ...lodgeNullTolerantScope(bookingLodgeId),
       },
-      include: { rates: true },
+      include: { membershipTypeRates: true },
     });
     const seasonData = toSeasonRateData(seasons);
     const guestInputs = toGuestPricingInputs(guests);
@@ -725,7 +725,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           endDate: { gte: checkIn },
           ...lodgeNullTolerantScope(bookingLodgeId),
         },
-        include: { rates: true },
+        include: { membershipTypeRates: true },
       });
       const seasonData = toSeasonRateData(seasons);
       const guestInputs = toGuestPricingInputs(primaryGuests);
@@ -1428,7 +1428,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       endDate: { gte: checkIn },
       ...lodgeNullTolerantScope(waitlistLodgeId),
     },
-    include: { rates: true },
+    include: { membershipTypeRates: true },
   });
   const seasonData = toSeasonRateData(seasons);
   const guestInputs = toGuestPricingInputs(guests);

@@ -22,6 +22,11 @@ import {
 
 const AGE_TIERS = ["ADULT", "YOUTH", "CHILD", "INFANT"] as const;
 
+// Rates keyed by membership type (#1930, E4): old member rows map to
+// MEMBER_TYPE, non-member rows to NONMEMBER_TYPE.
+const MEMBER_TYPE = "type-member";
+const NONMEMBER_TYPE = "type-nonmember";
+
 // calculateBookingPrice normalizes every date through an Intl.DateTimeFormat
 // in the NZ app timezone, which makes each run comparatively expensive. Keep
 // the run count modest (and the per-test timeout generous) so the suite stays
@@ -38,8 +43,8 @@ function ratesArb(maxCents = 20_000) {
     })
     .map((prices) =>
       AGE_TIERS.flatMap((ageTier, i) => [
-        { ageTier, isMember: true, pricePerNightCents: prices[i * 2] },
-        { ageTier, isMember: false, pricePerNightCents: prices[i * 2 + 1] },
+        { ageTier, membershipTypeId: MEMBER_TYPE, pricePerNightCents: prices[i * 2] },
+        { ageTier, membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: prices[i * 2 + 1] },
       ])
     );
 }
@@ -56,10 +61,10 @@ function memberCheaperRatesArb(maxCents = 20_000) {
     )
     .map((pairs) =>
       AGE_TIERS.flatMap((ageTier, i) => [
-        { ageTier, isMember: true, pricePerNightCents: pairs[i][0] },
+        { ageTier, membershipTypeId: MEMBER_TYPE, pricePerNightCents: pairs[i][0] },
         {
           ageTier,
-          isMember: false,
+          membershipTypeId: NONMEMBER_TYPE,
           pricePerNightCents: pairs[i][0] + pairs[i][1],
         },
       ])
@@ -91,10 +96,20 @@ const stayArb = fc
     return { checkIn, checkOut, nights };
   });
 
-const guestArb: fc.Arbitrary<GuestInput> = fc.record({
-  ageTier: fc.constantFrom(...AGE_TIERS),
-  isMember: fc.boolean(),
-});
+const guestArb: fc.Arbitrary<GuestInput> = fc
+  .record({
+    ageTier: fc.constantFrom(...AGE_TIERS),
+    isMember: fc.boolean(),
+  })
+  .map((guest) => ({
+    ...guest,
+    // A member prices from their own type (MEMBER_TYPE / OWN_TYPE); a
+    // non-member from NONMEMBER_TYPE / NON_MEMBER_DEFAULT (#1930, E4).
+    rateMembershipTypeId: guest.isMember ? MEMBER_TYPE : NONMEMBER_TYPE,
+    rateSource: (guest.isMember ? "OWN_TYPE" : "NON_MEMBER_DEFAULT") as
+      | "OWN_TYPE"
+      | "NON_MEMBER_DEFAULT",
+  }));
 
 const guestsArb = fc.array(guestArb, { minLength: 1, maxLength: 4 });
 
@@ -172,6 +187,8 @@ describe("calculateBookingPrice properties", () => {
       minGroupSize: fc.integer({ min: 1, max: 8 }),
       summerOnly: fc.boolean(),
       enabled: fc.constant(true),
+      // The discount substitutes the (cheaper) member type for non-members.
+      rateMembershipTypeId: fc.constant(MEMBER_TYPE),
     });
     fc.assert(
       fc.property(

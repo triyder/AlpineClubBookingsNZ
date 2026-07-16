@@ -43,6 +43,14 @@ const mocks = vi.hoisted(() => {
       findMany: vi.fn(),
       findFirst: vi.fn(),
     },
+    // #1930, E4: getHutFeeItemCodeMap resolves the FULL/NON_MEMBER ids for the
+    // per-guest item-code fallback.
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "type-full", key: "FULL" },
+        { id: "type-nonmember", key: "NON_MEMBER" },
+      ]),
+    },
     xeroSyncOperation: {
       update: vi.fn(),
     },

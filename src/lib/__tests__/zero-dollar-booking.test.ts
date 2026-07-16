@@ -60,6 +60,16 @@ const mockTx = {
   promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   lodge: { findFirst: mockTxLodgeFindFirst },
   memberLodgeAccess: { findMany: mockTxMemberLodgeAccessFindMany },
+  // Rate resolver (#1930, E4): pricing is mocked, so the resolver only needs to
+  // find the NON_MEMBER type id without throwing.
+  member: { findMany: vi.fn().mockResolvedValue([]) },
+  seasonalMembershipAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+  membershipType: {
+    findMany: vi.fn().mockResolvedValue([
+      { id: "type-nonmember", key: "NON_MEMBER" },
+      { id: "type-full", key: "FULL" },
+    ]),
+  },
 };
 
 vi.mock("@/lib/prisma", () => ({

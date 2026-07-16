@@ -92,7 +92,15 @@ admins at **Admin → Setup & Configuration → Export & Import**
   **implied by its folder**, not a CSV column, so a whole lodge is easy to add,
   curate, or spot as a unit. The full per-lodge file set is always emitted
   (header-only when a collection is empty) so a folder captures the entire
-  lodge config and the format is discoverable for hand-authoring. Instructions
+  lodge config and the format is discoverable for hand-authoring.
+  `season-rates.csv` is keyed by membership type (#1930, E4):
+  `seasonName, membershipTypeKey, ageTier, pricePerNightCents` — a blank
+  `ageTier` is a flat type's single all-ages rate. Only rate-bearing types are
+  emitted (every `MEMBER_RATE` type plus `NON_MEMBER`). **OLD bundles** carrying
+  the legacy `seasonName, ageTier, isMember, pricePerNightCents` shape are still
+  accepted on import: `isMember=true` maps to the `FULL` type and `false` to
+  `NON_MEMBER` (documented lossy compat — a legacy bundle populates only those
+  two types). Instructions
   are two-level: the top-level `lodge-config/instructions.csv` holds the
   **club-wide base** shown for every lodge, while a lodge folder's
   `instructions.csv` holds that lodge's **overrides** of the same keys.
@@ -103,10 +111,16 @@ admins at **Admin → Setup & Configuration → Export & Import**
   they reference real members.
 - **induction** — induction checklist templates with their nested sections and
   items (as JSON documents; member-specific results excluded).
-- **xero-config** — Xero account mappings and item-code mappings. The source
-  Xero org id is recorded in a category-local `xero-config/source.json` (sealed
-  with the rest of the category, not the manifest); the plan warns on an org
-  mismatch so codes are verified before applying.
+- **xero-config** — Xero account mappings and item-code mappings. HUT_FEE item
+  codes are keyed by membership type (#1930, E4): `item-code-mappings.csv` is
+  `category, membershipTypeKey, ageTier, seasonType, entranceFeeCategory,
+  itemCode, amountCents` (membershipTypeKey is HUT_FEE-only; blank for
+  ENTRANCE_FEE). Frozen legacy `isMember`-keyed HUT_FEE rows are not exported;
+  **OLD bundles** with the legacy `isMember` column are still accepted on import
+  (true→FULL, false→NON_MEMBER). The source Xero org id is recorded in a
+  category-local `xero-config/source.json` (sealed with the rest of the category,
+  not the manifest); the plan warns on an org mismatch so codes are verified
+  before applying.
 
 Intentionally excluded / deferred:
 

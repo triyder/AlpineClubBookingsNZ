@@ -105,7 +105,14 @@ function lodgeDb(overrides?: {
     lodgeRoom: { findMany: vi.fn().mockResolvedValue([]) },
     lodgeBed: { findMany: vi.fn().mockResolvedValue([]) },
     season: { findMany: vi.fn().mockResolvedValue(overrides?.seasons ?? []) },
-    seasonRate: { findMany: vi.fn().mockResolvedValue([]) },
+    // Membership-type-keyed rates (#1930, E4); the parser resolves keys here.
+    membershipTypeSeasonRate: { findMany: vi.fn().mockResolvedValue([]) },
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE", ageGroupsApply: true },
+        { id: "mt-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE", ageGroupsApply: true },
+      ]),
+    },
     lodgeInstruction: { findMany: vi.fn().mockResolvedValue([]) },
     choreTemplate: { findMany: vi.fn().mockResolvedValue([]) },
     xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -763,15 +770,25 @@ describe("match picker (key-weak renames)", () => {
 });
 
 describe("xero item identity is null-honest", () => {
-  it("matches an existing null-isMember row instead of duplicating it", async () => {
+  it("matches an existing row on null identity fields instead of duplicating it", async () => {
+    // A flat HUT_FEE code (#1930, E4): membershipTypeKey set, but ageTier and
+    // entranceFeeCategory both null. The blank CSV cells must match the stored
+    // nulls (never coerce null→a value and duplicate). FULL is configured as a
+    // flat (ageGroupsApply=false) type here so the blank-ageTier row is the
+    // valid shape (F9 shape validation).
     const db = {
       xeroAccountMapping: { findMany: vi.fn().mockResolvedValue([]) },
       xeroItemCodeMapping: {
         findMany: vi.fn().mockResolvedValue([
           {
-            id: "item-1", category: "HUT_FEE", ageTier: "ADULT", seasonType: "WINTER",
-            isMember: null, entranceFeeCategory: null, itemCode: "HUT-A", amountCents: null,
+            id: "item-1", category: "HUT_FEE", ageTier: null, seasonType: "WINTER",
+            membershipTypeId: "mt-full", entranceFeeCategory: null, itemCode: "HUT-A", amountCents: null,
           },
+        ]),
+      },
+      membershipType: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE", ageGroupsApply: false },
         ]),
       },
       xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -783,7 +800,7 @@ describe("xero item identity is null-honest", () => {
           category: "xero-config",
           rowCount: 1,
           bytes: strToU8(
-            "category,ageTier,seasonType,isMember,entranceFeeCategory,itemCode,amountCents\nHUT_FEE,ADULT,WINTER,,,HUT-A,\n",
+            "category,membershipTypeKey,ageTier,seasonType,entranceFeeCategory,itemCode,amountCents\nHUT_FEE,FULL,,WINTER,,HUT-A,\n",
           ),
         },
       ],
@@ -791,8 +808,8 @@ describe("xero item identity is null-honest", () => {
     );
     const plan = await buildImportPlan(db, zip, { mode: "merge" });
     const item = plan.categories.flatMap((c) => c.items).find((i) => i.entity === "xero-item-code-mapping");
-    // The blank-isMember row matches the existing null row → unchanged, NOT a
-    // duplicate create (the old compound-unique probe coerced null→false).
+    // The blank ageTier/entranceFeeCategory cells match the existing null row →
+    // unchanged, NOT a duplicate create.
     expect(item?.action).toBe("unchanged");
   });
 });
@@ -814,6 +831,7 @@ describe("xero target-org binding", () => {
       ({
         xeroAccountMapping: { findMany: vi.fn().mockResolvedValue([]) },
         xeroItemCodeMapping: { findMany: vi.fn().mockResolvedValue([]) },
+        membershipType: { findMany: vi.fn().mockResolvedValue([]) },
         xeroToken: {
           findFirst: vi
             .fn()
@@ -948,6 +966,7 @@ describe("import-side category selection", () => {
         committeeRole: { findMany: vi.fn().mockResolvedValue([]) },
         xeroAccountMapping: { findMany: vi.fn().mockResolvedValue([]) },
         xeroItemCodeMapping: { findMany: vi.fn().mockResolvedValue([]) },
+        membershipType: { findMany: vi.fn().mockResolvedValue([]) },
         xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
       }) as unknown as ReadDb;
 

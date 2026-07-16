@@ -10,10 +10,16 @@ import { requiresPaidSubscriptionForBooking } from "@/lib/member-subscription-el
 import {
   calculateBookingPrice,
   type GroupDiscountConfig,
-  type GuestInput,
   type PriceBreakdown,
+  type RateSource,
   type SeasonRateData,
+  type UnratedGuestInput,
 } from "@/lib/pricing";
+
+const NON_MEMBER_MEMBERSHIP_TYPE_KEY = "NON_MEMBER";
+const BUILT_IN_MEMBERSHIP_TYPE_KEYS = BUILT_IN_MEMBERSHIP_TYPES.map(
+  (type) => type.key,
+);
 import { getSeasonYear } from "@/lib/utils";
 
 const MEMBERSHIP_TYPE_BLOCKS_BOOKING_CODE =
@@ -396,46 +402,133 @@ export async function assertMembershipTypeBookingAllowed(
   }
 }
 
-export async function applyMembershipTypeRatePolicyToGuests<
-  Guest extends { isMember: boolean; memberId?: string | null; forceNonMemberRate?: boolean },
+export type GuestRateResolution = {
+  rateMembershipTypeId: string;
+  rateSource: RateSource;
+};
+
+/**
+ * Resolve every guest's rate membership type + rateSource (#1930, E4, D3).
+ * This REPLACES the old `applyMembershipTypeRatePolicyToGuests` boolean flip:
+ *   - a true non-member  -> the built-in NON_MEMBER type (NON_MEMBER_DEFAULT),
+ *   - a MEMBER_RATE member -> their own type (OWN_TYPE),
+ *   - a member whose type forces the non-member rate (NON_MEMBER_RATE) or is
+ *     otherwise non-MEMBER_RATE -> the NON_MEMBER type (TYPE_POLICY_FORCED).
+ * The result is persisted as the BookingGuest.rateMembershipTypeId snapshot and
+ * fed straight into calculateBookingPrice. Extends (does not fork) the shared
+ * `resolveMembershipTypePoliciesForMembers` effective-type helper.
+ */
+export async function resolveGuestRateMembershipTypes<
+  Guest extends { isMember: boolean; memberId?: string | null },
 >(
   db: unknown,
   params: {
     seasonYear: number;
     guests: ReadonlyArray<Guest>;
   },
-): Promise<Guest[]> {
+): Promise<Array<Guest & GuestRateResolution>> {
   const policies = await resolveMembershipTypePoliciesForMembers(db, {
     memberIds: params.guests.map((guest) => guest.memberId),
     seasonYear: params.seasonYear,
   });
 
+  // Built-in type ids: the NON_MEMBER default target, plus a key->id map that
+  // backfills any built-in fallback policy whose membershipType.id is null.
+  const typeIdByKey = new Map<string, string>();
+  if (isMembershipTypePolicyDb(db)) {
+    const types = (await db.membershipType.findMany({
+      where: { key: { in: [...BUILT_IN_MEMBERSHIP_TYPE_KEYS] } },
+      select: { id: true, key: true },
+    })) as Array<{ id: string; key: string }>;
+    for (const type of types) {
+      typeIdByKey.set(type.key, type.id);
+    }
+  }
+
+  const requireTypeId = (id: string | null | undefined, label: string): string => {
+    if (!id) {
+      throw new Error(
+        `Cannot price booking: membership type "${label}" is not present in the database.`,
+      );
+    }
+    return id;
+  };
+  const nonMemberTypeId = () =>
+    requireTypeId(
+      typeIdByKey.get(NON_MEMBER_MEMBERSHIP_TYPE_KEY),
+      NON_MEMBER_MEMBERSHIP_TYPE_KEY,
+    );
+  // Member-rate fallback for a member whose specific type cannot be resolved
+  // (no memberId — e.g. an orphaned guest whose member row was SetNull'd — or
+  // no policy row). Mirrors both the old engine (any isMember guest priced at
+  // the member rate) and the Xero NULL-snapshot fallback (isMember -> FULL), so
+  // day-one resolution stays byte-identical.
+  const fullTypeId = () => requireTypeId(typeIdByKey.get("FULL"), "FULL");
+
   return params.guests.map((guest) => {
-    if (!guest.isMember || !guest.memberId) {
-      return { ...guest };
+    if (!guest.isMember) {
+      // True non-member: the only class the group discount may substitute.
+      return {
+        ...guest,
+        rateMembershipTypeId: nonMemberTypeId(),
+        rateSource: "NON_MEMBER_DEFAULT" as const,
+      };
     }
-    const policy = policies.get(guest.memberId);
-    if (policy?.bookingBehavior !== "NON_MEMBER_RATE") {
-      return { ...guest };
+    const policy = guest.memberId ? policies.get(guest.memberId) : undefined;
+    if (!policy) {
+      // A member with no resolvable type prices at the member (FULL) rate.
+      return {
+        ...guest,
+        rateMembershipTypeId: fullTypeId(),
+        rateSource: "OWN_TYPE" as const,
+      };
     }
+    if (policy.bookingBehavior === "MEMBER_RATE") {
+      const ownId =
+        policy.membershipType.id ?? typeIdByKey.get(policy.membershipType.key);
+      return {
+        ...guest,
+        rateMembershipTypeId: requireTypeId(ownId, policy.membershipType.key),
+        rateSource: "OWN_TYPE" as const,
+      };
+    }
+    // NON_MEMBER_RATE, or BLOCK_BOOKING (blocked before pricing): both price
+    // from the built-in NON_MEMBER type's rows.
     return {
       ...guest,
-      forceNonMemberRate: true,
+      rateMembershipTypeId: nonMemberTypeId(),
+      rateSource: "TYPE_POLICY_FORCED" as const,
     };
   });
 }
 
-function restoreOriginalGuestIdentity(
-  price: PriceBreakdown,
-  guests: ReadonlyArray<{ isMember: boolean }>,
-): PriceBreakdown {
-  return {
-    ...price,
-    guests: price.guests.map((guest, index) => ({
-      ...guest,
-      isMember: guests[index]?.isMember ?? guest.isMember,
-    })),
-  };
+/**
+ * Read-time fallback for the group-discount substitution target (#1930, E4).
+ * A GroupDiscountSetting row created AFTER the re-key migration (the admin
+ * route's old upsert-create, or any hand-inserted row) carries a NULL
+ * rateMembershipTypeId; without this fallback an enabled discount would be
+ * silently inert (the engine only substitutes when a target id is present),
+ * where main's boolean flip always discounted. Resolve NULL to the built-in
+ * FULL type — the same target the migration seeds — so the discount always
+ * works. No-op (no query) when the discount is disabled or already targeted.
+ */
+export async function resolveGroupDiscountRateType(
+  db: unknown,
+  groupDiscount: GroupDiscountConfig | undefined,
+): Promise<GroupDiscountConfig | undefined> {
+  if (!groupDiscount?.enabled || groupDiscount.rateMembershipTypeId) {
+    return groupDiscount;
+  }
+  if (!isMembershipTypePolicyDb(db)) {
+    return groupDiscount;
+  }
+  const [fullType] = (await db.membershipType.findMany({
+    where: { key: { in: ["FULL"] } },
+    select: { id: true },
+  })) as Array<{ id: string }>;
+  return fullType
+    ? { ...groupDiscount, rateMembershipTypeId: fullType.id }
+    : groupDiscount;
 }
 
 export async function priceBookingGuestsWithMembershipTypePolicy(
@@ -444,7 +537,7 @@ export async function priceBookingGuestsWithMembershipTypePolicy(
     ownerMemberId?: string | null;
     checkIn: Date;
     checkOut: Date;
-    guests: GuestInput[];
+    guests: UnratedGuestInput[];
     seasons: SeasonRateData[];
     groupDiscount?: GroupDiscountConfig;
     seasonYear?: number;
@@ -456,19 +549,19 @@ export async function priceBookingGuestsWithMembershipTypePolicy(
     guests: input.guests,
     seasonYear,
   });
-  const pricedGuests = await applyMembershipTypeRatePolicyToGuests(db, {
-    seasonYear,
-    guests: input.guests,
-  });
-  return restoreOriginalGuestIdentity(
-    calculateBookingPrice(
-      input.checkIn,
-      input.checkOut,
-      pricedGuests,
-      input.seasons,
-      input.groupDiscount,
-    ),
-    input.guests,
+  const [ratedGuests, groupDiscount] = await Promise.all([
+    resolveGuestRateMembershipTypes(db, {
+      seasonYear,
+      guests: input.guests,
+    }),
+    resolveGroupDiscountRateType(db, input.groupDiscount),
+  ]);
+  return calculateBookingPrice(
+    input.checkIn,
+    input.checkOut,
+    ratedGuests,
+    input.seasons,
+    groupDiscount,
   );
 }
 

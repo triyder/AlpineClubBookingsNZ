@@ -28,7 +28,12 @@ import { RowValidator, asStr, coerceBool, nz, readCsvRows } from "../values";
 //     rooms.csv           name, sortOrder, active, notes
 //     beds.csv            roomName, name, sortOrder, active
 //     seasons.csv         name, type, startDate, endDate, active
-//     season-rates.csv    seasonName, ageTier, isMember, pricePerNightCents
+//     season-rates.csv    seasonName, membershipTypeKey, ageTier, pricePerNightCents
+//                         (ageTier blank = a flat type's single all-ages rate)
+//     Rates are keyed by membership type (#1930, E4). OLD bundles carrying the
+//     legacy `isMember` column are still accepted on import: isMember=true maps
+//     to the FULL type, false to NON_MEMBER (documented lossy compat — the
+//     other MEMBER_RATE types get no rows from a legacy bundle).
 // so the lodge a row belongs to is implied by the folder (not a CSV column).
 // The authoritative slug is lodge.json's `slug` — the folder name is just a
 // container.
@@ -68,7 +73,12 @@ const DISPLAY_NOTICE_MAX = 2000;
 const ROOM_FIELDS = ["name", "sortOrder", "active", "notes"] as const;
 const BED_FIELDS = ["roomName", "name", "sortOrder", "active", "bedType", "bunkGroup"] as const;
 const SEASON_FIELDS = ["name", "type", "startDate", "endDate", "active"] as const;
-const RATE_FIELDS = ["seasonName", "ageTier", "isMember", "pricePerNightCents"] as const;
+const RATE_FIELDS = ["seasonName", "membershipTypeKey", "ageTier", "pricePerNightCents"] as const;
+// Legacy isMember -> membershipTypeKey mapping for OLD import bundles (#1930, E4).
+const LEGACY_IS_MEMBER_TYPE_KEY: Record<"true" | "false", string> = {
+  true: "FULL",
+  false: "NON_MEMBER",
+};
 
 /** Folder-name segment for a lodge slug (slugs are url-safe; guard anyway). */
 export function folderSegment(slug: string): string {
@@ -184,7 +194,7 @@ registerEntity({
   tier: "key-strong",
   format: "csv",
   file: `${LODGES_PREFIX}<slug>/${RATES_CSV}`,
-  naturalKey: ["seasonName", "ageTier", "isMember"],
+  naturalKey: ["seasonName", "membershipTypeKey", "ageTier"],
   singleton: false,
   fields: [...RATE_FIELDS],
 });
@@ -252,7 +262,15 @@ interface LodgeBatch {
   seasons: Map<string, SeasonCurrent>; // lodgeId/name (first match)
   seasonsById: Map<string, SeasonCurrent>;
   seasonsByLodge: Map<string, Array<{ id: string; name: string; startDate: Date; endDate: Date }>>;
-  rates: Map<string, { id: string; pricePerNightCents: number }>; // lodgeId/seasonName/ageTier/isMember
+  rates: Map<string, { id: string; pricePerNightCents: number }>; // lodgeId/seasonName/membershipTypeKey/ageTierOrEmpty
+  membershipTypeIdByKey: Map<string, string>; // club-wide key -> id (for rate apply)
+  // Full descriptors for import validation (#1930, E4): rate rows may only
+  // target rate-bearing types (D2 invariant) and must match the type's
+  // ageGroupsApply shape.
+  membershipTypesByKey: Map<
+    string,
+    { id: string; bookingBehavior: string; ageGroupsApply: boolean }
+  >;
   currentDefaultSlug: string | null;
 }
 
@@ -270,7 +288,7 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
   const lodges = new Map(lodgeRows.map((l) => [l.slug, l]));
   const lodgeIds = lodgeRows.map((l) => l.id);
 
-  const [roomRows, bedRows, seasonRows, rateRows, currentDefault] = await Promise.all([
+  const [roomRows, bedRows, seasonRows, rateRows, membershipTypeRows, currentDefault] = await Promise.all([
     db.lodgeRoom.findMany({
       where: { lodgeId: { in: lodgeIds } },
       select: { id: true, lodgeId: true, name: true, sortOrder: true, active: true, notes: true },
@@ -284,9 +302,20 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
       orderBy: [{ startDate: "asc" }, { id: "asc" }],
       select: { id: true, lodgeId: true, name: true, type: true, startDate: true, endDate: true, active: true },
     }),
-    db.seasonRate.findMany({
+    // Membership-type-keyed rates (#1930, E4); the legacy SeasonRate table is
+    // frozen and no longer read/written by config transfer.
+    db.membershipTypeSeasonRate.findMany({
       where: { season: { lodgeId: { in: lodgeIds } } },
-      select: { id: true, ageTier: true, isMember: true, pricePerNightCents: true, season: { select: { lodgeId: true, name: true } } },
+      select: {
+        id: true,
+        ageTier: true,
+        pricePerNightCents: true,
+        membershipType: { select: { key: true } },
+        season: { select: { lodgeId: true, name: true } },
+      },
+    }),
+    db.membershipType.findMany({
+      select: { id: true, key: true, bookingBehavior: true, ageGroupsApply: true },
     }),
     db.lodge.findFirst({ where: { isDefault: true }, select: { slug: true } }),
   ]);
@@ -306,8 +335,17 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
   }
   const rates = new Map(
     rateRows.map((r) => [
-      `${r.season.lodgeId}/${r.season.name}/${r.ageTier}/${r.isMember}`,
+      `${r.season.lodgeId}/${r.season.name}/${r.membershipType.key}/${r.ageTier ?? ""}`,
       { id: r.id, pricePerNightCents: r.pricePerNightCents },
+    ]),
+  );
+  const membershipTypeIdByKey = new Map(
+    membershipTypeRows.map((t) => [t.key, t.id]),
+  );
+  const membershipTypesByKey = new Map(
+    membershipTypeRows.map((t) => [
+      t.key,
+      { id: t.id, bookingBehavior: t.bookingBehavior, ageGroupsApply: t.ageGroupsApply },
     ]),
   );
 
@@ -319,6 +357,8 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
     seasonsById,
     seasonsByLodge,
     rates,
+    membershipTypeIdByKey,
+    membershipTypesByKey,
     currentDefaultSlug: currentDefault?.slug ?? null,
   };
 }
@@ -363,9 +403,14 @@ export const lodgeConfigExporter: CategoryExporter = {
       orderBy: [{ startDate: "asc" }, { name: "asc" }],
       select: { name: true, type: true, startDate: true, endDate: true, active: true, lodge: { select: { slug: true } } },
     });
-    const rates = await ctx.db.seasonRate.findMany({
-      orderBy: [{ ageTier: "asc" }, { isMember: "asc" }],
-      select: { ageTier: true, isMember: true, pricePerNightCents: true, season: { select: { name: true, lodge: { select: { slug: true } } } } },
+    const rates = await ctx.db.membershipTypeSeasonRate.findMany({
+      orderBy: [{ membershipTypeId: "asc" }, { ageTier: "asc" }],
+      select: {
+        ageTier: true,
+        pricePerNightCents: true,
+        membershipType: { select: { key: true } },
+        season: { select: { name: true, lodge: { select: { slug: true } } } },
+      },
     });
 
     const bySlug = <T>() => new Map<string, T[]>();
@@ -381,7 +426,7 @@ export const lodgeConfigExporter: CategoryExporter = {
     for (const r of rooms) push(roomsBy, r.lodge.slug, { name: r.name, sortOrder: r.sortOrder, active: r.active, notes: r.notes });
     for (const b of beds) push(bedsBy, b.room.lodge.slug, { roomName: b.room.name, name: b.name, sortOrder: b.sortOrder, active: b.active, bedType: b.bedType, bunkGroup: b.bunkGroup });
     for (const s of seasons) push(seasonsBy, s.lodge.slug, { name: s.name, type: s.type, startDate: toDateStr(s.startDate), endDate: toDateStr(s.endDate), active: s.active });
-    for (const r of rates) push(ratesBy, r.season.lodge.slug, { seasonName: r.season.name, ageTier: r.ageTier, isMember: r.isMember, pricePerNightCents: r.pricePerNightCents });
+    for (const r of rates) push(ratesBy, r.season.lodge.slug, { seasonName: r.season.name, membershipTypeKey: r.membershipType.key, ageTier: r.ageTier ?? "", pricePerNightCents: r.pricePerNightCents });
 
     const entries: BundleEntry[] = [];
     for (const lodge of lodges) {
@@ -429,7 +474,7 @@ interface ParsedLodgeRows {
   rooms: Array<{ raw: Record<string, string>; name: string; data: Record<string, unknown> }>;
   beds: Array<{ raw: Record<string, string>; roomName: string; name: string; data: Record<string, unknown> }>;
   seasons: Array<{ raw: Record<string, string>; name: string; data: Record<string, unknown> }>;
-  rates: Array<{ raw: Record<string, string>; seasonName: string; ageTier: string; isMember: boolean; data: Record<string, unknown> }>;
+  rates: Array<{ raw: Record<string, string>; seasonName: string; membershipTypeKey: string; ageTier: string | null; data: Record<string, unknown> }>;
 }
 
 /**
@@ -550,17 +595,68 @@ function parseLodgeFolder(
   readCsvRows(files, paths.rates).forEach((raw, i) => {
     const v = new RowValidator(paths.rates, i, errors);
     const seasonName = v.required("seasonName", raw.seasonName);
-    const ageTier = v.enum("ageTier", "AgeTier", raw.ageTier);
-    const isMember = v.bool("isMember", raw.isMember);
+
+    // Membership-type key (#1930, E4). OLD bundles carry `isMember` instead:
+    // map true -> FULL, false -> NON_MEMBER (documented lossy compat).
+    let membershipTypeKey: string;
+    if (nz(raw.membershipTypeKey) !== null) {
+      membershipTypeKey = v.required("membershipTypeKey", raw.membershipTypeKey);
+    } else if (nz(raw.isMember) !== null) {
+      const isMember = v.bool("isMember", raw.isMember);
+      membershipTypeKey = LEGACY_IS_MEMBER_TYPE_KEY[String(isMember) as "true" | "false"];
+    } else {
+      membershipTypeKey = v.required("membershipTypeKey", raw.membershipTypeKey);
+    }
+    const membershipType = batch.membershipTypesByKey.get(membershipTypeKey);
+    if (membershipTypeKey && !membershipType) {
+      errors.push(
+        `${paths.rates}: row ${i + 1}: unknown membership type "${membershipTypeKey}"`,
+      );
+    }
+
+    // ageTier is optional: blank = a flat type's single all-ages rate (null).
+    const ageTier = nz(raw.ageTier) === null ? null : v.enum("ageTier", "AgeTier", raw.ageTier);
+
+    // D2 invariant + shape validation (#1930, E4). Both are blocking errors,
+    // exactly like an unknown membership type: a NON_MEMBER_RATE type (other
+    // than the built-in NON_MEMBER rate holder) or BLOCK_BOOKING type owns
+    // ZERO rate rows, and a row's ageTier must match the type's
+    // ageGroupsApply shape (per-tier rows for age-keyed types, one blank-tier
+    // flat row for flat types).
+    let rowShapeValid = true;
+    if (membershipType) {
+      const rateBearing =
+        membershipType.bookingBehavior === "MEMBER_RATE" ||
+        membershipTypeKey === "NON_MEMBER";
+      if (!rateBearing) {
+        errors.push(
+          `${paths.rates}: row ${i + 1}: membership type "${membershipTypeKey}" does not carry its own hut rates (${membershipType.bookingBehavior} types own zero rate rows)`,
+        );
+        rowShapeValid = false;
+      } else if (!membershipType.ageGroupsApply && ageTier !== null) {
+        errors.push(
+          `${paths.rates}: row ${i + 1}: membership type "${membershipTypeKey}" prices from a single flat rate — leave ageTier blank`,
+        );
+        rowShapeValid = false;
+      } else if (membershipType.ageGroupsApply && ageTier === null) {
+        errors.push(
+          `${paths.rates}: row ${i + 1}: membership type "${membershipTypeKey}" uses per-age-tier rates — specify an ageTier`,
+        );
+        rowShapeValid = false;
+      }
+    }
+
     const current =
-      lodgeId ? batch.rates.get(`${lodgeId}/${seasonName}/${ageTier}/${isMember}`) : null;
+      lodgeId
+        ? batch.rates.get(`${lodgeId}/${seasonName}/${membershipTypeKey}/${ageTier ?? ""}`)
+        : null;
     const blankOk = ctxMode === "merge" && !!current;
     const pricePerNightCents =
       blankOk && nz(raw.pricePerNightCents) === null
         ? 0
         : v.moneyCents("pricePerNightCents", raw.pricePerNightCents);
-    if (!v.ok) return;
-    out.rates.push({ raw, seasonName, ageTier, isMember, data: { pricePerNightCents } });
+    if (!v.ok || !membershipType || !rowShapeValid) return;
+    out.rates.push({ raw, seasonName, membershipTypeKey, ageTier, data: { pricePerNightCents } });
   });
 
   return out;
@@ -675,11 +771,11 @@ async function planLodgeConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
       });
     }
 
-    // Season rates.
+    // Season rates (keyed by membership type + optional age tier, #1930 E4).
     for (const row of parsed.rates) {
-      const key = `${slug}/${row.seasonName}/${row.ageTier}/${row.isMember}`;
+      const key = `${slug}/${row.seasonName}/${row.membershipTypeKey}/${row.ageTier ?? ""}`;
       const current = lodgeId
-        ? batch.rates.get(`${lodgeId}/${row.seasonName}/${row.ageTier}/${row.isMember}`) ?? null
+        ? batch.rates.get(`${lodgeId}/${row.seasonName}/${row.membershipTypeKey}/${row.ageTier ?? ""}`) ?? null
         : null;
       fingerprintParts.push(`season-rate:${key}:${current ? String(current.pricePerNightCents) : "absent"}`);
       const write = updateDataForMode(ctx.mode, row.raw, row.data);
@@ -821,24 +917,25 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       if (current) seasonIdByName.set(row.name, current.id as string);
     }
 
-    // 5) Season rates (by seasonId + ageTier + isMember).
+    // 5) Season rates (by seasonId + membershipTypeId + ageTier, #1930 E4).
     for (const row of parsed.rates) {
       const seasonId = seasonIdByName.get(row.seasonName);
-      if (!seasonId) {
+      const membershipTypeId = batch.membershipTypeIdByKey.get(row.membershipTypeKey);
+      if (!seasonId || !membershipTypeId) {
         result.skipped += 1;
         continue;
       }
-      const current = batch.rates.get(`${lodgeId}/${row.seasonName}/${row.ageTier}/${row.isMember}`) ?? null;
+      const current = batch.rates.get(`${lodgeId}/${row.seasonName}/${row.membershipTypeKey}/${row.ageTier ?? ""}`) ?? null;
       await applyRow({
         mode: ctx.mode,
         raw: row.raw,
         data: row.data,
         current,
         create: (data) =>
-          ctx.tx.seasonRate.create({
-            data: { seasonId, ageTier: row.ageTier as never, isMember: row.isMember, ...(data as object) } as never,
+          ctx.tx.membershipTypeSeasonRate.create({
+            data: { seasonId, membershipTypeId, ageTier: row.ageTier as never, ...(data as object) } as never,
           }),
-        update: (write) => ctx.tx.seasonRate.update({ where: { id: current!.id }, data: write }),
+        update: (write) => ctx.tx.membershipTypeSeasonRate.update({ where: { id: current!.id }, data: write }),
         result,
       });
     }

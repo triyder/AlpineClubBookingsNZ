@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => ({
       update: vi.fn(),
     },
     member: {
-      findMany: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
       findUnique: vi.fn(),
     },
@@ -40,6 +40,16 @@ const mocks = vi.hoisted(() => ({
     lodge: {
       findFirst: vi.fn(),
       count: vi.fn(),
+    },
+    // Rate resolver (#1930, E4): the hold path snapshots each guest's rate
+    // membership type at create time (linked members via assignments; unlinked
+    // guests resolve to the built-in NON_MEMBER type).
+    seasonalMembershipAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "type-full", key: "FULL" },
+        { id: "type-nonmember", key: "NON_MEMBER" },
+      ]),
     },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
@@ -1322,6 +1332,71 @@ describe("holdBookingRequestSlots owner role", () => {
       unknown
     >;
     expect(bookingArgs.memberId).toBe("existing-contact");
+  });
+
+  it("persists each guest's rate-membership-type snapshot on the held booking (#1930, E4)", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        type: BookingRequestType.GENERAL,
+        priceCents: 12000,
+        quotes: [],
+        guests: [
+          { firstName: "Linked", lastName: "Member", ageTier: AgeTier.ADULT },
+          { firstName: "Uma", lastName: "Unlinked", ageTier: AgeTier.ADULT },
+        ],
+        linkedGuestMembers: [{ guestIndex: 0, memberId: "member-42" }],
+      }) as never
+    );
+    // The admin-linked member carries a CUSTOM MEMBER_RATE type via its
+    // seasonal assignment; its snapshot must record that type's id.
+    vi.mocked(prisma.member.findMany).mockResolvedValue([
+      {
+        id: "member-42",
+        firstName: "Linked",
+        lastName: "Member",
+        email: "linked@example.test",
+        role: "MEMBER",
+        ageTier: AgeTier.ADULT,
+      },
+    ] as never);
+    vi.mocked(prisma.seasonalMembershipAssignment.findMany).mockResolvedValue([
+      {
+        memberId: "member-42",
+        seasonYear: 2026,
+        membershipType: {
+          id: "type-club",
+          key: "CLUB",
+          name: "Club",
+          isActive: true,
+          isBuiltIn: false,
+          bookingBehavior: "MEMBER_RATE",
+          subscriptionBehavior: "REQUIRED",
+        },
+      },
+    ] as never);
+
+    await holdBookingRequestSlots({ requestId: "req-1", adminMemberId: "admin-1" });
+
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    const created = (bookingArgs.guests as { create: Array<Record<string, unknown>> })
+      .create;
+    // Snapshot-only: the quoted per-guest price split is untouched.
+    expect(created[0]).toMatchObject({
+      memberId: "member-42",
+      isMember: true,
+      rateMembershipTypeId: "type-club",
+      priceCents: 6000,
+    });
+    expect(created[1]).toMatchObject({
+      isMember: false,
+      rateMembershipTypeId: "type-nonmember",
+      priceCents: 6000,
+    });
+
+    // Restore the suite defaults (clearAllMocks does not reset implementations).
+    vi.mocked(prisma.member.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.seasonalMembershipAssignment.findMany).mockResolvedValue([] as never);
   });
 
   it("rejects holding onto a login-capable member (#1255 guard)", async () => {

@@ -162,9 +162,10 @@ const CURRENT_SEASON = [{
   id: "s1",
   startDate: new Date("2026-04-01T00:00:00.000Z"),
   endDate: new Date("2026-10-31T00:00:00.000Z"),
-  rates: [
-    { ageTier: "ADULT", isMember: true, pricePerNightCents: 6000 },
-    { ageTier: "ADULT", isMember: false, pricePerNightCents: 8000 },
+  // Membership-type-keyed rates (#1930, E4): FULL members 6000, NON_MEMBER 8000.
+  membershipTypeRates: [
+    { membershipTypeId: "type-full", ageTier: "ADULT", pricePerNightCents: 6000 },
+    { membershipTypeId: "type-nonmember", ageTier: "ADULT", pricePerNightCents: 8000 },
   ],
 }];
 
@@ -201,9 +202,30 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
-    member: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(1) },
+    // Rate resolver (#1930, E4): member guests (with a memberId) resolve to the
+    // FULL type (role default) -> member rate; the built-in NON_MEMBER type
+    // backs true non-members.
+    member: {
+      findMany: vi.fn().mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({
+          id,
+          firstName: "Member",
+          lastName: "Test",
+          email: `${id}@test.com`,
+          role: "MEMBER",
+          ageTier: "ADULT",
+        })),
+      ),
+      findUnique: vi.fn().mockResolvedValue(null),
+      count: vi.fn().mockResolvedValue(1),
+    },
     seasonalMembershipAssignment: { findMany: vi.fn().mockResolvedValue([]) },
-    membershipType: { findMany: vi.fn().mockResolvedValue([]) },
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "type-full", key: "FULL", bookingBehavior: "MEMBER_RATE", subscriptionBehavior: "REQUIRED", name: "Full", isActive: true, isBuiltIn: true },
+        { id: "type-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE", subscriptionBehavior: "NOT_REQUIRED", name: "Non-Member", isActive: true, isBuiltIn: true },
+      ]),
+    },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
   };
 }

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   buildSetupReadiness,
+  computeMembershipTypeRateGaps,
   normalizeSetupProgress,
   type SetupDatabaseSnapshot,
 } from "@/lib/setup-readiness";
@@ -85,6 +86,32 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
     }),
   ]);
 
+  // Missing-rate readiness (#1930, E4): every ACTIVE MEMBER_RATE membership
+  // type must carry tier-complete rate rows (every bookable age tier, or a
+  // flat all-ages row) for every active or future season, or bookings for
+  // that type × those dates hard-throw at pricing time. Archived types are
+  // skipped — they only price history. The tier-aware coverage rule lives in
+  // computeMembershipTypeRateGaps (setup-readiness.ts).
+  const [memberRateTypes, currentAndFutureSeasons, existingTypeSeasonRates] =
+    await Promise.all([
+      prisma.membershipType.findMany({
+        where: { isActive: true, bookingBehavior: "MEMBER_RATE" },
+        select: { id: true, name: true, ageGroupsApply: true },
+      }),
+      prisma.season.findMany({
+        where: { OR: [{ active: true }, { endDate: { gte: now } }] },
+        select: { id: true, name: true },
+      }),
+      prisma.membershipTypeSeasonRate.findMany({
+        select: { seasonId: true, membershipTypeId: true, ageTier: true },
+      }),
+    ]);
+  const membershipTypeRateGaps = computeMembershipTypeRateGaps({
+    types: memberRateTypes,
+    seasons: currentAndFutureSeasons,
+    rateRows: existingTypeSeasonRates,
+  });
+
   return {
     adminCount,
     adminModuleSettings,
@@ -107,6 +134,7 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
     xeroAccountMappingCount,
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
+    membershipTypeRateGaps,
   };
 }
 
