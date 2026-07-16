@@ -275,7 +275,13 @@ export function parseMemberRelationOwnerKeys(schemaText: string): string[] {
   const keys: string[] = [];
   let model: string | null = null;
   const modelRe = /^model\s+(\w+)\s*\{/;
-  const relRe = /^\s*(\w+)\s+Member\??\s+@relation\(([^)]*)\)/;
+  // Any singular Member-typed field carrying attributes. The `@relation(...)`
+  // is extracted from the attribute tail separately so an attribute BEFORE
+  // `@relation(` (e.g. `@ignore @relation(...)`) can never silently exclude a
+  // field from the universe (fail-open would let an onDelete:Cascade relation
+  // die with the loser unclassified). The runtime-DMMF test additionally
+  // asserts every singular Member field maps to a parsed key (fail-closed).
+  const fieldRe = /^\s*(\w+)\s+Member\??\s+(@.*)$/;
   for (const line of lines) {
     const mm = line.match(modelRe);
     if (mm) {
@@ -286,8 +292,10 @@ export function parseMemberRelationOwnerKeys(schemaText: string): string[] {
       model = null;
       continue;
     }
-    const rm = line.match(relRe);
-    if (rm && model && /fields:\s*\[/.test(rm[2])) {
+    const rm = line.match(fieldRe);
+    if (!rm || !model) continue;
+    const rel = rm[2].match(/@relation\(([^)]*)\)/);
+    if (rel && /fields:\s*\[/.test(rel[1])) {
       keys.push(`${model}.${rm[1]}`);
     }
   }
