@@ -3080,6 +3080,12 @@ model Lodge {
   isDefault  Boolean  @default(false)
   doorCode   String?  @db.VarChar(80)
   travelNote String?
+  // Postal / physical address of the lodge, admin-editable (E3 #1929). Feeds the
+  // {{lodge-address}} content placeholder and the public contact page's lodge block.
+  // Nullable: fresh installs seed no address (the seed-account-defaults guard
+  // keeps geography out of seeds); the additive migration backfills only the
+  // existing default lodge with the historical hardcoded string.
+  address    String?  @db.VarChar(300)
   // Per-lodge config glob for the lobby display's {{config:<key>}}
   // placeholders (docs/lobby-display/design.md §3, fork issue #26): free-form
   // string key/value pairs, validated at the admin edit surface. Null = none.
@@ -3165,6 +3171,25 @@ model EmailMessageSetting {
   @@index([updatedByMemberId])
 }
 
+// DB-first club identity (E3 #1929). Admin-editable singleton (id="default")
+// holding the club-configurable identity fields; club.json remains the
+// per-field fallback and hard defaults are the last resort. Every field is
+// nullable so an empty/absent row is fully functional via the fallback chain
+// (DB -> club.json -> hard default), resolved in src/lib/club-identity-settings.ts.
+// The lodge display name is NOT stored here — it resolves from the Lodge table
+// (default lodge) so identity stays a single source of truth.
+model ClubIdentitySettings {
+  id                String   @id @default("default")
+  name              String?
+  shortName         String?
+  hutLeaderLabel    String?
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
 model EmailTemplateOverride {
   id                String   @id @default(cuid())
   templateName      String   @unique
@@ -3215,6 +3240,9 @@ model PageContent {
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  // Back-relation for the public Book Now target (E3 #1929). SetNull on delete.
+  bookNowSettings   PublicContentSettings[] @relation("PublicContentBookNowPage")
 
   @@index([sortOrder])
   @@index([updatedByMemberId])
@@ -4046,6 +4074,12 @@ model GroupDiscountSetting {
 // Public PageContent data blocks are opt-in. Inserting a token is not enough:
 // an administrator must also enable its family here before any authoritative
 // fee or policy data is rendered publicly.
+// Target the public "Book Now" button points at (E3 #1929).
+enum BookNowTarget {
+  BOOKING_FLOW
+  PAGE
+}
+
 model PublicContentSettings {
   id                   String   @id @default("default")
   membershipTypes      Boolean  @default(false)
@@ -4053,9 +4087,21 @@ model PublicContentSettings {
   hutFees              Boolean  @default(false)
   bookingPolicySummary Boolean  @default(false)
   cancellationPolicy   Boolean  @default(false)
+  // Configurable public "Book Now" button (E3 #1929). Default preserves the
+  // historical behaviour: shown, pointing at the booking flow. When target is
+  // PAGE, bookNowPageId names a published PageContent; getBookNowConfig() fails
+  // open to the booking flow if the page is missing/unpublished, so the button
+  // is never dead. The FK is SetNull so deleting the target page reverts the
+  // button to the booking flow rather than dangling.
+  showBookNow          Boolean       @default(true)
+  bookNowTarget        BookNowTarget @default(BOOKING_FLOW)
+  bookNowPageId        String?
+  bookNowPage          PageContent?  @relation("PublicContentBookNowPage", fields: [bookNowPageId], references: [id], onDelete: SetNull)
   updatedByMemberId    String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
+
+  @@index([bookNowPageId])
 }
 
 // ---------------------------------------------------------------------------

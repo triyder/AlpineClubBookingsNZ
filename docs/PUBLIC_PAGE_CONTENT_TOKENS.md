@@ -10,6 +10,23 @@ database-backed 404. The supported data tokens are:
 - `{{booking-policy-summary}}` or `{{booking-policy-summary:lodge-slug}}`
 - `{{cancellation-policy}}` or `{{cancellation-policy:lodge-slug}}`
 
+Inline **text** tokens are also available in page bodies, lodge instructions,
+and the site footer (they render an escaped string in place, not a block):
+
+- `{{club-name}}` — the DB-first club name (Admin > Club Identity).
+- `{{hut-leader}}` / `{{hut-leader-lower}}` — the configured hut-leader role
+  label (never a person's name).
+- `{{lodge-capacity}}` or `{{lodge-capacity:lodge-slug}}` — a lodge's capacity.
+- `{{lodge-name}}` or `{{lodge-name:lodge-slug}}` — a lodge's name.
+- `{{lodge-address}}` or `{{lodge-address:lodge-slug}}` — a lodge's address
+  (renders nothing when the lodge has no address set).
+- `{{currency}}`, and `{{facebook-url}}` (footer only).
+
+For the lodge text tokens the bare form resolves the **default lodge**; a
+`:lodge-slug` parameter targets a named lodge, and an unknown slug falls back to
+the default lodge. Edit lodge name/address under Admin > Club Identity > Lodge
+details (single-lodge) or Admin > Setup > Lodges (multi-lodge).
+
 ## Publishing workflow
 
 1. In Admin > Page Content, enable only the data families the club intends to

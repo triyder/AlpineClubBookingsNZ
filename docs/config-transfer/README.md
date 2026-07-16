@@ -81,8 +81,11 @@ admins at **Admin → Setup & Configuration → Export & Import**
   travel in the bundle and their `/api/images/<id>` references are remapped on
   import.
 - **club-settings** — the club-wide settings singletons (modules, booking
-  defaults, member-fields, bed-allocation, booking-request, IB payments, email
-  message settings, group discount, membership nomination/lockout/cancellation).
+  defaults, member-fields, bed-allocation, booking-request, IB payments, club
+  identity (name/short name/hut-leader label), email message settings, group
+  discount, membership nomination/lockout/cancellation). Applying the bundle
+  refreshes the DB-first club-identity cache so imported identity takes effect
+  immediately.
 - **lodge-config** — lodges, rooms, beds, seasons, season rates, lodge
   instructions (content images bundled + remapped), and chore templates. Each
   lodge is a **self-contained folder**, `lodge-config/lodges/<slug>/` with a

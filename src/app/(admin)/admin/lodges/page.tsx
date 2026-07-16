@@ -22,21 +22,29 @@ type LodgeRecord = {
   name: string;
   slug: string;
   active: boolean;
+  address: string | null;
   doorCode: string | null;
   travelNote: string | null;
 };
 
 type LodgeFormState = {
   name: string;
+  address: string;
   doorCode: string;
   travelNote: string;
 };
 
-const emptyForm: LodgeFormState = { name: "", doorCode: "", travelNote: "" };
+const emptyForm: LodgeFormState = {
+  name: "",
+  address: "",
+  doorCode: "",
+  travelNote: "",
+};
 
 function formFromLodge(lodge: LodgeRecord): LodgeFormState {
   return {
     name: lodge.name,
+    address: lodge.address ?? "",
     doorCode: lodge.doorCode ?? "",
     travelNote: lodge.travelNote ?? "",
   };
@@ -45,6 +53,7 @@ function formFromLodge(lodge: LodgeRecord): LodgeFormState {
 function formPayload(form: LodgeFormState) {
   return {
     name: form.name.trim(),
+    address: form.address.trim() || null,
     doorCode: form.doorCode.trim() || null,
     travelNote: form.travelNote.trim() || null,
   };
@@ -223,6 +232,7 @@ export default function AdminLodgesPage() {
           <CardHeader>
             <CardTitle>{creating ? "Add lodge" : "Edit lodge"}</CardTitle>
             <CardDescription>
+              The address feeds the public {"{{lodge-address}}"} content token.
               The door code and travel note appear in booking and pre-arrival
               emails for this lodge.
             </CardDescription>
@@ -236,6 +246,19 @@ export default function AdminLodgesPage() {
                 maxLength={120}
                 onChange={(event) =>
                   setForm((prev) => ({ ...prev, name: event.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="lodge-address">Address</Label>
+              <Textarea
+                id="lodge-address"
+                value={form.address}
+                maxLength={300}
+                rows={2}
+                placeholder="Optional — feeds the public {{lodge-address}} token"
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, address: event.target.value }))
                 }
               />
             </div>

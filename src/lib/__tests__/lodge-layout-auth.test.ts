@@ -31,6 +31,15 @@ vi.mock("@/components/app-providers", () => ({
   AppProviders: ({ children }: { children: ReactNode }) => children,
 }));
 
+// The layout now resolves DB-first club identity via the tagged public-layout
+// cache (E3 #1929). Its real module imports "server-only" (which vitest cannot
+// resolve); stub the accessor with the config identity — the same value the
+// layout used before it moved to the DB-first accessor.
+vi.mock("@/lib/public-layout-config", async () => {
+  const { clubIdentity } = await import("@/config/club-identity");
+  return { getCachedClubIdentity: vi.fn(async () => clubIdentity) };
+});
+
 describe("lodge layout authentication", () => {
   beforeEach(() => {
     vi.clearAllMocks();

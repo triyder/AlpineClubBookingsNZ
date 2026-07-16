@@ -18,6 +18,13 @@ vi.mock("@/config/club-identity", () => ({
     return identityState.publicUrl;
   },
 }));
+// {{club-name}}/{{hut-leader}} now resolve DB-first via getClubIdentity (E3 #1929).
+vi.mock("@/lib/club-identity-settings", () => ({
+  getClubIdentity: vi.fn(async () => ({
+    name: "Club <Name>",
+    hutLeaderLabel: "Hut Leader",
+  })),
+}));
 vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD & GST" }));
 vi.mock("@/lib/lodge-capacity", () => ({
   getDefaultLodgeCapacity: vi.fn(async () => 42),

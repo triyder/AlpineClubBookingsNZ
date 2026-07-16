@@ -28,6 +28,30 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 
 `config/club.json` is validated by `src/config/schema.ts`.
 
+### DB-first identity (admin-editable)
+
+The club **name**, **short name**, and **hut-leader label** are DB-first: an
+admin edits them under **Admin > Site Appearance & Content > Club Identity** (no
+redeploy). Each field resolves through a per-field fallback chain —
+**database (`ClubIdentitySettings`) → `config/club.json` → hard default** — so an
+empty/absent row keeps working from the file config, and clearing a field in the
+admin UI restores the configured default. Changes propagate to the site header,
+footer, page titles, and emails within a few seconds (a 15s tagged cache; the
+TOTP issuer label used at 2FA enrolment can lag by a short process-cache TTL and
+only affects new enrolments). `config/club.json` is never modified by these
+edits — it remains the seed and the fallback.
+
+The **lodge display name** is not stored in club identity: it always resolves
+from the **default lodge**'s `Lodge.name` (edit it under Club Identity > Lodge
+details, or Admin > Setup > Lodges for multi-lodge clubs). The lodge also carries
+an admin-editable **address** (shown on the public contact page and via the
+`{{lodge-name}}` / `{{lodge-address}}` content tokens).
+
+Email club-name precedence is `EmailMessageSetting.clubName` (Admin > Email
+Messages) → `ClubIdentitySettings.name` → `config/club.json`. Email template
+default subjects keep the config-derived lodge name as their stable search key;
+the live lodge name is substituted at send time.
+
 | Field                                              | Required | Description                                                                                                      |
 | -------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
 | `name`                                             | yes      | Full public club name.                                                                                           |
@@ -188,7 +212,9 @@ menu.
   data rather than another lodge's fallback. Legal and help-copy pages can also use text
   tokens `{{club-name}}`, `{{currency}}`, `{{lodge-capacity}}`,
   `{{lodge-capacity:lodge-slug}}` (a named lodge's capacity; unknown slug falls
-  back to the default lodge), `{{hut-leader}}`, and `{{hut-leader-lower}}`, which
+  back to the default lodge), `{{lodge-name}}` / `{{lodge-name:lodge-slug}}`,
+  `{{lodge-address}}` / `{{lodge-address:lodge-slug}}` (a lodge's name/address;
+  empty address renders nothing), `{{hut-leader}}`, and `{{hut-leader-lower}}`, which
   are resolved server-side
   from the current club/runtime settings (`{{hut-leader}}` renders the
   configured hut-leader **role label**, default `Hut Leader` — the role name,
@@ -230,6 +256,18 @@ menu.
   Those uploads accept PNG, JPEG, GIF, WebP, and AVIF files up to 10MB. SVG is
   intentionally rejected there because filesystem uploads are served as static
   image assets without the database image route's restrictive CSP.
+
+### Configurable "Book Now" button
+
+The public website header's **Book Now** button is configured on the same
+Admin > Page Content panel (`PublicContentSettings`):
+
+- **Show the button** — off hides it entirely (desktop and mobile).
+- **Target** — *booking flow* (the default: a logged-in member goes to `/book`,
+  a guest is sent through login) or a chosen **published content page**.
+- A page target that becomes unpublished or is deleted **fails open** to the
+  booking flow, so the button is never dead. The authenticated dashboard's own
+  Book Now action is unaffected — a signed-in member can always book.
 
 ## Website Site Content
 
@@ -331,10 +369,13 @@ once a *second active lodge actually exists*.
 
 ### 2. Create the lodge
 
-On the Lodges page, create the new lodge: name, and optionally its door code
-and travel note (these are the per-lodge identity fields used in that lodge's
-confirmation and pre-arrival emails). The club's original lodge already exists
-as the seeded default lodge.
+On the Lodges page, create the new lodge: name, and optionally its address, door
+code, and travel note (the door code and travel note are used in that lodge's
+confirmation and pre-arrival emails; the name and address are also public — the
+contact page and the `{{lodge-name}}` / `{{lodge-address}}` content tokens read
+them). The club's original lodge already exists as the seeded default lodge. For
+a single-lodge club, the same fields are editable under **Admin > Club Identity >
+Lodge details** without opening the multi-lodge management UI.
 
 ### 3. Run the setup wizard
 

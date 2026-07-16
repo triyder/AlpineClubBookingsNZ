@@ -4,7 +4,7 @@ import { CommitteeMembersGrid } from "@/components/website/committee-members-gri
 import { PhotoGalleryToken } from "@/components/website/photo-gallery-token";
 import { SkifieldConditionsWidget } from "@/components/website/skifield-conditions-widget";
 import { SkifieldWhakapapaWidget } from "@/components/website/skifield-whakapapa-widget";
-import { clubIdentity } from "@/config/club-identity";
+import type { ClubIdentity } from "@/config/club-identity-types";
 import type { EmbeddedBodyPart } from "@/lib/page-content-embeds";
 import {
   BookingPolicyToken,
@@ -18,6 +18,11 @@ type EmbeddedPageContentPartsProps = {
   parts: EmbeddedBodyPart[];
   pageSlug: string;
   keyPrefix?: string;
+  // DB-first club identity (E3 #1929). Threaded from the resolving server page so
+  // the embedded contact/join forms render the live club name instead of the
+  // static config value. The (website) route group has no ClubIdentityProvider,
+  // so this must come through props rather than a client hook.
+  clubIdentity: ClubIdentity;
 };
 
 function galleryIdSlug(pageSlug: string) {
@@ -28,6 +33,7 @@ export function EmbeddedPageContentParts({
   parts,
   pageSlug,
   keyPrefix = "embedded",
+  clubIdentity,
 }: EmbeddedPageContentPartsProps) {
   const idSlug = galleryIdSlug(pageSlug);
 

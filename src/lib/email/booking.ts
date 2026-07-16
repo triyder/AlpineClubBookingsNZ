@@ -11,7 +11,7 @@ import {
   setupIntentFailedTemplate,
   preArrivalReminderTemplate,
 } from "../email-templates";
-import { CLUB_LODGE_NAME } from "@/config/club-identity";
+import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import {
   formatNZDate,
   formatNZDateTime,
@@ -47,7 +47,7 @@ export async function sendBookingConfirmedEmail(
   const promoAdjustmentPrefix = promoAdjustmentCents > 0 ? "+" : "-";
   await sendEmail({
     to: email,
-    subject: `Booking Confirmed - ${CLUB_LODGE_NAME}`,
+    subject: `Booking Confirmed - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: bookingConfirmedTemplate(
       firstName,
       checkIn,
@@ -99,7 +99,7 @@ export async function sendBookingPendingEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: `Booking Pending - ${CLUB_LODGE_NAME}`,
+    subject: `Booking Pending - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: bookingPendingTemplate(
       firstName,
       checkIn,
@@ -130,7 +130,7 @@ export async function sendBookingBumpedEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: `Booking Update - ${CLUB_LODGE_NAME}`,
+    subject: `Booking Update - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: bookingBumpedTemplate(firstName, checkIn, checkOut, guestCount),
     templateName: "booking-bumped",
     templateData: {
@@ -153,7 +153,7 @@ export async function sendBookingGuestsCancelledEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: `Booking Cancelled - ${CLUB_LODGE_NAME}`,
+    subject: `Booking Cancelled - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: bookingGuestsCancelledTemplate(firstName, checkIn, checkOut),
     templateName: "booking-guests-cancelled",
     templateData: {
@@ -178,7 +178,7 @@ export async function sendBookingCancelledEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: `Booking Cancelled - ${CLUB_LODGE_NAME}`,
+    subject: `Booking Cancelled - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: bookingCancelledTemplate(
       firstName,
       checkIn,
@@ -225,7 +225,7 @@ export async function sendBookingReviewApprovedEmail(params: {
 }) {
   await sendEmail({
     to: params.email,
-    subject: `Your booking has been approved - ${CLUB_LODGE_NAME}`,
+    subject: `Your booking has been approved - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: bookingReviewApprovedTemplate(
       params.firstName,
       params.checkIn,
@@ -257,7 +257,7 @@ export async function sendBookingReviewRejectedEmail(params: {
 }) {
   await sendEmail({
     to: params.email,
-    subject: `Your booking could not be approved - ${CLUB_LODGE_NAME}`,
+    subject: `Your booking could not be approved - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: bookingReviewRejectedTemplate(
       params.firstName,
       params.checkIn,
@@ -288,7 +288,7 @@ export async function sendCheckinReminderEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: `Check-in Reminder - ${CLUB_LODGE_NAME}`,
+    subject: `Check-in Reminder - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: checkinReminderTemplate(firstName, checkIn, checkOut, guests, chores),
     templateName: "checkin-reminder",
     templateData: {
@@ -324,7 +324,7 @@ export async function sendPreArrivalReminderEmail(params: {
   const settings = await loadEmailMessageSettingsForLodge(params.lodgeId);
   await sendEmail({
     to: params.email,
-    subject: `Pre-arrival Information - ${CLUB_LODGE_NAME}`,
+    subject: `Pre-arrival Information - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: preArrivalReminderTemplate({
       ...params,
       lodgeTravelNote: settings.lodgeTravelNote,
@@ -386,7 +386,7 @@ export async function sendBookingModifiedEmail(params: {
 
   await sendEmail({
     to: params.email,
-    subject: `Booking Modified - ${CLUB_LODGE_NAME}`,
+    subject: `Booking Modified - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: bookingModifiedTemplate(params),
     templateName: "booking-modified",
     templateData: {
@@ -423,7 +423,7 @@ export async function sendSetupIntentFailedEmail(params: {
 }) {
   await sendEmail({
     to: params.email,
-    subject: `Card Setup Failed - ${CLUB_LODGE_NAME}`,
+    subject: `Card Setup Failed - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: setupIntentFailedTemplate(params),
     templateName: "setup-intent-failed",
     templateData: {

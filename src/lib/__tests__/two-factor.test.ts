@@ -1,6 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as OTPAuth from "otpauth";
 
+// two-factor.ts reads DB-first identity via the server-only sync accessor (E3
+// #1929); neutralise the boundary guard and stub the accessor.
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/club-identity-settings", () => ({
+  getClubIdentitySync: () => ({
+    name: "Test Club",
+    bookingsName: "Test Club - Bookings",
+  }),
+}));
+
 const mockPrisma = vi.hoisted(() => ({
   $transaction: vi.fn(async (operations: Array<Promise<unknown>>) =>
     Promise.all(operations),

@@ -51,6 +51,16 @@ vi.mock("@/lib/site-banners", () => ({
   getCurrentSiteBanners: vi.fn(async () => []),
 }));
 
+// The layouts now resolve DB-first club identity via the tagged public-layout
+// cache (E3 #1929), whose real module imports "server-only" and wraps
+// unstable_cache. Neutralise the guard and stub the accessor with the config
+// identity — gating happens before/independent of the identity value.
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/public-layout-config", async () => {
+  const { clubIdentity } = await import("@/config/club-identity");
+  return { getCachedClubIdentity: vi.fn(async () => clubIdentity) };
+});
+
 vi.mock("@/lib/finance-auth", () => ({
   hasFinanceViewerAccess: () => false,
 }));
