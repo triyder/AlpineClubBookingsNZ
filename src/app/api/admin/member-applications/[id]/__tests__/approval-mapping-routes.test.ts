@@ -54,7 +54,10 @@ function put(body: unknown) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.requireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "admin-1" } } });
+  h.requireAdmin.mockResolvedValue({
+    ok: true,
+    session: { user: { id: "admin-1", accessRoles: ["ADMIN"] } },
+  });
   h.buildApprovalMappingPreview.mockResolvedValue({
     body: { preview: { previewToken: "tok", persons: [], blockingErrors: [], hasMappings: true } },
     init: undefined,
@@ -88,7 +91,7 @@ describe("POST /approval-preview", () => {
     expect(h.buildApprovalMappingPreview).not.toHaveBeenCalled();
   });
 
-  it("passes personDecisions and the current season to the engine", async () => {
+  it("passes personDecisions, the current season, and the DB-verified actor to the engine", async () => {
     const personDecisions = { applicant: { mode: "MAP", memberId: "member-x" }, family: [] };
     const res = await POST(post({ personDecisions }), { params });
     expect(res.status).toBe(200);
@@ -96,7 +99,20 @@ describe("POST /approval-preview", () => {
       applicationId: "app-1",
       personDecisions,
       seasonYear: 2026,
+      actor: { id: "admin-1", isFullAdmin: true },
     });
+  });
+
+  it("marks a scoped (non-Full-Admin) session actor as isFullAdmin: false", async () => {
+    h.requireAdmin.mockResolvedValue({
+      ok: true,
+      session: { user: { id: "admin-2", accessRoles: ["ADMIN_MEMBERSHIP"] } },
+    });
+    const res = await POST(post({}), { params });
+    expect(res.status).toBe(200);
+    expect(h.buildApprovalMappingPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ actor: { id: "admin-2", isFullAdmin: false } }),
+    );
   });
 
   it("422s an invalid decision shape", async () => {
@@ -106,6 +122,14 @@ describe("POST /approval-preview", () => {
 });
 
 describe("PUT threads mapping payload", () => {
+  it("requires the membership:edit permission explicitly (matches the preview route)", async () => {
+    const res = await PUT(put({ decision: "APPROVE" }), { params });
+    expect(res.status).toBe(200);
+    expect(h.requireAdmin).toHaveBeenCalledWith({
+      permission: { area: "membership", level: "edit" },
+    });
+  });
+
   it("passes personDecisions (arg 6) and mappingPreviewToken (arg 7)", async () => {
     const personDecisions = { applicant: { mode: "MAP", memberId: "member-x" }, family: [] };
     const res = await PUT(
@@ -124,5 +148,14 @@ describe("PUT threads mapping payload", () => {
     const call = h.approveMemberApplication.mock.calls[0];
     expect(call[5]).toBeUndefined();
     expect(call[6]).toBeUndefined();
+  });
+
+  it("422s unknown body keys (strict schema) so a mis-nested mapping payload cannot silently approve all-CREATE", async () => {
+    const res = await PUT(
+      put({ decision: "APPROVE", mappingToken: "tok", personDecision: {} }),
+      { params },
+    );
+    expect(res.status).toBe(422);
+    expect(h.approveMemberApplication).not.toHaveBeenCalled();
   });
 });
