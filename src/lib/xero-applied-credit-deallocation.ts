@@ -33,8 +33,14 @@ const APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE =
 // XeroAppliedCreditDeallocationEventualConsistencyError) rather than terminal
 // FAILED. Convergence normally happens within seconds; this cap ensures a note
 // that never converges still lands FAILED for the operator instead of looping
-// forever. The count is persisted on the operation payload
-// (`eventualConsistencyRequeues`) so it survives each PENDING→RUNNING reclaim.
+// forever. The counts are persisted on the operation payload
+// (`eventualConsistencyRequeues`) so they survive each PENDING→RUNNING reclaim.
+//
+// The budget is PER credit note (#1924 review follow-up): the group loop aborts
+// on the first stale note, so a single operation-level counter shared across a
+// multi-note deallocation could be exhausted by several individually-converging
+// notes and land the whole operation terminal FAILED spuriously. Each
+// xeroCreditNoteId gets its own 0..MAX budget instead.
 const MAX_EVENTUAL_CONSISTENCY_REQUEUES = 10;
 
 interface DeallocationRow {
@@ -324,6 +330,7 @@ function isEventualConsistencyShapedTotal(params: {
  */
 async function requeueForEventualConsistency(params: {
   operationId: string;
+  xeroCreditNoteId: string;
   detail: string;
 }): Promise<never> {
   const current = await prisma.xeroSyncOperation.findUnique({
@@ -331,29 +338,48 @@ async function requeueForEventualConsistency(params: {
     select: { requestPayload: true },
   });
   const payload = metadataRecord(current?.requestPayload) ?? {};
-  const prior = Number.isInteger(payload.eventualConsistencyRequeues)
-    ? (payload.eventualConsistencyRequeues as number)
-    : 0;
+  // Per-note budget keyed by xeroCreditNoteId. Back-compat rule: a legacy
+  // numeric value (the old single operation-level counter) is migrated as the
+  // starting count for the note currently being requeued — the note that keeps
+  // re-GETting stale is precisely the one that accrued that count, so
+  // preserving it keeps a genuinely-stuck operation landing terminal instead of
+  // resetting its progress to zero. Any other note starts fresh at 0.
+  const rawCounter = payload.eventualConsistencyRequeues;
+  const counter: Record<string, number> = {};
+  if (typeof rawCounter === "number" && Number.isInteger(rawCounter)) {
+    counter[params.xeroCreditNoteId] = rawCounter;
+  } else {
+    const record = metadataRecord(rawCounter);
+    if (record) {
+      for (const [note, value] of Object.entries(record)) {
+        if (typeof value === "number" && Number.isInteger(value)) {
+          counter[note] = value;
+        }
+      }
+    }
+  }
+  const prior = counter[params.xeroCreditNoteId] ?? 0;
   const next = prior + 1;
+  counter[params.xeroCreditNoteId] = next;
   await prisma.xeroSyncOperation.update({
     where: { id: params.operationId },
     data: {
-      // Only the counter changes; ledgerSnapshot/checkpoint/history are carried
-      // through untouched so a transient outcome never advances convergence
-      // state.
+      // Only the per-note counter changes; ledgerSnapshot/checkpoint/history are
+      // carried through untouched so a transient outcome never advances
+      // convergence state.
       requestPayload: sanitizeForJson({
         ...payload,
-        eventualConsistencyRequeues: next,
+        eventualConsistencyRequeues: counter,
       }),
     },
   });
   if (next > MAX_EVENTUAL_CONSISTENCY_REQUEUES) {
     throw new Error(
-      `Applied-credit deallocation ${params.operationId} did not converge after ${MAX_EVENTUAL_CONSISTENCY_REQUEUES} eventual-consistency requeues: ${params.detail}`,
+      `Applied-credit deallocation ${params.operationId} did not converge after ${MAX_EVENTUAL_CONSISTENCY_REQUEUES} eventual-consistency requeues for credit note ${params.xeroCreditNoteId}: ${params.detail}`,
     );
   }
   throw new XeroAppliedCreditDeallocationEventualConsistencyError(
-    `${params.detail}; Xero provider read not yet converged (eventual-consistency requeue ${next}/${MAX_EVENTUAL_CONSISTENCY_REQUEUES})`,
+    `${params.detail}; Xero provider read not yet converged (eventual-consistency requeue ${next}/${MAX_EVENTUAL_CONSISTENCY_REQUEUES} for credit note ${params.xeroCreditNoteId})`,
   );
 }
 
@@ -769,6 +795,7 @@ export async function deallocateExcessAppliedCreditForBooking(
       if (eventualConsistencyStale) {
         await requeueForEventualConsistency({
           operationId: options.syncOperationId,
+          xeroCreditNoteId: group.xeroCreditNoteId,
           detail: `Stale top-of-loop provider allocations for credit note ${group.xeroCreditNoteId}: provider=${providerTotal}c current=${group.currentCents}c target=${group.targetCents}c`,
         });
       }
@@ -876,6 +903,7 @@ export async function deallocateExcessAppliedCreditForBooking(
         ) {
           await requeueForEventualConsistency({
             operationId: options.syncOperationId,
+            xeroCreditNoteId: group.xeroCreditNoteId,
             detail: `Post-recreate verification for ${group.xeroCreditNoteId}: provider=${providerTotal}c target=${group.targetCents}c`,
           });
         }

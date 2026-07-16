@@ -16,9 +16,21 @@ import { describe, expect, it } from "vitest";
 // bump. It also pins the two conversion claims to fence on `version:
 // request.version`, so a regression to the old updatedAt fence is a test
 // failure rather than a silent precision dependence.
+//
+// The enumeration above only sees `.bookingRequest.(update|updateMany)(` call
+// sites. A future write that reaches a BookingRequest row by another route —
+// `bookingRequest.upsert(...)`, `bookingRequest.updateManyAndReturn(...)`, a
+// nested `booking.update({ data: { bookingRequest: { update: ... } } })`, or a
+// raw `UPDATE "BookingRequest"` SQL statement — would bypass the version-bump
+// invariant undetected. There are zero such occurrences today, so a second scan
+// hard-fails on the mere existence of any of them: the author who introduces one
+// must both add the `version: { increment: 1 }` bump AND teach this test how to
+// verify their new write shape.
 
 const SRC_DIR = path.join(process.cwd(), "src");
-const INCREMENT = "version: { increment: 1 }";
+// Whitespace/newline/trailing-comma tolerant so a reformatted call site (e.g.
+// prettier wrapping the data object) still counts as bumping the version.
+const INCREMENT_RE = /version:\s*\{\s*increment:\s*1\s*,?\s*\}/;
 
 function walk(dir: string, files: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -76,14 +88,18 @@ interface CallSite {
   body: string;
 }
 
-function collectCallSites(): CallSite[] {
-  const sites: CallSite[] = [];
-  const sources = walk(SRC_DIR)
+function loadNonTestSources(): Array<{ rel: string; text: string }> {
+  return walk(SRC_DIR)
     .map((file) => ({
       rel: path.relative(process.cwd(), file).split(path.sep).join("/"),
       text: stripLineComments(fs.readFileSync(file, "utf8")),
     }))
     .filter(({ rel }) => !isTestFile(rel));
+}
+
+function collectCallSites(): CallSite[] {
+  const sites: CallSite[] = [];
+  const sources = loadNonTestSources();
 
   const pattern = /\.bookingRequest\.(update|updateMany)\(/g;
   for (const { rel, text } of sources) {
@@ -110,7 +126,7 @@ describe("BookingRequest version-fence source contract (#1923)", () => {
 
   it("bumps version on every mutating BookingRequest write", () => {
     const offenders = sites
-      .filter((site) => !site.body.includes(INCREMENT))
+      .filter((site) => !INCREMENT_RE.test(site.body))
       .map((site) => `${site.rel} (bookingRequest.${site.kind})`);
 
     expect(
@@ -120,6 +136,51 @@ describe("BookingRequest version-fence source contract (#1923)", () => {
         "would let a converter's optimistic version fence stay valid across a " +
         "concurrent mutation, resurrecting the millisecond-precision race the " +
         "integer counter replaced. Add the increment to the flagged call sites."
+    ).toEqual([]);
+  });
+
+  it("has no BookingRequest write shape the version-bump scan cannot see", () => {
+    // Write routes the `.bookingRequest.(update|updateMany)(` enumeration above
+    // does NOT cover. Zero occurrences exist today; any match is a hard failure
+    // demanding the author add the version bump and extend this test.
+    const forbidden: Array<{ label: string; re: RegExp }> = [
+      { label: ".bookingRequest.upsert(", re: /\.bookingRequest\.upsert\(/ },
+      {
+        label: ".bookingRequest.updateManyAndReturn(",
+        re: /\.bookingRequest\.updateManyAndReturn\(/,
+      },
+      {
+        label: "nested `bookingRequest: { update ... }` inside a data block",
+        re: /bookingRequest:\s*\{\s*update/,
+      },
+      {
+        label: "nested `bookingRequest: { upsert ... }` inside a data block",
+        re: /bookingRequest:\s*\{\s*upsert/,
+      },
+      {
+        label: 'raw SQL `UPDATE "BookingRequest"`',
+        re: /UPDATE\s+"?BookingRequest"?/,
+      },
+    ];
+
+    const offenders: string[] = [];
+    for (const { rel, text } of loadNonTestSources()) {
+      for (const { label, re } of forbidden) {
+        if (re.test(text)) {
+          offenders.push(`${rel}: ${label}`);
+        }
+      }
+    }
+
+    expect(
+      offenders,
+      "A BookingRequest write via a shape the version-bump scan does not " +
+        "enumerate was found (upsert, updateManyAndReturn, a nested " +
+        "`bookingRequest: { update|upsert }` write inside a data block, or raw " +
+        "`UPDATE \"BookingRequest\"` SQL). Any such write MUST bump " +
+        "`version: { increment: 1 }` to keep the held-request conversion fence " +
+        "sound (#1923) — and this test MUST be extended to verify the bump on " +
+        "the new write shape rather than merely rejecting its existence.",
     ).toEqual([]);
   });
 

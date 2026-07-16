@@ -690,7 +690,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     // for the retry; the ledger snapshot is not advanced.
     expect(h.operationPayload.current).toEqual(
       expect.objectContaining({
-        eventualConsistencyRequeues: 1,
+        eventualConsistencyRequeues: { "cn-1": 1 },
         checkpoint: expect.objectContaining({ phase: "BEFORE_DELETE" }),
       }),
     );
@@ -773,7 +773,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     expect(h.allocationUpdate).not.toHaveBeenCalled();
     expect(h.complete).not.toHaveBeenCalled();
     expect(h.operationPayload.current).toEqual(
-      expect.objectContaining({ eventualConsistencyRequeues: 1 }),
+      expect.objectContaining({ eventualConsistencyRequeues: { "cn-1": 1 } }),
     );
 
     // Converged retry links the recreate and completes.
@@ -815,10 +815,13 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     expect(h.operationPayload.current.eventualConsistencyRequeues).toBeUndefined();
   });
 
-  it("lands terminal FAILED once the bounded eventual-consistency requeue cap is exceeded (#1924)", async () => {
+  it("lands terminal FAILED once the bounded eventual-consistency requeue cap is exceeded, naming the exhausted note (#1924)", async () => {
     h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
     // Already at the cap (10): the next non-convergence must fail terminal
-    // instead of requeuing forever.
+    // instead of requeuing forever. The counter is stored here as a LEGACY plain
+    // number (the pre-per-note format) so this also exercises the back-compat
+    // migration rule: a numeric value is treated as the prior count for the note
+    // being requeued, so 10 -> 11 still lands terminal.
     h.operationPayload.current = {
       queueType: "APPLIED_CREDIT_DEALLOCATION",
       bookingId: "booking-1",
@@ -856,8 +859,59 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
 
     expect(isXeroAppliedCreditOperationBusyError(error)).toBe(false);
     expect((error as Error).message).toMatch(
-      /did not converge after 10 eventual-consistency requeues/,
+      /did not converge after 10 eventual-consistency requeues for credit note cn-1/,
     );
+  });
+
+  it("keeps the eventual-consistency requeue budget per credit note so converging notes don't exhaust each other's cap (#1924 review, #1924)", async () => {
+    h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
+    // cn-2 has already requeued 4 times (converging independently) and cn-1 has
+    // requeued 3 times, both well under the cap. A fresh stale top-of-loop read
+    // for cn-1 must bump ONLY cn-1's budget (3 -> 4) and stay busy — cn-2's
+    // separate count of 4 must not push cn-1 over the shared-in-the-old-design
+    // cap and land the operation terminal FAILED spuriously.
+    h.operationPayload.current = {
+      queueType: "APPLIED_CREDIT_DEALLOCATION",
+      bookingId: "booking-1",
+      eventualConsistencyRequeues: { "cn-1": 3, "cn-2": 4 },
+      ledgerSnapshot: {
+        desiredAppliedCents: 2500,
+        rows: [
+          {
+            id: "row-1",
+            xeroCreditNoteId: "cn-1",
+            amountCents: 4000,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      },
+      checkpoint: {
+        creditNoteId: "cn-1",
+        currentCents: 4000,
+        targetCents: 2500,
+        allocationIds: ["alloc-old"],
+        providerAllocations: [{ allocationID: "alloc-old", amountCents: 4000 }],
+        phase: "BEFORE_DELETE",
+      },
+    };
+    h.getCreditNote.mockResolvedValueOnce(
+      providerNoteMulti([
+        [4000, "alloc-old"],
+        [2500, "alloc-new"],
+      ]),
+    );
+
+    const busyError = await deallocateExcessAppliedCreditForBooking("booking-1", {
+      syncOperationId: "op-1",
+    }).catch((err) => err);
+
+    // Under the cap on both notes: transient busy requeue, never terminal.
+    expect(isXeroAppliedCreditOperationBusyError(busyError)).toBe(true);
+    // Only cn-1 advanced; cn-2's independent budget is untouched.
+    expect(h.operationPayload.current.eventualConsistencyRequeues).toEqual({
+      "cn-1": 4,
+      "cn-2": 4,
+    });
   });
 });
 

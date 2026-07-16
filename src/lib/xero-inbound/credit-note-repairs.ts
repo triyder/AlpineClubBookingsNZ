@@ -493,7 +493,13 @@ export async function resolveAccountCreditPaymentsFromMemberCredits(creditNoteId
  * `XeroObjectLink` allocation provenance. It is used ONLY when the
  * `CANCELLATION_REFUND` resolver returns empty and it FAILS CLOSED (returns
  * `[]`, causing the caller to skip repair exactly as today, with a visible
- * warn log) whenever the evidence is missing or ambiguous. The downstream
+ * warn log) whenever the evidence is missing or ambiguous. When local evidence
+ * EXISTS but is contradictory/ambiguous (multiple members, a slice missing its
+ * funding lot, conflicting slice-vs-link, a remainder link outside the set, or
+ * no resolvable payment) it also raises the deduped operator alert
+ * (`notifyXeroSyncError`, #1925 review) so a note that genuinely needs repair is
+ * not silently dropped; the benign short-circuits (no stamped slices at all, no
+ * active link) stay warn-only "nothing to do". The downstream
  * repair (`repairAccountCreditAllocationBusinessState`) still derives every
  * amount from the provider targets and precise slices, so this resolver never
  * introduces an amount guess of its own.
@@ -560,6 +566,16 @@ export async function resolveAppliedCreditPaymentsFromLocalProvenance(
         { creditNoteId, sliceId: slice.id },
         "Skipping non-refund applied-credit repair: a stamped slice is missing its funding lot or booking (fail-closed, #1925)",
       );
+      // Ambiguous local evidence (a slice stamped for this note but missing its
+      // funding lot/booking) — surface it so an operator can reconcile the note
+      // that genuinely needs repair instead of it being silently dropped (#1925
+      // review). notifyXeroSyncError dedupes to one alert/hour, so replayed
+      // webhooks stay idempotent-safe.
+      await notifyXeroSyncError({
+        errorType: "applied-credit-repair-ambiguous",
+        operation: `inbound-applied-credit-repair:${creditNoteId}`,
+        errorMessage: `Non-refund applied-credit repair skipped (fail-closed) for credit note ${creditNoteId}: stamped slice ${slice.id} is missing its funding lot or booking. Local provenance is ambiguous; the note may need manual reconciliation.`,
+      });
       return [];
     }
     memberIds.add(memberId);
@@ -572,6 +588,11 @@ export async function resolveAppliedCreditPaymentsFromLocalProvenance(
       { creditNoteId, candidateMembers: memberIds.size },
       "Skipping non-refund applied-credit repair: stamped slices resolve to multiple members (fail-closed, #1925)",
     );
+    await notifyXeroSyncError({
+      errorType: "applied-credit-repair-ambiguous",
+      operation: `inbound-applied-credit-repair:${creditNoteId}`,
+      errorMessage: `Non-refund applied-credit repair skipped (fail-closed) for credit note ${creditNoteId}: stamped slices resolve to ${memberIds.size} members. Local provenance is ambiguous; the note may need manual reconciliation.`,
+    });
     return [];
   }
   const memberId = [...memberIds][0];
@@ -587,6 +608,11 @@ export async function resolveAppliedCreditPaymentsFromLocalProvenance(
           { creditNoteId, linkLocalId: link.localId },
           "Skipping non-refund applied-credit repair: an active allocation link references a slice not stamped for this note (fail-closed, #1925)",
         );
+        await notifyXeroSyncError({
+          errorType: "applied-credit-repair-ambiguous",
+          operation: `inbound-applied-credit-repair:${creditNoteId}`,
+          errorMessage: `Non-refund applied-credit repair skipped (fail-closed) for credit note ${creditNoteId}: an active allocation link references slice ${link.localId} not stamped for this note (conflicting slice-vs-link evidence). The note may need manual reconciliation.`,
+        });
         return [];
       }
     } else if (link.localModel === "Payment") {
@@ -609,6 +635,11 @@ export async function resolveAppliedCreditPaymentsFromLocalProvenance(
         { creditNoteId, paymentId },
         "Skipping non-refund applied-credit repair: an active remainder link points at a payment outside the stamped member/booking set (fail-closed, #1925)",
       );
+      await notifyXeroSyncError({
+        errorType: "applied-credit-repair-ambiguous",
+        operation: `inbound-applied-credit-repair:${creditNoteId}`,
+        errorMessage: `Non-refund applied-credit repair skipped (fail-closed) for credit note ${creditNoteId}: an active remainder link points at payment ${paymentId} outside the stamped member/booking set. Local provenance is ambiguous; the note may need manual reconciliation.`,
+      });
       return [];
     }
   }
@@ -618,6 +649,11 @@ export async function resolveAppliedCreditPaymentsFromLocalProvenance(
       { creditNoteId, memberId, bookings: bookingIds.size },
       "Skipping non-refund applied-credit repair: stamped bookings resolve to no local payment for the member (fail-closed, #1925)",
     );
+    await notifyXeroSyncError({
+      errorType: "applied-credit-repair-ambiguous",
+      operation: `inbound-applied-credit-repair:${creditNoteId}`,
+      errorMessage: `Non-refund applied-credit repair skipped (fail-closed) for credit note ${creditNoteId}: stamped bookings for member ${memberId} resolve to no local payment. Local provenance is ambiguous; the note may need manual reconciliation.`,
+    });
     return [];
   }
 

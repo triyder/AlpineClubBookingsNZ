@@ -15,6 +15,7 @@ const h = vi.hoisted(() => {
   const paymentFindMany = vi.fn();
   const repairPrecise = vi.fn();
   const lockLedger = vi.fn();
+  const notifyXeroSyncError = vi.fn();
   const tx = {
     memberCredit: {
       findMany: memberCreditFindMany,
@@ -50,6 +51,7 @@ const h = vi.hoisted(() => {
     paymentFindMany,
     repairPrecise,
     lockLedger,
+    notifyXeroSyncError,
   };
 });
 
@@ -61,7 +63,7 @@ vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
 vi.mock("@/lib/xero-inbound/object-links", () => ({
   findActiveXeroObjectLinks: vi.fn().mockResolvedValue([]),
 }));
-vi.mock("@/lib/xero-error-alert", () => ({ notifyXeroSyncError: vi.fn() }));
+vi.mock("@/lib/xero-error-alert", () => ({ notifyXeroSyncError: h.notifyXeroSyncError }));
 vi.mock("@/lib/logger", () => ({
   default: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -320,6 +322,8 @@ describe("resolveAppliedCreditPaymentsFromLocalProvenance (#1925)", () => {
     expect(result).toEqual([]);
     expect(h.linkFindMany).not.toHaveBeenCalled();
     expect(h.paymentFindMany).not.toHaveBeenCalled();
+    // Benign "nothing to do" short-circuit: no operator alert.
+    expect(h.notifyXeroSyncError).not.toHaveBeenCalled();
   });
 
   it("fails closed (no resurrection) when only a tombstoned inactive link exists", async () => {
@@ -337,6 +341,8 @@ describe("resolveAppliedCreditPaymentsFromLocalProvenance (#1925)", () => {
 
     expect(result).toEqual([]);
     expect(h.paymentFindMany).not.toHaveBeenCalled();
+    // Benign "no active link proves the allocation" short-circuit: no alert.
+    expect(h.notifyXeroSyncError).not.toHaveBeenCalled();
   });
 
   it("fails closed when slices resolve to two candidate members", async () => {
@@ -360,6 +366,13 @@ describe("resolveAppliedCreditPaymentsFromLocalProvenance (#1925)", () => {
 
     expect(result).toEqual([]);
     expect(h.paymentFindMany).not.toHaveBeenCalled();
+    // Ambiguous local evidence: emit the deduped operator alert.
+    expect(h.notifyXeroSyncError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorType: "applied-credit-repair-ambiguous",
+        operation: "inbound-applied-credit-repair:cn-1",
+      }),
+    );
   });
 
   it("fails closed when a stamped slice is missing its funding lot", async () => {
@@ -378,6 +391,9 @@ describe("resolveAppliedCreditPaymentsFromLocalProvenance (#1925)", () => {
 
     expect(result).toEqual([]);
     expect(h.paymentFindMany).not.toHaveBeenCalled();
+    expect(h.notifyXeroSyncError).toHaveBeenCalledWith(
+      expect.objectContaining({ errorType: "applied-credit-repair-ambiguous" }),
+    );
   });
 
   it("fails closed when an active link references a slice not stamped for this note", async () => {
@@ -397,6 +413,9 @@ describe("resolveAppliedCreditPaymentsFromLocalProvenance (#1925)", () => {
 
     expect(result).toEqual([]);
     expect(h.paymentFindMany).not.toHaveBeenCalled();
+    expect(h.notifyXeroSyncError).toHaveBeenCalledWith(
+      expect.objectContaining({ errorType: "applied-credit-repair-ambiguous" }),
+    );
   });
 
   it("fails closed when an active remainder link points outside the stamped member/booking set", async () => {
@@ -418,6 +437,9 @@ describe("resolveAppliedCreditPaymentsFromLocalProvenance (#1925)", () => {
     const result = await resolveAppliedCreditPaymentsFromLocalProvenance("cn-1");
 
     expect(result).toEqual([]);
+    expect(h.notifyXeroSyncError).toHaveBeenCalledWith(
+      expect.objectContaining({ errorType: "applied-credit-repair-ambiguous" }),
+    );
   });
 
   it("fails closed when the stamped booking resolves to no local payment", async () => {
@@ -436,5 +458,29 @@ describe("resolveAppliedCreditPaymentsFromLocalProvenance (#1925)", () => {
     const result = await resolveAppliedCreditPaymentsFromLocalProvenance("cn-1");
 
     expect(result).toEqual([]);
+    expect(h.notifyXeroSyncError).toHaveBeenCalledWith(
+      expect.objectContaining({ errorType: "applied-credit-repair-ambiguous" }),
+    );
+  });
+
+  it("does not alert on the happy path when local provenance is unambiguous", async () => {
+    h.sliceFindMany.mockResolvedValue([
+      {
+        id: "slice-1",
+        appliedToBookingId: "booking-1",
+        memberCredit: { memberId: "member-1" },
+      },
+    ]);
+    h.linkFindMany.mockResolvedValue([
+      { localModel: "Payment", localId: "payment-1" },
+    ]);
+    h.paymentFindMany.mockResolvedValue([
+      { id: "payment-1", bookingId: "booking-1" },
+    ]);
+
+    const result = await resolveAppliedCreditPaymentsFromLocalProvenance("cn-1");
+
+    expect(result).toEqual([{ id: "payment-1", bookingId: "booking-1" }]);
+    expect(h.notifyXeroSyncError).not.toHaveBeenCalled();
   });
 });
