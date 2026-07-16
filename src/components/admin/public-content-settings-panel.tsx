@@ -16,7 +16,7 @@ type Settings = {
 
 const labels: Array<[keyof Settings, string]> = [
   ["membershipTypes", "Membership types"],
-  ["entranceFees", "Entrance fees"],
+  ["entranceFees", "Joining fees"],
   ["hutFees", "Hut fees"],
   ["bookingPolicySummary", "Booking policy summaries"],
   ["cancellationPolicy", "Cancellation policies"],

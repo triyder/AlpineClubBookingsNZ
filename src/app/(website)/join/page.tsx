@@ -13,7 +13,7 @@ export async function generateMetadata(): Promise<Metadata> {
     title: page?.title ?? "Join the Club",
     description:
       pageContentHtmlToPlainText(page?.headerText ?? "") ||
-      `How to become a member of the ${CLUB_NAME}. Nomination by two existing members, entrance fee, induction process, and membership details.`,
+      `How to become a member of the ${CLUB_NAME}. Nomination by two existing members, joining fee, induction process, and membership details.`,
   };
 }
 
@@ -24,7 +24,7 @@ export default async function JoinPage() {
   const title = page?.title || "Becoming a Member";
   const headerText =
     page?.headerText ||
-    `How to become a member of the ${CLUB_NAME}. Nomination by two existing members, entrance fee, induction process, and membership details.`;
+    `How to become a member of the ${CLUB_NAME}. Nomination by two existing members, joining fee, induction process, and membership details.`;
 
   return (
     <>

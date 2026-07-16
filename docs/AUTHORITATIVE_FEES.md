@@ -1,13 +1,20 @@
 # Authoritative Fee Configuration
 
-Annual membership fees and entrance fees are persisted, effective-dated club
+Annual membership fees and joining fees are persisted, effective-dated club
 configuration. Hut fees remain the lodge-scoped `Season` and `SeasonRate`
 records managed under **Admin > Hut Fees & Seasons**.
 
+> **Terminology.** "Joining fee" is the user-facing name for the one-off fee a
+> new member pays; "Annual Membership Fee" is the recurring fee to stay a
+> paid-up member. The code and schema still model the joining fee as the
+> `EntranceFee` record — that rename ships separately in E5 (#1931), so internal
+> identifiers, Xero references, and migrations retain the old `entrance`/
+> `subscription` names for now.
+
 Public PageContent blocks are double opt-in: their family is enabled in Admin >
-Page Content and membership types are individually public. Entrance blocks omit
-categories without a current schedule and never expose the compatibility Xero
-fallback. Hut-rate blocks use active seasons/rates plus configured age-tier
+Page Content and membership types are individually public. Joining-fee blocks
+omit categories without a current schedule and never expose the compatibility
+Xero fallback. Hut-rate blocks use active seasons/rates plus configured age-tier
 labels. Visibility writes are audited and invalidate public routes.
 
 ## Operator workflow
@@ -15,7 +22,7 @@ labels. Visibility writes are audited and invalidate public routes.
 1. A Membership editor opens **Admin > Membership Types**, writes a distinct
    public description, and explicitly enables public listing only after review.
    Every migrated and newly created type is hidden by default.
-2. A Finance editor opens **Admin > Membership & Entrance Fees** and adds an
+2. A Finance editor opens **Admin > Membership & Joining Fees** and adds an
    inclusive effective-date range. Ranges for the same type/category cannot
    overlap. NZD amounts are stored as GST-inclusive integer cents.
 3. For `PER_FAMILY` fees, choose one active member of every membered family as

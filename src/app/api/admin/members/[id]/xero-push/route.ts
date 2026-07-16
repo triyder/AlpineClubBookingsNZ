@@ -90,7 +90,7 @@ export async function POST(
 
     if (entranceFeeDecision === "SKIP" && !entranceFeeSkipReason) {
       return NextResponse.json(
-        { error: "A reason is required when not raising the entrance fee invoice." },
+        { error: "A reason is required when not raising the joining fee invoice." },
         { status: 422 }
       );
     }
@@ -205,7 +205,7 @@ export async function POST(
           "Failed to queue entrance fee invoice after contact creation"
         );
         const entranceFeeWarning =
-          "Xero contact created, but entrance fee invoice could not be queued. Retry from the member's Xero actions.";
+          "Xero contact created, but joining fee invoice could not be queued. Retry from the member's Xero actions.";
         warning = warning ? `${warning} ${entranceFeeWarning}` : entranceFeeWarning;
       }
     } else if (entranceFeeSkipReason) {

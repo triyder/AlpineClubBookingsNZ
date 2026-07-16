@@ -37,7 +37,7 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `publicUrl`                                        | yes      | Canonical public origin with no trailing slash.                                                                  |
 | `emailFromName`                                    | yes      | Display name for outbound email sender headers.                                                                  |
 | `lodgeTravelNote`                                  | no       | Email reminder travel/location note.                                                                             |
-| `hutLeaderLabel`                                   | no       | User-facing label for the hut-leader role (e.g. `Lodge Leader`, `Warden`, `Duty Manager`). Defaults to `Hut Leader`. |
+| `hutLeaderLabel`                                   | no       | User-facing label for the hut-leader **role** (e.g. `Lodge Leader`, `Warden`, `Duty Manager`), rendered wherever `{{hut-leader}}` appears — it is the role name, never a specific person. Defaults to `Hut Leader`. Who currently holds the role is assigned separately under Admin > Hut Leaders. |
 | `socialLinks.facebook`                             | no       | Facebook URL used by public pages/footer. Must be an http(s) URL, like `publicUrl`.                              |
 | `beds[].id`                                        | yes      | Stable bed or lodge identifier.                                                                                  |
 | `beds[].name`                                      | yes      | User-facing bed/lodge name.                                                                                      |
@@ -179,8 +179,10 @@ menu.
   back to the default lodge), `{{hut-leader}}`, and `{{hut-leader-lower}}`, which
   are resolved server-side
   from the current club/runtime settings (`{{hut-leader}}` renders the
-  configured hut-leader label, default `Hut Leader`; `{{hut-leader-lower}}`
-  renders its lower-cased form for mid-sentence prose). The `dataHash`
+  configured hut-leader **role label**, default `Hut Leader` — the role name,
+  never a specific person; who holds the role is managed under Admin > Hut
+  Leaders. `{{hut-leader-lower}}` renders its lower-cased form for mid-sentence
+  prose). The `dataHash`
   parameter is the Snow.nz widget hash. Photo token `path` parameters are
   normalised relative to
   `public/images/` and load images from that shared image-manager storage tree:
@@ -699,7 +701,7 @@ subscription/Xero/payment history, or call external providers.
 
 ### Membership subscription billing
 
-Finance editors operate annual subscription billing from `/admin/subscriptions`.
+Finance editors operate Annual Membership Fee billing from `/admin/subscriptions`.
 The preview resolves the selected membership year's effective annual fee,
 explicit family recipient, billing basis, and proration rule without writing or
 calling Xero. The preview also requires an explicitly configured
@@ -894,16 +896,16 @@ invalid app, email, or recovery-code attempts lock the two-factor challenge for
 
 ## Finance dashboard
 
-### Membership and entrance fee authority
+### Membership and joining fee authority
 
-Annual membership and entrance amounts are database configuration, not
+Annual membership and joining fee amounts are database configuration, not
 environment variables or provider metadata. Membership editors own public
 descriptions/listing under `/admin/membership-types`; Finance editors own
 effective-dated amounts and family billing members under
 `/admin/fee-configuration`. Hut fees remain lodge season/rate configuration.
 See `docs/AUTHORITATIVE_FEES.md` for operator and compatibility rules.
 
-The `/admin/fee-configuration` page shows annual membership fees, entrance fees,
+The `/admin/fee-configuration` page shows annual membership fees, joining fees,
 and (only when `familyBillingMode` is `BILL_FAMILY_VIA_BILLING_MEMBER`) family
 billing members. Each section loads read-only. Use the section's Edit button to
 expose its form and per-row controls; changes are staged locally and only

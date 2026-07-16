@@ -45,7 +45,7 @@ export function buildXeroEntranceFeeInvoiceOptions(
   if (!state.createEntranceFeeInvoice) {
     const reason = state.skipReason.trim();
     if (!reason) {
-      throw new Error("Enter a reason for not raising the entrance fee invoice.");
+      throw new Error("Enter a reason for not raising the joining fee invoice.");
     }
 
     return {
@@ -62,7 +62,7 @@ export function buildXeroEntranceFeeInvoiceOptions(
     amountCents = Math.round(parsedAmount * 100);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || amountCents <= 0) {
       throw new Error(
-        "Enter a valid entrance fee amount, or leave it blank to use the configured amount.",
+        "Enter a valid joining fee amount, or leave it blank to use the configured amount.",
       );
     }
   }

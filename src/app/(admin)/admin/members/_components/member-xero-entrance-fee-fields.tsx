@@ -31,7 +31,7 @@ export function MemberXeroEntranceFeeFields({
         />
         <div>
           <Label htmlFor={`${idPrefix}-create-invoice`}>
-            Create membership entrance fee invoice after contact creation
+            Create membership joining fee invoice after contact creation
           </Label>
           <p className="text-xs text-muted-foreground">
             Leave this unchecked only when the invoice is being handled another way.
@@ -69,7 +69,7 @@ export function MemberXeroEntranceFeeFields({
       ) : (
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-skip-reason`}>
-            Reason for not raising the entrance fee invoice
+            Reason for not raising the joining fee invoice
           </Label>
           <Textarea
             id={`${idPrefix}-skip-reason`}
@@ -77,7 +77,7 @@ export function MemberXeroEntranceFeeFields({
             onChange={(event) => decision.setXeroEntranceFeeSkipReason(event.target.value)}
             maxLength={500}
             rows={2}
-            placeholder="Required when no entrance fee invoice will be queued"
+            placeholder="Required when no joining fee invoice will be queued"
           />
         </div>
       )}

@@ -483,7 +483,17 @@ async function loadBookingCandidates(
       : {}),
     include: {
       lodge: { select: { id: true, name: true } },
-      member: { select: { id: true, firstName: true, lastName: true, email: true } },
+      member: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phoneCountryCode: true,
+          phoneAreaCode: true,
+          phoneNumber: true,
+        },
+      },
       guests: {
         select: {
           id: true,

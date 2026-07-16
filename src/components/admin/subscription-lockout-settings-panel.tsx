@@ -272,7 +272,7 @@ export function SubscriptionLockoutSettingsPanel({
         <CardHeader>
           <CardTitle>Booking lockout</CardTitle>
           <CardDescription>
-            Block members with an unpaid annual subscription from booking.
+            Block members with an unpaid Annual Membership Fee from booking.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">

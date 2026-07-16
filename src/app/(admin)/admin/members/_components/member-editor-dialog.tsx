@@ -297,7 +297,7 @@ export function MemberEditorDialog({
       onDialogSuccess(
         entranceFeeInvoiceOptions.createEntranceFeeInvoice &&
           result.data.entranceFeeInvoiceQueued
-          ? "Xero contact created, linked, and entrance fee invoice queued"
+          ? "Xero contact created, linked, and joining fee invoice queued"
           : "Xero contact created and linked",
       );
       const warningMessage =
@@ -392,7 +392,7 @@ export function MemberEditorDialog({
       onDialogSuccess(
         decision.entranceFeeInvoiceOptions.createEntranceFeeInvoice &&
           result.data.entranceFeeInvoiceQueued
-          ? "Xero contact created, linked, and entrance fee invoice queued"
+          ? "Xero contact created, linked, and joining fee invoice queued"
           : "Xero contact created and linked",
       );
       if (warning) onWarning(warning);
@@ -561,7 +561,7 @@ export function MemberEditorDialog({
                   createEntranceFeeInvoice: false,
                   entranceFeeInvoiceDecision: "SKIP",
                   entranceFeeInvoiceSkipReason:
-                    "No entrance fee invoice requested",
+                    "No joining fee invoice requested",
                 },
                 suggestedContacts: pushResult.suggestedContacts,
               });
@@ -577,7 +577,7 @@ export function MemberEditorDialog({
               successMessage =
                 entranceFeeInvoiceOptions?.createEntranceFeeInvoice &&
                 pushResult.data.entranceFeeInvoiceQueued
-                  ? "Member created, pushed to Xero, and entrance fee invoice queued"
+                  ? "Member created, pushed to Xero, and joining fee invoice queued"
                   : "Member created and pushed to Xero";
               warning =
                 pushResult.data.warning ||
