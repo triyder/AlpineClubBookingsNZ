@@ -1,6 +1,7 @@
 import type { XeroContactUpdateData } from "@/lib/xero-contacts";
 import { prisma } from "@/lib/prisma";
 import { getXeroContactNameOrderRepair } from "@/lib/xero-contact-link-mismatches";
+import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
 
 export type MemberXeroContactSnapshot = XeroContactUpdateData & {
   firstName: string;
@@ -26,7 +27,9 @@ export function buildXeroContactUpdatePayload(
   return {
     firstName: member.firstName,
     lastName: member.lastName,
-    email: member.email,
+    // A club-internal walk-in placeholder (#1935) must never be pushed to Xero
+    // as a real address on a contact update; normalise it to empty.
+    email: isPlaceholderContactEmail(member.email) ? "" : member.email,
     phoneCountryCode: member.phoneCountryCode ?? null,
     phoneAreaCode: member.phoneAreaCode ?? null,
     phoneNumber: member.phoneNumber ?? null,

@@ -1643,6 +1643,28 @@ bypasses — email verification, Xero-link, subscription, guest-subscription,
 and minimum-stay gates all apply to self-bookings; the gate bypasses are keyed
 to authorized on-behalf bookings only. Only admin-only accounts (no `USER`
 token) are redirected from the member wizard to `/admin/book`.
+A Booking Officer may also inline-create a **non-member booking owner** on
+`/admin/book` (#1935): `POST /api/admin/bookings/non-member-contact`
+(bookings:edit — the #1376 on-behalf scope) mints a non-login owner identical to
+what the public booking-request approval creates, with SERVER-FORCED
+`role: NON_MEMBER`, `canLogin: false`, `ageTier: ADULT`, and — unlike the
+booking-request pipeline, whose verified public address justifies `true` —
+`emailVerified: false` (an officer-typed address is unverified). The input
+accepts only name/email/phone, so those forced fields cannot be tampered via
+payload. Dedupe is suggest-and-pick and never silent reuse: several non-login
+contacts may legitimately share an email (the `Member_email_login_unique`
+partial index only covers `canLogin: true`), so reuse requires the officer's
+explicit pick and is validated by `assertMappableOwnerContact` (non-login
+NON_MEMBER/SCHOOL, active, not archived); a login-capable exact-email match is
+never reusable and blocks creation with a "pick them in the member search"
+error. A walk-in with no email stores a club-internal placeholder on the
+reserved `.invalid` domain (`Member.email` stays non-nullable — no schema
+change): all outbound email to that owner is suppressed at the `sendEmail`
+chokepoint, and the placeholder is excluded from Xero contact email-matching
+(`findOrCreateXeroContact` skips the email search and sends an empty address) so
+it is never used to match or pushed to Xero as a real address. Non-member
+booking owners are priced identically to public booking-request non-members
+(both feed the shared pricing engine with non-member guests).
 Legacy membership lifecycle/classification code may read `Member.role` only to
 distinguish compatibility categories such as non-login/non-member records until
 that workflow is fully represented by seasonal membership type.
