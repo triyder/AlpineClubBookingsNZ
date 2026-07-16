@@ -279,6 +279,7 @@ export function MemberXeroControls({
                 idPrefix="edit-xero"
                 decision={entranceFeeDecision}
                 onClearError={onClearFormError}
+                memberId={editingMember.id}
               />
               <Button
                 type="button"

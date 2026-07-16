@@ -4,6 +4,11 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  JoiningFeePreviewHint,
+  useJoiningFeePrefill,
+  useJoiningFeePreview,
+} from "@/components/admin/joining-fee-preview";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -87,6 +92,46 @@ type EntranceFeeDecisionForm = {
   narration: string;
   reason: string;
 };
+
+// Item 15 (#1931): surface the default joining fee for a not-yet-created
+// applicant via the preview lib's raw-inputs mode (approved applicants become
+// FULL members; the DOB resolves the age tier). Prefills the override fields so
+// the admin overrides from an informed baseline. Rendered per application so the
+// preview hooks obey the rules of hooks inside the applications map.
+function ApplicationJoiningFeePreview({
+  applicationId,
+  dateOfBirth,
+  active,
+  amount,
+  narration,
+  setAmount,
+  setNarration,
+}: {
+  applicationId: string;
+  dateOfBirth: string | null;
+  active: boolean;
+  amount: string;
+  narration: string;
+  setAmount: (value: string) => void;
+  setNarration: (value: string) => void;
+}) {
+  const previewState = useJoiningFeePreview({
+    pathId: applicationId,
+    enabled: active,
+    inputs: dateOfBirth
+      ? { membershipTypeKey: "FULL", dateOfBirth }
+      : { membershipTypeKey: "FULL", ageTier: "ADULT" },
+  });
+  useJoiningFeePrefill({
+    preview: previewState.preview,
+    prefillKey: applicationId,
+    amount,
+    narration,
+    setAmount,
+    setNarration,
+  });
+  return <JoiningFeePreviewHint state={previewState} />;
+}
 
 const filters: Array<{ label: string; value: string }> = [
   { label: "Pending admin", value: "PENDING_ADMIN" },
@@ -689,10 +734,10 @@ export default function MemberApplicationsPage() {
                   <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
-                        Entrance fee invoice
+                        Joining fee invoice
                       </p>
                       <p className="mt-1 text-amber-900">
-                        Choose whether to raise the entrance fee invoice when this application is approved.
+                        Choose whether to raise the joining fee invoice when this application is approved.
                       </p>
                     </div>
                     <select
@@ -713,7 +758,7 @@ export default function MemberApplicationsPage() {
                         }))
                       }
                     >
-                      <option value="CREATE">Raise entrance fee invoice</option>
+                      <option value="CREATE">Raise joining fee invoice</option>
                       <option value="SKIP">Do not raise invoice</option>
                     </select>
                     {(entranceFeeDecisions[application.id]?.action ?? "CREATE") === "CREATE" ? (
@@ -763,6 +808,43 @@ export default function MemberApplicationsPage() {
                             }
                           />
                         </label>
+                        <div className="md:col-span-2">
+                          <ApplicationJoiningFeePreview
+                            applicationId={application.id}
+                            dateOfBirth={application.applicantDateOfBirth}
+                            active={application.status === "PENDING_ADMIN"}
+                            amount={entranceFeeDecisions[application.id]?.amount ?? ""}
+                            narration={entranceFeeDecisions[application.id]?.narration ?? ""}
+                            setAmount={(value) =>
+                              setEntranceFeeDecisions((prev) => ({
+                                ...prev,
+                                [application.id]: {
+                                  ...(prev[application.id] ?? {
+                                    action: "CREATE",
+                                    amount: "",
+                                    narration: "",
+                                    reason: "",
+                                  }),
+                                  amount: value,
+                                },
+                              }))
+                            }
+                            setNarration={(value) =>
+                              setEntranceFeeDecisions((prev) => ({
+                                ...prev,
+                                [application.id]: {
+                                  ...(prev[application.id] ?? {
+                                    action: "CREATE",
+                                    amount: "",
+                                    narration: "",
+                                    reason: "",
+                                  }),
+                                  narration: value,
+                                },
+                              }))
+                            }
+                          />
+                        </div>
                       </div>
                     ) : (
                       <label className="space-y-1">

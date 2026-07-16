@@ -11,6 +11,11 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  JoiningFeePreviewHint,
+  useJoiningFeePrefill,
+  useJoiningFeePreview,
+} from "@/components/admin/joining-fee-preview"
 import type { MemberDetail } from "../_types"
 
 interface MemberXeroCreateDialogProps {
@@ -46,6 +51,18 @@ export function MemberXeroCreateDialog({
   onChangeEntranceFeeNarration,
   onSubmit,
 }: MemberXeroCreateDialogProps) {
+  const previewState = useJoiningFeePreview({
+    pathId: member.id,
+    enabled: open && createEntranceFeeInvoice,
+  })
+  useJoiningFeePrefill({
+    preview: previewState.preview,
+    prefillKey: member.id,
+    amount: entranceFeeAmount,
+    narration: entranceFeeNarration,
+    setAmount: onChangeEntranceFeeAmount,
+    setNarration: onChangeEntranceFeeNarration,
+  })
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
@@ -101,6 +118,9 @@ export function MemberXeroCreateDialog({
                   value={entranceFeeNarration}
                   onChange={(e) => onChangeEntranceFeeNarration(e.target.value)}
                 />
+              </div>
+              <div className="sm:col-span-2">
+                <JoiningFeePreviewHint state={previewState} />
               </div>
             </div>
           ) : (

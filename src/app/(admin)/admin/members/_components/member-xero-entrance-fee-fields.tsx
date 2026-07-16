@@ -4,18 +4,39 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import type { UseXeroEntranceFeeDecisionResult } from "@/lib/admin-xero-entrance-fee"
+import {
+  JoiningFeePreviewHint,
+  useJoiningFeePrefill,
+  useJoiningFeePreview,
+} from "@/components/admin/joining-fee-preview"
 
 interface MemberXeroEntranceFeeFieldsProps {
   idPrefix: string
   decision: UseXeroEntranceFeeDecisionResult
   onClearError: () => void
+  // When set (an existing member), the resolved default joining fee is fetched
+  // and surfaced, and the override fields are prefilled (item 15, #1931).
+  memberId?: string
 }
 
 export function MemberXeroEntranceFeeFields({
   idPrefix,
   decision,
   onClearError,
+  memberId,
 }: MemberXeroEntranceFeeFieldsProps) {
+  const previewState = useJoiningFeePreview({
+    pathId: memberId ?? null,
+    enabled: Boolean(memberId) && decision.xeroCreateEntranceFeeInvoice,
+  })
+  useJoiningFeePrefill({
+    preview: previewState.preview,
+    prefillKey: memberId ?? "",
+    amount: decision.xeroEntranceFeeAmount,
+    narration: decision.xeroEntranceFeeNarration,
+    setAmount: decision.setXeroEntranceFeeAmount,
+    setNarration: decision.setXeroEntranceFeeNarration,
+  })
   return (
     <div className="space-y-3">
       <div className="flex items-start gap-2">
@@ -40,31 +61,34 @@ export function MemberXeroEntranceFeeFields({
       </div>
 
       {decision.xeroCreateEntranceFeeInvoice ? (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label htmlFor={`${idPrefix}-amount`}>Invoice amount override</Label>
-            <Input
-              id={`${idPrefix}-amount`}
-              type="number"
-              min="0"
-              step="0.01"
-              inputMode="decimal"
-              placeholder="Use configured amount"
-              value={decision.xeroEntranceFeeAmount}
-              onChange={(event) => decision.setXeroEntranceFeeAmount(event.target.value)}
-            />
+        <div className="space-y-2">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor={`${idPrefix}-amount`}>Invoice amount override</Label>
+              <Input
+                id={`${idPrefix}-amount`}
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                placeholder="Use configured amount"
+                value={decision.xeroEntranceFeeAmount}
+                onChange={(event) => decision.setXeroEntranceFeeAmount(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1 sm:col-span-2">
+              <Label htmlFor={`${idPrefix}-narration`}>Invoice narration</Label>
+              <Textarea
+                id={`${idPrefix}-narration`}
+                value={decision.xeroEntranceFeeNarration}
+                onChange={(event) => decision.setXeroEntranceFeeNarration(event.target.value)}
+                maxLength={500}
+                rows={2}
+                placeholder="Optional description to use on the invoice line"
+              />
+            </div>
           </div>
-          <div className="space-y-1 sm:col-span-2">
-            <Label htmlFor={`${idPrefix}-narration`}>Invoice narration</Label>
-            <Textarea
-              id={`${idPrefix}-narration`}
-              value={decision.xeroEntranceFeeNarration}
-              onChange={(event) => decision.setXeroEntranceFeeNarration(event.target.value)}
-              maxLength={500}
-              rows={2}
-              placeholder="Optional description to use on the invoice line"
-            />
-          </div>
+          {memberId && <JoiningFeePreviewHint state={previewState} />}
         </div>
       ) : (
         <div className="space-y-1">
