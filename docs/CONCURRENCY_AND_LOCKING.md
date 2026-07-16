@@ -99,6 +99,14 @@ same Payment. Separate runners can claim both rows before either check, so this
 contention uses a dedicated transient result: each loser returns to PENDING
 (never FAILED), and a later scan runs them without overlap. Provider-verified
 local slice/link reconciliation retakes the member ledger lock.
+Cancellation and Internet-Banking hold expiry, while holding the global booking
+lock, query for any non-complete applied-credit deallocation before their first
+write. If one exists they defer the whole transition; a later retry computes
+the clearing amount from provider-converged slices. Legacy inbound rows missing
+those slices are repaired under the transaction/member-credit lock only when a
+unique positive funding lot proves provenance. Slice reduction/deletion is
+therefore working state, while the operation checkpoint/history and inactive /
+active object-link history preserve the durable audit trail.
 | **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`) | — | Archive/delete of one member. |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |

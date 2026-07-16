@@ -7,6 +7,7 @@ import { buildBookingAppliedCreditDescription, getAmountCentsFromAllocationMetad
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
+import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 
 export async function resolvePaymentIdsByInvoiceTargets(
   creditNoteId: string,
@@ -632,6 +633,12 @@ export async function repairAccountCreditAllocationBusinessState(
           createdAppliedCredits += 1;
         }
       }
+
+      await repairLegacyAppliedCreditNoteAllocationsForBooking(
+        payment.bookingId,
+        target.invoiceId,
+        tx,
+      );
 
       const aggregate = await tx.memberCredit.aggregate({
         where: {

@@ -39,6 +39,7 @@ vi.mock("@/lib/prisma", () => ({
 
 const mockApplyLocalRefundAllocation = vi.fn();
 const mockStartXeroSyncOperation = vi.fn();
+const mockRepairLegacyAppliedCreditNoteAllocationsForBooking = vi.fn();
 
 vi.mock("@/lib/payment-transactions", () => ({
   applyLocalRefundAllocation: mockApplyLocalRefundAllocation,
@@ -46,6 +47,10 @@ vi.mock("@/lib/payment-transactions", () => ({
 vi.mock("@/lib/xero-sync", () => ({
   buildXeroIdempotencyKey: (...parts: unknown[]) => parts.join(":"),
   startXeroSyncOperation: mockStartXeroSyncOperation,
+}));
+vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
+  repairLegacyAppliedCreditNoteAllocationsForBooking:
+    mockRepairLegacyAppliedCreditNoteAllocationsForBooking,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -692,6 +697,9 @@ describe("member-credit helpers", () => {
         { memberId: "member-1", bookingId: "booking-ib", newFinalPriceCents: 3000 },
         tx as any
       );
+      expect(
+        mockRepairLegacyAppliedCreditNoteAllocationsForBooking,
+      ).toHaveBeenCalledWith("booking-ib", "inv-1", tx);
       expect(mockStartXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
         operationType: "UPDATE",
         correlationKey: "booking:booking-ib:applied-credit-deallocation:3000:v1",

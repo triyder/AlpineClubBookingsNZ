@@ -79,6 +79,9 @@ vi.mock("@/lib/member-credit", () => ({
   deriveBookingAppliedCreditCents: h.deriveApplied,
   lockMemberCreditLedger: vi.fn(),
 }));
+vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
+  repairLegacyAppliedCreditNoteAllocationsForBooking: vi.fn(),
+}));
 vi.mock("@/lib/xero-api-client", () => ({
   getAuthenticatedXeroClient: vi.fn(async () => ({
     tenantId: "tenant-1",

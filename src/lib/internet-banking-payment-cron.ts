@@ -22,6 +22,8 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
+import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
+import { findUnconvergedAppliedCreditDeallocation } from "@/lib/xero-applied-credit-operation-serialization";
 
 export interface InternetBankingHoldReleaseResult {
   scanned: number;
@@ -60,6 +62,13 @@ function releaseOneHold(paymentId: string, now: Date) {
         fresh.booking.status !== BookingStatus.CONFIRMED
       ) {
         return { type: "skipped" as const };
+      }
+
+      if (await findUnconvergedAppliedCreditDeallocation(fresh.id, tx)) {
+        return {
+          type: "skipped" as const,
+          reason: "applied-credit-deallocation" as const,
+        };
       }
 
       await tx.booking.update({
@@ -150,6 +159,11 @@ function releaseOneHold(paymentId: string, now: Date) {
           transactions: paymentTransactions,
         });
         if (!freshPaymentCaptured) {
+          await repairLegacyAppliedCreditNoteAllocationsForBooking(
+            fresh.bookingId,
+            fresh.xeroInvoiceId,
+            tx,
+          );
           // Read the Xero-allocated applied credit under the same advisory lock,
           // matching the cancel path's "read allocated credit under lock(1)"
           // requirement so the aggregate is consistent.

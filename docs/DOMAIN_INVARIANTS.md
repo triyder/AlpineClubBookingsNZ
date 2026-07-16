@@ -829,6 +829,21 @@ Cancellation and Internet-Banking hold expiry derive the invoice's allocated
 credit from the precise positive `MemberCreditNoteAllocation.amountCents`
 aggregate, not the coarse historical `MemberCredit.xeroCreditNoteId` stamp,
 which cannot represent a partial clamp.
+They defer the entire transition while an `APPLIED_CREDIT_DEALLOCATION` is
+PENDING, RUNNING, FAILED, PARTIAL, or WAITING_PAYMENT. This prevents either
+transition from freezing a clearing-note amount against the pre-clamp slices;
+after the worker reaches COMPLETE, the retry reads the converged target slices.
+
+Inbound/legacy repairs that stamped `BOOKING_APPLIED.xeroCreditNoteId` without
+creating a precise slice are upgraded under the same transaction lock before
+clamp, cancel, expiry, or deallocation reads them. Repair requires exactly one
+positive funding lot and enough unallocated cents, creates the
+`MemberCreditNoteAllocation` plus active provenance link, and fails closed on
+missing or ambiguous provenance. Allocation rows are mutable working slices:
+provider-verified deallocation may reduce or delete them. Immutable-equivalent
+audit is retained in the deallocation operation's request checkpoint/history
+(prior and target cents, provider IDs and match rule) and the inactive/active
+`XeroObjectLink` history.
 
 Every modification path also applies the same lifecycle transitions: a
 PAYMENT_PENDING booking whose EFFECTIVE (credit-reduced) price drops to zero

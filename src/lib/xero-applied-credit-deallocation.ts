@@ -16,6 +16,7 @@ import {
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
 } from "./xero-operation-outbox-payload";
 import { XeroAppliedCreditOperationBusyError } from "./xero-applied-credit-operation-serialization";
+import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "./xero-applied-credit-allocation-repair";
 
 const APPLIED_CREDIT_ALLOCATION_ROLE = "APPLIED_CREDIT_ALLOCATION";
 const APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE =
@@ -421,6 +422,15 @@ export async function deallocateExcessAppliedCreditForBooking(
       `Applied-credit operation ${conflicting.id} is still running; retrying deallocation`
     );
   }
+
+  await prisma.$transaction(async (tx) => {
+    await lockMemberCreditLedger(booking.memberId, tx);
+    await repairLegacyAppliedCreditNoteAllocationsForBooking(
+      bookingId,
+      booking.payment!.xeroInvoiceId!,
+      tx,
+    );
+  });
 
   const desiredAppliedCents = await deriveBookingAppliedCreditCents(bookingId);
   const rows = await prisma.memberCreditNoteAllocation.findMany({

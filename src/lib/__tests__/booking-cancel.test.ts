@@ -61,6 +61,8 @@ const mocks = vi.hoisted(() => {
   // #1547: the under-lock Xero-linked applied-credit aggregate in the
   // never-captured claim tx (A1).
   txMemberCreditAggregate: vi.fn(),
+  findUnconvergedAppliedCreditDeallocation: vi.fn(),
+  repairLegacyAppliedCreditNoteAllocationsForBooking: vi.fn(),
   // #1406: spy on the payment-link revoke so the guard test can prove a
   // just-accepted booking's brand-new payment links are NEVER revoked.
   revokePaymentLinksForBooking: vi.fn(),
@@ -193,6 +195,16 @@ vi.mock("@/lib/promo", () => ({
   deletePromoRedemptionAndAdjustCount: mocks.deletePromoRedemptionAndAdjustCount,
 }));
 
+vi.mock("@/lib/xero-applied-credit-operation-serialization", () => ({
+  findUnconvergedAppliedCreditDeallocation:
+    mocks.findUnconvergedAppliedCreditDeallocation,
+}));
+
+vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
+  repairLegacyAppliedCreditNoteAllocationsForBooking:
+    mocks.repairLegacyAppliedCreditNoteAllocationsForBooking,
+}));
+
 import { cancelBooking } from "@/lib/booking-cancel";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
@@ -269,6 +281,8 @@ describe("cancelBooking credit refunds", () => {
     mocks.paymentTransactionFindFirst.mockResolvedValue(null);
     // #1547: default = no Xero-linked applied-credit allocations under the lock.
     mocks.txMemberCreditAggregate.mockResolvedValue({ _sum: { amountCents: null } });
+    mocks.findUnconvergedAppliedCreditDeallocation.mockResolvedValue(null);
+    mocks.repairLegacyAppliedCreditNoteAllocationsForBooking.mockResolvedValue(0);
     // #1491: fold materialization defaults — no captured rows to attribute to.
     mocks.txPaymentTransactionFindMany.mockResolvedValue([]);
     mocks.txPaymentTransactionUpdate.mockResolvedValue({});
@@ -2359,6 +2373,49 @@ describe("cancelBooking credit refunds", () => {
         { bookingId: "bk_ib2", refundAmountCents: 7000 },
         { createdByMemberId: "member_1" }
       );
+      expect(
+        mocks.repairLegacyAppliedCreditNoteAllocationsForBooking
+      ).toHaveBeenCalledWith("bk_ib2", "inv_ib2", mocks.lastTx);
+    });
+
+    it("defers cancellation before any write when clamp deallocation has not converged", async () => {
+      const booking = neverCapturedBooking(
+        { id: "bk_dealloc", finalPriceCents: 8000 },
+        {
+          id: "payment_dealloc",
+          bookingId: "bk_dealloc",
+          source: "INTERNET_BANKING",
+          status: "PROCESSING",
+          stripePaymentIntentId: null,
+          xeroInvoiceId: "inv_dealloc",
+        },
+      );
+      mocks.bookingFindUnique.mockResolvedValueOnce(booking);
+      mocks.txBookingFindUnique.mockResolvedValueOnce(booking);
+      mocks.findUnconvergedAppliedCreditDeallocation.mockResolvedValueOnce({
+        id: "op_dealloc",
+        status: "PENDING",
+      });
+
+      const result = await cancelBooking(
+        "bk_dealloc",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card",
+      );
+
+      expect(result).toEqual({
+        status: 409,
+        error:
+          "Applied credit is still being reconciled with Xero; retry cancellation after it completes",
+      });
+      expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+      expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+      expect(mocks.restoreCreditFromBooking).not.toHaveBeenCalled();
+      expect(
+        mocks.enqueueXeroModificationCreditNoteOperation,
+      ).not.toHaveBeenCalled();
     });
 
     it("runs the restore inside the existing claim on a no-payment WAITLISTED cancel and preserves the response field semantics", async () => {

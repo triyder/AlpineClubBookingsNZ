@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   processWaitlistForDates: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
+  findUnconvergedAppliedCreditDeallocation: vi.fn(),
+  repairLegacyAppliedCreditNoteAllocationsForBooking: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -65,6 +67,16 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroRefundCreditNoteOperation: mocks.enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected:
     mocks.kickQueuedXeroOutboxOperationsIfConnected,
+}));
+
+vi.mock("@/lib/xero-applied-credit-operation-serialization", () => ({
+  findUnconvergedAppliedCreditDeallocation:
+    mocks.findUnconvergedAppliedCreditDeallocation,
+}));
+
+vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
+  repairLegacyAppliedCreditNoteAllocationsForBooking:
+    mocks.repairLegacyAppliedCreditNoteAllocationsForBooking,
 }));
 
 import { releaseExpiredInternetBankingHolds } from "@/lib/internet-banking-payment-cron";
@@ -160,6 +172,8 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
       queueOperationId: "op_refund_note_1",
     });
     mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(null);
+    mocks.findUnconvergedAppliedCreditDeallocation.mockResolvedValue(null);
+    mocks.repairLegacyAppliedCreditNoteAllocationsForBooking.mockResolvedValue(0);
   });
 
   it("enqueues the invoice-clearing credit note through the release transaction client", async () => {
@@ -228,6 +242,22 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
     // #1547: a skipped hold never touches the credit ledger.
     expect(mocks.restoreCreditFromBooking).not.toHaveBeenCalled();
+  });
+
+  it("defers hold expiry before any write while clamp deallocation is unresolved", async () => {
+    mocks.findUnconvergedAppliedCreditDeallocation.mockResolvedValueOnce({
+      id: "op_dealloc",
+      status: "RUNNING",
+    });
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.released).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(mocks.txBookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.txPaymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.restoreCreditFromBooking).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
 
   it("restores applied credit inside the release transaction and threads it through the narrative (#1547)", async () => {
@@ -328,6 +358,8 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
       queueOperationId: "op_refund_note_1",
     });
     mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(null);
+    mocks.findUnconvergedAppliedCreditDeallocation.mockResolvedValue(null);
+    mocks.repairLegacyAppliedCreditNoteAllocationsForBooking.mockResolvedValue(0);
   });
 
   it("clears the full finalPrice even when the booking carried applied credit (no double-count)", async () => {
@@ -364,6 +396,9 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
       10000,
       { store: txRef.current },
     );
+    expect(
+      mocks.repairLegacyAppliedCreditNoteAllocationsForBooking,
+    ).toHaveBeenCalledWith("booking_ib_1", "inv_ib_1", txRef.current);
   });
 
   it("conserves on hold-expiry with #1620-allocated applied credit (reduced clearing + 100% restore)", async () => {

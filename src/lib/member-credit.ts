@@ -13,6 +13,7 @@ import { applyLocalRefundAllocation } from "./payment-transactions";
 import logger from "@/lib/logger";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
+import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import {
   assertMatchingIdempotentAdjustmentRequest,
   calculateAppliedCreditAmount,
@@ -374,6 +375,11 @@ export async function clampAppliedCreditToBookingPrice(
   });
   const payment = booking?.payment;
   if (payment?.source === PaymentSource.INTERNET_BANKING && payment.xeroInvoiceId) {
+    await repairLegacyAppliedCreditNoteAllocationsForBooking(
+      bookingId,
+      payment.xeroInvoiceId,
+      tx,
+    );
     const allocated = await tx.memberCreditNoteAllocation.aggregate({
       where: { appliedToBookingId: bookingId },
       _sum: { amountCents: true },

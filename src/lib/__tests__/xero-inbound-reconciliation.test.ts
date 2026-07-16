@@ -53,6 +53,7 @@ const mocks = vi.hoisted(() => ({
   processWaitlist: vi.fn(),
   txLinkFindFirst: vi.fn(),
   txOperationFindFirst: vi.fn(),
+  repairLegacyAppliedCreditNoteAllocationsForBooking: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -127,6 +128,11 @@ vi.mock("@/lib/logger", () => ({
     warn: vi.fn(),
     debug: vi.fn(),
   },
+}));
+
+vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
+  repairLegacyAppliedCreditNoteAllocationsForBooking:
+    mocks.repairLegacyAppliedCreditNoteAllocationsForBooking,
 }));
 
 vi.mock("@/lib/email", () => ({
@@ -4481,6 +4487,9 @@ describe("processStoredXeroInboundEvents", () => {
     // the shared reconcile advisory lock.
     expect(mocks.transaction).toHaveBeenCalled();
     expect(mocks.txExecuteRaw).toHaveBeenCalled();
+    expect(
+      mocks.repairLegacyAppliedCreditNoteAllocationsForBooking,
+    ).toHaveBeenCalledWith("bk234567890", "inv_booking_1", expect.anything());
     // Clamped to the payment amount, not the raw 5000 aggregate.
     expect(mocks.paymentUpdate).toHaveBeenCalledWith({
       where: { id: "pay_booking_1" },

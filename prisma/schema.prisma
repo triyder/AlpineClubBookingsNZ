@@ -3861,7 +3861,8 @@ model MemberCredit {
 /// the raise-path allocation engine reduces the FULL Xero invoice by allocating
 /// the member's existing floating ACCRECCREDIT notes (or a freshly minted note
 /// for an admin-adjustment remainder that has no Xero note). Each row records one
-/// slice of one funding lot consumed against one booking's invoice. A funding
+/// mutable working slice of one funding lot consumed against one booking's
+/// invoice. A funding
 /// note's remaining unallocated balance = MemberCredit.amountCents (the positive
 /// lot) minus the sum of amountCents over its allocation rows. Idempotency anchor
 /// for the per-note Xero allocation outbox op (localModel
@@ -3875,8 +3876,10 @@ model MemberCreditNoteAllocation {
   xeroCreditNoteId   String
   // The booking whose Xero invoice the note is allocated against. Deliberately a
   // bare scalar with no FK to Booking (mirrors MemberCredit.restoredFromBookingId):
-  // allocation ledger rows are an immutable audit trail and must survive a booking
-  // hard-delete rather than cascade or block it.
+  // working slices can be reduced/deleted after provider-verified deallocation,
+  // but remain bare scalars so booking hard-delete neither cascades nor blocks.
+  // Durable equivalent audit survives in the XeroSyncOperation requestPayload
+  // checkpoint/history and inactive/active XeroObjectLink provenance history.
   appliedToBookingId String
   // Positive cents drawn from the lot for this booking (never exceeds the lot's
   // remaining balance).
