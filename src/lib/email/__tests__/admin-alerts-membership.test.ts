@@ -58,7 +58,7 @@ describe("sendAdminMemberDeleteRequestedAlert (#1938)", () => {
     expect(reviewUrl).not.toContain("/admin/members/");
   });
 
-  it("sends via the shared member-requests alert category", async () => {
+  it("sends via the dedicated member-delete-request alert category", async () => {
     await sendAdminMemberDeleteRequestedAlert({
       requesterName: "Admin One",
       memberId: "member-42",
@@ -66,15 +66,15 @@ describe("sendAdminMemberDeleteRequestedAlert (#1938)", () => {
       reason: "Duplicate created in error",
     });
 
-    // NOTE: this alert stays on the shared `adminFamilyGroupRequest` ("Member
-    // requests") preference. A dedicated toggle would require a new
-    // NotificationPreference column (a schema/migration change), which is out of
-    // scope for #1938 (no-schema). The category's description already documents
-    // safe-delete coverage. Tracked as a follow-up.
+    // #1938: this alert now filters on its own dedicated `adminMemberDeleteRequest`
+    // preference key (additive, default on) rather than the shared
+    // `adminFamilyGroupRequest` ("Member requests") category, so an admin who
+    // mutes family-group/application alerts no longer silently mutes
+    // delete-request review alerts.
     expect(h.sendToAdmins).toHaveBeenCalledWith(
       expect.objectContaining({
         templateName: "admin-member-delete-requested",
-        preferenceKey: "adminFamilyGroupRequest",
+        preferenceKey: "adminMemberDeleteRequest",
       }),
     );
   });

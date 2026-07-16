@@ -34,7 +34,7 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
   adminFamilyGroupRequest: {
     label: "Member requests",
     description:
-      "Alerts when a member request needs admin review, including membership applications, family groups, cancellation, archive, and safe-delete requests.",
+      "Alerts when a member request needs admin review, including membership applications, family groups, cancellation, archive, and self-service account-deletion requests.",
   },
   adminBookingChangeRequest: {
     label: "Booking change requests",
@@ -58,6 +58,11 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
     label: "Booking review required",
     description:
       "Alerts when a booking needs admin review before it can check in, such as a paid booking left with only under-18 guests. Kept separate so muting routine new-booking alerts does not silence this review alert.",
+  },
+  adminMemberDeleteRequest: {
+    label: "Member delete requests",
+    description:
+      "Alerts when an admin requests a permanent member-record hard delete that a different admin must approve. Kept separate from the shared member-requests category so muting family-group and application alerts does not silence delete-request review alerts.",
   },
 } as const;
 
@@ -88,6 +93,7 @@ export const ADMIN_NOTIFICATION_PREFERENCE_SELECT = {
   adminIssueReport: true,
   adminBookingRequest: true,
   adminBookingReviewRequired: true,
+  adminMemberDeleteRequest: true,
 } as const;
 
 export function resolveAdminNotificationPreferences(
@@ -108,5 +114,6 @@ export function resolveAdminNotificationPreferences(
     adminIssueReport: preferences?.adminIssueReport ?? true,
     adminBookingRequest: preferences?.adminBookingRequest ?? true,
     adminBookingReviewRequired: preferences?.adminBookingReviewRequired ?? true,
+    adminMemberDeleteRequest: preferences?.adminMemberDeleteRequest ?? true,
   };
 }
