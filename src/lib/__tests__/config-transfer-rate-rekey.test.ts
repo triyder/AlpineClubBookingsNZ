@@ -12,8 +12,11 @@ import type { TxDb } from "@/lib/config-transfer/import-types";
 // (true -> FULL, false -> NON_MEMBER, documented lossy compat).
 
 const MEMBERSHIP_TYPES = [
-  { id: "mt-full", key: "FULL" },
-  { id: "mt-nonmember", key: "NON_MEMBER" },
+  { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE", ageGroupsApply: true },
+  { id: "mt-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE", ageGroupsApply: true },
+  { id: "mt-school", key: "SCHOOL_GROUP", bookingBehavior: "MEMBER_RATE", ageGroupsApply: false },
+  { id: "mt-associate", key: "ASSOCIATE", bookingBehavior: "NON_MEMBER_RATE", ageGroupsApply: true },
+  { id: "mt-blocked", key: "SOCIAL", bookingBehavior: "BLOCK_BOOKING", ageGroupsApply: true },
 ];
 
 /**
@@ -136,6 +139,104 @@ describe("config-transfer season-rate re-key apply (#1930, E4)", () => {
         expect.objectContaining({ membershipTypeId: "mt-nonmember", ageTier: "ADULT", pricePerNightCents: 7000 }),
       ]),
     );
+  });
+});
+
+function planCtx(files: Map<string, Uint8Array>, db: TxDb) {
+  return {
+    db,
+    files,
+    manifest: {} as never,
+    mode: "merge" as const,
+    resolutions: new Map<string, string>(),
+  };
+}
+
+describe("config-transfer D2 + shape import validation (#1930, E4 review F9)", () => {
+  it("season-rates: rejects rows targeting NON_MEMBER_RATE/BLOCK types as blocking errors", async () => {
+    const captures = { rateCreates: [] as Record<string, unknown>[], itemCreates: [] as Record<string, unknown>[] };
+    const files = lodgeFiles(
+      "seasonName,membershipTypeKey,ageTier,pricePerNightCents\n" +
+      "Winter,ASSOCIATE,ADULT,5000\n" +
+      "Winter,SOCIAL,ADULT,5000\n" +
+      "Winter,FULL,ADULT,5000\n",
+    );
+    const plan = await lodgeConfigImporter.plan(planCtx(files, makeTx(captures)) as never);
+
+    expect(plan.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('membership type "ASSOCIATE" does not carry its own hut rates'),
+        expect.stringContaining('membership type "SOCIAL" does not carry its own hut rates'),
+      ]),
+    );
+    // Invalid rows are excluded from the plan; the valid FULL row still plans.
+    const rateItems = plan.items.filter((item) => item.entity === "season-rate");
+    expect(rateItems).toHaveLength(1);
+    expect(rateItems[0].key).toContain("FULL");
+  });
+
+  it("season-rates: validates row shape against ageGroupsApply", async () => {
+    const captures = { rateCreates: [] as Record<string, unknown>[], itemCreates: [] as Record<string, unknown>[] };
+    const files = lodgeFiles(
+      "seasonName,membershipTypeKey,ageTier,pricePerNightCents\n" +
+      // Flat type must not carry a per-tier row...
+      "Winter,SCHOOL_GROUP,ADULT,5000\n" +
+      // ...and an age-keyed type must not carry a blank-tier (flat) row.
+      "Winter,FULL,,5000\n" +
+      // Correct shapes still plan.
+      "Winter,SCHOOL_GROUP,,4000\n" +
+      "Winter,FULL,ADULT,6000\n",
+    );
+    const plan = await lodgeConfigImporter.plan(planCtx(files, makeTx(captures)) as never);
+
+    expect(plan.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('"SCHOOL_GROUP" prices from a single flat rate'),
+        expect.stringContaining('"FULL" uses per-age-tier rates'),
+      ]),
+    );
+    const rateItems = plan.items.filter((item) => item.entity === "season-rate");
+    expect(rateItems.map((item) => item.key)).toEqual([
+      "main/Winter/SCHOOL_GROUP/",
+      "main/Winter/FULL/ADULT",
+    ]);
+  });
+
+  it("xero HUT_FEE: rejects non-rate-bearing types and shape mismatches as blocking errors", async () => {
+    const captures = { rateCreates: [] as Record<string, unknown>[], itemCreates: [] as Record<string, unknown>[] };
+    const files = new Map<string, Uint8Array>([
+      ["xero-config/item-code-mappings.csv", strToU8(
+        "category,membershipTypeKey,ageTier,seasonType,entranceFeeCategory,itemCode,amountCents\n" +
+        "HUT_FEE,ASSOCIATE,ADULT,WINTER,,HUT-BAD,\n" +
+        "HUT_FEE,SCHOOL_GROUP,ADULT,WINTER,,HUT-BAD-SHAPE,\n" +
+        "HUT_FEE,FULL,,WINTER,,HUT-BAD-FLAT,\n" +
+        "HUT_FEE,FULL,ADULT,WINTER,,HUT-OK,\n" +
+        "HUT_FEE,SCHOOL_GROUP,,WINTER,,HUT-OK-FLAT,\n" +
+        "ENTRANCE_FEE,,,,ADULT,ENT-OK,5000\n",
+      )],
+    ]);
+    const plan = await xeroConfigImporter.plan(planCtx(files, makeTx(captures)) as never);
+
+    expect(plan.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('membership type "ASSOCIATE" does not carry its own hut fees'),
+        expect.stringContaining('"SCHOOL_GROUP" prices from a single flat rate'),
+        expect.stringContaining('"FULL" uses per-age-tier rates'),
+      ]),
+    );
+    // Valid rows (incl. ENTRANCE_FEE, which never carries a membership type)
+    // still plan; invalid ones are excluded.
+    const itemKeys = plan.items
+      .filter((item) => item.entity === "xero-item-code-mapping")
+      .map((item) => item.key);
+    expect(itemKeys).toEqual(
+      expect.arrayContaining([
+        "HUT_FEE/FULL/ADULT/WINTER/-",
+        "HUT_FEE/SCHOOL_GROUP/-/WINTER/-",
+        "ENTRANCE_FEE/-/-/-/ADULT",
+      ]),
+    );
+    expect(itemKeys).toHaveLength(3);
   });
 });
 

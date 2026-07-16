@@ -264,6 +264,13 @@ interface LodgeBatch {
   seasonsByLodge: Map<string, Array<{ id: string; name: string; startDate: Date; endDate: Date }>>;
   rates: Map<string, { id: string; pricePerNightCents: number }>; // lodgeId/seasonName/membershipTypeKey/ageTierOrEmpty
   membershipTypeIdByKey: Map<string, string>; // club-wide key -> id (for rate apply)
+  // Full descriptors for import validation (#1930, E4): rate rows may only
+  // target rate-bearing types (D2 invariant) and must match the type's
+  // ageGroupsApply shape.
+  membershipTypesByKey: Map<
+    string,
+    { id: string; bookingBehavior: string; ageGroupsApply: boolean }
+  >;
   currentDefaultSlug: string | null;
 }
 
@@ -307,7 +314,9 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
         season: { select: { lodgeId: true, name: true } },
       },
     }),
-    db.membershipType.findMany({ select: { id: true, key: true } }),
+    db.membershipType.findMany({
+      select: { id: true, key: true, bookingBehavior: true, ageGroupsApply: true },
+    }),
     db.lodge.findFirst({ where: { isDefault: true }, select: { slug: true } }),
   ]);
 
@@ -333,6 +342,12 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
   const membershipTypeIdByKey = new Map(
     membershipTypeRows.map((t) => [t.key, t.id]),
   );
+  const membershipTypesByKey = new Map(
+    membershipTypeRows.map((t) => [
+      t.key,
+      { id: t.id, bookingBehavior: t.bookingBehavior, ageGroupsApply: t.ageGroupsApply },
+    ]),
+  );
 
   return {
     lodges,
@@ -343,6 +358,7 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
     seasonsByLodge,
     rates,
     membershipTypeIdByKey,
+    membershipTypesByKey,
     currentDefaultSlug: currentDefault?.slug ?? null,
   };
 }
@@ -591,7 +607,8 @@ function parseLodgeFolder(
     } else {
       membershipTypeKey = v.required("membershipTypeKey", raw.membershipTypeKey);
     }
-    if (membershipTypeKey && !batch.membershipTypeIdByKey.has(membershipTypeKey)) {
+    const membershipType = batch.membershipTypesByKey.get(membershipTypeKey);
+    if (membershipTypeKey && !membershipType) {
       errors.push(
         `${paths.rates}: row ${i + 1}: unknown membership type "${membershipTypeKey}"`,
       );
@@ -599,6 +616,35 @@ function parseLodgeFolder(
 
     // ageTier is optional: blank = a flat type's single all-ages rate (null).
     const ageTier = nz(raw.ageTier) === null ? null : v.enum("ageTier", "AgeTier", raw.ageTier);
+
+    // D2 invariant + shape validation (#1930, E4). Both are blocking errors,
+    // exactly like an unknown membership type: a NON_MEMBER_RATE type (other
+    // than the built-in NON_MEMBER rate holder) or BLOCK_BOOKING type owns
+    // ZERO rate rows, and a row's ageTier must match the type's
+    // ageGroupsApply shape (per-tier rows for age-keyed types, one blank-tier
+    // flat row for flat types).
+    let rowShapeValid = true;
+    if (membershipType) {
+      const rateBearing =
+        membershipType.bookingBehavior === "MEMBER_RATE" ||
+        membershipTypeKey === "NON_MEMBER";
+      if (!rateBearing) {
+        errors.push(
+          `${paths.rates}: row ${i + 1}: membership type "${membershipTypeKey}" does not carry its own hut rates (${membershipType.bookingBehavior} types own zero rate rows)`,
+        );
+        rowShapeValid = false;
+      } else if (!membershipType.ageGroupsApply && ageTier !== null) {
+        errors.push(
+          `${paths.rates}: row ${i + 1}: membership type "${membershipTypeKey}" prices from a single flat rate — leave ageTier blank`,
+        );
+        rowShapeValid = false;
+      } else if (membershipType.ageGroupsApply && ageTier === null) {
+        errors.push(
+          `${paths.rates}: row ${i + 1}: membership type "${membershipTypeKey}" uses per-age-tier rates — specify an ageTier`,
+        );
+        rowShapeValid = false;
+      }
+    }
 
     const current =
       lodgeId
@@ -609,7 +655,7 @@ function parseLodgeFolder(
       blankOk && nz(raw.pricePerNightCents) === null
         ? 0
         : v.moneyCents("pricePerNightCents", raw.pricePerNightCents);
-    if (!v.ok || !batch.membershipTypeIdByKey.has(membershipTypeKey)) return;
+    if (!v.ok || !membershipType || !rowShapeValid) return;
     out.rates.push({ raw, seasonName, membershipTypeKey, ageTier, data: { pricePerNightCents } });
   });
 

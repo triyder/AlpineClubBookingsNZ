@@ -68,8 +68,8 @@ function sourceDb(): ReadDb {
     },
     membershipType: {
       findMany: vi.fn().mockResolvedValue([
-        { id: "mt-full", key: "FULL" },
-        { id: "mt-nonmember", key: "NON_MEMBER" },
+        { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE", ageGroupsApply: true },
+        { id: "mt-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE", ageGroupsApply: true },
       ]),
     },
     lodgeInstruction: { findMany: vi.fn().mockResolvedValue([]) },
@@ -91,8 +91,8 @@ function emptyTargetDb(): ReadDb {
     // Rate rows key on the membership type; the parser resolves keys against these.
     membershipType: {
       findMany: vi.fn().mockResolvedValue([
-        { id: "mt-full", key: "FULL" },
-        { id: "mt-nonmember", key: "NON_MEMBER" },
+        { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE", ageGroupsApply: true },
+        { id: "mt-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE", ageGroupsApply: true },
       ]),
     },
     lodgeInstruction: { findMany: vi.fn().mockResolvedValue([]) },

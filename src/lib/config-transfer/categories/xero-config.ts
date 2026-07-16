@@ -138,7 +138,10 @@ function parseItemRow(
   index: number,
   raw: Record<string, string>,
   errors: string[],
-  membershipTypeIdByKey: Map<string, string>,
+  membershipTypesByKey: Map<
+    string,
+    { id: string; bookingBehavior: string; ageGroupsApply: boolean }
+  >,
 ): ParsedItemRow | null {
   const v = new RowValidator(ITEM_FILE, index, errors);
   const category = v.required("category", raw.category);
@@ -158,7 +161,9 @@ function parseItemRow(
     const isMember = v.bool("isMember", raw.isMember);
     membershipTypeKey = LEGACY_IS_MEMBER_TYPE_KEY[String(isMember) as "true" | "false"];
   }
-  if (membershipTypeKey !== null && !membershipTypeIdByKey.has(membershipTypeKey)) {
+  const membershipType =
+    membershipTypeKey !== null ? membershipTypesByKey.get(membershipTypeKey) : undefined;
+  if (membershipTypeKey !== null && !membershipType) {
     errors.push(
       `${ITEM_FILE} row ${index + 2}: membershipTypeKey — unknown membership type "${membershipTypeKey}"`,
     );
@@ -172,6 +177,35 @@ function parseItemRow(
     seasonType: v.enumOrNull("seasonType", "SeasonType", raw.seasonType),
     entranceFeeCategory: v.enumOrNull("entranceFeeCategory", "EntranceFeeCategory", raw.entranceFeeCategory),
   };
+
+  // D2 invariant + shape validation for HUT_FEE rows (#1930, E4), blocking
+  // errors exactly like an unknown membership type: item codes may only key a
+  // rate-bearing type (MEMBER_RATE, or the built-in NON_MEMBER rate holder),
+  // and the row's ageTier must match the type's ageGroupsApply shape.
+  if (category === "HUT_FEE" && membershipTypeKey !== null && membershipType) {
+    const rateBearing =
+      membershipType.bookingBehavior === "MEMBER_RATE" ||
+      membershipTypeKey === "NON_MEMBER";
+    if (!rateBearing) {
+      errors.push(
+        `${ITEM_FILE} row ${index + 2}: membershipTypeKey — membership type "${membershipTypeKey}" does not carry its own hut fees (${membershipType.bookingBehavior} types own zero HUT_FEE rows)`,
+      );
+      return null;
+    }
+    if (!membershipType.ageGroupsApply && identity.ageTier !== null) {
+      errors.push(
+        `${ITEM_FILE} row ${index + 2}: ageTier — membership type "${membershipTypeKey}" prices from a single flat rate; leave ageTier blank`,
+      );
+      return null;
+    }
+    if (membershipType.ageGroupsApply && identity.ageTier === null) {
+      errors.push(
+        `${ITEM_FILE} row ${index + 2}: ageTier — membership type "${membershipTypeKey}" uses per-age-tier rates; specify an ageTier`,
+      );
+      return null;
+    }
+  }
+
   const data = {
     itemCode: nz(raw.itemCode),
     amountCents: nz(raw.amountCents) === null ? null : v.moneyCents("amountCents", raw.amountCents),
@@ -183,7 +217,13 @@ function parseItemRow(
 interface XeroBatch {
   accounts: Map<string, { id: string; key: string; code: string | null; itemCode: string | null }>;
   items: Map<string, { id: string; itemCode: string | null; amountCents: number | null }>;
-  membershipTypeIdByKey: Map<string, string>;
+  // Full descriptors for import validation (#1930, E4): HUT_FEE rows may only
+  // target rate-bearing types (D2) and must match the type's ageGroupsApply
+  // shape.
+  membershipTypesByKey: Map<
+    string,
+    { id: string; bookingBehavior: string; ageGroupsApply: boolean }
+  >;
   membershipTypeKeyById: Map<string, string>;
 }
 
@@ -198,9 +238,16 @@ async function loadXeroBatch(db: ReadDb): Promise<XeroBatch> {
         membershipTypeId: true, entranceFeeCategory: true, itemCode: true, amountCents: true,
       },
     }),
-    db.membershipType.findMany({ select: { id: true, key: true } }),
+    db.membershipType.findMany({
+      select: { id: true, key: true, bookingBehavior: true, ageGroupsApply: true },
+    }),
   ]);
-  const membershipTypeIdByKey = new Map(membershipTypeRows.map((t) => [t.key, t.id]));
+  const membershipTypesByKey = new Map(
+    membershipTypeRows.map((t) => [
+      t.key,
+      { id: t.id, bookingBehavior: t.bookingBehavior, ageGroupsApply: t.ageGroupsApply },
+    ]),
+  );
   const membershipTypeKeyById = new Map(membershipTypeRows.map((t) => [t.id, t.key]));
   const items = new Map<string, { id: string; itemCode: string | null; amountCents: number | null }>();
   for (const row of itemRows) {
@@ -221,7 +268,7 @@ async function loadXeroBatch(db: ReadDb): Promise<XeroBatch> {
   return {
     accounts: new Map(accountRows.map((r) => [r.key, r])),
     items,
-    membershipTypeIdByKey,
+    membershipTypesByKey,
     membershipTypeKeyById,
   };
 }
@@ -308,7 +355,7 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
   });
 
   readCsvRows(ctx.files, ITEM_FILE).forEach((raw, i) => {
-    const parsed = parseItemRow(i, raw, errors, batch.membershipTypeIdByKey);
+    const parsed = parseItemRow(i, raw, errors, batch.membershipTypesByKey);
     if (!parsed) return;
     const current = batch.items.get(parsed.key) ?? null;
     fingerprintParts.push(
@@ -349,11 +396,11 @@ async function applyXeroConfig(ctx: ApplyContext): Promise<CategoryApplyResult> 
   }
 
   for (const [i, raw] of readCsvRows(ctx.files, ITEM_FILE).entries()) {
-    const parsed = parseItemRow(i, raw, errors, batch.membershipTypeIdByKey);
+    const parsed = parseItemRow(i, raw, errors, batch.membershipTypesByKey);
     if (!parsed) { result.skipped += 1; continue; }
     const current = batch.items.get(parsed.key) ?? null;
     const membershipTypeId = parsed.identity.membershipTypeKey
-      ? batch.membershipTypeIdByKey.get(parsed.identity.membershipTypeKey) ?? null
+      ? batch.membershipTypesByKey.get(parsed.identity.membershipTypeKey)?.id ?? null
       : null;
     await applyRow({
       mode: ctx.mode,

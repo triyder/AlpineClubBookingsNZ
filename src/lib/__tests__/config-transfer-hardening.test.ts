@@ -109,8 +109,8 @@ function lodgeDb(overrides?: {
     membershipTypeSeasonRate: { findMany: vi.fn().mockResolvedValue([]) },
     membershipType: {
       findMany: vi.fn().mockResolvedValue([
-        { id: "mt-full", key: "FULL" },
-        { id: "mt-nonmember", key: "NON_MEMBER" },
+        { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE", ageGroupsApply: true },
+        { id: "mt-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE", ageGroupsApply: true },
       ]),
     },
     lodgeInstruction: { findMany: vi.fn().mockResolvedValue([]) },
@@ -773,7 +773,9 @@ describe("xero item identity is null-honest", () => {
   it("matches an existing row on null identity fields instead of duplicating it", async () => {
     // A flat HUT_FEE code (#1930, E4): membershipTypeKey set, but ageTier and
     // entranceFeeCategory both null. The blank CSV cells must match the stored
-    // nulls (never coerce null→a value and duplicate).
+    // nulls (never coerce null→a value and duplicate). FULL is configured as a
+    // flat (ageGroupsApply=false) type here so the blank-ageTier row is the
+    // valid shape (F9 shape validation).
     const db = {
       xeroAccountMapping: { findMany: vi.fn().mockResolvedValue([]) },
       xeroItemCodeMapping: {
@@ -785,7 +787,9 @@ describe("xero item identity is null-honest", () => {
         ]),
       },
       membershipType: {
-        findMany: vi.fn().mockResolvedValue([{ id: "mt-full", key: "FULL" }]),
+        findMany: vi.fn().mockResolvedValue([
+          { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE", ageGroupsApply: false },
+        ]),
       },
       xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
     } as unknown as ReadDb;
