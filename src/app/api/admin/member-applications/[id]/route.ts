@@ -5,6 +5,7 @@ import {
   MembershipApplicationError,
   rejectMemberApplication,
 } from "@/lib/nomination";
+import { personDecisionsSchema } from "@/lib/member-application-mapping";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 
@@ -29,6 +30,12 @@ const reviewSchema = z.object({
   // non-boolean fails this parse and falls out as the route's 422 validation
   // response. This route is requireAdmin()-gated, so the flag is admin-only.
   notifyMember: z.boolean().optional(),
+  // E10 (#1936): per-person map-to-existing decisions + the preview token that
+  // binds this approval to the previewed outcome. Absent = all-CREATE =
+  // byte-identical current behavior; the token is required iff any decision is
+  // MAP (enforced in approveMemberApplication).
+  personDecisions: personDecisionsSchema.optional().nullable(),
+  mappingPreviewToken: z.string().min(1).optional().nullable(),
 });
 
 export async function PUT(
@@ -65,13 +72,17 @@ export async function PUT(
         session.user.id,
         parsed.data.adminNotes,
         parsed.data.entranceFeeInvoiceDecision,
-        parsed.data.notifyMember
+        parsed.data.notifyMember,
+        parsed.data.personDecisions,
+        parsed.data.mappingPreviewToken
       );
 
       return NextResponse.json({
         success: true,
         status: result.application.status,
         applicantMemberId: result.applicantMember.id,
+        createdMemberIds: result.createdMemberIds,
+        mappedMemberIds: result.mappedMemberIds,
         warnings: result.warnings,
       });
     }
