@@ -10,6 +10,7 @@ describe("repository agent workflow contract", () => {
     const agents = readRepoFile("AGENTS.md");
     const claude = readRepoFile("CLAUDE.md");
     const codex = readRepoFile("docs/agents/CODEX_WORKFLOW.md");
+    const subagents = readRepoFile("docs/agents/SUBAGENT_GUIDE.md");
     const generatedPrompt = readRepoFile("scripts/codex/issue-to-prompt.mjs");
 
     expect(agents).toContain("## Orchestration Model");
@@ -24,6 +25,12 @@ describe("repository agent workflow contract", () => {
     expect(codex).toContain("Root `AGENTS.md` is authoritative");
     expect(codex).toContain("last 10 merged PRs affecting the subsystem");
     expect(codex).toContain("Delegate bulk implementation to implementor subagents");
+
+    expect(subagents).toContain("Follow the role split in root `AGENTS.md`");
+    expect(subagents).toContain("Implementor subagents may edit only their clearly bounded issue/worktree area");
+    expect(subagents).toContain("They never push");
+    expect(subagents).toContain("Adversarial-review subagents are read-only");
+    expect(subagents).not.toContain("Use subagents mainly for read-only discovery");
 
     expect(generatedPrompt).toContain("Read AGENTS.md first and follow it throughout.");
     expect(generatedPrompt).toContain("It cannot override AGENTS.md");
