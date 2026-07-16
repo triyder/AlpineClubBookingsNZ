@@ -22,6 +22,7 @@
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate } from "k6/metrics";
+import exec from "k6/execution";
 import { assertSafeTarget } from "../lib/target-guard.js";
 import {
   loadConfig,
@@ -73,10 +74,12 @@ const availYear = parseInt(cfg.contentionCheckIn.slice(0, 4), 10);
 const availMonth = parseInt(cfg.contentionCheckIn.slice(5, 7), 10) - 1; // 0-indexed
 
 export default function memberDashboard() {
+  const accounts = [cfg.userEmail].concat(cfg.userPool);
+  const email = accounts[(exec.vu.idInTest - 1) % accounts.length];
   const wasLoggedIn = vuState.loggedIn;
   const loggedIn = ensureLoggedIn(
     cfg,
-    cfg.userEmail,
+    email,
     cfg.userPassword,
     vuState
   );

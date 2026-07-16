@@ -26,6 +26,9 @@ describe("load harness semantics", () => {
     const scenario = read("load/scenarios/member-dashboard.js");
     expect(scenario).toContain('http_req_duration{flow:member_dashboard}');
     expect(scenario).toContain("dashboard_bootstrap_login_success");
+    expect(scenario).toContain("[cfg.userEmail].concat(cfg.userPool)");
+    expect(scenario).toContain("exec.vu.idInTest");
+    expect(scenario).toContain("ensureLoggedIn(\n    cfg,\n    email,");
   });
 
   it("distributes cold logins over the configured account pool", () => {

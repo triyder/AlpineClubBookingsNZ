@@ -28,7 +28,8 @@ Layout:
   occupancy equals the exact capacity-limited expected delta from a known
   `CONTENTION_EXPECTED_BASELINE`.
 - `scenarios/member-dashboard.js` — authenticated dashboard, lodges,
-  availability, and credit-balance reads.
+  availability, and credit-balance reads, distributed across `LOAD_USERS` when
+  supplied.
 
 Quick start against the throwaway staging stack:
 

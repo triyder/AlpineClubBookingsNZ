@@ -90,7 +90,7 @@ It is deliberately **not** an npm dependency and never runs in CI.
 | `LOAD_TEST_CONFIRM_TARGET` | **yes** | — | Must be exactly `1`. The per-run "I checked the target" opt-in. |
 | `LOAD_USER_EMAIL` | for auth scenarios | `alice@demo.alpineclub.test` | Member to log in as. |
 | `LOAD_USER_PASSWORD` | for auth scenarios | — | That member's password (the staging demo-seed password). Never hardcoded. |
-| `LOAD_USERS` | no | — | Comma-separated extra member emails (same password) used round-robin by login and contention VUs. Without it, login is explicitly a same-account cold-login contention test. |
+| `LOAD_USERS` | no | — | Comma-separated extra member emails (same password) used round-robin by login, dashboard, and contention VUs. Without it, auth scenarios are explicitly same-account contention tests. |
 | `LOGIN_ITERATIONS_PER_VU` | no | `1` | Cold logins per VU. The primary evidence profile is exactly one; values above one are an explicit repeated-login stress profile. |
 | `PEAK_VUS` | no | `100` | Peak virtual users for the ramp / contention stampede. |
 | `RAMP_UP` / `STEADY` / `RAMP_DOWN` | no | `1m` / `3m` / `30s` | Stage durations for the ramping scenarios. |
@@ -193,7 +193,8 @@ runs so each run starts from a known-empty night.
 
 ### 4. Member dashboard — `load/scenarios/member-dashboard.js`
 
-Each VU logs in once, then loops the authenticated read paths:
+Each VU logs in once (round-robin across `LOAD_USERS` when supplied), then
+loops the authenticated read paths:
 `/dashboard` (server-rendered), `/api/lodges`, `/api/availability`
 (the calendar month containing `CONTENTION_CHECKIN`, so a side-by-side run
 reads the calendar the write path is contending on), and
