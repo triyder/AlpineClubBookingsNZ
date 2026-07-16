@@ -33,15 +33,43 @@ const RESERVED_WINDOW_CHECKINS = new Set<string>([
 // highest index past 09-30 into early October (#1703 follow-up). Windows must
 // therefore land entirely inside one season, on any run date. ISO YYYY-MM-DD
 // sorts lexicographically, so plain string comparison is a correct date compare.
-const SEEDED_SEASONS: ReadonlyArray<{ start: string; end: string }> = [
-  { start: "2026-06-01", end: "2026-09-30" }, // Winter 2026
-  { start: "2026-11-01", end: "2027-03-31" }, // Summer 2026-27
+// Season key matches the club-config rate columns (config/club.json →
+// nightlyRates.winter / .summer) and the seed's WINTER/SUMMER season types.
+export type SeededSeasonKey = "winter" | "summer";
+
+const SEEDED_SEASONS: ReadonlyArray<{
+  key: SeededSeasonKey;
+  start: string;
+  end: string;
+}> = [
+  { key: "winter", start: "2026-06-01", end: "2026-09-30" }, // Winter 2026
+  { key: "summer", start: "2026-11-01", end: "2027-03-31" }, // Summer 2026-27
 ];
 
 function isWindowInSeededSeason(nights: string[]): boolean {
   return SEEDED_SEASONS.some((season) =>
     nights.every((night) => night >= season.start && night <= season.end),
   );
+}
+
+// Which seeded season a window's nights fall in — winter vs summer selects the
+// club-config rate column, so a price assertion stays correct on any run date
+// regardless of which season the index lands in (stayWindow may drift a window
+// from winter into summer as the run date advances). Throws if the window is not
+// wholly inside one seeded season, which stayWindow already guarantees.
+export function seasonForWindow(
+  window: Pick<StayWindow, "nights">,
+): SeededSeasonKey {
+  const season = SEEDED_SEASONS.find((s) =>
+    window.nights.every((night) => night >= s.start && night <= s.end),
+  );
+  if (!season) {
+    throw new Error(
+      `stay window nights ${window.nights.join(", ")} fall outside every seeded ` +
+        `season (see SEEDED_SEASONS / prisma/seed.ts).`,
+    );
+  }
+  return season.key;
 }
 
 export type StayWindow = {

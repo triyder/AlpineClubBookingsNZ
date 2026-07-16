@@ -7,7 +7,9 @@ import {
   clearMailbox,
   waitForEmail,
 } from "./helpers/mailpit";
-import { stayWindow } from "./helpers/stay-dates";
+import { seasonForWindow, stayWindow, type StayWindow } from "./helpers/stay-dates";
+import { clubConfig } from "../src/config/club";
+import { PLACEHOLDER_CONTACT_EMAIL_DOMAIN } from "../src/lib/placeholder-contact-email";
 
 // docs/END_TO_END_TEST_MATRIX.md — Book on Behalf (non-member), E9 (#1935),
 // live-app follow-up (#1962). The admin non-member Book-on-Behalf flow has
@@ -57,7 +59,57 @@ const WALK_IN_OWNER = {
   lastName: "Walkin",
 };
 
-const PLACEHOLDER_DOMAIN = "no-email.invalid";
+// Captured in Test 1's inline create; Test 2 asserts the reuse suggestion
+// returns this EXACT contact id (dedupe, not a fresh duplicate). Safe under
+// serial mode — Test 1 always runs (and sets this) before Test 2.
+let createdContactId = "";
+
+// A priced quote as returned by /api/bookings/quote (subset this spec reads).
+type NonMemberQuote = {
+  guests: { isMember: boolean; ageTier: string; priceCents: number }[];
+  totalPriceCents: number;
+};
+
+// Assert the quote was priced at NON-MEMBER rates by matching the EXACT total
+// the seeded club config implies for the booked window — and prove that total is
+// distinct from the member-rate total, so the assertion pins the rate COLUMN
+// rather than merely "some positive price". Both the season and the cents derive
+// from live sources, so the check is date-safe:
+//   - season = seasonForWindow(window): the window's actual nights decide winter
+//     vs summer (an index can drift between seasons as the run date advances);
+//   - rates = clubConfig: the SAME loadClubConfig() the E2E stack's prisma/seed
+//     reads its SeasonRate rows from, resolved from the repo-root cwd shared by
+//     the seed and this test (config/club.json, else club.example.json) — so the
+//     expected cents equal the seeded rates the app actually quotes, with no
+//     hardcoded magic number and no hardcoded season.
+function assertNonMemberPricing(quote: NonMemberQuote, window: StayWindow): void {
+  expect(quote.guests.length).toBeGreaterThan(0);
+  expect(quote.guests.every((g) => g.isMember === false)).toBeTruthy();
+
+  const season = seasonForWindow(window);
+  const nights = window.nights.length;
+  const nightlyCents = (
+    tier: string,
+    column: "memberCents" | "nonMemberCents",
+  ): number => {
+    const ageTier = clubConfig.ageTiers.find((t) => t.id === tier);
+    if (!ageTier) throw new Error(`no club-config rate for age tier "${tier}"`);
+    return ageTier.nightlyRates[season][column];
+  };
+  const expectedNonMemberTotal = quote.guests.reduce(
+    (sum, g) => sum + nights * nightlyCents(g.ageTier, "nonMemberCents"),
+    0,
+  );
+  const expectedMemberTotal = quote.guests.reduce(
+    (sum, g) => sum + nights * nightlyCents(g.ageTier, "memberCents"),
+    0,
+  );
+  // Discriminating guard: for these tiers/season the two columns differ, so an
+  // exact match on the non-member total proves the non-member column drove the
+  // quote — a member-priced quote (the pre-#1935 bug shape) would fail here.
+  expect(expectedNonMemberTotal).not.toBe(expectedMemberTotal);
+  expect(quote.totalPriceCents).toBe(expectedNonMemberTotal);
+}
 
 async function openBookOnBehalf(page: Page): Promise<void> {
   await page.goto("/admin/book");
@@ -76,7 +128,7 @@ async function pickDatesAddGuestAndQuote(
   page: Page,
   window: { checkIn: string; checkOut: string },
   guest: { firstName: string; lastName: string },
-): Promise<{ guests: { isMember: boolean; priceCents: number }[]; totalPriceCents: number }> {
+): Promise<NonMemberQuote> {
   await expect(page.getByText("Select Dates", { exact: true })).toBeVisible();
   await selectCalendarDay(page, window.checkIn);
   await selectCalendarDay(page, window.checkOut);
@@ -112,7 +164,28 @@ test("inline-creates a non-member owner, prices them as a non-member, and emails
   await page.getByLabel("First name", { exact: true }).fill(REAL_OWNER.firstName);
   await page.getByLabel("Last name", { exact: true }).fill(REAL_OWNER.lastName);
   await page.getByLabel("Email", { exact: true }).fill(REAL_OWNER.email);
-  await page.getByRole("button", { name: "Create new & continue" }).click();
+
+  // Capture the create response so Test 2 can prove suggest-and-pick reuses THIS
+  // exact contact (dedupe) rather than minting a duplicate. The route returns
+  // { contact, reused:false } at 201 for a fresh inline create
+  // (src/app/api/admin/bookings/non-member-contact/route.ts).
+  const [contactResponse] = await Promise.all([
+    page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/admin/bookings/non-member-contact") &&
+        r.request().method() === "POST",
+      { timeout: 30_000 },
+    ),
+    page.getByRole("button", { name: "Create new & continue" }).click(),
+  ]);
+  expect(
+    contactResponse.status(),
+    `inline non-member contact create (${contactResponse.status()})`,
+  ).toBe(201);
+  const created = await contactResponse.json();
+  expect(created.reused).toBe(false);
+  createdContactId = created.contact.id as string;
+  expect(createdContactId).toBeTruthy();
 
   // The owner is selected and the wizard advances exactly like a member owner.
   await expect(
@@ -127,9 +200,7 @@ test("inline-creates a non-member owner, prices them as a non-member, and emails
     firstName: REAL_OWNER.firstName,
     lastName: REAL_OWNER.lastName,
   });
-  expect(quote.guests.length).toBeGreaterThan(0);
-  expect(quote.guests.every((g) => g.isMember === false)).toBeTruthy();
-  expect(quote.totalPriceCents).toBeGreaterThan(0);
+  assertNonMemberPricing(quote, window);
 
   await expect(page.getByText("Booking Summary")).toBeVisible();
   // The review reflects the non-member classification that drove the pricing.
@@ -200,6 +271,13 @@ test("suggest-and-pick reuses the existing non-member contact instead of duplica
     `reuse existing contact (${reuseResponse.status()})`,
   ).toBeTruthy();
 
+  // Dedupe PROVEN: the route returns { contact, reused:true } and the returned
+  // contact is the SAME record Test 1 created — not a duplicate minted from the
+  // re-typed email (route.ts → reuseNonMemberContact, non-member-contact.ts).
+  const reused = await reuseResponse.json();
+  expect(reused.reused).toBe(true);
+  expect(reused.contact.id).toBe(createdContactId);
+
   await expect(
     page.getByText(
       `Booking on behalf of: ${REAL_OWNER.firstName} ${REAL_OWNER.lastName}`,
@@ -211,7 +289,7 @@ test("suggest-and-pick reuses the existing non-member contact instead of duplica
     firstName: "Reused",
     lastName: "Guest",
   });
-  expect(quote.guests.every((g) => g.isMember === false)).toBeTruthy();
+  assertNonMemberPricing(quote, window);
 
   await expect(page.getByText("Booking Summary")).toBeVisible();
   await page.getByRole("button", { name: "Confirm Booking" }).click();
@@ -257,7 +335,7 @@ test("a no-email walk-in owner is created with a placeholder and never emailed",
     firstName: WALK_IN_OWNER.firstName,
     lastName: WALK_IN_OWNER.lastName,
   });
-  expect(quote.guests.every((g) => g.isMember === false)).toBeTruthy();
+  assertNonMemberPricing(quote, window);
 
   await expect(page.getByText("Booking Summary")).toBeVisible();
 
@@ -281,5 +359,5 @@ test("a no-email walk-in owner is created with a placeholder and never emailed",
 
   // No confirmation/hold email is ever addressed to the reserved placeholder
   // domain — the walk-in owner is never emailed.
-  await assertNoEmailToDomain(PLACEHOLDER_DOMAIN);
+  await assertNoEmailToDomain(PLACEHOLDER_CONTACT_EMAIL_DOMAIN);
 });
