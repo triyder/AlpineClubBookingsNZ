@@ -568,12 +568,13 @@ of the UI. Both flows contribute to the sidebar's "Deletion Requests" attention
 badge (self-service `PENDING` + admin-initiated `REQUESTED`).
 
 The admin-initiated alert email (`admin-member-delete-requested`) deep-links to
-this review queue. It is currently delivered under the shared **Member
-requests** notification preference (`adminFamilyGroupRequest`), the same
-category as membership applications, family-group, cancellation, and archive
-requests — muting that category mutes all of them. A dedicated toggle for
-delete-request alerts would require a new `NotificationPreference` column and is
-deferred to a follow-up (this change is intentionally no-schema).
+this review queue. It is delivered under its own dedicated **Member delete
+requests** notification preference (`adminMemberDeleteRequest`), kept separate
+from the shared **Member requests** category (`adminFamilyGroupRequest`, which
+covers membership applications, family-group, cancellation, and archive
+requests). This preference is additive and defaults **on**, so existing rows
+keep delete-request alerts enabled; muting the shared member-requests category
+no longer also silences delete-request review alerts.
 
 ## Membership Type Settings
 

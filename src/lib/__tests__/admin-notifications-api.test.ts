@@ -155,6 +155,10 @@ describe("Admin notifications API", () => {
     // #1422: the dedicated review-required preference resolves to its default
     // (true) so muting new-booking alerts never silences the review alert.
     expect(body.preferences.adminBookingReviewRequired).toBe(true);
+    // #1938: the dedicated member-delete-request preference resolves to its
+    // default (true) so muting other categories never silences the delete-request
+    // review alert.
+    expect(body.preferences.adminMemberDeleteRequest).toBe(true);
     expect(prisma.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
