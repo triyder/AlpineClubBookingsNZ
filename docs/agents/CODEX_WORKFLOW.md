@@ -65,6 +65,11 @@ last 10 merged PRs affecting the subsystem, reconciles their lock/state/provider
 contracts, and records the relevant PR numbers in the PR lock-impact section.
 Root `AGENTS.md` is authoritative if this workflow ever drifts again.
 
+The `agent-workflow-contract.test.ts` verification test pins these entry-point
+links and PR evidence fields. A change that removes or contradicts the shared
+workflow must update the canonical contract deliberately instead of allowing
+agent-specific guidance to drift silently.
+
 ## Stop Conditions
 
 Stop and ask for human review when:
