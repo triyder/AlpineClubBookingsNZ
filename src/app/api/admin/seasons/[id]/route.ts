@@ -3,28 +3,27 @@ import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
-import { bookableAgeTierEnum } from "@/lib/age-tier-schema"
 import { logAudit } from "@/lib/audit"
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
 import { lodgeNullTolerantScope } from "@/lib/lodges"
+import {
+  membershipTypeSeasonRateInputSchema,
+  replaceMembershipTypeSeasonRates,
+  validateMembershipTypeSeasonRates,
+} from "@/lib/season-rate-editor"
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
 })
 
+// Rates keyed by membership type (#1930, E4); frozen legacy SeasonRate untouched.
 const updateSeasonSchema = z.object({
   name: z.string().min(1).optional(),
   type: z.enum(["WINTER", "SUMMER"]).optional(),
   startDate: dateOnlyString.optional(),
   endDate: dateOnlyString.optional(),
   active: z.boolean().optional(),
-  rates: z.array(
-    z.object({
-      ageTier: bookableAgeTierEnum,
-      isMember: z.boolean(),
-      pricePerNightCents: z.number().int().min(0),
-    })
-  ).min(1).optional(),
+  membershipTypeRates: membershipTypeSeasonRateInputSchema.optional(),
 })
 
 export async function GET(
@@ -37,7 +36,7 @@ export async function GET(
 
   const season = await prisma.season.findUnique({
     where: { id },
-    include: { rates: true },
+    include: { rates: true, membershipTypeRates: true },
   })
 
   if (!season) {
@@ -70,7 +69,14 @@ export async function PUT(
     return NextResponse.json({ error: "Season not found" }, { status: 404 })
   }
 
-  const { rates, startDate, endDate, ...seasonData } = parsed.data
+  const { membershipTypeRates, startDate, endDate, ...seasonData } = parsed.data
+
+  if (membershipTypeRates) {
+    const rateError = await validateMembershipTypeSeasonRates(prisma, membershipTypeRates)
+    if (rateError) {
+      return NextResponse.json({ error: rateError }, { status: 400 })
+    }
+  }
 
   const parsedStartDate = startDate ? parseDateOnly(startDate) : undefined
   const parsedEndDate = endDate ? parseDateOnly(endDate) : undefined
@@ -120,22 +126,15 @@ export async function PUT(
       },
     })
 
-    // Update rates if provided
-    if (rates) {
-      await tx.seasonRate.deleteMany({ where: { seasonId: id } })
-      await tx.seasonRate.createMany({
-        data: rates.map((rate) => ({
-          seasonId: id,
-          ageTier: rate.ageTier,
-          isMember: rate.isMember,
-          pricePerNightCents: rate.pricePerNightCents,
-        })),
-      })
+    // Update membership-type rates if provided; the frozen legacy SeasonRate
+    // table is deliberately left untouched (#1930, E4 — E13 drops it).
+    if (membershipTypeRates) {
+      await replaceMembershipTypeSeasonRates(tx, id, membershipTypeRates)
     }
 
     return tx.season.findUnique({
       where: { id },
-      include: { rates: true },
+      include: { rates: true, membershipTypeRates: true },
     })
   })
 
