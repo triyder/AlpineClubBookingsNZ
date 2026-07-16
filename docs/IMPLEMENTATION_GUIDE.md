@@ -30,6 +30,12 @@ Edit `config/club.json` first. This file controls:
 Keep all money values in cents. Keep booking dates as New Zealand date-only
 lodge nights unless you intentionally rework the booking model.
 
+The seeded starter pages (privacy policy, booking terms, FAQ) are fully generic
+and token-driven — they carry no club-specific name or geography, filling in your
+club and lodge automatically via `{{club-name}}` / `{{lodge-name}}` /
+`{{lodge-capacity}}` (#1945). A guard test keeps club-specific names out of the
+seeded content; edit the rendered pages under Admin > Site Contents after setup.
+
 For a guided config pass, run:
 
 ```bash
