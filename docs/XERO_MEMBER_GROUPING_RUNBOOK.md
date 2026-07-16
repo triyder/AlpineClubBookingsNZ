@@ -66,6 +66,25 @@ scheduled maintenance window.
    (in `XeroSyncOperation`) and non-fatal; a daily-limit halt leaves a resume
    cursor to continue the next day. The job never advances the CONTACT
    delta-sync watermark.
+   - **Server-enforced dry-run freshness (#1961).** Each dry-run persists its
+     provenance (a `XeroMemberGroupingDryRun` row: the mode, the
+     `CONTACT_GROUP_FULL_REFRESH` cache cursor it was computed against, a
+     fingerprint of the active rules, and a digest of the planned changes). The
+     bulk re-sync must reference that dry-run id, and the **server** re-validates
+     freshness at execution start — it is not a client-asserted flag. A run is
+     rejected (with a message telling you to re-run the dry-run) when the
+     referenced dry-run is **absent** (HTTP 422), or when — HTTP 409 — it is
+     **older than the 30-minute window** (initiating run only), the **group
+     cache was refreshed** since it ran (its recorded cursor no longer matches),
+     the **mode or a rule changed** since it ran, or (initiating run only) the
+     **planned changes drifted** from the reviewed diff. So if you refresh the
+     Xero group cache, or edit the mode/rules, after previewing, you must re-run
+     the dry-run before the re-sync will proceed. Resume chunks skip the
+     wall-clock/plan-drift checks (a daily-limit resume may span days) but still
+     enforce the cache-cursor and rules equality, so a rule or cache change
+     mid-run aborts every subsequent chunk. Both the accepted run and each
+     rejection are audit-logged (`XERO_GROUPING_BULK_RESYNC` /
+     `XERO_GROUPING_BULK_RESYNC_REJECTED`) with the dry-run id.
 7. **Post-check.** Re-refresh the group cache and re-run the dry-run — it should
    now report an **empty** add/remove diff (the information-only section may
    still list `NOT_APPLICABLE` members you choose to leave parked in managed
@@ -81,6 +100,9 @@ scheduled maintenance window.
   editing, deactivating, or deleting a rule, does not re-group anyone
   immediately. Members re-group on their next trigger (age-tier change,
   current-season membership-type change, cron age-up) or via this bulk action.
+  A mode/rule change also **invalidates any prior dry-run** for the bulk
+  re-sync: the server's freshness check (#1961) rejects a re-sync whose
+  referenced dry-run predates the change, so re-run the dry-run after editing.
 - **Deleting a rule does not remove members** already in that group — it only
   shrinks the managed universe. The admin UI states this at the point of
   deletion.
