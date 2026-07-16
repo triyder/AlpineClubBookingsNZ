@@ -28,11 +28,15 @@ interface CommitteeMember {
 
 interface ContactPageClientProps {
   club: ClubIdentity;
+  // Default lodge identity, loaded server-side (E3 #1929). The address block is
+  // hidden when address is null. No hardcoded geography lives in this file.
+  lodge?: { name: string; address: string | null };
   showHero?: boolean;
 }
 
 export function ContactPageClient({
   club,
+  lodge,
   showHero = true,
 }: ContactPageClientProps) {
   const facebookUrl = club.socialLinks.facebook ?? club.publicUrl;
@@ -278,17 +282,19 @@ export function ContactPageClient({
                       </div>
                     </div>
                   )}
-                  <div className="flex items-start gap-3">
-                    <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-brand-gold" />
-                    <div>
-                      <p className="text-sm font-medium text-brand-charcoal">
-                        Lodge
-                      </p>
-                      <p className="text-sm text-brand-deep/75">
-                        Waldvogel Lodge, Iwikau Village, Mt Ruapehu, New Zealand
-                      </p>
+                  {lodge?.address ? (
+                    <div className="flex items-start gap-3">
+                      <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-brand-gold" />
+                      <div>
+                        <p className="text-sm font-medium text-brand-charcoal">
+                          {lodge.name}
+                        </p>
+                        <p className="text-sm text-brand-deep/75">
+                          {lodge.address}
+                        </p>
+                      </div>
                     </div>
-                  </div>
+                  ) : null}
                 </CardContent>
               </Card>
 

@@ -15,10 +15,13 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
+import { invalidatePublicClubIdentity } from "@/lib/public-layout-cache";
+import { primeClubIdentitySync } from "@/lib/club-identity-settings";
 
 const createSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
+    address: z.string().trim().max(300).nullable().optional(),
     doorCode: z.string().trim().max(80).nullable().optional(),
     travelNote: z.string().trim().max(2000).nullable().optional(),
     active: z.boolean().optional().default(true),
@@ -65,6 +68,7 @@ export async function POST(request: Request) {
         name: parsed.data.name.trim(),
         slug,
         active: parsed.data.active,
+        address: normalizeLodgeText(parsed.data.address),
         doorCode: normalizeLodgeText(parsed.data.doorCode),
         travelNote: normalizeLodgeText(parsed.data.travelNote),
       },
@@ -89,6 +93,9 @@ export async function POST(request: Request) {
   });
 
   revalidatePublicPageContent();
+  // A new (possibly default) lodge can change DB-first club identity (E3 #1929).
+  invalidatePublicClubIdentity();
+  await primeClubIdentitySync();
 
   return NextResponse.json(
     { lodge: serializeLodge(created) },

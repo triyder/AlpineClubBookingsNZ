@@ -17,6 +17,8 @@ import { requireAdmin } from "@/lib/session-guards";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import { BookingStatus } from "@prisma/client";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
+import { invalidatePublicClubIdentity } from "@/lib/public-layout-cache";
+import { primeClubIdentitySync } from "@/lib/club-identity-settings";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -25,6 +27,7 @@ const paramsSchema = z.object({
 const patchSchema = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
+    address: z.string().trim().max(300).nullable().optional(),
     doorCode: z.string().trim().max(80).nullable().optional(),
     travelNote: z.string().trim().max(2000).nullable().optional(),
     active: z.boolean().optional(),
@@ -142,6 +145,7 @@ export async function PATCH(
   const data: {
     name?: string;
     slug?: string;
+    address?: string | null;
     doorCode?: string | null;
     travelNote?: string | null;
     active?: boolean;
@@ -150,6 +154,9 @@ export async function PATCH(
   if (parsed.data.name !== undefined && parsed.data.name !== existing.name) {
     data.name = parsed.data.name.trim();
     data.slug = await buildUniqueLodgeSlug(prisma, data.name, existing.id);
+  }
+  if (parsed.data.address !== undefined) {
+    data.address = normalizeLodgeText(parsed.data.address);
   }
   if (parsed.data.doorCode !== undefined) {
     data.doorCode = normalizeLodgeText(parsed.data.doorCode);
@@ -206,6 +213,10 @@ export async function PATCH(
   });
 
   revalidatePublicPageContent();
+  // The default lodge's name feeds DB-first club identity (E3 #1929); refresh
+  // both the tagged public cache and the sync accessor after a lodge write.
+  invalidatePublicClubIdentity();
+  await primeClubIdentitySync();
 
   return NextResponse.json({ lodge: serializeLodge(updated) });
 }

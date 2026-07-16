@@ -210,6 +210,34 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     contexts: ["page-content-body", "lodge-instructions", "site-footer"],
   },
   {
+    token: "lodge-name",
+    kind: "text",
+    description:
+      "Replaced with the default lodge's name when the content renders. With " +
+      "more than one lodge, name a lodge by its slug — {{lodge-name:lodge-slug}} " +
+      "— to show that lodge's name; an unknown slug falls back to the default " +
+      "lodge.",
+    example: "{{lodge-name}}",
+    allowsParameter: true,
+    parameterExample: "{{lodge-name:whakapapa-river-lodge}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body", "lodge-instructions", "site-footer"],
+  },
+  {
+    token: "lodge-address",
+    kind: "text",
+    description:
+      "Replaced with the default lodge's address when the content renders " +
+      "(nothing is shown when no address is set). With more than one lodge, " +
+      "name a lodge by its slug — {{lodge-address:lodge-slug}} — to show that " +
+      "lodge's address; an unknown slug falls back to the default lodge.",
+    example: "{{lodge-address}}",
+    allowsParameter: true,
+    parameterExample: "{{lodge-address:whakapapa-river-lodge}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body", "lodge-instructions", "site-footer"],
+  },
+  {
     token: "hut-leader",
     kind: "text",
     description:

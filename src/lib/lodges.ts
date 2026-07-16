@@ -14,6 +14,7 @@ export const lodgeSelect = {
   name: true,
   slug: true,
   active: true,
+  address: true,
   doorCode: true,
   travelNote: true,
   createdAt: true,
@@ -27,6 +28,7 @@ export interface SerializedLodge {
   name: string;
   slug: string;
   active: boolean;
+  address: string | null;
   doorCode: string | null;
   travelNote: string | null;
   createdAt: string;
@@ -39,6 +41,7 @@ export function serializeLodge(lodge: LodgeRecord): SerializedLodge {
     name: lodge.name,
     slug: lodge.slug,
     active: lodge.active,
+    address: lodge.address,
     doorCode: lodge.doorCode,
     travelNote: lodge.travelNote,
     createdAt: lodge.createdAt.toISOString(),

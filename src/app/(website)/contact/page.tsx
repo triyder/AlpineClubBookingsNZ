@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
 import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
 import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
-import { clubIdentity, CLUB_NAME } from "@/config/club-identity";
+import { CLUB_NAME } from "@/config/club-identity";
+import { getClubIdentity } from "@/lib/club-identity-settings";
+import { getDefaultLodgeId } from "@/lib/lodges";
 import { buildEmbeddedBody } from "@/lib/page-content-embeds";
 import {
   getSanitizedPageContentByPath,
   pageContentHtmlToPlainText,
 } from "@/lib/page-content-html";
+import { prisma } from "@/lib/prisma";
 
 export async function generateMetadata(): Promise<Metadata> {
   const page = await getSanitizedPageContentByPath("/contact");
@@ -19,8 +22,31 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
+async function loadDefaultLodgeContact(): Promise<{
+  name: string;
+  address: string | null;
+} | null> {
+  // Default-lodge identity for the contact card (E3 #1929), replacing the old
+  // hardcoded "Waldvogel Lodge…" string. Never throws — a DB miss simply hides
+  // the address block.
+  try {
+    const defaultLodgeId = await getDefaultLodgeId(prisma);
+    const lodge = await prisma.lodge.findUnique({
+      where: { id: defaultLodgeId },
+      select: { name: true, address: true },
+    });
+    return lodge ? { name: lodge.name, address: lodge.address } : null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function ContactPage() {
-  const page = await getSanitizedPageContentByPath("/contact");
+  const [page, lodge, clubIdentity] = await Promise.all([
+    getSanitizedPageContentByPath("/contact"),
+    loadDefaultLodgeContact(),
+    getClubIdentity(),
+  ]);
   const embeddedBody = page ? await buildEmbeddedBody(page.contentHtml) : [];
 
   const caption = page?.caption ?? "Get in touch";
@@ -51,7 +77,7 @@ export default async function ContactPage() {
           keyPrefix="contact"
         />
       ) : (
-        <ContactPageClient club={clubIdentity} showHero={false} />
+        <ContactPageClient club={clubIdentity} lodge={lodge ?? undefined} showHero={false} />
       )}
     </>
   );

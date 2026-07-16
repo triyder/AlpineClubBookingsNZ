@@ -134,6 +134,38 @@ async function resolveLodgeCapacityToken(
   return getDefaultLodgeCapacity();
 }
 
+type LodgeIdentityTokenValue = { name: string; address: string };
+
+/**
+ * {{lodge-name}} / {{lodge-address}} resolve the default lodge's name/address;
+ * {{lodge-name:lodge-slug}} etc. resolve the named lodge. An unknown slug falls
+ * back to the default lodge (mirrors {{lodge-capacity}}); a lodge with no
+ * address renders "". Both tokens share this single lookup per slug.
+ */
+async function resolveLodgeIdentityToken(
+  parameter: string | undefined,
+): Promise<LodgeIdentityTokenValue> {
+  const { prisma } = await import("@/lib/prisma");
+  const { getDefaultLodgeId } = await import("@/lib/lodges");
+  try {
+    if (parameter) {
+      const lodge = await prisma.lodge.findUnique({
+        where: { slug: parameter },
+        select: { name: true, address: true },
+      });
+      if (lodge) return { name: lodge.name, address: lodge.address ?? "" };
+    }
+    const defaultLodgeId = await getDefaultLodgeId(prisma);
+    const lodge = await prisma.lodge.findUnique({
+      where: { id: defaultLodgeId },
+      select: { name: true, address: true },
+    });
+    return { name: lodge?.name ?? "", address: lodge?.address ?? "" };
+  } catch {
+    return { name: "", address: "" };
+  }
+}
+
 // URL schemes a token value may safely carry into an href attribute. Mirrors
 // allowedSchemes in page-content-html.ts, whose sanitiser cannot vet token
 // values because tokens resolve after sanitisation.
@@ -196,6 +228,25 @@ export async function resolveTextTokens(contentHtml: string): Promise<string> {
     );
   }
 
+  // Pre-resolve each distinct lodge-name / lodge-address slug parameter (E3
+  // #1929). Both tokens share one lookup per slug; the empty-string key is the
+  // default lodge.
+  const lodgeIdentityParams = new Set(
+    matches
+      .filter((match) => {
+        const token = (match[1] ?? "").toLowerCase();
+        return token === "lodge-name" || token === "lodge-address";
+      })
+      .map((match) => (match[2] ?? "").trim().toLowerCase()),
+  );
+  const lodgeIdentityByParam = new Map<string, LodgeIdentityTokenValue>();
+  for (const param of lodgeIdentityParams) {
+    lodgeIdentityByParam.set(
+      param,
+      await resolveLodgeIdentityToken(param || undefined),
+    );
+  }
+
   // DB-first club identity (E3 #1929): pre-resolve once (the replace callback is
   // synchronous) so {{club-name}}/{{hut-leader}} render the admin-editable values.
   const clubIdentity = await getClubIdentity();
@@ -210,6 +261,18 @@ export async function resolveTextTokens(contentHtml: string): Promise<string> {
             (parameter ?? "").trim().toLowerCase(),
           );
           return escapeHtmlText(String(value ?? ""));
+        }
+        case "lodge-name": {
+          const value = lodgeIdentityByParam.get(
+            (parameter ?? "").trim().toLowerCase(),
+          );
+          return escapeHtmlText(value?.name ?? "");
+        }
+        case "lodge-address": {
+          const value = lodgeIdentityByParam.get(
+            (parameter ?? "").trim().toLowerCase(),
+          );
+          return escapeHtmlText(value?.address ?? "");
         }
         case "club-name":
           return escapeHtmlText(clubIdentity.name);
