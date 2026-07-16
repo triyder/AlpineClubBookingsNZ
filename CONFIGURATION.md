@@ -959,6 +959,47 @@ material postal fields that differ from the physical address. Server routes
 remain authoritative: when `postalSameAsPhysical` is submitted, physical address
 fields are copied into postal fields before the member or application is saved.
 
+## Merging Duplicate Members
+
+When the same person ends up with two member records (for example one from an old
+import and one from a new application, or a duplicated Book-on-Behalf contact), a
+**Full Admin** can merge them from **Admin > Members > (open the record you want
+to keep) > "Merge a duplicate into this member"**. Only Full Admins see the
+action; scoped admins cannot merge.
+
+- **Who is kept.** The record you open is the **master** and survives. You pick
+  the duplicate to merge in; it is **permanently deleted** at the end (there is no
+  undo). A swap control lets you flip which record is the master before you
+  commit.
+- **What merges.** Blank fields on the master are filled from the duplicate;
+  where both have a value the master's wins. All history — bookings, payments,
+  credits, subscriptions, family/partner links, inductions, committee roles, and
+  so on — moves onto the master. Login details, security settings (password,
+  2FA), and the Xero accounting link always stay the master's and are never
+  taken from the duplicate.
+- **What is blocked.** The merge stops (with a clear reason in the preview) when
+  the master is inactive/archived, the duplicate holds an admin role (demote it
+  first), either record has a pending deletion/archive/family request (including
+  a member's own pending account-deletion request), or the duplicate carries a
+  real (invoiced/paid) membership-subscription for a season the master already
+  has a subscription row for — paid history is never silently dropped.
+- **What is warned.** The preview lists every access role the master will gain
+  from the duplicate — including custom (definition-backed) roles — plus any
+  confirmed-partner link, promo allocation, or group-booking join row that will
+  be dropped as a duplicate, so nothing changes silently.
+- **The manual Xero step.** The system does **not** touch Xero over the network
+  during a merge. The duplicate's Xero *contact* is left in Xero — the preview
+  warns you to **archive or merge it in Xero manually**. The one thing it does
+  re-point in the database is the duplicate's joining-fee (entrance-fee) invoice
+  link, so the master is still recognised as having paid a joining fee and is not
+  re-charged. The duplicate is also signed out on their next request.
+- **Confirming.** Before anything happens you see a full preview: the field-by-
+  field result, how many history rows move, which duplicate rows are de-duplicated,
+  and every warning. You must type `MERGE <duplicate's full name>` to enable the
+  irreversible **Merge and delete duplicate** button. Every merge writes one
+  critical `MEMBER_MERGED` audit record. Historic audit rows that referenced the
+  duplicate keep its id and stored name by design, so the audit trail stays intact.
+
 ## App Defaults
 
 | Variable                           | Description                                                                                          |

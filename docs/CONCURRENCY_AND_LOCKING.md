@@ -90,7 +90,7 @@ are the literal `1`.
 | **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` (`capacity.ts`) | 1 | Capacity claims/checks for one lodge. |
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit). |
-| **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`) | — | Archive/delete of one member; overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review. |
+| **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`, `member-merge.ts`) | — | Archive/delete of one member; overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review; and **member merge** (dual-lock on master + loser, E11 #1937, see below). |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
 | **Roster generation** | `hashtext("roster:<date>")` | inline (`admin-roster-service.ts`) | — | Roster generation for one calendar date. |
@@ -181,6 +181,32 @@ do not use unnamespaced `hashtext(<id>)` for new lock families.
 
 Do not add or compose a row lock without updating this inventory and documenting
 its order against every advisory- and row-lock counterpart.
+
+### Member merge — dual member-lifecycle lock (E11 #1937)
+
+`executeMemberMerge` (`member-merge.ts`) is the only writer that holds **two**
+`member-lifecycle:<memberId>` advisory locks at once — one for the master, one
+for the loser. Both are acquired at the very top of the single merge transaction
+in **sorted id order** (`[masterId, loserId].sort()`, smaller id first) so a
+merge and its mirror (a merge started from the other direction, or a concurrent
+archive/delete of either member) can never deadlock. Because the keys share the
+`member-lifecycle:` namespace with `member-lifecycle-actions.ts`, a merge also
+mutually excludes any archive or delete of either the master or the loser.
+
+Inside the locks the merge re-reads both members, re-runs the full guard matrix,
+and re-verifies the HMAC preview token (which bakes in both `updatedAt` values)
+before any write, so a stale preview or a concurrent edit fails with a 409
+instead of merging against changed state. There are **no Xero API calls** in or
+after the transaction — the loser's Xero teardown is DB-only (deactivate
+contact-identity `XeroObjectLink` rows and re-point the active
+`ENTRANCE_FEE_INVOICE` link to the master); the loser's Xero contact is left for
+manual clean-up.
+
+The merge transaction runs with an extended interactive-transaction window
+(`timeout: 120s`, `maxWait: 10s`): re-pointing 70+ relations takes hundreds of
+sequential round-trips on a heavy member, and the dual advisory lock already
+serialises every competing lifecycle writer, so the long window cannot admit a
+concurrent conflicting write.
 
 ## The disciplines, by writer class
 

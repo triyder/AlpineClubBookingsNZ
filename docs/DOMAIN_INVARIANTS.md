@@ -1882,6 +1882,84 @@ promo-code/book-on-behalf workaround that rosters a booking-less custodian).
 Hard delete must remain limited to records that pass the eligibility checks for
 no durable booking, financial, family, Xero, or membership-history blockers.
 
+### Member profile merge (E11 #1937)
+
+Two duplicate member records may be merged into one by a **Full Admin only**. The
+admin picks the **master** (the record that survives); the other is the **loser**
+and is hard-deleted at the end. The merge is **additive and master-wins**:
+
+- **Field merge.** The master's populated scalar fields always win; a blank
+  master field is filled from the loser (contact/identity/address groups —
+  phone and each address block fill as a whole, never field-by-field, so a merged
+  record never mixes one member's street number with another's city).
+  `requiresInduction` and `hutLeaderEligible` are OR-ed (and
+  `hutLeaderEligibleAt` becomes the earliest); `joinedDate` becomes the earliest.
+  **Login and identity are never merged** — `email`, `passwordHash`,
+  `emailVerified`, `canLogin`, `role`, `financeAccessLevel`, every 2FA field, and
+  `xeroContactId` always stay the master's. (Login-email uniqueness is a partial
+  unique index `WHERE canLogin = true`, so two login rows on one email can never
+  coexist mid-transaction.)
+- **Relation buckets.** Every Member-referencing relation is classified into
+  exactly one bucket by `MEMBER_MERGE_RELATION_SPECS`, enforced complete by a
+  DMMF/schema test that fails CI if a new relation is added unclassified:
+  - **move** — history re-points loser → master (`updateMany`): bookings, guests,
+    credits, refunds, redemptions, committee/hut-leader/lodge-access-created,
+    actor and reviewer back-references, and the four Member self-relations
+    (parent / secondary parent / email-inheritance / details-confirmed-by), whose
+    self-cycles are nulled on the master first.
+  - **resolve** — a unique constraint means a per-model resolver dedupes before
+    moving: `MemberSubscription`/`SeasonalMembershipAssignment` (per season),
+    `MemberAccessRole`, `MemberLodgeAccess`, `CommitteeAssignment`,
+    `PromoCodeAssignment`, `PromoRedemptionAllocation` (both uniques),
+    `MembershipCancellationRequestParticipant`, `GroupBookingJoin`,
+    `NotificationPreference` (1-1), `MemberInductionSignOff` (earliest sign-off
+    wins), `MemberInductionAssignedSigner`, `FamilyGroupMember` (keep the
+    master's row, upgrade its role to `MAX(ADMIN > MEMBER)`, and re-point the
+    family's billing membership), and `MemberPartnerLink` (canonical
+    `memberAId < memberBId` pair, self-pairs and duplicates deleted, and at most
+    one CONFIRMED partner kept for the master).
+  - **cascade** — the loser's auth identity and ephemeral tokens
+    (password-reset / email-verification / email-change tokens, all 2FA rows,
+    partner-invite tokens) are never moved; they die with `member.delete(loser)`.
+  - **snapshot** — FK-less scalar member-id columns
+    (`MemberLifecycleActionRequest.memberId`, `BookingModification.memberId`,
+    `MemberApplication` nominator/reviewer ids, `NominationToken`,
+    `IssueReport.resolvedById`, `AuditLog` columns, …) are **left pointing at the
+    loser's id by design** as immutable history; the same historic audit rows
+    that reference the loser keep its id and stored names on purpose.
+- **Subscription-collision blocker.** If the loser holds a *meaningful*
+  `MemberSubscription` (any invoice/payment/charge-coverage signal) for a season
+  the master holds **any** subscription row for — meaningful or not — the merge
+  is **blocked**: the keep-master resolver drops the loser's colliding row, so a
+  paid/invoiced loser row must never collide, even with a meaningless
+  `NOT_INVOICED` master row (dropping it would delete payment history, and a
+  charge-coverage-backed row would fail on its `onDelete: Restrict` FK). A
+  meaningless loser subscription for a season the master also holds is dropped;
+  otherwise it moves.
+- **Xero teardown (ENTRANCE_FEE_INVOICE re-point rule).** Inside the transaction
+  and with **no Xero API calls**, the loser's contact-identity `XeroObjectLink`
+  rows are deactivated and its `xeroContactId` nulled (mirroring the delete path).
+  The exception is the loser's active `ENTRANCE_FEE_INVOICE` (joining-fee) link:
+  it is **re-pointed** (its `localId` set to the master) so the paid-joining-fee
+  evidence survives — otherwise E5's invoice-idempotency check would treat the
+  master as never-invoiced and risk a double charge. If the master already holds
+  an active `ENTRANCE_FEE_INVOICE` link (the partial unique forbids two), the
+  loser's is deactivated instead and the preview says so. The loser's Xero
+  **contact** is not touched in Xero — the preview warns the admin to archive or
+  merge it there manually (residual risk: no post-merge Xero contact-group or
+  invoice re-sync, consistent with the periodic-reconciliation stance).
+- **Guards, preview and confirmation.** Full Admin only; master ≠ loser; both
+  exist; master active and not archived; loser ≠ the acting admin; the loser may
+  not hold any admin access role (and the last-Full-Admin backstop applies); no
+  PENDING/REQUESTED lifecycle, deletion, or family-join request on either member.
+  The whole merge runs in one transaction under the dual `member-lifecycle`
+  advisory lock (see CONCURRENCY_AND_LOCKING.md), re-runs the guards, and
+  re-verifies an HMAC preview token (over both ids, both `updatedAt`, and an
+  outcome digest) so a drifted preview 409s. The admin must type
+  `MERGE <loser full name>` (whitespace-normalised) to confirm, and one critical
+  `MEMBER_MERGED` audit records the loser snapshot, field outcome, per-relation
+  counts, collision resolutions, and a bounded 500-row moved-id sample.
+
 ## Integrations
 
 - Webhooks and cron jobs must be idempotent.
