@@ -4,7 +4,7 @@ import { ContextualHelpButton } from "@/components/contextual-help-button";
 import { Badge } from "@/components/ui/badge";
 import { NavBar } from "@/components/nav-bar";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
-import { CLUB_NAME, clubIdentity } from "@/config/club-identity";
+import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -22,9 +22,10 @@ export default async function FinanceLayout({
   const member = await requireFinanceViewer("/finance");
   const fullName = `${member.firstName} ${member.lastName}`.trim() || "Member";
   const isManager = hasFinanceManagerAccess(member);
-  const [effectiveModules, lodgeCapacity] = await Promise.all([
+  const [effectiveModules, lodgeCapacity, clubIdentity] = await Promise.all([
     loadEffectiveModuleFlags(),
     getDefaultLodgeCapacity(),
+    getCachedClubIdentity(),
   ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
@@ -49,7 +50,7 @@ export default async function FinanceLayout({
                 Finance
               </p>
               <h1 className="text-3xl font-semibold text-foreground">
-                {CLUB_NAME} finance workspace
+                {liveClubIdentity.name} finance workspace
               </h1>
               <p className="text-sm text-muted-foreground">
                 Review finance reports, booking performance, and sync status in

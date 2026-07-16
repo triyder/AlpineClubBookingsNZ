@@ -1,4 +1,5 @@
 import {
+  BadgeInfo,
   FilePenLine,
   Images,
   Megaphone,
@@ -13,6 +14,13 @@ import {
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
 const sections: AdminHubSection[] = [
+  {
+    href: "/admin/appearance/identity",
+    title: "Club Identity",
+    description:
+      "Set the club name, short name, hut-leader label, and your lodge's public details.",
+    icon: BadgeInfo,
+  },
   {
     href: "/admin/site-style",
     title: "Site Style",

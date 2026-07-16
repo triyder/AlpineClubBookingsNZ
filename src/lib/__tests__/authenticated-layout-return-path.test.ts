@@ -45,6 +45,15 @@ vi.mock("@/lib/site-banners", () => ({
   getCurrentSiteBanners: vi.fn(async () => []),
 }));
 
+// The layout now resolves DB-first club identity via the tagged public-layout
+// cache (E3 #1929). Its real module imports "server-only" and the identity read
+// happens well after the auth redirect, so stub the accessor with the config
+// identity to keep importing the layout light.
+vi.mock("@/lib/public-layout-config", async () => {
+  const { clubIdentity } = await import("@/config/club-identity");
+  return { getCachedClubIdentity: vi.fn(async () => clubIdentity) };
+});
+
 // Stub the layout's UI dependencies so importing it stays light; the anonymous
 // redirect path returns before any of these are rendered.
 vi.mock("@/components/app-providers", () => ({

@@ -23,6 +23,7 @@ const SINGLETON_DELEGATES = [
   "bedAllocationSettings",
   "bookingRequestSettings",
   "internetBankingPaymentSettings",
+  "clubIdentitySettings",
   "emailMessageSetting",
   "groupDiscountSetting",
   "membershipNominationSettings",

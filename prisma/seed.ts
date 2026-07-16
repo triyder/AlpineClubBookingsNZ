@@ -8,7 +8,6 @@ import bcrypt from "bcryptjs";
 import { clubConfig } from "../src/config/club";
 import {
   CLUB_CONTACT_EMAIL,
-  CLUB_LODGE_NAME,
   clubDomainEmail,
 } from "../src/config/club-identity";
 import { slugifyLodgeName } from "../src/lib/lodges";
@@ -227,6 +226,54 @@ async function createMissingSeasonRates(
   }
 }
 
+// Seed the membership-type-keyed hut rates (#1930, E4) with the same D4 fan-out
+// the migration backfill uses: member rates -> every MEMBER_RATE type,
+// non-member rates -> the built-in NON_MEMBER type. Create-if-missing so admin
+// edits survive a re-run. Every type starts age-keyed (ageGroupsApply=true).
+async function createMissingMembershipTypeSeasonRates(
+  seasonId: string,
+  season: "winter" | "summer",
+) {
+  const types = await prisma.membershipType.findMany({
+    select: { id: true, key: true, bookingBehavior: true },
+  });
+  const rates = seedRatesForSeason(season);
+  const memberRates = rates.filter((rate) => rate.isMember);
+  const nonMemberRates = rates.filter((rate) => !rate.isMember);
+
+  const upsert = async (
+    membershipTypeId: string,
+    ageTier: AgeTier,
+    pricePerNightCents: number,
+  ) => {
+    await prisma.membershipTypeSeasonRate.upsert({
+      where: {
+        seasonId_membershipTypeId_ageTier: {
+          seasonId,
+          membershipTypeId,
+          ageTier,
+        },
+      },
+      update: {},
+      create: { seasonId, membershipTypeId, ageTier, pricePerNightCents },
+    });
+  };
+
+  for (const type of types) {
+    if (type.bookingBehavior === "MEMBER_RATE") {
+      for (const rate of memberRates) {
+        await upsert(type.id, rate.ageTier, rate.pricePerNightCents);
+      }
+    } else if (type.key === "NON_MEMBER") {
+      for (const rate of nonMemberRates) {
+        await upsert(type.id, rate.ageTier, rate.pricePerNightCents);
+      }
+    }
+    // NON_MEMBER_RATE (except NON_MEMBER) and BLOCK_BOOKING types deliberately
+    // get no own rows (D2 invariant).
+  }
+}
+
 // Seed the default Lodge Induction checklist template (create-if-missing). The
 // template is only created when no template with this version exists, so admin
 // edits and new versions survive a re-run. It is marked active only when no
@@ -295,6 +342,12 @@ async function main() {
   // EmailMessageSetting has no configured lodge name; on a first-run seed,
   // upgrade that placeholder to the club-config lodge name. Rows with any
   // other name are club data and are never touched.
+  // Derived default lodge name (the config-derived fallback that clubLodgeName
+  // used to export before E3 #1929 made lodge identity DB-first). The seed still
+  // names the placeholder lodge "<Club> Lodge"; NO geography/address is seeded
+  // (the Lodge.address backfill lives in migration SQL only — the
+  // seed-account-defaults guard keeps geography out of seeds).
+  const clubLodgeName = `${clubConfig.name} Lodge`;
   const existingLodges = await prisma.lodge.findMany({
     select: { id: true, name: true },
     // Deterministic order so the else-branch below stamps the oldest lodge
@@ -306,8 +359,8 @@ async function main() {
   if (existingLodges.length === 0) {
     const createdLodge = await prisma.lodge.create({
       data: {
-        name: CLUB_LODGE_NAME,
-        slug: slugifyLodgeName(CLUB_LODGE_NAME),
+        name: clubLodgeName,
+        slug: slugifyLodgeName(clubLodgeName),
         active: true,
         // Flag the sole lodge as the club default (#1656). The migration
         // backfill already sets this on the migration-seeded lodge; this
@@ -319,7 +372,7 @@ async function main() {
       },
     });
     seedLodgeId = createdLodge.id;
-    console.log(`Lodge seeded: ${CLUB_LODGE_NAME}`);
+    console.log(`Lodge seeded: ${clubLodgeName}`);
   } else if (
     existingLodges.length === 1 &&
     existingLodges[0].name === "Lodge"
@@ -327,15 +380,33 @@ async function main() {
     const updatedLodge = await prisma.lodge.update({
       where: { id: existingLodges[0].id },
       data: {
-        name: CLUB_LODGE_NAME,
-        slug: slugifyLodgeName(CLUB_LODGE_NAME),
+        name: clubLodgeName,
+        slug: slugifyLodgeName(clubLodgeName),
       },
     });
     seedLodgeId = updatedLodge.id;
-    console.log(`Lodge placeholder renamed to: ${CLUB_LODGE_NAME}`);
+    console.log(`Lodge placeholder renamed to: ${clubLodgeName}`);
   } else {
     seedLodgeId = existingLodges[0].id;
   }
+
+  // DB-first club identity singleton (E3 #1929): seed the club.json values so a
+  // fresh install has a row, but CREATE-ONLY (update: {}) — a re-run must never
+  // overwrite an admin's edits. An absent row is still fully functional via the
+  // runtime fallback chain; this just makes the admin card show the config
+  // values as the current values. No lodge name/address is stored here (lodge
+  // identity is the Lodge table's; address is migration-only).
+  await prisma.clubIdentitySettings.upsert({
+    where: { id: "default" },
+    update: {},
+    create: {
+      id: "default",
+      name: clubConfig.name,
+      shortName: clubConfig.shortName ?? null,
+      hutLeaderLabel: clubConfig.hutLeaderLabel ?? null,
+    },
+  });
+  console.log("Club identity settings seeded (create-only)");
 
   // Seed default cancellation policy tiers (create-if-missing).
   const policies = [
@@ -472,6 +543,7 @@ async function main() {
     },
   });
   await createMissingSeasonRates(winter2026.id, "winter");
+  await createMissingMembershipTypeSeasonRates(winter2026.id, "winter");
   console.log(`Season seeded: ${winter2026.name}`);
 
   // Seed Summer 2026-27 season (November - March) with rates from club config.
@@ -489,7 +561,30 @@ async function main() {
     },
   });
   await createMissingSeasonRates(summer2026.id, "summer");
+  await createMissingMembershipTypeSeasonRates(summer2026.id, "summer");
   console.log(`Season seeded: ${summer2026.name}`);
+
+  // Group-discount substitution target (#1930, E4): a GroupDiscountSetting row
+  // created outside the re-key migration would carry a NULL target, leaving an
+  // enabled discount inert but for the read-time fallback. Create-if-missing
+  // (schema defaults keep the discount disabled) and heal a NULL target to the
+  // built-in FULL type — never overwriting an admin-configured target.
+  const fullMembershipType = await prisma.membershipType.findFirst({
+    where: { key: "FULL" },
+    select: { id: true },
+  });
+  if (fullMembershipType) {
+    await prisma.groupDiscountSetting.upsert({
+      where: { id: "default" },
+      update: {},
+      create: { id: "default", rateMembershipTypeId: fullMembershipType.id },
+    });
+    await prisma.groupDiscountSetting.updateMany({
+      where: { id: "default", rateMembershipTypeId: null },
+      data: { rateMembershipTypeId: fullMembershipType.id },
+    });
+    console.log("Group discount substitution target seeded");
+  }
 
   // Seed Xero account mappings with current defaults (create-if-missing).
   const accountMappings = [

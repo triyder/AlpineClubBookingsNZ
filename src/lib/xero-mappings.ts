@@ -87,38 +87,115 @@ async function getItemCodeMapping(key: string): Promise<string | null> {
   return mapping.itemCode;
 }
 
-/**
- * Build a lookup map for hut fee item codes keyed by "${ageTier}_${seasonType}_${isMember}".
- * Falls back to the legacy flat `hutFeeItem` from XeroAccountMapping if the new table is empty.
- */
-export async function getHutFeeItemCodeMap(): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+// Resolver for hut-fee Xero item codes keyed by membership type (#1930, E4).
+// `byKey` is `${membershipTypeId}_${seasonType}_${ageTier|"FLAT"}` ->
+// itemCode. A guest's code is resolved from its BookingGuest.rateMembershipType
+// snapshot; a NULL snapshot (pre-refactor booking) falls back
+// isMember -> FULL/NON_MEMBER, which — because the backfill fanned the old
+// isMember=true code to FULL and isMember=false code to NON_MEMBER — yields the
+// same code the legacy `${ageTier}_${seasonType}_${isMember}` key did.
+export interface HutFeeItemCodeResolver {
+  byKey: Map<string, string>;
+  fullTypeId: string | null;
+  nonMemberTypeId: string | null;
+  legacyItemCode: string | null;
+  // Count of membership-type-keyed rows found, for `.size > 0`-style guards
+  // that decide whether to attach any per-guest item code at all.
+  size: number;
+}
 
-  const rows = await prisma.xeroItemCodeMapping.findMany({
-    where: { category: "HUT_FEE" },
-  });
+function hutFeeItemCodeKey(
+  membershipTypeId: string,
+  seasonType: string,
+  ageTier: string | null,
+): string {
+  return `${membershipTypeId}_${seasonType}_${ageTier ?? "FLAT"}`;
+}
+
+/**
+ * Build the hut-fee item-code resolver keyed by membership type (#1930, E4).
+ * Reads the membership-type-keyed HUT_FEE rows (membershipTypeId set); a truly
+ * empty table falls back to the legacy flat `hutFeeItem`.
+ */
+export async function getHutFeeItemCodeMap(): Promise<HutFeeItemCodeResolver> {
+  const byKey = new Map<string, string>();
+
+  const [rows, builtInTypes, legacyItemCode] = await Promise.all([
+    prisma.xeroItemCodeMapping.findMany({ where: { category: "HUT_FEE" } }),
+    prisma.membershipType.findMany({
+      where: { key: { in: ["FULL", "NON_MEMBER"] } },
+      select: { id: true, key: true },
+    }),
+    getItemCodeMapping("hutFeeItem"),
+  ]);
 
   for (const row of rows) {
-    if (row.ageTier && row.seasonType && row.isMember !== null && row.itemCode) {
-      map.set(`${row.ageTier}_${row.seasonType}_${row.isMember}`, row.itemCode);
+    if (row.membershipTypeId && row.seasonType && row.itemCode) {
+      byKey.set(
+        hutFeeItemCodeKey(row.membershipTypeId, row.seasonType, row.ageTier),
+        row.itemCode,
+      );
     }
   }
 
-  if (map.size === 0) {
-    // Fallback: use legacy flat hutFeeItem for all combinations
-    const legacyItemCode = await getItemCodeMapping("hutFeeItem");
-    if (legacyItemCode) {
-      for (const tier of ["INFANT", "CHILD", "YOUTH", "ADULT"]) {
-        for (const season of ["WINTER", "SUMMER"]) {
-          for (const member of [true, false]) {
-            map.set(`${tier}_${season}_${member}`, legacyItemCode);
-          }
-        }
-      }
-    }
-  }
+  const typeIdByKey = new Map(builtInTypes.map((t) => [t.key, t.id]));
+  return {
+    byKey,
+    fullTypeId: typeIdByKey.get("FULL") ?? null,
+    nonMemberTypeId: typeIdByKey.get("NON_MEMBER") ?? null,
+    legacyItemCode: legacyItemCode ?? null,
+    size: byKey.size,
+  };
+}
 
-  return map;
+/**
+ * Whether the hut-fee resolver is configured at all: it carries membership-type
+ * keyed rows OR the legacy flat `hutFeeItem` code. Mirrors main's
+ * `hutFeeItemCodeMap.size > 0` guard (the legacy map was pre-filled from
+ * `hutFeeItem` when the keyed table was empty), so callers fall back to the
+ * single `hutFeesIncome` item code exactly when main did (#1930, E4).
+ */
+export function isHutFeeResolverConfigured(
+  resolver: HutFeeItemCodeResolver,
+): boolean {
+  return resolver.byKey.size > 0 || resolver.legacyItemCode != null;
+}
+
+/**
+ * Resolve one guest's hut-fee Xero item code (#1930, E4). Prefers the guest's
+ * rateMembershipType snapshot; a NULL snapshot falls back isMember ->
+ * FULL/NON_MEMBER. Within a type, prefers the exact age-tier row then the flat
+ * (FLAT) row.
+ *
+ * Fallback semantics are byte-identical to main's boolean-keyed map:
+ *   - keyed rows exist, lookup misses -> null (the line stays account-coded;
+ *     the legacy `hutFeeItem` is NOT consulted once keyed rows exist),
+ *   - keyed table EMPTY (genuine legacy-only install) -> the flat `hutFeeItem`
+ *     (main pre-filled every key with it),
+ *   - no seasonType -> null; the caller falls back to the single
+ *     `hutFeesIncome` item code (never `hutFeeItem`), matching main's
+ *     `(map && seasonType) ? ... : itemCode` precedence.
+ */
+export function resolveHutFeeItemCode(
+  resolver: HutFeeItemCodeResolver,
+  guest: {
+    ageTier: string;
+    isMember: boolean;
+    rateMembershipTypeId?: string | null;
+  },
+  seasonType: string | null | undefined,
+): string | null {
+  if (!seasonType) return null;
+  if (resolver.byKey.size === 0) return resolver.legacyItemCode;
+  const typeId =
+    guest.rateMembershipTypeId ??
+    (guest.isMember ? resolver.fullTypeId : resolver.nonMemberTypeId);
+  if (!typeId) return null;
+  return (
+    resolver.byKey.get(hutFeeItemCodeKey(typeId, seasonType, guest.ageTier)) ??
+    resolver.byKey.get(hutFeeItemCodeKey(typeId, seasonType, null)) ??
+    null
+  );
 }
 
 /**

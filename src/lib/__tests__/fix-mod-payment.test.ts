@@ -318,9 +318,12 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
         id: "s1",
         startDate: new Date("2026-04-01"),
         endDate: new Date("2026-10-31"),
-        rates: [
-          { ageTier: "ADULT", isMember: true, pricePerNightCents: 5000 },
-          { ageTier: "ADULT", isMember: false, pricePerNightCents: 7000 },
+        // Membership-type-keyed rates (#1930, E4): FULL members 5000, NON_MEMBER
+        // 7000. The pricing engine (calculateBookingPrice) is mocked in this
+        // suite, so these values only need the re-keyed shape, not the amounts.
+        membershipTypeRates: [
+          { membershipTypeId: "type-full", ageTier: "ADULT", pricePerNightCents: 5000 },
+          { membershipTypeId: "type-nonmember", ageTier: "ADULT", pricePerNightCents: 7000 },
         ],
       }]),
     },
@@ -328,6 +331,31 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({}),
+    },
+    // Rate-membership-type snapshot resolution (#1930, E4): the modify/guest-add
+    // paths now resolve every guest's rate type before pricing. Provide the
+    // policy-db delegates so the resolver sees the built-in types (member guests
+    // -> FULL/member rate, true non-members -> NON_MEMBER) instead of throwing.
+    member: {
+      findMany: vi.fn().mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({
+          id,
+          firstName: "Member",
+          lastName: "Test",
+          email: `${id}@test.com`,
+          role: "MEMBER",
+          ageTier: "ADULT",
+        })),
+      ),
+      findUnique: vi.fn().mockResolvedValue(null),
+      count: vi.fn().mockResolvedValue(1),
+    },
+    seasonalMembershipAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "type-full", key: "FULL", bookingBehavior: "MEMBER_RATE", subscriptionBehavior: "REQUIRED", name: "Full", isActive: true, isBuiltIn: true },
+        { id: "type-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE", subscriptionBehavior: "NOT_REQUIRED", name: "Non-Member", isActive: true, isBuiltIn: true },
+      ]),
     },
   };
 }

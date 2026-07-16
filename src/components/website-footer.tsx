@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { WebsiteLogo } from "@/components/website-logo";
-import { CLUB_NAME } from "@/config/club-identity";
+import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { getSiteFooterContent } from "@/lib/site-content";
 
 // Styles the admin-editable footer HTML (sanitised on write and read) so the
@@ -39,7 +39,11 @@ export async function WebsiteFooter({
   logoDataUrl?: string | null;
   pageSlug: string;
 }) {
-  const raw = await getSiteFooterContent();
+  const [raw, clubIdentity] = await Promise.all([
+    getSiteFooterContent(),
+    getCachedClubIdentity(),
+  ]);
+  const clubName = clubIdentity.name;
   const blurbHtml = demoteFooterHeadings(raw.blurbHtml);
   const quickLinksHtml = demoteFooterHeadings(raw.quickLinksHtml);
   const affiliationsHtml = demoteFooterHeadings(raw.affiliationsHtml);
@@ -63,7 +67,7 @@ export async function WebsiteFooter({
           <div>
             <div className="mb-3">
               <WebsiteLogo
-                label={CLUB_NAME}
+                label={clubName}
                 logoDataUrl={logoDataUrl}
                 className="max-h-10 max-w-40 brightness-110"
                 textClassName="text-brand-snow"
@@ -100,7 +104,7 @@ export async function WebsiteFooter({
         {/* Legal row stays code-rendered: auto year, non-removable links. */}
         <div className="mt-10 border-t border-brand-ridge/30 pt-6 text-center text-sm text-brand-snow/85">
           <p>
-            &copy; {new Date().getFullYear()} {CLUB_NAME} Incorporated. All
+            &copy; {new Date().getFullYear()} {clubName} Incorporated. All
             rights reserved.
           </p>
           <p className="mt-2 space-x-4">

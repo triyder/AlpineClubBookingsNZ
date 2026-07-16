@@ -8,7 +8,7 @@ import {
 } from "crypto";
 import * as OTPAuth from "otpauth";
 import type { TwoFactorMethod } from "@prisma/client";
-import { CLUB_BOOKINGS_NAME, CLUB_NAME } from "@/config/club-identity";
+import { getClubIdentitySync } from "@/lib/club-identity-settings";
 import { getAuthSecret } from "@/lib/runtime-config";
 import { prisma } from "@/lib/prisma";
 
@@ -125,7 +125,10 @@ function generateRecoveryCodes(count = TWO_FACTOR_RECOVERY_CODE_COUNT) {
 
 function buildTotp(secretBase32: string, label: string) {
   return new OTPAuth.TOTP({
-    issuer: CLUB_NAME,
+    // DB-first club name via the self-warming sync accessor (E3 #1929): the
+    // TOTP issuer/label can lag a rename by up to the sync cache TTL, which only
+    // affects NEW enrolments (existing authenticators keep their embedded issuer).
+    issuer: getClubIdentitySync().name,
     label,
     algorithm: "SHA1",
     digits: 6,
@@ -142,7 +145,7 @@ export function generateTotpEnrollment(label: string) {
   return {
     secret: secretBase32,
     otpauthUrl: totp.toString(),
-    issuer: CLUB_NAME,
+    issuer: getClubIdentitySync().name,
     label,
   };
 }
@@ -153,7 +156,10 @@ export function verifyTotpCode(secretBase32: string, code: string) {
     return false;
   }
 
-  return buildTotp(secretBase32, CLUB_BOOKINGS_NAME).validate({
+  // The label is metadata only — validate() ignores it, computing from the
+  // secret/algorithm/digits/period — so the sync accessor's short lag is
+  // irrelevant to verification here.
+  return buildTotp(secretBase32, getClubIdentitySync().bookingsName).validate({
     token,
     window: TWO_FACTOR_TOTP_WINDOW,
   }) !== null;

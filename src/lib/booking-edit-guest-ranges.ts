@@ -1,6 +1,7 @@
 import type { AgeTier } from "@prisma/client";
 import {
   calculateBookingPrice,
+  type RateSource,
   type SeasonRateData,
 } from "@/lib/pricing";
 import { normalizeDateOnlyForTimeZone } from "@/lib/date-only";
@@ -12,7 +13,11 @@ interface ExistingBookingEditGuest {
   ageTier: AgeTier;
   isMember: boolean;
   memberId?: string | null;
-  forceNonMemberRate?: boolean;
+  // Resolved rate membership type (#1930, E4); replaces the old
+  // forceNonMemberRate boolean. Range pricing here never applies a group
+  // discount, so rateSource is carried only for shape parity.
+  rateMembershipTypeId: string;
+  rateSource?: RateSource;
   stayStart?: Date | null;
   stayEnd?: Date | null;
   priceCents: number;
@@ -24,7 +29,8 @@ interface AddedBookingEditGuest {
   ageTier: AgeTier;
   isMember: boolean;
   memberId?: string | null;
-  forceNonMemberRate?: boolean;
+  rateMembershipTypeId: string;
+  rateSource?: RateSource;
 }
 
 interface ProposedExistingGuestRange {
@@ -94,7 +100,10 @@ function minDate(a: Date, b: Date): Date {
 function priceGuestRangeCents(
   start: Date,
   end: Date,
-  guest: Pick<ExistingBookingEditGuest, "ageTier" | "isMember" | "forceNonMemberRate">,
+  guest: Pick<
+    ExistingBookingEditGuest,
+    "ageTier" | "isMember" | "rateMembershipTypeId" | "rateSource"
+  >,
   seasons: SeasonRateData[]
 ): number {
   const normalizedStart = normalizeDateOnlyForTimeZone(start);
@@ -109,7 +118,8 @@ function priceGuestRangeCents(
     [{
       ageTier: guest.ageTier,
       isMember: guest.isMember,
-      forceNonMemberRate: guest.forceNonMemberRate,
+      rateMembershipTypeId: guest.rateMembershipTypeId,
+      rateSource: guest.rateSource,
     }],
     seasons
   ).totalPriceCents;

@@ -44,11 +44,6 @@ export async function getAgeTierSettings(): Promise<AgeTierSettingData[]> {
     const { prisma } = await import("./prisma");
     const rows = await prisma.ageTierSetting.findMany({
       orderBy: { sortOrder: "asc" },
-      include: {
-        xeroAcceptedContactGroups: {
-          orderBy: [{ groupName: "asc" }, { groupId: "asc" }],
-        },
-      },
     });
     const normalized = normalizeAgeTierSettings(
       rows.map((r) => ({
@@ -59,14 +54,6 @@ export async function getAgeTierSettings(): Promise<AgeTierSettingData[]> {
         subscriptionRequiredForBooking: r.subscriptionRequiredForBooking ?? true,
         familyGroupRequestCreateMemberAllowed:
           r.familyGroupRequestCreateMemberAllowed ?? false,
-        xeroContactGroupId: r.xeroContactGroupId,
-        xeroContactGroupName: r.xeroContactGroupName,
-        xeroAcceptedContactGroups: Array.isArray(r.xeroAcceptedContactGroups)
-          ? r.xeroAcceptedContactGroups.map((group) => ({
-              groupId: group.groupId,
-              groupName: group.groupName,
-            }))
-          : [],
         sortOrder: r.sortOrder,
       }))
     );

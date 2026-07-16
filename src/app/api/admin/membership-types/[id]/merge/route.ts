@@ -11,7 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
 // Same shape the collection/[id] routes use so serializeMembershipType and the
-// merge guards see age tiers, Xero rules, and the current assignment count.
+// merge guards see age tiers and the current assignment count.
 const membershipTypeSelect = {
   id: true,
   key: true,
@@ -29,18 +29,6 @@ const membershipTypeSelect = {
   allowedAgeTiers: {
     select: { ageTier: true },
     orderBy: { ageTier: "asc" },
-  },
-  xeroContactGroupRules: {
-    select: {
-      id: true,
-      ageTier: true,
-      mode: true,
-      groupId: true,
-      groupName: true,
-      isActive: true,
-      sortOrder: true,
-    },
-    orderBy: [{ sortOrder: "asc" }, { groupName: "asc" }, { groupId: "asc" }],
   },
   _count: { select: { assignments: true, annualFees: true } },
 } satisfies Prisma.MembershipTypeSelect;
@@ -219,13 +207,10 @@ export async function POST(
     });
 
     // Audit the reassignment + deletion as one MEMBERSHIP_TYPE_MERGED record.
-    // Xero coherence note: assignment-type changes in this app are NOT
-    // synchronously resynced to Xero contact groups (see
-    // saveSeasonalMembershipAssignment / the seasonal-membership route, which
-    // only upsert + audit). Reconciliation is by the existing periodic /
-    // admin mismatch tooling (resyncXeroContactCachesByIds and the contact-group
-    // mismatch panels), so this route deliberately does not enqueue a Xero
-    // resync. The UI surfaces a Xero-rule-diff warning before confirm instead.
+    // Xero coherence note: the deleted source type's XeroContactGroupRule rows
+    // cascade-delete with it, shrinking the managed universe. Members already in
+    // those groups are never removed by the system (E8, #1934); reconciliation is
+    // by the admin Xero member-grouping dry-run + bulk re-sync.
     await tx.auditLog.create(
       buildStructuredAuditLogCreateArgs({
         action: "MEMBERSHIP_TYPE_MERGED",
@@ -246,9 +231,7 @@ export async function POST(
           reassignedAssignments,
           reassignedAssignmentsTruncated:
             sourceAssignments.length > reassignedAssignments.length,
-          sourceXeroContactGroupRules: source.xeroContactGroupRules,
-          targetXeroContactGroupRules: target.xeroContactGroupRules,
-          xeroReconciliation: "periodic",
+          xeroReconciliation: "admin-grouping-resync",
         },
         request: getAuditRequestContext(request),
       }),

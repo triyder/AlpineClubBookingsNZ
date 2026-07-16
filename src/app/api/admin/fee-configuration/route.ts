@@ -184,13 +184,13 @@ export async function POST(request: Request) {
         const existing = input.action === "UPDATE_ENTRANCE_FEE"
           ? await tx.entranceFee.findUnique({ where: { id: input.id } })
           : null;
-        if (input.action === "UPDATE_ENTRANCE_FEE" && !existing) throw new FeeScheduleValidationError("Entrance fee not found.", 404);
+        if (input.action === "UPDATE_ENTRANCE_FEE" && !existing) throw new FeeScheduleValidationError("Joining fee not found.", 404);
         const category = input.action === "CREATE_ENTRANCE_FEE" ? input.category : existing!.category;
         await lockFeeSchedule(tx, "entrance", category);
         const overlap = await tx.entranceFee.findFirst({
           where: { category, ...scheduleOverlapWhere({ ...dates, excludeId: existing?.id }) }, select: { id: true },
         });
-        if (overlap) throw new FeeScheduleValidationError("This entrance fee overlaps an existing effective-date range.", 409);
+        if (overlap) throw new FeeScheduleValidationError("This joining fee overlaps an existing effective-date range.", 409);
         const row = existing
           ? await tx.entranceFee.update({ where: { id: existing.id }, data: dates })
           : await tx.entranceFee.create({ data: { category, ...dates } });
@@ -203,7 +203,7 @@ export async function POST(request: Request) {
         targetId = existing.id;
       } else if (input.action === "DELETE_ENTRANCE_FEE") {
         const existing = await tx.entranceFee.findUnique({ where: { id: input.id } });
-        if (!existing) throw new FeeScheduleValidationError("Entrance fee not found.", 404);
+        if (!existing) throw new FeeScheduleValidationError("Joining fee not found.", 404);
         await lockFeeSchedule(tx, "entrance", existing.category);
         await tx.entranceFee.delete({ where: { id: existing.id } });
         targetId = existing.id;

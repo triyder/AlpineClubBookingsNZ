@@ -1,7 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { buildBookingRequestListWhere } from "@/lib/booking-request";
 import { getPendingMembershipCancellationReviewCount } from "@/lib/membership-cancellation-admin";
-import { getPendingMemberArchiveReviewCount } from "@/lib/member-lifecycle-actions";
+import {
+  getPendingMemberArchiveReviewCount,
+  getPendingMemberDeleteReviewCount,
+} from "@/lib/member-lifecycle-actions";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 import { REVIEWED_REQUEST_TYPES } from "@/lib/admin-family-group-requests-service";
 import {
@@ -23,6 +26,7 @@ export type AdminPendingCounts = {
   membershipCancellations: number;
   archiveRequests: number;
   deletionRequests: number;
+  memberDeleteRequests: number;
   issueReports: number;
   unassignedHutLeaderDates: number;
 };
@@ -36,7 +40,8 @@ export type AdminPendingCounts = {
  * booking-requests, unpaid-finished-stays and unsettled finished-stay
  * additions (shared helpers with the dashboard cards, #1709/#1731/#1723),
  * membership-cancellation-requests,
- * member-lifecycle-action-requests, deletion-requests, issue-reports,
+ * member-lifecycle-action-requests (ARCHIVE and DELETE review queues),
+ * deletion-requests, issue-reports,
  * hut-leaders/unassigned-dates); update both together if a queue definition
  * changes.
  */
@@ -54,6 +59,7 @@ export async function getAdminPendingCounts(): Promise<AdminPendingCounts> {
     membershipCancellations,
     archiveRequests,
     deletionRequests,
+    memberDeleteRequests,
     issueReports,
     unassignedDates,
   ] = await Promise.all([
@@ -79,6 +85,7 @@ export async function getAdminPendingCounts(): Promise<AdminPendingCounts> {
     getPendingMembershipCancellationReviewCount(),
     getPendingMemberArchiveReviewCount(),
     prisma.deletionRequest.count({ where: { status: "PENDING" } }),
+    getPendingMemberDeleteReviewCount(),
     prisma.issueReport.count({ where: { resolvedAt: null } }),
     getUnassignedHutLeaderDates(),
   ]);
@@ -96,6 +103,7 @@ export async function getAdminPendingCounts(): Promise<AdminPendingCounts> {
     membershipCancellations,
     archiveRequests,
     deletionRequests,
+    memberDeleteRequests,
     issueReports,
     unassignedHutLeaderDates: unassignedDates.length,
   };

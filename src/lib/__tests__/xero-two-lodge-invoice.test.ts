@@ -39,25 +39,34 @@ describe("Xero invoice line items are consistent across lodges", () => {
     }
   });
 
-  it("resolves per-guest item codes by tier/season/membership only, identically per lodge", () => {
+  it("resolves per-guest item codes by rate type/season/age tier only, identically per lodge", () => {
+    const MEMBER_TYPE = "type-full";
+    const NONMEMBER_TYPE = "type-nonmember";
     const mixedGuests = [
-      { firstName: "John", lastName: "Smith", ageTier: "ADULT", isMember: true, priceCents: 9000 },
-      { firstName: "Jane", lastName: "Smith", ageTier: "ADULT", isMember: false, priceCents: 13000 },
-      { firstName: "Tom", lastName: "Smith", ageTier: "CHILD", isMember: true, priceCents: 4000 },
+      { firstName: "John", lastName: "Smith", ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, priceCents: 9000 },
+      { firstName: "Jane", lastName: "Smith", ageTier: "ADULT", isMember: false, rateMembershipTypeId: NONMEMBER_TYPE, priceCents: 13000 },
+      { firstName: "Tom", lastName: "Smith", ageTier: "CHILD", isMember: true, rateMembershipTypeId: MEMBER_TYPE, priceCents: 4000 },
     ];
-    // A single club-wide item-code map (there is no per-lodge map): the same
-    // map applied for two different lodges must yield the same codes.
-    const itemCodeMap = new Map([
-      ["ADULT_WINTER_true", "HUTFEE-ADULT-WIN-MEM"],
-      ["ADULT_WINTER_false", "HUTFEE-ADULT-WIN-NON"],
-      ["CHILD_WINTER_true", "HUTFEE-CHILD-WIN-MEM"],
+    // A single club-wide resolver (there is no per-lodge map): the same
+    // resolver applied for two different lodges must yield the same codes.
+    const byKey = new Map([
+      [`${MEMBER_TYPE}_WINTER_ADULT`, "HUTFEE-ADULT-WIN-MEM"],
+      [`${NONMEMBER_TYPE}_WINTER_ADULT`, "HUTFEE-ADULT-WIN-NON"],
+      [`${MEMBER_TYPE}_WINTER_CHILD`, "HUTFEE-CHILD-WIN-MEM"],
     ]);
+    const itemCodeResolver = {
+      byKey,
+      fullTypeId: MEMBER_TYPE,
+      nonMemberTypeId: NONMEMBER_TYPE,
+      legacyItemCode: null,
+      size: byKey.size,
+    };
 
     const lodgeA = buildInvoiceLineItems(
-      mixedGuests, checkIn, checkOut, 2, "200", null, false, itemCodeMap, "WINTER"
+      mixedGuests, checkIn, checkOut, 2, "200", null, false, itemCodeResolver, "WINTER"
     );
     const lodgeB = buildInvoiceLineItems(
-      mixedGuests, checkIn, checkOut, 2, "200", null, false, itemCodeMap, "WINTER"
+      mixedGuests, checkIn, checkOut, 2, "200", null, false, itemCodeResolver, "WINTER"
     );
 
     expect(lodgeA).toEqual(lodgeB);

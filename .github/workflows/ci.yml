@@ -291,6 +291,16 @@ jobs:
           CLUB_THEME_MIGRATION_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
         run: npx vitest run src/lib/__tests__/club-theme-default-reseed-migration.test.ts
 
+      # E8 (#1934): real-Postgres behavior of the member-grouping cutover
+      # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
+      # idempotent re-run). Self-provisions a throwaway schema (needs PG 15+
+      # for NULLS NOT DISTINCT); the suite describe.skip's itself when the env
+      # var is absent, so this step MUST stay wired.
+      - name: Test guarded Xero member-grouping migration against PostgreSQL
+        env:
+          XERO_MEMBER_GROUPING_MIGRATION_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: npx vitest run src/lib/__tests__/xero-member-grouping-migration.test.ts
+
       # F28 (#1888): wire the real-DB BookingGuest stay-range trigger suite so it
       # is no longer a silent no-op. It self-provisions a throwaway schema and
       # applies only the two trigger migrations, so it needs any reachable

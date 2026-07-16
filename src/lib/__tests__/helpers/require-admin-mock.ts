@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
-import { hasAdminPortalAccess } from "@/lib/admin-permissions";
+import {
+  hasAdminAreaAccess,
+  hasAdminPortalAccess,
+  type AdminAccessRequirement,
+} from "@/lib/admin-permissions";
+
+type RequireAdminMockOptions = {
+  permission?: AdminAccessRequirement | false;
+};
 
 /**
  * Drop-in `requireAdmin` implementation for tests that mock
@@ -7,15 +15,22 @@ import { hasAdminPortalAccess } from "@/lib/admin-permissions";
  * delegates to the test's mocked `auth()` and `requireActiveSessionUser()`
  * so per-test session and active-member setups keep working.
  *
+ * When the route passes an explicit `permission` requirement (the #1927
+ * content routes do), this honours it via `hasAdminAreaAccess` so a
+ * per-area view-vs-edit denial is exercised end-to-end. With no options it
+ * keeps the historical broad portal-access check.
+ *
  * Usage inside a vi.mock factory:
  *
  *   vi.mock("@/lib/session-guards", () => ({
- *     requireAdmin: async () =>
- *       (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
+ *     requireAdmin: async (options) =>
+ *       (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(options),
  *     requireActiveSessionUser: ...,
  *   }));
  */
-export async function evaluateRequireAdminMock() {
+export async function evaluateRequireAdminMock(
+  options: RequireAdminMockOptions = {},
+) {
   const { auth } = await import("@/lib/auth");
   const session = await auth();
   if (!session?.user?.id) {
@@ -24,7 +39,12 @@ export async function evaluateRequireAdminMock() {
       response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
     };
   }
-  if (!hasAdminPortalAccess(session.user)) {
+  const requirement =
+    options.permission === false ? null : (options.permission ?? null);
+  const hasAccess = requirement
+    ? hasAdminAreaAccess(session.user, requirement)
+    : hasAdminPortalAccess(session.user);
+  if (!hasAccess) {
     return {
       ok: false as const,
       response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),

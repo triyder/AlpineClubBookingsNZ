@@ -188,7 +188,9 @@ describe("confirmCrossLodgeWaitlistOffer in-transaction duplicate-stay guard (M2
         startDate: new Date("2026-08-01"),
         endDate: new Date("2026-08-31"),
         type: "STANDARD",
-        rates: [],
+        // Membership-type-keyed rates (#1930, E4); pricing is mocked so an
+        // empty set is fine, but toSeasonRateData reads this relation.
+        membershipTypeRates: [],
       },
     ]);
     mocks.groupDiscountFindUnique.mockResolvedValue(null);

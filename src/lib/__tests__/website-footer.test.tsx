@@ -1,14 +1,11 @@
 // @vitest-environment jsdom
 
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSiteFooterContent: vi.fn(),
-}));
-
-vi.mock("@/config/club-identity", () => ({
-  CLUB_NAME: "Test Alpine Club",
+  getCachedClubIdentity: vi.fn(),
 }));
 
 vi.mock("@/components/website-logo", () => ({
@@ -19,9 +16,20 @@ vi.mock("@/lib/site-content", () => ({
   getSiteFooterContent: mocks.getSiteFooterContent,
 }));
 
+// Footer identity is DB-first (E3 #1929): the club name in the logo label and
+// the copyright line comes from getCachedClubIdentity(), not the static
+// CLUB_NAME. A rename in the DB must reach the footer.
+vi.mock("@/lib/public-layout-config", () => ({
+  getCachedClubIdentity: mocks.getCachedClubIdentity,
+}));
+
 import { WebsiteFooter } from "@/components/website-footer";
 
 describe("WebsiteFooter", () => {
+  beforeEach(() => {
+    mocks.getCachedClubIdentity.mockResolvedValue({ name: "Test Alpine Club" });
+  });
+
   it("renders admin-managed footer sections beside code-managed legal links", async () => {
     mocks.getSiteFooterContent.mockResolvedValue({
       blurbHtml: "<p>Admin blurb</p>",
@@ -66,5 +74,21 @@ describe("WebsiteFooter", () => {
     expect(screen.getByText("Test Alpine Club")).toBeTruthy();
     expect(screen.queryByText("Quick Links")).toBeNull();
     expect(screen.getByText("Affiliations")).toBeTruthy();
+  });
+
+  it("reflects a DB-first club rename in the logo label and copyright", async () => {
+    mocks.getCachedClubIdentity.mockResolvedValue({ name: "Renamed Ski Club" });
+    mocks.getSiteFooterContent.mockResolvedValue({
+      blurbHtml: "",
+      quickLinksHtml: "",
+      affiliationsHtml: "",
+    });
+
+    render(await WebsiteFooter({ pageSlug: "home", logoDataUrl: null }));
+
+    expect(screen.getByText("Renamed Ski Club")).toBeTruthy();
+    expect(
+      screen.getByText(/Renamed Ski Club Incorporated\. All\s+rights reserved\./),
+    ).toBeTruthy();
   });
 });

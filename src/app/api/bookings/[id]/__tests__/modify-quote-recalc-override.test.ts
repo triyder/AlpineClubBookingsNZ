@@ -62,10 +62,19 @@ vi.mock("@/lib/lodges", () => ({
 vi.mock("@/lib/lodge-capacity", () => ({ getLodgeCapacity: h.getLodgeCapacity }));
 vi.mock("@/lib/membership-type-policy", () => ({
   assertMembershipTypeBookingAllowed: vi.fn().mockResolvedValue(undefined),
-  applyMembershipTypeRatePolicyToGuests: vi
+  // #1930, E4: the resolver replaces applyMembershipTypeRatePolicyToGuests;
+  // identity passthrough (stamping a non-member snapshot) is enough here since
+  // priceBookingGuestsWithMembershipTypePolicy is also mocked.
+  resolveGuestRateMembershipTypes: vi
     .fn()
-    .mockImplementation((_db: unknown, { guests }: { guests: unknown[] }) =>
-      Promise.resolve(guests),
+    .mockImplementation((_db: unknown, { guests }: { guests: Array<Record<string, unknown>> }) =>
+      Promise.resolve(
+        guests.map((g) => ({
+          ...g,
+          rateMembershipTypeId: "type-nonmember",
+          rateSource: "NON_MEMBER_DEFAULT",
+        })),
+      ),
     ),
   priceBookingGuestsWithMembershipTypePolicy: h.priceGuests,
   MembershipTypeBookingPolicyError: class extends Error {},
@@ -372,7 +381,12 @@ describe("POST /api/bookings/[id]/modify-quote ordinary-edit Xero lock guard (is
         id: "season-1",
         startDate: D("2026-06-01"),
         endDate: D("2026-10-31"),
-        rates: [{ ageTier: "ADULT", isMember: true, pricePerNightCents: 7500 }],
+        // #1930, E4: the resolver mock stamps guests as type-nonmember, so the
+        // in-progress plan prices extension nights from these type-keyed rows.
+        membershipTypeRates: [
+          { membershipTypeId: "type-full", ageTier: "ADULT", pricePerNightCents: 7500 },
+          { membershipTypeId: "type-nonmember", ageTier: "ADULT", pricePerNightCents: 7500 },
+        ],
       },
     ]);
   };

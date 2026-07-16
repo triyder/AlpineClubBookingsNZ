@@ -18,7 +18,7 @@ vi.mock("@/lib/capacity", async (importOriginal) => {
 
 vi.mock("@/lib/membership-type-policy", () => ({
   assertMembershipTypeBookingAllowed: vi.fn().mockResolvedValue(undefined),
-  applyMembershipTypeRatePolicyToGuests: vi
+  resolveGuestRateMembershipTypes: vi
     .fn()
     .mockImplementation((_tx: unknown, { guests }: { guests: unknown[] }) =>
       Promise.resolve(guests),
@@ -34,7 +34,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { calculateModifiedPricing } from "@/lib/booking-modify-plan";
 import {
-  applyMembershipTypeRatePolicyToGuests,
+  resolveGuestRateMembershipTypes,
   priceBookingGuestsWithMembershipTypePolicy,
 } from "@/lib/membership-type-policy";
 
@@ -193,7 +193,7 @@ describe("calculateModifiedPricing capacity (issue #1668)", () => {
 
   it("proceeds with capacityOverridden: true for a confirmed admin override", async () => {
     h.checkCapacityForGuestRanges.mockResolvedValue(OVER_CAPACITY);
-    vi.mocked(applyMembershipTypeRatePolicyToGuests).mockImplementation(
+    vi.mocked(resolveGuestRateMembershipTypes).mockImplementation(
       ((_tx: unknown, { guests }: { guests: unknown[] }) =>
         Promise.resolve(guests)) as never,
     );

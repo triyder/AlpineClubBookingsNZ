@@ -395,19 +395,31 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
           id: "season_1",
           startDate: new Date("2026-04-01"),
           endDate: new Date("2026-10-31"),
-          rates: [
+          // Membership-type-keyed rates (#1930, E4). calculateBookingPrice is
+          // mocked in this suite, so the values are inert; the shape must match
+          // so toSeasonRateData does not crash.
+          membershipTypeRates: [
             {
+              membershipTypeId: "type-full",
               ageTier: "ADULT",
-              isMember: true,
               pricePerNightCents: 2500,
             },
             {
+              membershipTypeId: "type-nonmember",
               ageTier: "ADULT",
-              isMember: false,
               pricePerNightCents: 5000,
             },
           ],
         },
+      ]),
+    },
+    // Rate resolver (#1930, E4) delegates.
+    member: { findMany: vi.fn().mockResolvedValue([]) },
+    seasonalMembershipAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "type-nonmember", key: "NON_MEMBER" },
+        { id: "type-full", key: "FULL" },
       ]),
     },
   };

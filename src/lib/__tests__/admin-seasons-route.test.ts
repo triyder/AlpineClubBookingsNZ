@@ -10,8 +10,9 @@ const mocks = vi.hoisted(() => ({
   seasonUpdate: vi.fn(),
   lodgeFindFirst: vi.fn(),
   lodgeFindUnique: vi.fn(),
-  seasonRateDeleteMany: vi.fn(),
-  seasonRateCreateMany: vi.fn(),
+  membershipTypeFindMany: vi.fn(),
+  rateDeleteMany: vi.fn(),
+  rateCreateMany: vi.fn(),
   transaction: vi.fn(),
   logAudit: vi.fn(),
   revalidatePublicPageContent: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock("@/lib/prisma", () => ({
       create: mocks.seasonCreate,
       update: mocks.seasonUpdate,
     },
+    membershipType: { findMany: mocks.membershipTypeFindMany },
     lodge: {
       findFirst: mocks.lodgeFindFirst,
       findUnique: mocks.lodgeFindUnique,
@@ -60,8 +62,21 @@ const adminSession = {
   user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
 };
 
+// The rate resolver / rate-bearing validation (#1930, E4) consults membership
+// types: FULL is a MEMBER_RATE type; NON_MEMBER is rate-bearing by key;
+// ASSOCIATE is a NON_MEMBER_RATE type that must NOT carry its own rates.
+const MEMBERSHIP_TYPES: Record<
+  string,
+  { id: string; key: string; bookingBehavior: string }
+> = {
+  "mt-full": { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE" },
+  "mt-nonmember": { id: "mt-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE" },
+  "mt-associate": { id: "mt-associate", key: "ASSOCIATE", bookingBehavior: "NON_MEMBER_RATE" },
+};
+
+// Membership-type-keyed rates (#1930, E4).
 const validRates = [
-  { ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
+  { membershipTypeId: "mt-full", ageTier: "ADULT", pricePerNightCents: 4500 },
 ];
 
 function jsonRequest(url: string, method: "POST" | "PUT", body: unknown) {
@@ -78,7 +93,25 @@ describe("admin season routes (multi-lodge phase 7)", () => {
     mocks.auth.mockResolvedValue(adminSession);
     mocks.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
     mocks.seasonFindFirst.mockResolvedValue(null);
-    mocks.seasonCreate.mockResolvedValue({ id: "season-1", rates: [] });
+    mocks.seasonCreate.mockResolvedValue({ id: "season-1", membershipTypeRates: [] });
+    mocks.seasonFindUnique.mockResolvedValue({ id: "season-1", membershipTypeRates: [] });
+    // Rate-bearing validation looks up the referenced types by id.
+    mocks.membershipTypeFindMany.mockImplementation(
+      async (args: { where: { id: { in: string[] } } }) =>
+        args.where.id.in
+          .map((id) => MEMBERSHIP_TYPES[id])
+          .filter((t): t is (typeof MEMBERSHIP_TYPES)[string] => Boolean(t)),
+    );
+    // POST wraps the nested create in a transaction.
+    mocks.transaction.mockImplementation(async (callback) =>
+      callback({
+        season: { create: mocks.seasonCreate, update: mocks.seasonUpdate, findUnique: mocks.seasonFindUnique },
+        membershipTypeSeasonRate: {
+          deleteMany: mocks.rateDeleteMany,
+          createMany: mocks.rateCreateMany,
+        },
+      }),
+    );
   });
 
   it("lists every season when no lodge filter is given", async () => {
@@ -116,7 +149,7 @@ describe("admin season routes (multi-lodge phase 7)", () => {
         type: "WINTER",
         startDate: "2026-06-01",
         endDate: "2026-09-30",
-        rates: validRates,
+        membershipTypeRates: validRates,
         lodgeId: "lodge-2",
       }),
     );
@@ -148,7 +181,7 @@ describe("admin season routes (multi-lodge phase 7)", () => {
         type: "WINTER",
         startDate: "2026-06-01",
         endDate: "2026-09-30",
-        rates: validRates,
+        membershipTypeRates: validRates,
         lodgeId: "lodge-2",
       }),
     );
@@ -165,7 +198,7 @@ describe("admin season routes (multi-lodge phase 7)", () => {
         type: "WINTER",
         startDate: "2026-06-01",
         endDate: "2026-09-30",
-        rates: validRates,
+        membershipTypeRates: validRates,
       }),
     );
 
@@ -191,7 +224,7 @@ describe("admin season routes (multi-lodge phase 7)", () => {
         type: "WINTER",
         startDate: "2026-06-01",
         endDate: "2026-09-30",
-        rates: validRates,
+        membershipTypeRates: validRates,
         lodgeId: "lodge-2",
       }),
     );
@@ -216,9 +249,9 @@ describe("admin season routes (multi-lodge phase 7)", () => {
           update: mocks.seasonUpdate,
           findUnique: mocks.seasonFindUnique,
         },
-        seasonRate: {
-          deleteMany: mocks.seasonRateDeleteMany,
-          createMany: mocks.seasonRateCreateMany,
+        membershipTypeSeasonRate: {
+          deleteMany: mocks.rateDeleteMany,
+          createMany: mocks.rateCreateMany,
         },
       }),
     );
@@ -243,5 +276,105 @@ describe("admin season routes (multi-lodge phase 7)", () => {
       }),
     );
     expect(mocks.revalidatePublicPageContent).toHaveBeenCalledOnce();
+  });
+
+  it("round-trips a membership-type-keyed rate grid: creates rows then GETs them (#1930, E4)", async () => {
+    mocks.lodgeFindUnique.mockResolvedValue({ id: "lodge-2", active: true });
+    const gridRates = [
+      { membershipTypeId: "mt-full", ageTier: "ADULT", pricePerNightCents: 5000 },
+      { membershipTypeId: "mt-full", ageTier: "CHILD", pricePerNightCents: 2500 },
+      { membershipTypeId: "mt-nonmember", ageTier: "ADULT", pricePerNightCents: 7000 },
+    ];
+    const persisted = gridRates.map((r, i) => ({ id: `r${i}`, ...r }));
+    mocks.seasonFindUnique.mockResolvedValue({
+      id: "season-1",
+      membershipTypeRates: persisted,
+    });
+
+    const res = await POST(
+      jsonRequest("http://localhost/api/admin/seasons", "POST", {
+        name: "Winter 2026",
+        type: "WINTER",
+        startDate: "2026-06-01",
+        endDate: "2026-09-30",
+        membershipTypeRates: gridRates,
+        lodgeId: "lodge-2",
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    // The nested create carries the membership-type rate rows.
+    expect(mocks.seasonCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          membershipTypeRates: {
+            create: expect.arrayContaining([
+              expect.objectContaining({ membershipTypeId: "mt-full", ageTier: "ADULT", pricePerNightCents: 5000 }),
+              expect.objectContaining({ membershipTypeId: "mt-nonmember", ageTier: "ADULT", pricePerNightCents: 7000 }),
+            ]),
+          },
+        }),
+      }),
+    );
+    const body = await res.json();
+    expect(body.membershipTypeRates).toHaveLength(3);
+  });
+
+  it("rejects a rate for a non-rate-bearing membership type (#1930, E4, D2)", async () => {
+    mocks.lodgeFindUnique.mockResolvedValue({ id: "lodge-2", active: true });
+
+    const res = await POST(
+      jsonRequest("http://localhost/api/admin/seasons", "POST", {
+        name: "Winter 2026",
+        type: "WINTER",
+        startDate: "2026-06-01",
+        endDate: "2026-09-30",
+        // ASSOCIATE is NON_MEMBER_RATE and not NON_MEMBER, so it carries no rates.
+        membershipTypeRates: [
+          { membershipTypeId: "mt-associate", ageTier: "ADULT", pricePerNightCents: 5000 },
+        ],
+        lodgeId: "lodge-2",
+      }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toContain("ASSOCIATE");
+    expect(mocks.seasonCreate).not.toHaveBeenCalled();
+  });
+
+  it("PUT replaces the membership-type rate rows (delete + recreate) (#1930, E4)", async () => {
+    mocks.seasonFindUnique.mockResolvedValue({
+      id: "season-1",
+      name: "Winter 2026",
+      lodgeId: "lodge-2",
+      startDate: new Date("2026-06-01"),
+      endDate: new Date("2026-09-30"),
+      membershipTypeRates: [],
+    });
+
+    const res = await PUT(
+      jsonRequest("http://localhost/api/admin/seasons/season-1", "PUT", {
+        membershipTypeRates: [
+          { membershipTypeId: "mt-full", ageTier: "ADULT", pricePerNightCents: 6000 },
+        ],
+      }),
+      { params: Promise.resolve({ id: "season-1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(mocks.rateDeleteMany).toHaveBeenCalledWith({ where: { seasonId: "season-1" } });
+    expect(mocks.rateCreateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.arrayContaining([
+          expect.objectContaining({
+            seasonId: "season-1",
+            membershipTypeId: "mt-full",
+            ageTier: "ADULT",
+            pricePerNightCents: 6000,
+          }),
+        ]),
+      }),
+    );
   });
 });

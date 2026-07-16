@@ -22,7 +22,9 @@ const updateSchema = z
  * Lists the site content sections (footer columns) for the admin editor.
  */
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "view" },
+  });
   if (!guard.ok) {
     return guard.response;
   }
@@ -39,7 +41,9 @@ export async function GET() {
  * sanitise again on read.
  */
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "edit" },
+  });
   if (!guard.ok) {
     return guard.response;
   }

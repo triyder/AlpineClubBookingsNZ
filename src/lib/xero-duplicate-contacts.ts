@@ -20,6 +20,7 @@ import {
   namesLookSimilarForPotentialMatch,
   normalizeXeroContactMatchValue,
 } from "./xero-contacts";
+import { isPlaceholderContactEmail } from "./placeholder-contact-email";
 
 export interface PotentialXeroContactMatch {
   contactId: string;
@@ -78,7 +79,11 @@ export async function findPotentialXeroContactsForMember(
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const contactsById = new Map<string, Contact>();
 
-  if (normalizedMemberEmail) {
+  // Walk-in placeholder owners (#1935) have no real address on the reserved
+  // `.invalid` domain: never send it as an OData EmailAddress filter (it would
+  // match nothing, or worse a stray contact). Skip the email search entirely and
+  // fall through to the name search — mirrors the guards in xero-contacts.ts.
+  if (normalizedMemberEmail && !isPlaceholderContactEmail(member.email)) {
     const emailResponse = await callXeroApi(
       () =>
         xero.accountingApi.getContacts(

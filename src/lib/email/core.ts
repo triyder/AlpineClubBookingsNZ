@@ -13,6 +13,7 @@ import {
   getActiveEmailSuppression,
   normalizeEmailAddress,
 } from "@/lib/email-suppression";
+import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
 import {
   getEmailTransporter,
   shouldPersistEmailHtml,
@@ -29,6 +30,13 @@ export type EmailSendOutcome =
       status: "suppressed";
       emailLogId: string | null;
       emailSuppressionId: string;
+      reason: string;
+    }
+  // A club-internal walk-in placeholder recipient (#1935): the owner has no
+  // real address, so nothing is ever sent — independent of any notify choice.
+  | {
+      status: "skipped_placeholder_recipient";
+      emailLogId: null;
       reason: string;
     };
 
@@ -84,6 +92,24 @@ export async function sendEmail({
   );
   const plainTextBody = text || htmlToPlainText(prepared.html);
   const normalizedRecipient = normalizeEmailAddress(to);
+
+  // Walk-in placeholder owners (#1935) have a club-internal, undeliverable
+  // `.invalid` address stored so `Member.email` stays non-nullable. No message
+  // is ever sent to them — this short-circuits every send path (booking
+  // confirmation/hold, waitlist, cron, webhooks) regardless of any per-booking
+  // notify choice, and it does not create an EmailLog row (nothing was queued).
+  if (isPlaceholderContactEmail(normalizedRecipient)) {
+    logger.info(
+      { templateName },
+      "Skipped email to walk-in placeholder recipient",
+    );
+    return {
+      status: "skipped_placeholder_recipient",
+      emailLogId: null,
+      reason: "placeholder_recipient",
+    };
+  }
+
   const emailLogRecipient = logRecipient?.trim() || to;
   const recipientRedactedInLogs = emailLogRecipient !== to;
   const persistHtmlBody =

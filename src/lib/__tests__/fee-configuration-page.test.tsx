@@ -117,7 +117,7 @@ describe("fee configuration page", () => {
     render(<FeeConfigurationPage />);
     expect(await screen.findByText(/finance view access is read-only/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Edit membership fees" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Edit entrance fees" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit joining fees" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit family billing" })).toBeNull();
     // No forms, no per-row controls, no billing Select while read-only.
     expect(screen.queryByLabelText("Annual amount (NZD)")).toBeNull();
@@ -209,10 +209,10 @@ describe("fee configuration page", () => {
   it("gates the entrance fee form and row controls behind Edit", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => response(true, editableData)));
     render(<FeeConfigurationPage />);
-    await screen.findByRole("button", { name: "Edit entrance fees" });
+    await screen.findByRole("button", { name: "Edit joining fees" });
     expect(screen.queryByLabelText("Amount (NZD)")).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit ADULT fee" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Edit entrance fees" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit joining fees" }));
     expect(screen.getByLabelText("Amount (NZD)")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Edit ADULT fee" })).toBeTruthy();
   });

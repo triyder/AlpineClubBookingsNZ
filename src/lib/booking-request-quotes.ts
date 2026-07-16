@@ -37,8 +37,10 @@ import {
 import { sendBookingRequestQuoteEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { countActiveLodges, getDefaultLodgeId } from "@/lib/lodges";
+import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
 import { prisma } from "@/lib/prisma";
 import { approveSchoolBookingRequest } from "@/lib/school-booking-request";
+import { getSeasonYear } from "@/lib/utils";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const quoteableStatuses = [
@@ -1172,19 +1174,40 @@ export async function holdBookingRequestSlots(input: {
   const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
   const linkedMembers = linkedGuestMemberMap(request.linkedGuestMembers);
   const guestPriceCents = splitPriceAcrossGuests(option.totalCents, guests.length);
-  const guestCreates = guests.map((guest, index) => {
-    const memberId = linkedMembers.get(index);
-    return {
-      firstName: guest.firstName,
-      lastName: guest.lastName,
-      ageTier: guest.ageTier,
-      isMember: Boolean(memberId),
-      memberId,
-      stayStart: request.checkIn,
-      stayEnd: request.checkOut,
-      priceCents: guestPriceCents[index] ?? 0,
-    };
-  });
+  // Persist the rate-membership-type snapshot (#1930, E4, D3) on the held
+  // booking's guest rows, resolved at the request's check-in season year: an
+  // admin-linked member of a custom MEMBER_RATE type records that type,
+  // unlinked guests record the built-in NON_MEMBER type. Snapshot-only — the
+  // quoted per-guest split above stays exactly as stored. rateSource is
+  // resolver-internal and never persisted.
+  const guestCreates = (
+    await resolveGuestRateMembershipTypes(prisma, {
+      seasonYear: getSeasonYear(request.checkIn),
+      guests: guests.map((guest, index) => {
+        const memberId = linkedMembers.get(index);
+        return {
+          firstName: guest.firstName,
+          lastName: guest.lastName,
+          ageTier: guest.ageTier,
+          isMember: Boolean(memberId),
+          memberId,
+          stayStart: request.checkIn,
+          stayEnd: request.checkOut,
+          priceCents: guestPriceCents[index] ?? 0,
+        };
+      }),
+    })
+  ).map((guest) => ({
+    firstName: guest.firstName,
+    lastName: guest.lastName,
+    ageTier: guest.ageTier,
+    isMember: guest.isMember,
+    memberId: guest.memberId,
+    stayStart: guest.stayStart,
+    stayEnd: guest.stayEnd,
+    priceCents: guest.priceCents,
+    rateMembershipTypeId: guest.rateMembershipTypeId,
+  }));
 
   let capacityFullNights: string[] | null = null;
 

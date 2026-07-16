@@ -35,6 +35,9 @@ import {
 import {
   getAccountMapping,
   getHutFeeItemCodeMap,
+  isHutFeeResolverConfigured,
+  resolveHutFeeItemCode,
+  type HutFeeItemCodeResolver,
   getResolvedAccountMapping,
 } from "./xero-mappings";
 import {
@@ -77,10 +80,13 @@ export interface UpdateXeroBookingInvoiceOptions
  * Build Xero invoice line items from a booking's guests and stay nights.
  * Exported for testing.
  *
- * @param itemCodeMap - Per-guest item code lookup keyed by "${ageTier}_${seasonType}_${isMember}".
- *   When provided with a seasonType, each guest gets their own item code based on their
- *   age tier, membership status, and the booking's season type.
- * @param itemCode - Legacy single item code applied to all guests (used when itemCodeMap is empty).
+ * @param itemCodeResolver - Per-guest hut-fee item code resolver keyed by
+ *   membership type (#1930, E4). When provided with a seasonType, each guest
+ *   gets its own item code from its rateMembershipType snapshot (NULL falls
+ *   back isMember -> FULL/NON_MEMBER).
+ * @param itemCode - Single hutFeesIncome item code applied to all guests, used
+ *   only when the resolver is absent/unconfigured or no seasonType is known —
+ *   never as a fallback for a per-guest miss once keyed rows exist.
  */
 interface NightPriceRun {
   startDate: Date;
@@ -156,6 +162,8 @@ export function buildInvoiceLineItems(
     lastName: string;
     ageTier: string;
     isMember: boolean;
+    // Rate-membership-type snapshot (#1930, E4) — drives the hut-fee item code.
+    rateMembershipTypeId?: string | null;
     priceCents: number;
     // Per-night rows (issue #713). When present, line items are emitted per
     // contiguous run; otherwise the guest is billed as one line over the whole
@@ -168,13 +176,24 @@ export function buildInvoiceLineItems(
   accountCode: string = "200",
   itemCode?: string | null,
   accountCodeExplicitlyConfigured: boolean = false,
-  itemCodeMap?: Map<string, string>,
+  itemCodeResolver?: HutFeeItemCodeResolver,
   seasonType?: string | null,
 ): LineItem[] {
-  const applyCodes = (lineItem: LineItem, guest: { ageTier: string; isMember: boolean }) => {
-    // Resolve item code: prefer per-guest granular mapping, fall back to legacy flat code
-    const guestItemCode = (itemCodeMap && seasonType)
-      ? (itemCodeMap.get(`${guest.ageTier}_${seasonType}_${guest.isMember}`) ?? null)
+  const applyCodes = (
+    lineItem: LineItem,
+    guest: { ageTier: string; isMember: boolean; rateMembershipTypeId?: string | null },
+  ) => {
+    // Resolve item code with main's exact precedence (#1930, E4): when the
+    // per-guest resolver is configured (keyed rows or legacy hutFeeItem) AND a
+    // seasonType is known, the resolver's answer is FINAL — a miss with keyed
+    // rows present yields NO item code (account-coded line), never the single
+    // hutFeesIncome item code. The hutFeesIncome item code param applies only
+    // when the resolver is absent/unconfigured or the seasonType is unknown.
+    const resolverActive = Boolean(
+      itemCodeResolver && seasonType && isHutFeeResolverConfigured(itemCodeResolver),
+    );
+    const guestItemCode = resolverActive
+      ? resolveHutFeeItemCode(itemCodeResolver!, guest, seasonType)
       : (itemCode ?? null);
 
     // If itemCode is set, Xero auto-fills the account from the Item's config.
@@ -193,7 +212,13 @@ export function buildInvoiceLineItems(
 
   const runToLineItem = (
     run: NightPriceRun,
-    guest: { firstName: string; lastName: string; ageTier: string; isMember: boolean }
+    guest: {
+      firstName: string;
+      lastName: string;
+      ageTier: string;
+      isMember: boolean;
+      rateMembershipTypeId?: string | null;
+    }
   ): LineItem => {
     const description = [
       `${guest.firstName} ${guest.lastName}`,
@@ -390,6 +415,7 @@ export async function createXeroInvoiceForBooking(
       lastName: g.lastName,
       ageTier: g.ageTier,
       isMember: g.isMember,
+      rateMembershipTypeId: g.rateMembershipTypeId,
       priceCents: g.priceCents,
       nights: (g.nights ?? []).map((n) => ({ stayDate: n.stayDate, priceCents: n.priceCents })),
     })),
@@ -399,7 +425,11 @@ export async function createXeroInvoiceForBooking(
     incomeCode,
     hutFeeMapping.itemCode,
     hutFeeMapping.codeExplicitlyConfigured,
-    hutFeeItemCodeMap.size > 0 ? hutFeeItemCodeMap : undefined,
+    // Always pass the resolver: on a legacy-only install (no keyed rows) it
+    // resolves the flat hutFeeItem; when unconfigured or without a seasonType,
+    // buildInvoiceLineItems falls to hutFeeMapping.itemCode (#1930, E4).
+    // Byte-identical to main's boolean-keyed map precedence.
+    hutFeeItemCodeMap,
     bookingSeasonType,
   );
 
@@ -409,9 +439,11 @@ export async function createXeroInvoiceForBooking(
     const promo = booking.promoRedemption?.promoCode ?? null;
     const firstGuest = booking.guests[0];
 
-    // Fall back to hut-fee item code for legacy / non-promo discounts.
-    const fallbackItemCode = (hutFeeItemCodeMap.size > 0 && bookingSeasonType && firstGuest)
-      ? (hutFeeItemCodeMap.get(`${firstGuest.ageTier}_${bookingSeasonType}_${firstGuest.isMember}`) ?? hutFeeMapping.itemCode)
+    // Fall back to hut-fee item code for legacy / non-promo discounts. Unlike
+    // the guest lines, main's promo fallback DID fall through to the single
+    // hutFeesIncome item code on a per-guest miss — preserved here (#1930, E4).
+    const fallbackItemCode = (bookingSeasonType && firstGuest && isHutFeeResolverConfigured(hutFeeItemCodeMap))
+      ? (resolveHutFeeItemCode(hutFeeItemCodeMap, firstGuest, bookingSeasonType) ?? hutFeeMapping.itemCode)
       : hutFeeMapping.itemCode;
 
     const discountItemCode = promo?.xeroItemCode ?? fallbackItemCode;
@@ -883,6 +915,7 @@ export async function updateXeroBookingInvoiceForBooking(
       lastName: g.lastName,
       ageTier: g.ageTier,
       isMember: g.isMember,
+      rateMembershipTypeId: g.rateMembershipTypeId,
       priceCents: g.priceCents,
       nights: (g.nights ?? []).map((n) => ({ stayDate: n.stayDate, priceCents: n.priceCents })),
     })),
@@ -892,7 +925,7 @@ export async function updateXeroBookingInvoiceForBooking(
     incomeCode,
     hutFeeMapping.itemCode,
     hutFeeMapping.codeExplicitlyConfigured,
-    hutFeeItemCodeMap.size > 0 ? hutFeeItemCodeMap : undefined,
+    hutFeeItemCodeMap,
     bookingSeasonType,
   );
 

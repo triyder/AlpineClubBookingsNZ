@@ -11,7 +11,9 @@ import {
 
 // GET /api/admin/image-manager/images?dir=<relative-path> – list images in a directory
 export async function GET(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   const dir = request.nextUrl.searchParams.get("dir") ?? "";
@@ -57,7 +59,9 @@ export async function GET(request: NextRequest) {
 
 // DELETE /api/admin/image-manager/images – delete a single image file
 export async function DELETE(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: unknown;

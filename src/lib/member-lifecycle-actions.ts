@@ -104,6 +104,11 @@ export type SerializedMemberLifecycleActionRequest = {
   requestedAt: string;
   reviewedAt: string | null;
   processedAt: string | null;
+  // Raw requester FK (nullable via onDelete: SetNull). Kept alongside the
+  // resolved `requestedBy` object so the deletion-requests page can enforce the
+  // second-admin separation-of-duties rule (#1938) even when the requester's
+  // member record has since been deleted and `requestedBy` is null.
+  requestedByMemberId: string | null;
   requestedBy: { id: string; name: string; email: string } | null;
   reviewedBy: { id: string; name: string; email: string } | null;
   memberSnapshot: Prisma.JsonValue | null;
@@ -125,6 +130,10 @@ export type SerializedAdminMemberArchiveLifecycleRequest =
       archivedAt: string | null;
       archivedReason: string | null;
     } | null;
+    // Display name that stays populated even when the live member lookup
+    // misses (e.g. an APPROVED DELETE whose target record is already gone):
+    // it falls back to the captured `memberSnapshot`. #1938.
+    targetName: string;
   };
 
 export class MemberLifecycleActionError extends Error {
@@ -165,7 +174,7 @@ function snapshotMember(snapshot: unknown) {
   };
 }
 
-function memberNameFromSnapshot(snapshot: unknown, fallback: string) {
+export function memberNameFromSnapshot(snapshot: unknown, fallback: string) {
   const member = snapshotMember(snapshot);
   if (!member) return fallback;
 
@@ -200,6 +209,7 @@ function serializeMemberLifecycleActionRequest(
     requestedAt: request.requestedAt.toISOString(),
     reviewedAt: serializeDate(request.reviewedAt),
     processedAt: serializeDate(request.processedAt),
+    requestedByMemberId: request.requestedByMemberId,
     requestedBy: serializeMember(request.requestedBy),
     reviewedBy: serializeMember(request.reviewedBy),
     memberSnapshot: request.memberSnapshot,
@@ -226,7 +236,7 @@ function serializeArchiveTargetMember(
   };
 }
 
-function serializeAdminArchiveLifecycleRequest(
+function serializeAdminLifecycleRequest(
   request: LifecycleActionRequestRecord,
   member:
     | Prisma.MemberGetPayload<{ select: typeof archiveTargetMemberSelect }>
@@ -236,6 +246,9 @@ function serializeAdminArchiveLifecycleRequest(
   return {
     ...serializeMemberLifecycleActionRequest(request),
     member: serializeArchiveTargetMember(member),
+    targetName: member
+      ? memberDisplayName(member)
+      : memberNameFromSnapshot(request.memberSnapshot, request.memberId),
   };
 }
 
@@ -644,29 +657,49 @@ export async function getMemberArchiveLifecycleRequests(memberId: string) {
   return requests.map(serializeMemberLifecycleActionRequest);
 }
 
+function pendingReviewCountWhere(action: MemberLifecycleAction) {
+  return {
+    action,
+    status: MemberLifecycleActionRequestStatus.REQUESTED,
+  } satisfies Prisma.MemberLifecycleActionRequestWhereInput;
+}
+
 export async function getPendingMemberArchiveReviewCount() {
   return prisma.memberLifecycleActionRequest.count({
-    where: {
-      action: MemberLifecycleAction.ARCHIVE,
-      status: MemberLifecycleActionRequestStatus.REQUESTED,
-    },
+    where: pendingReviewCountWhere(MemberLifecycleAction.ARCHIVE),
   });
 }
 
-export async function getAdminMemberArchiveLifecycleRequests({
+export async function getPendingMemberDeleteReviewCount() {
+  return prisma.memberLifecycleActionRequest.count({
+    where: pendingReviewCountWhere(MemberLifecycleAction.DELETE),
+  });
+}
+
+/**
+ * Admin review list for member lifecycle action requests, parameterised by
+ * action (#1938). ARCHIVE feeds the membership-cancellations page; DELETE feeds
+ * the new admin-initiated section on /admin/deletion-requests. The serializer
+ * carries both the live `member` (null once an APPROVED DELETE has removed the
+ * record) and a snapshot-safe `targetName`. `pendingCount` is always the
+ * REQUESTED count for the same action, so the caller can badge it directly.
+ */
+export async function getAdminMemberLifecycleRequests({
+  action = MemberLifecycleAction.ARCHIVE,
   status = MemberLifecycleActionRequestStatus.REQUESTED,
   page = 1,
   pageSize = 25,
 }: {
+  action?: MemberLifecycleAction;
   status?: AdminMemberLifecycleActionStatusFilter;
   page?: number;
   pageSize?: number;
 }) {
   const where =
     status === "ALL"
-      ? { action: MemberLifecycleAction.ARCHIVE }
+      ? { action }
       : {
-          action: MemberLifecycleAction.ARCHIVE,
+          action,
           status,
         };
 
@@ -679,7 +712,9 @@ export async function getAdminMemberArchiveLifecycleRequests({
       take: pageSize,
     }),
     prisma.memberLifecycleActionRequest.count({ where }),
-    getPendingMemberArchiveReviewCount(),
+    prisma.memberLifecycleActionRequest.count({
+      where: pendingReviewCountWhere(action),
+    }),
   ]);
 
   const memberIds = [...new Set(requests.map((request) => request.memberId))];
@@ -694,7 +729,7 @@ export async function getAdminMemberArchiveLifecycleRequests({
 
   return {
     requests: requests.map((request) =>
-      serializeAdminArchiveLifecycleRequest(
+      serializeAdminLifecycleRequest(
         request,
         membersById.get(request.memberId),
       ),
@@ -705,6 +740,28 @@ export async function getAdminMemberArchiveLifecycleRequests({
     pageSize,
     totalPages: Math.ceil(total / pageSize),
   };
+}
+
+/**
+ * Back-compat wrapper: the membership-cancellations page and its tests call the
+ * ARCHIVE list by this name. New callers should use
+ * getAdminMemberLifecycleRequests with an explicit action.
+ */
+export async function getAdminMemberArchiveLifecycleRequests({
+  status = MemberLifecycleActionRequestStatus.REQUESTED,
+  page = 1,
+  pageSize = 25,
+}: {
+  status?: AdminMemberLifecycleActionStatusFilter;
+  page?: number;
+  pageSize?: number;
+}) {
+  return getAdminMemberLifecycleRequests({
+    action: MemberLifecycleAction.ARCHIVE,
+    status,
+    page,
+    pageSize,
+  });
 }
 
 function assertEligibleForDelete(eligibility: MemberDeleteEligibility) {

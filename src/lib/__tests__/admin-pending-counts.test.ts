@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   issueReportCount: vi.fn(),
   getPendingMembershipCancellationReviewCount: vi.fn(),
   getPendingMemberArchiveReviewCount: vi.fn(),
+  getPendingMemberDeleteReviewCount: vi.fn(),
   getUnassignedHutLeaderDates: vi.fn(),
 }));
 
@@ -39,6 +40,7 @@ vi.mock("@/lib/membership-cancellation-admin", () => ({
 
 vi.mock("@/lib/member-lifecycle-actions", () => ({
   getPendingMemberArchiveReviewCount: mocks.getPendingMemberArchiveReviewCount,
+  getPendingMemberDeleteReviewCount: mocks.getPendingMemberDeleteReviewCount,
 }));
 
 vi.mock("@/lib/hut-leader-coverage", () => ({
@@ -69,6 +71,7 @@ describe("getAdminPendingCounts", () => {
     mocks.getPendingMembershipCancellationReviewCount.mockResolvedValue(8);
     mocks.getPendingMemberArchiveReviewCount.mockResolvedValue(9);
     mocks.deletionRequestCount.mockResolvedValue(10);
+    mocks.getPendingMemberDeleteReviewCount.mockResolvedValue(14);
     mocks.issueReportCount.mockResolvedValue(11);
     mocks.getUnassignedHutLeaderDates.mockResolvedValue([
       "2026-07-04",
@@ -90,6 +93,7 @@ describe("getAdminPendingCounts", () => {
       membershipCancellations: 8,
       archiveRequests: 9,
       deletionRequests: 10,
+      memberDeleteRequests: 14,
       issueReports: 11,
       unassignedHutLeaderDates: 2,
     });

@@ -45,7 +45,7 @@ import {
   type SeasonRateData,
 } from "@/lib/pricing";
 import {
-  applyMembershipTypeRatePolicyToGuests,
+  resolveGuestRateMembershipTypes,
   assertMembershipTypeBookingAllowed,
   MembershipTypeBookingPolicyError,
   priceBookingGuestsWithMembershipTypePolicy,
@@ -571,15 +571,15 @@ export async function loadActiveSeasonRates(
 ): Promise<SeasonRateData[]> {
   const seasons = await tx.season.findMany({
     where: { active: true, ...lodgeNullTolerantScope(lodgeId) },
-    include: { rates: true },
+    include: { membershipTypeRates: true },
   });
   return seasons.map((s) => ({
     seasonId: s.id,
     startDate: s.startDate,
     endDate: s.endDate,
-    rates: s.rates.map((r) => ({
+    rates: s.membershipTypeRates.map((r) => ({
+      membershipTypeId: r.membershipTypeId,
       ageTier: r.ageTier,
-      isMember: r.isMember,
       pricePerNightCents: r.pricePerNightCents,
     })),
   }));
@@ -772,17 +772,17 @@ export async function calculateModifiedPricing(
     seasonYear,
   });
 
-  const policyAdjustedGuestsForPricing = await applyMembershipTypeRatePolicyToGuests(tx, {
+  const policyAdjustedGuestsForPricing = await resolveGuestRateMembershipTypes(tx, {
     seasonYear,
     guests: guestsForPricing,
   });
   const policyAdjustedAddGuests = normalizedAddGuests
-    ? await applyMembershipTypeRatePolicyToGuests(tx, {
+    ? await resolveGuestRateMembershipTypes(tx, {
         seasonYear,
         guests: normalizedAddGuests,
       })
     : undefined;
-  const policyAdjustedExistingGuests = await applyMembershipTypeRatePolicyToGuests(tx, {
+  const policyAdjustedExistingGuests = await resolveGuestRateMembershipTypes(tx, {
     seasonYear,
     guests: booking.guests.map((guest) => ({
       ...guest,
@@ -1269,6 +1269,9 @@ export async function applyGuestChanges(
           stayStart: entry.stayStart,
           stayEnd: entry.stayEnd,
           priceCents: entry.priceCents,
+          // Persist the resolved rate-type snapshot on the added guest (#1930,
+          // E4).
+          rateMembershipTypeId: g.rateMembershipTypeId,
         },
       });
       const envelope = await syncGuestNights(
@@ -1317,6 +1320,10 @@ export async function applyGuestChanges(
         stayStart: g.stayStart ?? newCheckIn,
         stayEnd: g.stayEnd ?? newCheckOut,
         priceCents: bg.priceCents,
+        // Persist the resolved rate-type snapshot on the added guest (#1930,
+        // E4).
+        rateMembershipTypeId: (bg as { rateMembershipTypeId?: string | null })
+          .rateMembershipTypeId,
       },
     });
     const envelope = await syncGuestNights(
@@ -1358,6 +1365,13 @@ export async function applyGuestChanges(
         stayStart: envelope.stayStart,
         stayEnd: envelope.stayEnd,
         priceCents: priceBreakdown.guests[i].priceCents,
+        // Overwrite the rate-type snapshot on the full-reprice path (#1930,
+        // E4). The in-progress-edit path builds guests without a snapshot, so
+        // this is undefined there and Prisma leaves the stored snapshot
+        // untouched — matching D5's "locked nights keep their stale snapshot".
+        rateMembershipTypeId: (
+          priceBreakdown.guests[i] as { rateMembershipTypeId?: string | null }
+        ).rateMembershipTypeId,
       },
     });
   }

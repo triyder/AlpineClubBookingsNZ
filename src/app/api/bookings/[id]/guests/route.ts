@@ -376,16 +376,16 @@ export async function POST(
       // Load seasons for pricing
       const seasons = await tx.season.findMany({
         where: { active: true, ...lodgeNullTolerantScope(bookingLodgeId) },
-        include: { rates: true },
+        include: { membershipTypeRates: true },
       });
 
       const seasonRateData: SeasonRateData[] = seasons.map((s) => ({
         seasonId: s.id,
         startDate: s.startDate,
         endDate: s.endDate,
-        rates: s.rates.map((r) => ({
+        rates: s.membershipTypeRates.map((r) => ({
+          membershipTypeId: r.membershipTypeId,
           ageTier: r.ageTier,
-          isMember: r.isMember,
           pricePerNightCents: r.pricePerNightCents,
         })),
       }));
@@ -471,6 +471,9 @@ export async function POST(
             stayStart: booking.checkIn,
             stayEnd: booking.checkOut,
             priceCents: priced.priceCents,
+            // Persist the rate-type snapshot at creation (#1930, E4) so a later
+            // Xero line picks the matching item code.
+            rateMembershipTypeId: priced.rateMembershipTypeId,
             nights: {
               create: (priced.nightDates ?? []).map((stayDate, k) => ({
                 stayDate,

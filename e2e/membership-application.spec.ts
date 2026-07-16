@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import { loginPersona, storageStatePath } from "./helpers/auth";
 import {
   E2E_ADMIN,
+  MAPPING_APPLICANT,
+  MAPPING_APPLICATION_ID,
+  MAPPING_TARGET_MEMBER_ID,
   MEMBERSHIP_APPLICANT,
   MEMBERSHIP_APPLICATION_ID,
   NOMINATION_TOKEN_ONE,
@@ -118,6 +121,101 @@ test("an admin approves the application and the applicant becomes a member", asy
     membersText.includes(MEMBERSHIP_APPLICANT.email),
     "approved applicant should exist as a member",
   ).toBeTruthy();
+
+  await context.close();
+});
+
+test("an admin maps a rejoining applicant onto their existing member record (E10 diff preview + approve)", async ({
+  browser,
+}) => {
+  // The seed stores a PENDING_ADMIN application (Rex Rejoiner) alongside an
+  // existing non-login member with the same email — the lapsed-rejoiner shape.
+  // Drive the real admin UI: choose Map to existing, preview the field diff,
+  // check the joining-fee SKIP default, approve, then assert the existing
+  // member was updated in place and no duplicate was created.
+  const context = await browser.newContext({
+    storageState: storageStatePath(E2E_ADMIN.email),
+  });
+  const page = await context.newPage();
+  await page.goto("/admin/member-applications");
+
+  // Scope everything to the mapping application's card (default filter is
+  // "Pending admin", which also lists other seeded applications).
+  const applicantName = `${MAPPING_APPLICANT.firstName} ${MAPPING_APPLICANT.lastName}`;
+  const card = page
+    .locator("div.rounded-xl.border")
+    .filter({ hasText: applicantName });
+  await expect(card).toHaveCount(1);
+
+  // Switch the applicant to Map-to-existing and pick the existing member via
+  // the live search (the exact-email candidate). The radio is a React-controlled
+  // <input type="radio">; both check() (which verifies `checked` immediately
+  // after the click, racing React 18's deferred re-render) and label->control
+  // forwarding proved flaky in CI. Use a plain click() on the input (fires the
+  // controlled onChange without an immediate-state assertion) and prove the
+  // switch functionally via the MAP-mode-only live-search input, which is a
+  // web-first assertion that auto-retries until the re-render lands.
+  const mapToExisting = card.getByRole("radio", { name: "Map to existing" });
+  await mapToExisting.click();
+  // Functional proof the mode actually switched to MAP: the member live-search
+  // (this placeholder) only renders when the person is set to Map to existing.
+  await expect(card.getByPlaceholder("Search name or email")).toBeVisible();
+  await card
+    .getByPlaceholder("Search name or email")
+    .fill(MAPPING_APPLICANT.email);
+  await card.getByRole("button", { name: "Search", exact: true }).click();
+  await card.getByRole("button", { name: "Use" }).first().click();
+  await expect(card.getByText(`Mapped to ${applicantName}`)).toBeVisible();
+
+  // Preview: the diff table shows what the overwrite will change (the member
+  // was seeded without a DOB or phone), and the promotion note appears.
+  await card.getByRole("button", { name: "Preview mapping" }).click();
+  await expect(
+    card.getByText("Preview ready — no blocking issues."),
+  ).toBeVisible();
+  await expect(card.getByRole("cell", { name: "Date of birth" })).toBeVisible();
+  await expect(
+    card.getByRole("cell", { name: MAPPING_APPLICANT.dateOfBirth }),
+  ).toBeVisible();
+  await expect(
+    card.getByText(/promoted to a login account/i),
+  ).toBeVisible();
+
+  // Joining fee defaults to SKIP for a mapped applicant.
+  await expect(card.locator("select")).toHaveValue("SKIP");
+  await expect(card.locator("textarea").last()).toHaveValue(
+    "Mapped to existing member",
+  );
+
+  // Approve (the second check). The notify-choice dialog always shows; skip
+  // the email so the run never depends on outbound mail.
+  const putResponse = page.waitForResponse(
+    (res) =>
+      res.url().includes(`/api/admin/member-applications/${MAPPING_APPLICATION_ID}`) &&
+      res.request().method() === "PUT",
+  );
+  await card.getByRole("button", { name: "Approve", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Approve without emailing" })
+    .click();
+  const putBody = await (await putResponse).json();
+  expect(putBody.status).toBe("APPROVED");
+  expect(putBody.mappedMemberIds).toEqual([MAPPING_TARGET_MEMBER_ID]);
+  expect(putBody.createdMemberIds).toEqual([]);
+  await expect(page.getByText(/Application approved\./)).toBeVisible();
+
+  // The existing member was updated in place — and there is still exactly ONE
+  // member for this email (no duplicate record was created).
+  const members = await context.request.get(
+    `/api/admin/members?q=${encodeURIComponent(MAPPING_APPLICANT.email)}`,
+  );
+  expect(members.ok(), `GET /api/admin/members (${members.status()})`).toBeTruthy();
+  const membersBody = await members.json();
+  const matches = (membersBody.members ?? []).filter(
+    (member: { email: string }) => member.email === MAPPING_APPLICANT.email,
+  );
+  expect(matches, "exactly one member holds the applicant email").toHaveLength(1);
+  expect(matches[0].id).toBe(MAPPING_TARGET_MEMBER_ID);
 
   await context.close();
 });

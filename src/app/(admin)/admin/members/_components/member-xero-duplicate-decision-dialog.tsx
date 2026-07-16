@@ -65,7 +65,7 @@ export function MemberXeroDuplicateDecisionDialog({
             {decision.entranceFeeInvoiceOptions.createEntranceFeeInvoice && (
               <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                 If you choose <span className="font-medium">Create New Contact Anyway</span>,
-                the membership entrance fee invoice will also be queued.
+                the membership joining fee invoice will also be queued.
               </div>
             )}
           </div>

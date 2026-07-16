@@ -4,6 +4,27 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ getPage: vi.fn(), buildBody: vi.fn() }));
+// The website pages now resolve DB-first club identity (via the tagged
+// public-layout cache) and the default lodge address server-side (E3 #1929).
+// Neutralise the server-only guard and stub those reads so the pages import and
+// render without a database or the unstable_cache runtime.
+const stubClubIdentity = {
+  name: "Club Name",
+  socialLinks: {},
+  publicUrl: "https://club.example.org",
+};
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/public-layout-config", () => ({
+  getCachedClubIdentity: vi.fn(async () => stubClubIdentity),
+}));
+vi.mock("@/lib/lodges", () => ({
+  getDefaultLodgeId: vi.fn(async () => "lodge-1"),
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    lodge: { findUnique: vi.fn(async () => ({ name: "Lodge", address: null })) },
+  },
+}));
 vi.mock("@/lib/page-content-html", () => ({
   getSanitizedPageContentByPath: mocks.getPage,
   pageContentHtmlToPlainText: () => "",

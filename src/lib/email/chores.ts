@@ -4,9 +4,9 @@ import {
 } from "../email-templates";
 import {
   CLUB_HUT_LEADER_LABEL,
-  CLUB_LODGE_NAME,
   CLUB_NAME,
 } from "@/config/club-identity";
+import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { formatNZDate } from "../nzst-date";
 import { sendEmail } from "./core";
 
@@ -35,7 +35,7 @@ export async function sendChoreRosterEmail(
 
   await sendEmail({
     to: email,
-    subject: `Your chore roster for ${formattedDate} - ${CLUB_LODGE_NAME}`,
+    subject: `Your chore roster for ${formattedDate} - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: choreRosterTemplate(guestName, date, chores, choreLink),
     templateName: "chore-roster",
     templateData: {

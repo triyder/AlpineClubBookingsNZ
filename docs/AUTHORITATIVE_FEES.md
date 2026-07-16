@@ -1,13 +1,36 @@
 # Authoritative Fee Configuration
 
-Annual membership fees and entrance fees are persisted, effective-dated club
-configuration. Hut fees remain the lodge-scoped `Season` and `SeasonRate`
-records managed under **Admin > Hut Fees & Seasons**.
+Annual membership fees and joining fees are persisted, effective-dated club
+configuration. Hut fees are the lodge-scoped `Season` records managed under
+**Admin > Hut Fees & Seasons**, with per-night rates keyed by **membership
+type** in `MembershipTypeSeasonRate` (#1930, E4). Each `MEMBER_RATE` membership
+type carries its own rate rows; non-members price via the built-in
+`NON_MEMBER` type; `NON_MEMBER_RATE` (except `NON_MEMBER`) and `BLOCK_BOOKING`
+types carry zero own rows. A type prices per age tier when
+`MembershipType.ageGroupsApply` is true (one row per tier) or from a single flat
+rate when false (one `NULL`-ageTier row). The legacy member/non-member
+boolean-keyed `SeasonRate` table is **retained but frozen** — read only by the
+public `{{hut-fees}}` embed until E7 re-keys it, and dropped by E13. Xero
+hut-fee item codes re-key the same way via `XeroItemCodeMapping.membershipTypeId`
+so an invoice line never disagrees with the rate that priced it.
+
+Each priced `BookingGuest` stores a `rateMembershipTypeId` snapshot (the type
+whose rows priced it). The snapshot is recomputed and overwritten whenever a
+guest is repriced; locked nights keep their booked price and stale snapshot
+untouched. A `NULL` snapshot (pre-refactor booking) resolves at read time as
+`isMember → FULL / NON_MEMBER`.
+
+> **Terminology.** "Joining fee" is the user-facing name for the one-off fee a
+> new member pays; "Annual Membership Fee" is the recurring fee to stay a
+> paid-up member. The code and schema still model the joining fee as the
+> `EntranceFee` record — that rename ships separately in E5 (#1931), so internal
+> identifiers, Xero references, and migrations retain the old `entrance`/
+> `subscription` names for now.
 
 Public PageContent blocks are double opt-in: their family is enabled in Admin >
-Page Content and membership types are individually public. Entrance blocks omit
-categories without a current schedule and never expose the compatibility Xero
-fallback. Hut-rate blocks use active seasons/rates plus configured age-tier
+Page Content and membership types are individually public. Joining-fee blocks
+omit categories without a current schedule and never expose the compatibility
+Xero fallback. Hut-rate blocks use active seasons/rates plus configured age-tier
 labels. Visibility writes are audited and invalidate public routes.
 
 ## Operator workflow
@@ -15,7 +38,7 @@ labels. Visibility writes are audited and invalidate public routes.
 1. A Membership editor opens **Admin > Membership Types**, writes a distinct
    public description, and explicitly enables public listing only after review.
    Every migrated and newly created type is hidden by default.
-2. A Finance editor opens **Admin > Membership & Entrance Fees** and adds an
+2. A Finance editor opens **Admin > Membership & Joining Fees** and adds an
    inclusive effective-date range. Ranges for the same type/category cannot
    overlap. NZD amounts are stored as GST-inclusive integer cents.
 3. For `PER_FAMILY` fees, choose one active member of every membered family as

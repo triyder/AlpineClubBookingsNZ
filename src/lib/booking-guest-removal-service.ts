@@ -519,7 +519,12 @@ export async function removeBookingGuestInTransaction({
     remainingGuests.map((guest, index) =>
       tx.bookingGuest.update({
         where: { id: guest.id },
-        data: { priceCents: priceBreakdown.guests[index].priceCents },
+        // Overwrite the rate-type snapshot alongside the repriced total
+        // (#1930, E4).
+        data: {
+          priceCents: priceBreakdown.guests[index].priceCents,
+          rateMembershipTypeId: priceBreakdown.guests[index].rateMembershipTypeId,
+        },
       })
     )
   );
@@ -642,16 +647,16 @@ export async function loadSeasonRateData(
 ): Promise<SeasonRateData[]> {
   const seasons = await tx.season.findMany({
     where: { active: true, ...(lodgeId ? lodgeNullTolerantScope(lodgeId) : {}) },
-    include: { rates: true },
+    include: { membershipTypeRates: true },
   });
 
   return seasons.map((season) => ({
     seasonId: season.id,
     startDate: season.startDate,
     endDate: season.endDate,
-    rates: season.rates.map((rate) => ({
+    rates: season.membershipTypeRates.map((rate) => ({
+      membershipTypeId: rate.membershipTypeId,
       ageTier: rate.ageTier,
-      isMember: rate.isMember,
       pricePerNightCents: rate.pricePerNightCents,
     })),
   }));

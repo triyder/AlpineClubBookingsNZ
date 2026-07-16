@@ -199,7 +199,7 @@ async function main() {
   //    so lodge B can price a stay and the cross-lodge waitlist quote works.
   const lodgeASeasons = await prisma.season.findMany({
     where: { lodgeId: lodgeAId, active: true },
-    include: { rates: true },
+    include: { rates: true, membershipTypeRates: true },
   });
   for (const season of lodgeASeasons) {
     const cloneId = `e2e-lodge-b-${season.id}`;
@@ -213,10 +213,19 @@ async function main() {
         endDate: season.endDate,
         active: true,
         lodgeId: lodgeBId,
+        // Legacy boolean-keyed rates (frozen) plus the membership-type-keyed
+        // rates that authoritatively price bookings (#1930, E4).
         rates: {
           create: season.rates.map((rate) => ({
             ageTier: rate.ageTier,
             isMember: rate.isMember,
+            pricePerNightCents: rate.pricePerNightCents,
+          })),
+        },
+        membershipTypeRates: {
+          create: season.membershipTypeRates.map((rate) => ({
+            membershipTypeId: rate.membershipTypeId,
+            ageTier: rate.ageTier,
             pricePerNightCents: rate.pricePerNightCents,
           })),
         },

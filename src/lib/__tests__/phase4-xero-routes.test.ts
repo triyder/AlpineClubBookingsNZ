@@ -4,7 +4,7 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(),
-  getXeroContactGroupMismatchSnapshot: vi.fn(),
+  getXeroMemberGroupingSnapshot: vi.fn(),
   getXeroContactLinkMismatchSnapshot: vi.fn(),
   getXeroContactGroups: vi.fn(),
   getXeroContactGroupCacheLastRefreshedAt: vi.fn(),
@@ -26,8 +26,8 @@ vi.mock("@/lib/session-guards", () => ({
     (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
-vi.mock("@/lib/age-tier-xero-groups", () => ({
-  getXeroContactGroupMismatchSnapshot: mocks.getXeroContactGroupMismatchSnapshot,
+vi.mock("@/lib/xero-member-grouping-resync", () => ({
+  getXeroMemberGroupingSnapshot: mocks.getXeroMemberGroupingSnapshot,
 }));
 vi.mock("@/lib/xero-contact-link-mismatches", () => ({
   getXeroContactLinkMismatchSnapshot: mocks.getXeroContactLinkMismatchSnapshot,
@@ -232,11 +232,11 @@ describe("Phase 4 Xero admin routes", () => {
   });
 
   it("returns the contact group mismatch snapshot", async () => {
-    mocks.getXeroContactGroupMismatchSnapshot.mockResolvedValue({
+    mocks.getXeroMemberGroupingSnapshot.mockResolvedValue({
+      mode: "MEMBERSHIP_TYPE_AND_AGE",
       cacheReady: true,
       lastRefreshedAt: "2026-04-26T00:00:00.000Z",
-      configuredMappings: [],
-      count: 0,
+      mismatchCount: 0,
       mismatches: [],
     });
 
@@ -246,7 +246,7 @@ describe("Phase 4 Xero admin routes", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(mocks.getXeroContactGroupMismatchSnapshot).toHaveBeenCalledWith({
+    expect(mocks.getXeroMemberGroupingSnapshot).toHaveBeenCalledWith({
       limit: 50,
     });
   });

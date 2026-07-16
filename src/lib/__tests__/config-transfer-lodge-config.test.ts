@@ -55,14 +55,21 @@ function sourceDb(): ReadDb {
         },
       ]),
     },
-    seasonRate: {
+    // Membership-type-keyed rates (#1930, E4); export joins the type key.
+    membershipTypeSeasonRate: {
       findMany: vi.fn().mockResolvedValue([
         {
           ageTier: "ADULT",
-          isMember: true,
           pricePerNightCents: 5000,
+          membershipType: { key: "FULL" },
           season: { name: "Winter", lodge: { slug: "main" } },
         },
+      ]),
+    },
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE", ageGroupsApply: true },
+        { id: "mt-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE", ageGroupsApply: true },
       ]),
     },
     lodgeInstruction: { findMany: vi.fn().mockResolvedValue([]) },
@@ -80,7 +87,14 @@ function emptyTargetDb(): ReadDb {
     lodgeRoom: { findMany: vi.fn().mockResolvedValue([]) },
     lodgeBed: { findMany: vi.fn().mockResolvedValue([]) },
     season: { findMany: vi.fn().mockResolvedValue([]) },
-    seasonRate: { findMany: vi.fn().mockResolvedValue([]) },
+    membershipTypeSeasonRate: { findMany: vi.fn().mockResolvedValue([]) },
+    // Rate rows key on the membership type; the parser resolves keys against these.
+    membershipType: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE", ageGroupsApply: true },
+        { id: "mt-nonmember", key: "NON_MEMBER", bookingBehavior: "NON_MEMBER_RATE", ageGroupsApply: true },
+      ]),
+    },
     lodgeInstruction: { findMany: vi.fn().mockResolvedValue([]) },
     choreTemplate: { findMany: vi.fn().mockResolvedValue([]) },
     displayLayout: { findMany: vi.fn().mockResolvedValue([]) },
@@ -124,8 +138,11 @@ describe("config-transfer lodge-config (per-lodge folders)", () => {
     expect(seasons.rows[0]).toMatchObject({ name: "Winter", startDate: "2026-06-01" });
 
     const rates = parseCsv(strFromU8(files.get(RATES)!));
+    expect(rates.headers).toContain("membershipTypeKey");
+    expect(rates.headers).not.toContain("isMember");
     expect(rates.rows[0]).toMatchObject({
       seasonName: "Winter",
+      membershipTypeKey: "FULL",
       ageTier: "ADULT",
       pricePerNightCents: "5000",
     });

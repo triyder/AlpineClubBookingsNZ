@@ -4,7 +4,6 @@ import type {
   MembershipTypeSubscriptionBehavior,
   Prisma,
   Role,
-  XeroContactGroupRuleMode,
 } from "@prisma/client";
 import { getSeasonYear } from "@/lib/utils";
 
@@ -20,11 +19,6 @@ export const MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS = [
   "REQUIRED",
   "NOT_REQUIRED",
 ] as const satisfies readonly MembershipTypeSubscriptionBehavior[];
-
-export const MEMBERSHIP_TYPE_XERO_RULE_MODES = [
-  "MANAGED",
-  "ACCEPTED",
-] as const satisfies readonly XeroContactGroupRuleMode[];
 
 export const MEMBERSHIP_TYPE_AGE_TIERS = [
   "INFANT",
@@ -55,7 +49,7 @@ export const BUILT_IN_MEMBERSHIP_TYPES = [
     key: "LIFE",
     name: "Life",
     description:
-      "Life membership starts with member booking-rate policy and no annual subscription requirement.",
+      "Life membership starts with member booking-rate policy and no Annual Membership Fee requirement.",
     bookingBehavior: "MEMBER_RATE",
     subscriptionBehavior: "NOT_REQUIRED",
     sortOrder: 2,
@@ -64,7 +58,7 @@ export const BUILT_IN_MEMBERSHIP_TYPES = [
     key: "SCHOOL",
     name: "School",
     description:
-      "School or education-organisation booking contact. Does not grant member access or annual subscription obligations.",
+      "School or education-organisation booking contact. Does not grant member access or Annual Membership Fee obligations.",
     bookingBehavior: "NON_MEMBER_RATE",
     subscriptionBehavior: "NOT_REQUIRED",
     sortOrder: 3,
@@ -73,7 +67,7 @@ export const BUILT_IN_MEMBERSHIP_TYPES = [
     key: "NON_MEMBER",
     name: "Non-Member",
     description:
-      "General public or guest contact. Does not grant member access or annual subscription obligations.",
+      "General public or guest contact. Does not grant member access or Annual Membership Fee obligations.",
     bookingBehavior: "NON_MEMBER_RATE",
     subscriptionBehavior: "NOT_REQUIRED",
     sortOrder: 4,
@@ -120,24 +114,6 @@ const BUILT_IN_MEMBERSHIP_TYPE_ALLOWED_AGE_TIERS = {
   FAMILY: ["INFANT", "CHILD", "YOUTH", "ADULT"],
 } as const satisfies Record<BuiltInMembershipTypeKey, readonly AgeTier[]>;
 
-export type MembershipTypeXeroRuleInput = {
-  ageTier?: AgeTier | null;
-  mode: XeroContactGroupRuleMode;
-  groupId: string;
-  groupName?: string | null;
-  isActive?: boolean;
-  sortOrder?: number | null;
-};
-
-export type NormalizedMembershipTypeXeroRule = {
-  ageTier: AgeTier | null;
-  mode: XeroContactGroupRuleMode;
-  groupId: string;
-  groupName: string | null;
-  isActive: boolean;
-  sortOrder: number;
-};
-
 export function normalizeMembershipTypeAgeTiers(
   ageTiers: readonly AgeTier[],
 ): AgeTier[] {
@@ -145,61 +121,20 @@ export function normalizeMembershipTypeAgeTiers(
   return MEMBERSHIP_TYPE_AGE_TIERS.filter((ageTier) => requested.has(ageTier));
 }
 
-export function normalizeMembershipTypeXeroRules(
-  rules: readonly MembershipTypeXeroRuleInput[],
-): NormalizedMembershipTypeXeroRule[] {
-  return rules.map((rule, index) => ({
-    ageTier: rule.ageTier ?? null,
-    mode: rule.mode,
-    groupId: rule.groupId.trim(),
-    groupName: normalizeMembershipTypeText(rule.groupName),
-    isActive: rule.isActive ?? true,
-    sortOrder: rule.sortOrder ?? index,
-  }));
-}
-
 export function validateMembershipTypeRuleConfiguration(params: {
   allowedAgeTiers: readonly AgeTier[];
-  xeroContactGroupRules: readonly NormalizedMembershipTypeXeroRule[];
 }): string | null {
   if (params.allowedAgeTiers.length === 0) {
     return "Select at least one allowed age tier.";
   }
-
-  const exactRules = new Set<string>();
-  const managedScopes = new Set<string>();
-  for (const rule of params.xeroContactGroupRules) {
-    if (!rule.groupId) {
-      return "Every Xero group rule needs a group.";
-    }
-
-    const scope = rule.ageTier ?? "ALL";
-    const exactKey = `${rule.mode}:${scope}:${rule.groupId}`;
-    if (exactRules.has(exactKey)) {
-      return "Duplicate Xero group rules are not allowed.";
-    }
-    exactRules.add(exactKey);
-
-    if (rule.mode === "MANAGED") {
-      if (managedScopes.has(scope)) {
-        return "Only one managed Xero group rule is allowed for each age-tier scope.";
-      }
-      managedScopes.add(scope);
-    }
-  }
-
   return null;
 }
 
 export async function replaceMembershipTypeRuleConfiguration(
-  db: Pick<
-    Prisma.TransactionClient,
-    "membershipTypeAgeTier" | "xeroContactGroupRule"
-  >,
+  db: Pick<Prisma.TransactionClient, "membershipTypeAgeTier">,
   membershipTypeId: string,
   config: {
     allowedAgeTiers?: readonly AgeTier[];
-    xeroContactGroupRules?: readonly NormalizedMembershipTypeXeroRule[];
   },
 ): Promise<void> {
   if (config.allowedAgeTiers !== undefined) {
@@ -209,24 +144,6 @@ export async function replaceMembershipTypeRuleConfiguration(
         data: config.allowedAgeTiers.map((ageTier) => ({
           membershipTypeId,
           ageTier,
-        })),
-        skipDuplicates: true,
-      });
-    }
-  }
-
-  if (config.xeroContactGroupRules !== undefined) {
-    await db.xeroContactGroupRule.deleteMany({ where: { membershipTypeId } });
-    if (config.xeroContactGroupRules.length > 0) {
-      await db.xeroContactGroupRule.createMany({
-        data: config.xeroContactGroupRules.map((rule) => ({
-          membershipTypeId,
-          ageTier: rule.ageTier,
-          mode: rule.mode,
-          groupId: rule.groupId,
-          groupName: rule.groupName,
-          isActive: rule.isActive,
-          sortOrder: rule.sortOrder,
         })),
         skipDuplicates: true,
       });
@@ -245,19 +162,11 @@ type MembershipTypeWithAssignmentCount = {
   isBuiltIn: boolean;
   bookingBehavior: MembershipTypeBookingBehavior;
   subscriptionBehavior: MembershipTypeSubscriptionBehavior;
+  ageGroupsApply?: boolean;
   sortOrder: number;
   createdAt: Date;
   updatedAt: Date;
   allowedAgeTiers?: Array<{ ageTier: AgeTier }>;
-  xeroContactGroupRules?: Array<{
-    id: string;
-    ageTier: AgeTier | null;
-    mode: XeroContactGroupRuleMode;
-    groupId: string;
-    groupName: string | null;
-    isActive: boolean;
-    sortOrder: number;
-  }>;
   _count?: {
     assignments: number;
     annualFees?: number;
@@ -323,20 +232,12 @@ export function serializeMembershipType(type: MembershipTypeWithAssignmentCount)
     isBuiltIn: type.isBuiltIn,
     bookingBehavior: type.bookingBehavior,
     subscriptionBehavior: type.subscriptionBehavior,
+    ageGroupsApply: type.ageGroupsApply ?? true,
     sortOrder: type.sortOrder,
     createdAt: type.createdAt.toISOString(),
     updatedAt: type.updatedAt.toISOString(),
     assignmentCount: type._count?.assignments ?? 0,
     allowedAgeTiers: (type.allowedAgeTiers ?? []).map((item) => item.ageTier),
-    xeroContactGroupRules: (type.xeroContactGroupRules ?? []).map((rule) => ({
-      id: rule.id,
-      ageTier: rule.ageTier,
-      mode: rule.mode,
-      groupId: rule.groupId,
-      groupName: rule.groupName,
-      isActive: rule.isActive,
-      sortOrder: rule.sortOrder,
-    })),
   };
 }
 

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
-import { bookableAgeTierEnum } from "@/lib/age-tier-schema"
 import { logAudit } from "@/lib/audit"
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
 import {
@@ -10,24 +9,24 @@ import {
   resolveOptionalActiveLodgeId,
 } from "@/lib/lodges"
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
+import {
+  membershipTypeSeasonRateInputSchema,
+  validateMembershipTypeSeasonRates,
+} from "@/lib/season-rate-editor"
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
 })
 
+// Rates are keyed by membership type (#1930, E4). The frozen legacy
+// boolean-keyed SeasonRate table is no longer written by this editor.
 const seasonSchema = z.object({
   name: z.string().min(1, "Name is required"),
   type: z.enum(["WINTER", "SUMMER"]),
   startDate: dateOnlyString,
   endDate: dateOnlyString,
   active: z.boolean().default(true),
-  rates: z.array(
-    z.object({
-      ageTier: bookableAgeTierEnum,
-      isMember: z.boolean(),
-      pricePerNightCents: z.number().int().min(0),
-    })
-  ).min(1, "Must provide at least one rate"),
+  membershipTypeRates: membershipTypeSeasonRateInputSchema,
   lodgeId: z.string().min(1).optional(),
 })
 
@@ -39,7 +38,9 @@ export async function GET(req: NextRequest) {
   const lodgeId = req.nextUrl.searchParams.get("lodgeId")
   const seasons = await prisma.season.findMany({
     where: lodgeId ? lodgeNullTolerantScope(lodgeId) : undefined,
-    include: { rates: true },
+    // Legacy `rates` retained for the frozen public embed; membershipTypeRates
+    // is the authoritative pricing table the editor writes (#1930, E4).
+    include: { rates: true, membershipTypeRates: true },
     orderBy: { startDate: "desc" },
   })
 
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const { name, type, startDate, endDate, active, rates } = parsed.data
+  const { name, type, startDate, endDate, active, membershipTypeRates } = parsed.data
 
   const parsedStartDate = parseDateOnly(startDate)
   const parsedEndDate = parseDateOnly(endDate)
@@ -70,6 +71,11 @@ export async function POST(req: NextRequest) {
       { error: "End date must be after start date" },
       { status: 400 }
     )
+  }
+
+  const rateError = await validateMembershipTypeSeasonRates(prisma, membershipTypeRates)
+  if (rateError) {
+    return NextResponse.json({ error: rateError }, { status: 400 })
   }
 
   const lodgeId = await resolveOptionalActiveLodgeId(prisma, parsed.data.lodgeId)
@@ -100,29 +106,34 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const season = await prisma.season.create({
-    data: {
-      name,
-      type,
-      startDate: parsedStartDate,
-      endDate: parsedEndDate,
-      active,
-      lodgeId,
-      rates: {
-        create: rates.map((rate) => ({
-          ageTier: rate.ageTier,
-          isMember: rate.isMember,
-          pricePerNightCents: rate.pricePerNightCents,
-        })),
+  const season = await prisma.$transaction(async (tx) => {
+    const created = await tx.season.create({
+      data: {
+        name,
+        type,
+        startDate: parsedStartDate,
+        endDate: parsedEndDate,
+        active,
+        lodgeId,
+        membershipTypeRates: {
+          create: membershipTypeRates.map((rate) => ({
+            membershipTypeId: rate.membershipTypeId,
+            ageTier: rate.ageTier,
+            pricePerNightCents: rate.pricePerNightCents,
+          })),
+        },
       },
-    },
-    include: { rates: true },
+    })
+    return tx.season.findUnique({
+      where: { id: created.id },
+      include: { rates: true, membershipTypeRates: true },
+    })
   })
 
   logAudit({
     action: "season.create",
     memberId: session.user.id,
-    targetId: season.id,
+    targetId: season?.id,
     details: `Created season: ${name}`,
   });
 

@@ -25,7 +25,9 @@ function sanitizeFilename(name: string): string {
 
 // POST /api/admin/image-manager/upload – upload one or more image files
 export async function POST(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "content", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let formData: FormData;

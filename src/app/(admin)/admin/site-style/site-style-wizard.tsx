@@ -49,6 +49,12 @@ import {
   type ClubThemeValues,
   type ContrastWarning,
 } from "@/lib/club-theme-schema";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminForbiddenSaveNotice,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 // Type-only reference to the lazy-loaded zod schema. `typeof import(...)` in a
 // type position emits no runtime import, so naming the schema's type here never
@@ -110,6 +116,8 @@ function previewStyle(values: ClubThemeValues): CSSProperties {
 
 export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
   const router = useRouter();
+  const canEdit = useAdminAreaEditAccess("content");
+  const [forbidden, setForbidden] = useState(false);
   const [values, setValues] = useState<ClubThemeValues>({
     brandGold: initialTheme.brandGold,
     brandCharcoal: initialTheme.brandCharcoal,
@@ -197,6 +205,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
     setSaving(true);
     setError("");
     setSavedMessage("");
+    setForbidden(false);
 
     try {
       const response = await fetch("/api/admin/site-style", {
@@ -207,6 +216,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
       });
       const body = await response.json().catch(() => null);
       if (!response.ok || !body?.theme) {
+        if (response.status === 403) setForbidden(true);
         throw new Error(
           responseErrorMessage(body, "Failed to save site style"),
         );
@@ -311,6 +321,13 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
+        {!canEdit ? (
+          <AdminViewOnlyNotice>
+            Your admin role can view the site style but cannot change it. The
+            controls below are read-only.
+          </AdminViewOnlyNotice>
+        ) : null}
+        {forbidden ? <AdminForbiddenSaveNotice /> : null}
         <div className="grid gap-2 sm:grid-cols-5">
           {steps.map((item) => {
             const Icon = item.icon;
@@ -371,6 +388,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                           }
                           className="h-10 w-14 shrink-0 p-1"
                           aria-label={`${field.label} swatch`}
+                          disabled={!canEdit}
                         />
                         <Input
                           value={values[field.key]}
@@ -378,6 +396,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                             updateColour(field.key, event.target.value)
                           }
                           aria-label={`${field.label} value`}
+                          readOnly={!canEdit}
                         />
                       </div>
                       {fieldErrors[field.key]?.[0] && (
@@ -405,6 +424,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                   <Label>Heading font</Label>
                   <Select
                     value={values.headingFontKey}
+                    disabled={!canEdit}
                     onValueChange={(value) =>
                       updateFont("headingFontKey", value as ClubThemeFontKey)
                     }
@@ -425,6 +445,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                   <Label>Body font</Label>
                   <Select
                     value={values.bodyFontKey}
+                    disabled={!canEdit}
                     onValueChange={(value) =>
                       updateFont("bodyFontKey", value as ClubThemeFontKey)
                     }
@@ -458,6 +479,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                   onChange={(e) => updateRawCss(e.target.value)}
                   rows={16}
                   spellCheck={false}
+                  readOnly={!canEdit}
                   placeholder={`/* Example */\n.dynamic-header {\n  background: linear-gradient(135deg, #1a1a2e, #16213e);\n}`}
                   className="w-full rounded-md border border-slate-300 bg-white p-3 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-400"
                 />
@@ -486,16 +508,18 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                   }}
                 />
                 <div className="flex flex-wrap gap-3">
-                  <Button
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     type="button"
                     variant="outline"
                     onClick={() => fileInputRef.current?.click()}
                   >
                     <Upload className="mr-2 h-4 w-4" />
                     Choose logo
-                  </Button>
+                  </ViewOnlyActionButton>
                   {values.logoDataUrl && (
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       type="button"
                       variant="outline"
                       onClick={() => {
@@ -508,7 +532,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                     >
                       <Trash2 className="mr-2 h-4 w-4" />
                       Remove logo
-                    </Button>
+                    </ViewOnlyActionButton>
                   )}
                 </div>
                 {fieldErrors.logoDataUrl?.[0] && (
@@ -675,10 +699,15 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
         </div>
 
         <div className="flex flex-wrap justify-between gap-3 border-t pt-5">
-          <Button type="button" variant="outline" onClick={resetNeutral}>
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            type="button"
+            variant="outline"
+            onClick={resetNeutral}
+          >
             <RotateCcw className="mr-2 h-4 w-4" />
             Reset neutral
-          </Button>
+          </ViewOnlyActionButton>
           <div className="flex flex-wrap gap-3">
             <Button
               type="button"
@@ -689,21 +718,23 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
               Back
             </Button>
             {stepIndex < steps.length - 1 ? (
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 type="button"
                 onClick={goNext}
                 disabled={saving || saveBlocked}
               >
                 {saving ? "Saving..." : "Save and next"}
-              </Button>
+              </ViewOnlyActionButton>
             ) : (
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 type="button"
                 onClick={finish}
                 disabled={saving || saveBlocked}
               >
                 {saving ? "Saving..." : "Finish setup"}
-              </Button>
+              </ViewOnlyActionButton>
             )}
           </div>
         </div>

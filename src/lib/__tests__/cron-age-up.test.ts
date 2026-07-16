@@ -49,6 +49,14 @@ vi.mock("../utils", () => ({
   getSeasonYear: vi.fn(() => 2026),
 }));
 
+// Best-effort Xero contact-group trigger (E8, #1934): mocked so we can assert
+// it fires after a durable tier flip and never for skipped/handoff members.
+const mockTriggerGroupSync = vi.fn();
+vi.mock("../xero-contact-groups", () => ({
+  triggerMemberXeroContactGroupSync: (...args: unknown[]) =>
+    mockTriggerGroupSync(...args),
+}));
+
 import { prisma } from "../prisma";
 import {
   sendAgeUpInvitationEmail,
@@ -168,6 +176,42 @@ describe("checkAgeUpMembers", () => {
         targetAgeTierMinAge: 18,
       })
     );
+
+    // E8 (#1934): the best-effort Xero contact-group re-sync fires after the
+    // tier flip has committed.
+    expect(mockTriggerGroupSync).toHaveBeenCalledTimes(1);
+    expect(mockTriggerGroupSync).toHaveBeenCalledWith("m1", {
+      reason: "cron_age_up",
+    });
+  });
+
+  it("does not fire the Xero contact-group trigger when the flip is skipped (parent handoff)", async () => {
+    const member = {
+      id: "m-handoff",
+      email: "shared@example.com",
+      firstName: "Kid",
+      lastName: "Smith",
+      dateOfBirth: dobForAge(18),
+      inheritEmailFromId: "parent-1",
+      inheritEmailFrom: { id: "parent-1", email: "shared@example.com" },
+    };
+
+    mockedFindMany.mockResolvedValue([member] as any);
+    mockedEmailLogFind.mockResolvedValue(null);
+    mockTxMemberFindUnique.mockResolvedValue({
+      canLogin: false,
+      ageTier: "YOUTH",
+      inheritEmailFromId: "parent-1",
+      inheritParentEmail: false,
+      parentMemberId: null,
+    });
+    mockedSendHandoffEmail.mockResolvedValue(undefined as any);
+
+    const result = await checkAgeUpMembers();
+
+    expect(result.upgraded).toBe(0);
+    // No tier flip happened, so no grouping trigger fires.
+    expect(mockTriggerGroupSync).not.toHaveBeenCalled();
   });
 
   it("upgrades normally once the member has a unique email and inheritance is cleared", async () => {

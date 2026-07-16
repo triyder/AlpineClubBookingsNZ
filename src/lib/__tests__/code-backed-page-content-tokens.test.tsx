@@ -20,6 +20,30 @@ const mocks = vi.hoisted(() => ({
   photoGalleryToken: vi.fn(),
 }));
 
+// The contact/join pages now load DB-first club identity + the default lodge
+// address server-side (E3 #1929). Neutralise the server-only guard and stub the
+// identity reads. The pages read identity through the tagged public-layout cache
+// (getCachedClubIdentity), whose real module wraps unstable_cache and cannot run
+// under vitest, so stub that accessor directly alongside the raw one.
+const stubClubIdentity = {
+  name: "Club Name",
+  socialLinks: {},
+  publicUrl: "https://club.example.org",
+};
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/club-identity-settings", () => ({
+  getClubIdentity: vi.fn(async () => stubClubIdentity),
+}));
+vi.mock("@/lib/public-layout-config", () => ({
+  getCachedClubIdentity: vi.fn(async () => stubClubIdentity),
+}));
+vi.mock("@/lib/lodges", () => ({
+  getDefaultLodgeId: vi.fn(async () => "lodge-1"),
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: { lodge: { findUnique: vi.fn(async () => ({ name: "Lodge", address: null })) } },
+}));
+
 vi.mock("@/lib/page-content-html", () => ({
   getSanitizedPageContentByPath: mocks.getSanitizedPageContentByPath,
   pageContentHtmlToPlainText: () => "",

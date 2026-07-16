@@ -19,6 +19,12 @@ import {
   PolicyScopeSelect,
   usePolicyScopeLodgeName,
 } from "@/components/admin/booking-policies/policy-scope-select";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminForbiddenSaveNotice,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 // Mirrors LODGE_INSTRUCTION_KEYS / LODGE_INSTRUCTION_LABELS in
 // src/lib/lodge-instructions.ts (that module is server-only).
@@ -78,8 +84,11 @@ export function LodgeInstructionsPanel() {
   // control renders nothing while fewer than two lodges exist.
   const [scopeLodgeId, setScopeLodgeId] = useState<string | null>(null);
   const scopeLodgeName = usePolicyScopeLodgeName(scopeLodgeId);
+  // Lodge instructions gate on the LODGE area, not content (#1927).
+  const canEdit = useAdminAreaEditAccess("lodge");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [forbidden, setForbidden] = useState(false);
   const [drafts, setDrafts] = useState<KeyedRecord<string>>(emptyRecord(""));
   const [updatedAt, setUpdatedAt] = useState<KeyedRecord<string | null>>(
     emptyRecord(null),
@@ -137,6 +146,7 @@ export function LodgeInstructionsPanel() {
   async function saveDocument(key: DocumentKey, title: string) {
     const contentHtml = editorRefs.current[key]?.getHtml() ?? drafts[key];
     setSavingKey(key);
+    setForbidden(false);
     try {
       const res = await fetch("/api/admin/lodge-instructions", {
         method: "PUT",
@@ -149,6 +159,9 @@ export function LodgeInstructionsPanel() {
         }),
       });
       if (!res.ok) {
+        if (res.status === 403) {
+          setForbidden(true);
+        }
         const body = await res.json().catch(() => null);
         toast.error(body?.error ?? `Failed to save ${title}`);
         return;
@@ -202,6 +215,7 @@ export function LodgeInstructionsPanel() {
       return;
     }
     setSavingKey(key);
+    setForbidden(false);
     try {
       const res = await fetch("/api/admin/lodge-instructions", {
         method: "PUT",
@@ -210,6 +224,9 @@ export function LodgeInstructionsPanel() {
         body: JSON.stringify({ key, lodgeId: scopeLodgeId, remove: true }),
       });
       if (!res.ok) {
+        if (res.status === 403) {
+          setForbidden(true);
+        }
         const body = await res.json().catch(() => null);
         toast.error(body?.error ?? `Failed to remove the ${title} override`);
         return;
@@ -265,6 +282,14 @@ export function LodgeInstructionsPanel() {
         id="lodge-instructions-scope"
       />
 
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view lodge instructions but cannot change them.
+          The editors below are read-only.
+        </AdminViewOnlyNotice>
+      ) : null}
+      {forbidden ? <AdminForbiddenSaveNotice /> : null}
+
       {DOCUMENTS.map((doc) => {
         const showEditor =
           !scopeIsLodge || hasOverride[doc.key] || pendingOverride[doc.key];
@@ -291,14 +316,15 @@ export function LodgeInstructionsPanel() {
                     {doc.title.toLowerCase()} document. An override replaces it
                     entirely for this lodge.
                   </p>
-                  <Button
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     type="button"
                     variant="outline"
                     onClick={() => createOverride(doc.key, doc.title)}
                     disabled={savingKey !== null}
                   >
                     Create override (copies club-wide content)
-                  </Button>
+                  </ViewOnlyActionButton>
                 </>
               ) : (
                 <>
@@ -313,6 +339,7 @@ export function LodgeInstructionsPanel() {
                     }
                     placeholder={`Write the ${doc.title.toLowerCase()} instructions...`}
                     tokenHelpContext="lodge-instructions"
+                    readOnly={!canEdit}
                   />
                   <div className="flex flex-wrap items-center justify-end gap-3">
                     {scopeIsLodge && pendingOverride[doc.key] ? (
@@ -332,16 +359,18 @@ export function LodgeInstructionsPanel() {
                       </Button>
                     ) : null}
                     {scopeIsLodge && hasOverride[doc.key] ? (
-                      <Button
+                      <ViewOnlyActionButton
+                        canEdit={canEdit}
                         type="button"
                         variant="outline"
                         onClick={() => removeOverride(doc.key, doc.title)}
                         disabled={savingKey !== null}
                       >
                         Remove override
-                      </Button>
+                      </ViewOnlyActionButton>
                     ) : null}
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       type="button"
                       onClick={() => saveDocument(doc.key, doc.title)}
                       disabled={savingKey !== null}
@@ -352,7 +381,7 @@ export function LodgeInstructionsPanel() {
                         : scopeIsLodge
                           ? "Save Override"
                           : `Save ${doc.title}`}
-                    </Button>
+                    </ViewOnlyActionButton>
                   </div>
                 </>
               )}

@@ -7,6 +7,7 @@ import {
   type GuestInput,
   type PriceBreakdown,
   type SeasonRateData,
+  type UnratedGuestInput,
 } from "@/lib/pricing";
 import {
   countActiveGuestsForNight,
@@ -25,6 +26,9 @@ export interface GroupDiscountSettingLike {
   enabled: boolean;
   minGroupSize: number;
   summerOnly: boolean;
+  // Rate membership type substituted for NON_MEMBER_DEFAULT guests in a
+  // qualifying group (#1930, E4). Seeded to the built-in FULL type.
+  rateMembershipTypeId?: string | null;
 }
 
 export interface SeasonRateSource {
@@ -32,9 +36,12 @@ export interface SeasonRateSource {
   startDate: Date;
   endDate: Date;
   type?: SeasonType;
-  rates: Array<{
-    ageTier: AgeTier;
-    isMember: boolean;
+  // Membership-type-keyed rate rows (#1930, E4). Load from
+  // Season.membershipTypeRates (the authoritative table); the legacy
+  // boolean-keyed `rates` relation is frozen and only read by the public embed.
+  membershipTypeRates: Array<{
+    membershipTypeId: string;
+    ageTier: AgeTier | null;
     pricePerNightCents: number;
   }>;
 }
@@ -43,7 +50,6 @@ export interface GuestPricingSource {
   ageTier: AgeTier;
   isMember: boolean;
   memberId?: string | null;
-  forceNonMemberRate?: boolean;
   stayStart?: Date | null;
   stayEnd?: Date | null;
   // Explicit included nights (issue #713). Passed through to pricing so a
@@ -62,6 +68,7 @@ export function toGroupDiscountConfig(
     minGroupSize: setting.minGroupSize,
     summerOnly: setting.summerOnly,
     enabled: true,
+    rateMembershipTypeId: setting.rateMembershipTypeId ?? null,
   };
 }
 
@@ -71,20 +78,21 @@ export function toSeasonRateData(seasons: SeasonRateSource[]): SeasonRateData[] 
     startDate: season.startDate,
     endDate: season.endDate,
     type: season.type,
-    rates: season.rates.map((rate) => ({
+    rates: season.membershipTypeRates.map((rate) => ({
+      membershipTypeId: rate.membershipTypeId,
       ageTier: rate.ageTier,
-      isMember: rate.isMember,
       pricePerNightCents: rate.pricePerNightCents,
     })),
   }));
 }
 
-export function toGuestPricingInputs(guests: GuestPricingSource[]): GuestInput[] {
+export function toGuestPricingInputs(
+  guests: GuestPricingSource[],
+): UnratedGuestInput[] {
   return guests.map((guest) => ({
     ageTier: guest.ageTier,
     isMember: guest.isMember,
     memberId: guest.memberId ?? undefined,
-    forceNonMemberRate: guest.forceNonMemberRate,
     stayStart: guest.stayStart ?? undefined,
     stayEnd: guest.stayEnd ?? undefined,
     nights: guest.nights ?? undefined,
@@ -111,7 +119,9 @@ export function isGroupDiscountAppliedToBooking(input: {
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
-  guests?: GuestInput[];
+  // Only stay ranges are read (via countActiveGuestsForNight), so unrated
+  // guests are accepted — the rate membership type is irrelevant here.
+  guests?: UnratedGuestInput[];
   seasons: SeasonRateData[];
   groupDiscount?: GroupDiscountConfig;
 }): boolean {

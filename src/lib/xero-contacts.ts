@@ -36,6 +36,7 @@ import {
   XeroDailyLimitError,
 } from "./xero-api-client";
 import { syncManagedXeroContactGroupForMember } from "./xero-contact-groups";
+import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -453,7 +454,10 @@ export async function findOrCreateXeroContact(
     // Email quotes are stripped to keep the OData filter syntactically valid;
     // z.string().email() at the API boundary ensures only RFC-valid emails
     // reach this point, so no further escaping is needed.
-  try {
+  // Walk-in placeholder owners (#1935) have no real address: skip the Xero
+  // email search entirely (a placeholder must never match a real contact) and
+  // fall through to creating a contact with an empty email below.
+  if (!isPlaceholderContactEmail(member.email)) try {
     const contactsResponse = await callXeroApi(
       () =>
         xero.accountingApi.getContacts(
@@ -501,7 +505,9 @@ export async function findOrCreateXeroContact(
       name: `${member.firstName} ${member.lastName}`,
       firstName: member.firstName,
       lastName: member.lastName,
-      emailAddress: member.email,
+      // A club-internal walk-in placeholder (#1935) must never be sent to Xero
+      // as a real address; send an empty email for those owners.
+      emailAddress: isPlaceholderContactEmail(member.email) ? "" : member.email,
       phones: member.phoneNumber
         ? [
             {
@@ -780,7 +786,9 @@ export async function createXeroContactForMember(
       name: `${member.firstName} ${member.lastName}`,
       firstName: member.firstName,
       lastName: member.lastName,
-      emailAddress: member.email,
+      // A club-internal walk-in placeholder (#1935) must never be sent to Xero
+      // as a real address; send an empty email for those owners.
+      emailAddress: isPlaceholderContactEmail(member.email) ? "" : member.email,
       phones: [
         {
           phoneType: Phone.PhoneTypeEnum.MOBILE,

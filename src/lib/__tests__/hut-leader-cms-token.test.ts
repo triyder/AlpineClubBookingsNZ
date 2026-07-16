@@ -18,9 +18,16 @@ vi.mock("@/config/club-identity", () => ({
   CLUB_NAME: "Club Name",
   CLUB_FACEBOOK_URL: undefined,
   CLUB_PUBLIC_URL: "https://club.example.org",
-  get CLUB_HUT_LEADER_LABEL() {
-    return identityState.hutLeaderLabel;
-  },
+}));
+// {{hut-leader}}/{{club-name}} now resolve DB-first via getClubIdentity (E3
+// #1929); the mutable label drives the mocked identity.
+vi.mock("@/lib/club-identity-settings", () => ({
+  getClubIdentity: vi.fn(async () => ({
+    name: "Club Name",
+    get hutLeaderLabel() {
+      return identityState.hutLeaderLabel;
+    },
+  })),
 }));
 vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD" }));
 vi.mock("@/lib/lodge-capacity", () => ({

@@ -142,7 +142,7 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
   {
     token: "entrance-fees",
     kind: "embed",
-    description: "Lists the currently effective public entrance fees.",
+    description: "Lists the currently effective public joining fees.",
     example: "{{entrance-fees}}",
     allowsLegacySingleBrace: false,
     contexts: ["page-content-body"],
@@ -210,12 +210,42 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     contexts: ["page-content-body", "lodge-instructions", "site-footer"],
   },
   {
+    token: "lodge-name",
+    kind: "text",
+    description:
+      "Replaced with the default lodge's name when the content renders. With " +
+      "more than one lodge, name a lodge by its slug — {{lodge-name:lodge-slug}} " +
+      "— to show that lodge's name; an unknown slug falls back to the default " +
+      "lodge.",
+    example: "{{lodge-name}}",
+    allowsParameter: true,
+    parameterExample: "{{lodge-name:whakapapa-river-lodge}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body", "lodge-instructions", "site-footer"],
+  },
+  {
+    token: "lodge-address",
+    kind: "text",
+    description:
+      "Replaced with the default lodge's address when the content renders " +
+      "(nothing is shown when no address is set). With more than one lodge, " +
+      "name a lodge by its slug — {{lodge-address:lodge-slug}} — to show that " +
+      "lodge's address; an unknown slug falls back to the default lodge.",
+    example: "{{lodge-address}}",
+    allowsParameter: true,
+    parameterExample: "{{lodge-address:whakapapa-river-lodge}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body", "lodge-instructions", "site-footer"],
+  },
+  {
     token: "hut-leader",
     kind: "text",
     description:
-      "Replaced with the club's configured hut-leader label (default " +
-      '"Hut Leader") when the content renders. Use it for headings or ' +
-      "standalone references.",
+      "Inserts the club's configured hut-leader role label (default " +
+      '"Hut Leader"; some clubs set e.g. "Lodge Leader") when the content ' +
+      "renders. It is the role name only, never a specific person's name. " +
+      "Manage who currently holds the role under Admin > Hut Leaders. Use it " +
+      "for headings or standalone references.",
     example: "{{hut-leader}}",
     allowsLegacySingleBrace: false,
     contexts: ["page-content-body", "lodge-instructions"],
@@ -224,7 +254,8 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     token: "hut-leader-lower",
     kind: "text",
     description:
-      'Lower-cased form of the hut-leader label (default "hut leader"). ' +
+      'Lower-cased form of the configured hut-leader role label (default ' +
+      '"hut leader") — the role name, never a specific person\'s name. ' +
       "Use it mid-sentence so the configured label reads naturally in prose.",
     example: "{{hut-leader-lower}}",
     allowsLegacySingleBrace: false,
