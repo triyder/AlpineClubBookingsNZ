@@ -195,4 +195,50 @@ describe("provider-aware inbound applied-credit repair", () => {
       data: { creditAppliedCents: 0 },
     });
   });
+
+  it("is a no-op on replay: deleted-final-allocation reconciliation run twice appends no second offset row (#1887)", async () => {
+    h.linkFindMany.mockResolvedValue([{
+      metadata: { creditNoteId: "cn-1", invoiceId: "invoice-1", amountCents: 3000 },
+    }]);
+
+    // Run 1: the provider allocation was deleted (target 0) while a historical
+    // -3000 applied row remains, so the reconciler appends a single +3000
+    // offset to bring the signed ledger to provider truth (0).
+    h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+    h.memberCreditAggregate
+      .mockResolvedValueOnce({ _sum: { amountCents: 0 } })     // unstamped (null cn)
+      .mockResolvedValueOnce({ _sum: { amountCents: -3000 } }) // current ledger (pre-offset)
+      .mockResolvedValue({ _sum: { amountCents: 0 } });        // post-offset total
+
+    await repairAccountCreditAllocationBusinessState("cn-1", []);
+
+    expect(h.memberCreditCreate).toHaveBeenCalledTimes(1);
+    expect(h.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ amountCents: 3000, xeroCreditNoteId: "cn-1" }),
+    });
+
+    // Run 2 (replay): identical provider state, but the +3000 offset from run 1
+    // now nets the signed ledger to zero. currentAppliedCents equals the
+    // provider-aware applied total (0), so ledgerDeltaCents is 0 and NO new
+    // MemberCredit offset row is appended — the reconciliation is idempotent.
+    h.memberCreditCreate.mockClear();
+    h.memberCreditUpdate.mockClear();
+    h.memberCreditUpdateMany.mockClear();
+    h.allocationAggregate.mockReset();
+    h.memberCreditAggregate.mockReset();
+    h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+    h.memberCreditAggregate
+      .mockResolvedValueOnce({ _sum: { amountCents: 0 } }) // unstamped (offset is cn-1-stamped)
+      .mockResolvedValueOnce({ _sum: { amountCents: 0 } }) // current ledger already reconciled to 0
+      .mockResolvedValue({ _sum: { amountCents: 0 } });    // post total
+    // The replay now sees both the historical and reconciliation-offset rows.
+    h.memberCreditFindMany.mockResolvedValue([
+      { id: "historical-negative", amountCents: -3000, description: "Applied to booking booking-", xeroCreditNoteId: "cn-1" },
+      { id: "reconciliation-offset", amountCents: 3000, description: "Applied to booking booking-", xeroCreditNoteId: "cn-1" },
+    ]);
+
+    await repairAccountCreditAllocationBusinessState("cn-1", []);
+
+    expect(h.memberCreditCreate).not.toHaveBeenCalled();
+  });
 });

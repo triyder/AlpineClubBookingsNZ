@@ -665,9 +665,26 @@ export async function deallocateExcessAppliedCreditForBooking(
         );
       }
       if (group.targetCents > 0) {
+        // The recreate idempotency key MUST be scoped to this specific
+        // deallocation operation. Two distinct operations on the same
+        // note/invoice with the same currentCents->targetCents transition
+        // (e.g. reprice down -> re-allocate on reprice up -> reprice down
+        // again, all within Xero's ~24h idempotency-key retention) would
+        // otherwise share a key: the second op's recreate would return the
+        // first op's cached response and create nothing, under-clearing the
+        // invoice by targetCents and fencing cancellation/IB expiry until the
+        // key expires. syncOperationId is fixed when the operation row is
+        // created, so it is stable across crash-retries of the SAME operation
+        // (the property we need) yet distinct across separate operations.
+        if (!options.syncOperationId) {
+          throw new Error(
+            `Refusing to build a deallocation-recreate idempotency key without a syncOperationId for credit note ${group.xeroCreditNoteId}: an operation-scoped discriminator is required to avoid cross-operation cache collisions`
+          );
+        }
         const idempotencyKey = buildXeroIdempotencyKey(
           "credit-note", group.xeroCreditNoteId, "invoice", booking.payment.xeroInvoiceId,
-          "deallocation-recreate", group.currentCents, group.targetCents, "v1"
+          "deallocation-recreate", group.currentCents, group.targetCents,
+          "op", options.syncOperationId, "v2"
         );
         await callXeroApi(
           () => xero.accountingApi.createCreditNoteAllocation(

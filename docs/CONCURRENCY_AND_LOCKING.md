@@ -115,11 +115,14 @@ requeued checkpointed PENDING row remains fenced, as do RUNNING and any
 provider-ambiguous failure states. Manual retry only CAS-requeues to PENDING;
 the outbox claim is the sole authority that may execute provider calls.
 
-Cancellation and Internet-Banking hold expiry acquire global booking lock(1)
-first and the per-member credit-ledger lock second. While holding both, they
-query for any non-complete applied-credit deallocation before their first write.
-If one exists they defer the whole transition; a later retry computes the
-clearing amount from provider-converged slices. Legacy inbound rows missing
+Never-captured cancellation and Internet-Banking hold expiry acquire global
+booking lock(1) first and the per-member credit-ledger lock second. While
+holding both, they query for any non-complete applied-credit deallocation
+before their first write. If one exists they defer the whole transition; a
+later retry computes the clearing amount from provider-converged slices. The
+paid/captured cancel (refund) path does not take the credit-ledger lock or this
+fence: it restores credit from the payment mirror (mirror-based and capped) and
+never sizes clearing from slices. Legacy inbound rows missing
 those slices are repaired under the member-credit lock only when a unique
 positive funding lot proves provenance. Slice reduction/deletion is therefore
 working state, while the operation checkpoint/history and inactive/active

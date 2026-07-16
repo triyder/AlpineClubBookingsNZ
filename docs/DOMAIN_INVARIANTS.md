@@ -835,14 +835,18 @@ fails visibly for operator retry/manual review and never guesses an ID or amount
 The admin retry action never invokes either multi-call applied-credit handler
 inline: one atomic FAILED/PARTIAL-to-PENDING compare-and-set wins, then the
 outbox's PENDING-to-RUNNING claim remains the sole provider-call authority.
-Cancellation and Internet-Banking hold expiry derive the invoice's allocated
-credit from the precise positive `MemberCreditNoteAllocation.amountCents`
-aggregate, not the coarse historical `MemberCredit.xeroCreditNoteId` stamp,
-which cannot represent a partial clamp.
-They defer the entire transition while an `APPLIED_CREDIT_DEALLOCATION` is
-PENDING, RUNNING, FAILED, PARTIAL, or WAITING_PAYMENT. This prevents either
-transition from freezing a clearing-note amount against the pre-clamp slices;
-after the worker reaches COMPLETE, the retry reads the converged target slices.
+Never-captured cancellation and Internet-Banking hold expiry derive the
+invoice's allocated credit from the precise positive
+`MemberCreditNoteAllocation.amountCents` aggregate, not the coarse historical
+`MemberCredit.xeroCreditNoteId` stamp, which cannot represent a partial clamp.
+Only those two paths take the member lock and fence: they defer the entire
+transition while an `APPLIED_CREDIT_DEALLOCATION` is PENDING, RUNNING, FAILED,
+PARTIAL, or WAITING_PAYMENT. This prevents either transition from freezing a
+clearing-note amount against the pre-clamp slices; after the worker reaches
+COMPLETE, the retry reads the converged target slices. The paid/captured cancel
+(refund) path does not take this fence: it restores credit from the payment
+mirror (a mirror-based, capped restore) and never sizes any clearing amount
+from slices, so no slice-derived money error is constructible there.
 
 Inbound/legacy repairs that stamped `BOOKING_APPLIED.xeroCreditNoteId` without
 creating a precise slice are upgraded under the same transaction lock before

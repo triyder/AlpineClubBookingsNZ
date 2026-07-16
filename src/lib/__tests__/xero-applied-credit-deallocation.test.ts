@@ -278,7 +278,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       "cn-1",
       { allocations: [expect.objectContaining({ amount: 25 })] },
       undefined,
-      "credit-note:cn-1:invoice:inv-1:deallocation-recreate:4000:2500:v1",
+      "credit-note:cn-1:invoice:inv-1:deallocation-recreate:4000:2500:op:op-1:v2",
     );
     expect(h.allocationUpdate).toHaveBeenCalledWith({
       where: { id: "row-1" },
@@ -335,6 +335,53 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
         },
       }),
     );
+  });
+
+  it("scopes the recreate idempotency key to the operation so distinct operations never collide, while a retried operation reuses its key (#1887)", async () => {
+    h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
+
+    // Each independent deallocation operation starts from the same durable
+    // state (fresh ledger snapshot, provider at currentCents=4000, target=2500)
+    // and must nonetheless emit a distinct recreate idempotency key.
+    async function recreateKeyFor(syncOperationId: string): Promise<string> {
+      h.operationPayload.current = {
+        queueType: "APPLIED_CREDIT_DEALLOCATION",
+        bookingId: "booking-1",
+      };
+      h.currentRows.current = h.rows.map((row) => ({ ...row }));
+      h.getCreditNote
+        .mockReset()
+        .mockResolvedValueOnce(providerNote(4000))
+        .mockResolvedValueOnce(providerNote(2500, "alloc-new"));
+      h.createCreditNoteAllocation.mockClear();
+      h.createCreditNoteAllocation.mockResolvedValue(providerNote(2500));
+
+      await deallocateExcessAppliedCreditForBooking("booking-1", {
+        syncOperationId,
+      });
+
+      const call = h.createCreditNoteAllocation.mock.calls.at(-1);
+      expect(call).toBeDefined();
+      return call![4] as string;
+    }
+
+    const keyOpA = await recreateKeyFor("op-A");
+    const keyOpB = await recreateKeyFor("op-B");
+    const keyOpARetry = await recreateKeyFor("op-A");
+
+    // Two DISTINCT operations with identical note/invoice/current/target must
+    // NOT share a key — otherwise the second op's recreate returns the first
+    // op's cached Xero response and creates nothing (under-clearing).
+    expect(keyOpA).not.toEqual(keyOpB);
+    expect(keyOpA).toContain(":op:op-A:v2");
+    expect(keyOpB).toContain(":op:op-B:v2");
+    expect(keyOpA).toBe(
+      "credit-note:cn-1:invoice:inv-1:deallocation-recreate:4000:2500:op:op-A:v2",
+    );
+
+    // The SAME operation retried (crash-retry) must reuse its key so Xero's
+    // idempotency dedupes the duplicate recreate.
+    expect(keyOpARetry).toBe(keyOpA);
   });
 
   it("refuses a stale durable ledger snapshot before any provider call", async () => {
