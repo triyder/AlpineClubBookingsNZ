@@ -47,11 +47,18 @@ import {
   computeApprovalMappingOutcomes,
   getLoginHolderIdForEmail,
   loadApprovalMappingTargets,
+  loadMappingAgeTierSettings,
   verifyApprovalMappingPreviewToken,
   type MappingApplicationInput,
   type MappingTargetRecord,
   type PersonOutcome,
 } from "@/lib/member-application-mapping";
+// Pure age-tier math for the mapping path: the approval transaction reads
+// AgeTierSetting through `tx` (loadMappingAgeTierSettings) and computes tiers
+// with the settings variant, bypassing the 5-minute cache in @/lib/age-tier so
+// the written tier always equals the tokenized preview outcome (#1936).
+import { computeAgeTierWithSettings } from "@/lib/policies/age-tier";
+import { isFullAdmin } from "@/lib/access-roles";
 import {
   NOMINATION_AUTOMATIC_REMINDER_LIMIT,
   getNominationTokenExpiryDate,
@@ -1361,9 +1368,24 @@ export async function approveMemberApplication(
     const address = parseApplicationAddress(lockedApplication.applicantAddress);
     const familyMembers = parseApplicationFamilyMembers(lockedApplication.familyMembers);
     const applicantPhone = parseApplicantPhone(lockedApplication.applicantPhone);
-    const applicantAgeTier = await computeTier(
-      lockedApplication.applicantDateOfBirth.toISOString().slice(0, 10)
-    );
+    // E10 (#1936): when any person is mapped, age tiers are computed from
+    // AgeTierSetting rows read via `tx` (bypassing the 5-minute process cache)
+    // so the WRITTEN tier always equals the recomputed, tokenized preview
+    // outcome. The all-CREATE path keeps the existing cached computeTier
+    // behavior, byte-identical to today.
+    const mappingAgeTierSettings = hasMappings
+      ? await loadMappingAgeTierSettings(tx)
+      : null;
+    const mappingSeasonStart = getSeasonStartDate(seasonYear);
+    const applicantAgeTier = mappingAgeTierSettings
+      ? computeAgeTierWithSettings(
+          lockedApplication.applicantDateOfBirth,
+          mappingSeasonStart,
+          mappingAgeTierSettings
+        )
+      : await computeTier(
+          lockedApplication.applicantDateOfBirth.toISOString().slice(0, 10)
+        );
     // The application form captures the booking-gate profile details, so
     // approval counts as initial confirmation for the applicant and dependents.
     const profileConfirmedAt = new Date();
@@ -1403,12 +1425,29 @@ export async function approveMemberApplication(
         getLoginHolderIdForEmail(tx, lockedApplication.applicantEmail),
       ]);
       mappingTargetsById = targetsById;
+      // #1026 gate: the PUT actor's access roles are re-read INSIDE the
+      // transaction (never trusted from the preview or the JWT). A preview
+      // minted by a Full Admin and approved by a scoped admin recomputes with
+      // the scoped actor, so the outcome payload diverges and the token check
+      // below 409s — fail closed. A missing/role-less actor counts as not
+      // Full Admin.
+      const actingAdmin = await tx.member.findUnique({
+        where: { id: adminMemberId },
+        select: {
+          id: true,
+          canLogin: true,
+          accessRoles: { select: { role: true, roleDefinitionId: true } },
+        },
+      });
+      const actorIsFullAdmin = actingAdmin ? isFullAdmin(actingAdmin) : false;
       const { persons, blockingErrors } = await computeApprovalMappingOutcomes({
         application: applicationInput,
         decisions,
         targetsById,
         loginHolderId,
         seasonYear,
+        actor: { id: adminMemberId, isFullAdmin: actorIsFullAdmin },
+        ageTierSettings: mappingAgeTierSettings ?? [],
       });
       if (
         !verifyApprovalMappingPreviewToken(
@@ -1621,7 +1660,13 @@ export async function approveMemberApplication(
     for (let index = 0; index < familyMembers.length; index += 1) {
       const familyMember = familyMembers[index];
       const familyDecision = decisions[index + 1].decision;
-      const dependentAgeTier = await computeTier(familyMember.dateOfBirth);
+      const dependentAgeTier = mappingAgeTierSettings
+        ? computeAgeTierWithSettings(
+            new Date(familyMember.dateOfBirth),
+            mappingSeasonStart,
+            mappingAgeTierSettings
+          )
+        : await computeTier(familyMember.dateOfBirth);
 
       if (familyDecision.mode === "MAP") {
         const outcome = outcomeByRef.get(`family:${index}`);

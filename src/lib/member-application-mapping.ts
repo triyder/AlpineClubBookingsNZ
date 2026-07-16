@@ -1,8 +1,18 @@
 import "server-only";
 
 import { createHmac, timingSafeEqual } from "crypto";
-import type { AgeTier, Prisma } from "@prisma/client";
-import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
+import { ApplicationStatus, type AgeTier, type Prisma } from "@prisma/client";
+// Deliberately the pure policies module, NOT "@/lib/age-tier": the outcome
+// computation must read AgeTierSetting through the caller's database client
+// (preview: prisma; approval: the transaction) and never through the 5-minute
+// process cache, so preview and in-tx recompute always agree (#1936 minor).
+import {
+  computeAgeTierWithSettings,
+  getSeasonStartDate,
+  normalizeAgeTierSettings,
+  type AgeTierSettingData,
+} from "@/lib/policies/age-tier";
+import { hasPrivilegedAccess } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 import {
   resolvePersonDecisions,
@@ -41,6 +51,28 @@ export {
 // ---------------------------------------------------------------------------
 
 const PREVIEW_TOKEN_VERSION = 1;
+
+/**
+ * #1026 parity (E10 review blocker): the acting admin whose permissions gate a
+ * privileged-target email overwrite. `isFullAdmin` must be resolved from
+ * DB-verified access roles (requireAdmin session roles, or an in-transaction
+ * member read) — never from client input.
+ */
+export type MappingActorContext = {
+  id: string;
+  isFullAdmin: boolean;
+};
+
+/**
+ * Mirrors the direct member-edit guard copy (admin-member-detail-service.ts,
+ * issue #1026): a scoped admin must not change the login email of a member who
+ * holds a privileged access role — email change + a public forgot-password
+ * request hands the account (and its roles) to the new address. The applicant
+ * MAP path overwrites the target email with the publicly-submitted application
+ * email, so it takes the same Full-Admin gate.
+ */
+export const PRIVILEGED_MAPPING_EMAIL_GUARD_MESSAGE =
+  "Only a Full Admin can change a privileged member's email; mapping this applicant would overwrite this member's login email with the application email.";
 
 export type FieldDiff = {
   field: string;
@@ -166,6 +198,9 @@ export type MappingTargetRecord = {
   familyGroupMemberships: Array<{ familyGroupId: string }>;
   subscriptions: Array<{ id: string }>;
   seasonalMembershipAssignments: Array<{ id: string }>;
+  // Access-role assignment rows (role token or definition id), feeding the
+  // #1026 privileged-email gate via hasPrivilegedAccess (canLogin-aware).
+  accessRoles: Array<{ role: string | null; roleDefinitionId: string | null }>;
 };
 
 export async function loadApprovalMappingTargets(
@@ -213,6 +248,7 @@ export async function loadApprovalMappingTargets(
       onboardingConfirmedAt: true,
       xeroContactId: true,
       updatedAt: true,
+      accessRoles: { select: { role: true, roleDefinitionId: true } },
       familyGroupMemberships: { select: { familyGroupId: true } },
       subscriptions: { where: { seasonYear }, select: { id: true }, take: 1 },
       seasonalMembershipAssignments: {
@@ -223,6 +259,34 @@ export async function loadApprovalMappingTargets(
     },
   })) as unknown as MappingTargetRecord[];
   return new Map(rows.map((row) => [row.id, row]));
+}
+
+/**
+ * Age-tier boundaries read through the caller's database client — the preview
+ * uses the request-time client and the approval transaction uses `tx` — so the
+ * outcome computation always sees committed settings and never the 5-minute
+ * process cache in `@/lib/age-tier`. Falls back to the configured defaults
+ * when the table is empty or unreadable (mirrors getAgeTierSettings).
+ */
+export async function loadMappingAgeTierSettings(
+  db: MappingReadClient,
+): Promise<AgeTierSettingData[]> {
+  try {
+    const rows = await db.ageTierSetting.findMany({
+      orderBy: { sortOrder: "asc" },
+      select: {
+        tier: true,
+        minAge: true,
+        maxAge: true,
+        label: true,
+        sortOrder: true,
+      },
+    });
+    return normalizeAgeTierSettings(rows);
+  } catch {
+    // Table unavailable — normalizeAgeTierSettings([]) is the defaults.
+    return normalizeAgeTierSettings([]);
+  }
 }
 
 export async function getLoginHolderIdForEmail(
@@ -285,9 +349,25 @@ export async function computeApprovalMappingOutcomes(params: {
   targetsById: Map<string, MappingTargetRecord>;
   loginHolderId: string | null;
   seasonYear: number;
+  // The acting admin (#1026 gate). Preview passes the requireAdmin session
+  // actor; the approval transaction passes the PUT actor re-read in-tx. The
+  // actor-dependent errors are part of the tokenized outcome, so a preview
+  // minted by a Full Admin cannot be replayed by a scoped admin: the recompute
+  // diverges and the approval 409s on token drift (fail closed).
+  actor: MappingActorContext;
+  // Age-tier boundaries loaded via loadMappingAgeTierSettings from the same
+  // client the targets were read with (never the cached computeAgeTier).
+  ageTierSettings: AgeTierSettingData[];
 }): Promise<{ persons: PersonOutcome[]; blockingErrors: string[] }> {
-  const { application, decisions, targetsById, loginHolderId, seasonYear } =
-    params;
+  const {
+    application,
+    decisions,
+    targetsById,
+    loginHolderId,
+    seasonYear,
+    actor,
+    ageTierSettings,
+  } = params;
   const seasonStart = getSeasonStartDate(seasonYear);
   const hasFamily = application.familyMembers.length > 0;
   const nominatorIds = new Set(
@@ -298,9 +378,10 @@ export async function computeApprovalMappingOutcomes(params: {
 
   const applicantPhone = parseApplicantPhone(application.applicantPhone);
   const applicantAddress = parseApplicationAddress(application.applicantAddress);
-  const applicantAgeTier = await computeAgeTier(
+  const applicantAgeTier = computeAgeTierWithSettings(
     application.applicantDateOfBirth,
     seasonStart,
+    ageTierSettings,
   );
 
   const persons: PersonOutcome[] = [];
@@ -328,6 +409,7 @@ export async function computeApprovalMappingOutcomes(params: {
           loginHolderId,
           nominatorIds,
           hasFamily,
+          actor,
           incoming: {
             firstName: application.applicantFirstName,
             lastName: application.applicantLastName,
@@ -352,7 +434,11 @@ export async function computeApprovalMappingOutcomes(params: {
     }
     const target = targetsById.get(decision.memberId);
     const familyAgeTier = familyMember
-      ? await computeAgeTier(new Date(familyMember.dateOfBirth), seasonStart)
+      ? computeAgeTierWithSettings(
+          new Date(familyMember.dateOfBirth),
+          seasonStart,
+          ageTierSettings,
+        )
       : "ADULT";
     persons.push(
       buildFamilyMapOutcome({
@@ -440,10 +526,19 @@ function buildApplicantMapOutcome(args: {
   loginHolderId: string | null;
   nominatorIds: Set<string>;
   hasFamily: boolean;
+  actor: MappingActorContext;
   incoming: ApplicantIncoming;
 }): PersonOutcome {
-  const { ref, label, target, loginHolderId, nominatorIds, hasFamily, incoming } =
-    args;
+  const {
+    ref,
+    label,
+    target,
+    loginHolderId,
+    nominatorIds,
+    hasFamily,
+    actor,
+    incoming,
+  } = args;
   if (!target) {
     return {
       ...baseCreateOutcome(ref, label, [
@@ -475,6 +570,25 @@ function buildApplicantMapOutcome(args: {
     errors.push(
       "This member already belongs to a family group and cannot join the new application family group.",
     );
+  }
+  // #1026 parity (review blocker): the keep-auth applicant MAP overwrites the
+  // target's login email with the publicly-submitted application email. When
+  // the target is login-capable and holds a privileged access role, only a
+  // Full Admin may do that (email change + forgot-password = account
+  // takeover). Editing your own record stays allowed, mirroring the direct
+  // member-edit guard. hasPrivilegedAccess is canLogin-aware, so a non-login
+  // target (the promotion path) never trips this.
+  const emailWillChange =
+    (norm(incoming.email)?.toLowerCase() ?? null) !==
+    (norm(target.email)?.toLowerCase() ?? null);
+  if (
+    emailWillChange &&
+    target.canLogin &&
+    hasPrivilegedAccess(target) &&
+    !actor.isFullAdmin &&
+    actor.id !== target.id
+  ) {
+    errors.push(PRIVILEGED_MAPPING_EMAIL_GUARD_MESSAGE);
   }
 
   const fieldDiffs = buildApplicantDiffs(target, incoming);
@@ -828,6 +942,8 @@ export async function buildApprovalMappingPreview(params: {
   applicationId: string;
   personDecisions?: PersonDecisions | null;
   seasonYear: number;
+  // The requireAdmin-verified acting admin (#1026 gate).
+  actor: MappingActorContext;
   db?: MappingReadClient;
 }): Promise<JsonRouteResult> {
   const db = params.db ?? prisma;
@@ -867,9 +983,10 @@ export async function buildApprovalMappingPreview(params: {
     nominator2Id: application.nominator2Id,
   };
 
-  const [targetsById, loginHolderId] = await Promise.all([
+  const [targetsById, loginHolderId, ageTierSettings] = await Promise.all([
     loadApprovalMappingTargets(db, resolution.mapTargetIds, params.seasonYear),
     getLoginHolderIdForEmail(db, application.applicantEmail),
+    loadMappingAgeTierSettings(db),
   ]);
 
   const { persons, blockingErrors } = await computeApprovalMappingOutcomes({
@@ -878,6 +995,8 @@ export async function buildApprovalMappingPreview(params: {
     targetsById,
     loginHolderId,
     seasonYear: params.seasonYear,
+    actor: params.actor,
+    ageTierSettings,
   });
 
   const previewToken = buildApprovalMappingPreviewToken({

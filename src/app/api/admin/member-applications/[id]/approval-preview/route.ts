@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { buildApprovalMappingPreview } from "@/lib/member-application-mapping";
 import { personDecisionsSchema } from "@/lib/member-application-decisions";
+import { isFullAdmin } from "@/lib/access-roles";
 import { requireAdmin } from "@/lib/session-guards";
 import { getSeasonYear } from "@/lib/utils";
 import logger from "@/lib/logger";
@@ -60,6 +61,14 @@ export async function POST(
       applicationId: parsedParams.data.id,
       personDecisions: parsed.data.personDecisions ?? null,
       seasonYear: getSeasonYear(),
+      // #1026 gate: DB-verified session roles (requireAdmin re-reads them), so
+      // the privileged-email block can never be dodged with a stale JWT claim.
+      actor: {
+        id: guard.session.user.id,
+        isFullAdmin: isFullAdmin({
+          accessRoles: guard.session.user.accessRoles,
+        }),
+      },
     });
     return NextResponse.json(result.body, result.init);
   } catch (err) {
