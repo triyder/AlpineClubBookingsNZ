@@ -877,6 +877,23 @@ after this feature deploys. Before flipping the mode, re-base any existing
 left in place becomes an uninvoiceable `PER_FAMILY_FEE_IN_INDIVIDUAL_MODE`
 exception under individual billing.
 
+Each annual fee is itemised into one or more **components** (E6, #1932), edited
+under its fee row on `/admin/fee-configuration`. Every invoiceable fee has at
+least one component and the components' integer-cent amounts must sum exactly to
+the fee total (an amount edit is rejected unless its components are reconciled in
+the same request); each component becomes its own GST-inclusive Xero invoice
+line, optionally coded to its own account/item, with its own proration flag. A
+`NO_INVOICE` fee has no components. Existing installs are backfilled to a single
+default component, so day-one invoices are unchanged.
+
+A member in more than one family is billed for a `PER_FAMILY` fee via an
+admin-chosen **billing family** (`Member.billingFamilyGroupId`), set from the
+member detail family card or the fee-config family-billing panel (audited; greyed
+in `BILL_MEMBERS_INDIVIDUALLY` mode). An unset selection stays an
+`AMBIGUOUS_FAMILY` exception; a stale one is an `INVALID_BILLING_FAMILY_SELECTION`
+exception. Removing the member from a family clears the selection in the same
+transaction, so it can never cause silent misbilling.
+
 Missing seasonal
 type, fee schedule, family, or active same-family billing recipient becomes a
 visible exception and never produces an invoice. `NO_INVOICE` produces a

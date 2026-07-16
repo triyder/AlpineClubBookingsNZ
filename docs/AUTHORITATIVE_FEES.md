@@ -130,6 +130,67 @@ all, so it changes the operator and subscription rules above.
   no invoice, and the schedule's basis must be changed to per-member or
   no-invoice before it can be invoiced.
 
+## Annual fee components (multi-line invoices, E6, #1932)
+
+An annual membership fee is broken into one or more **components** — e.g. base
+membership + work party fee + FMC subscription — each rendered as its own line on
+the Xero invoice, optionally coded to its own GL account/item, each with its own
+choice of whether it is prorated for a mid-year joiner.
+
+- **Lifecycle invariant.** A `NO_INVOICE` fee is a zero total with **no**
+  components; every invoiceable fee has **≥1 component at all times** whose
+  `amountCents` sum **exactly** to the fee total (validated server-side in the one
+  transaction that writes the fee). The fee total stays authoritative, so every
+  existing preview/consumer is unchanged. Creating a fee auto-creates the default
+  component (label "Annual membership fee", prorate true) or copies a same-amount
+  predecessor's components so a club's structure carries forward across
+  effective-dated rows. Editing a fee's amount (or switching its no-invoice
+  status) is **rejected** unless reconciled components are supplied in the same
+  request. The invoice builder therefore never meets a fee with zero components.
+- **Proration.** The fee-level `prorationRule` decides the covered month count
+  (unchanged). Per component, `charged = prorate ? floor((amount × months + 6) /
+  12) : amount`, and the charge total is **Σ components**. For a **single**
+  component (every fee immediately after the day-one backfill) this equals the
+  old fee-level calculation byte-for-byte. For a **multi-component prorated** fee
+  the sum of per-line half-up roundings can differ from a single fee-level
+  rounding by up to **(n−1) cents** — this is intended: the charge total is
+  authoritative as Σ components so the invoice (one line per component) always
+  foots to the charge amount.
+- **Immutability & adoption.** Confirmation freezes one
+  `MembershipSubscriptionChargeComponent` per line (the immutable-charge invariant
+  extends to these rows). The invoice builder emits one line per component in
+  stable order; the adoption guard compares the full line array (count + per-line
+  amount/account/item/OUTPUT2 tax) plus total, reference, contact, due interval,
+  type, line-amount type and status — line description is not compared. A legacy
+  charge minted before the backfill reproduces the identical historical single
+  line via the same derivation the backfill uses.
+- **Day-one backfill** (owner-approved additive derivation): one default
+  component per existing invoiceable fee, and one verbatim snapshot component per
+  existing invoiceable charge whose description is rebuilt from the exact
+  historical template including `(1 month)` vs `(N months)` pluralization. No
+  existing charge, invoice, or amount is mutated.
+
+## Per-member billing family (E6, #1932)
+
+A member can belong to more than one family group. In
+`BILL_FAMILY_VIA_BILLING_MEMBER` mode a `PER_FAMILY` fee for such a member is
+resolved by an admin-chosen **billing family** (`Member.billingFamilyGroupId`),
+set from the member detail family card or the fee-config family-billing panel
+(audited, finance:edit; greyed with a note in `BILL_MEMBERS_INDIVIDUALLY` mode
+where it is ignored):
+
+- multi-family member, selection set and still one of their groups → bill that
+  family (through the same recipient checks as an unambiguous family);
+- selection set but no longer one of their groups → `INVALID_BILLING_FAMILY_SELECTION`;
+- selection unset → `AMBIGUOUS_FAMILY` (unchanged);
+- single-group member → the field is ignored.
+
+Removing a member from a family **NULLs the selection in the same transaction**
+across all six removal paths (group edit/delete, family removal request, member
+archive, membership cancellation, deletion request, bulk deactivate). Safety
+property: any missed path degrades to a visible `INVALID_BILLING_FAMILY_SELECTION`
+at the next billing preview — never silent misbilling.
+
 ## Joining-fee re-key and day-one fidelity (E5, #1931)
 
 The migration copies every effective `EntranceFee` window verbatim into

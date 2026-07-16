@@ -31,8 +31,18 @@ Future reviews and issues should cite this file when proposing changes.
 - A confirmed `MembershipSubscriptionCharge` is an immutable snapshot: fee and
   membership type, billing basis, annual/charged cents, proration, dates/months,
   covered subscriptions, family, recipient name/email, due days, frozen
-  `subscriptionIncome` account/item identifiers, and reference never change.
-  Only delivery/status/Xero metadata may advance.
+  `subscriptionIncome` account/item identifiers, reference, **and its frozen
+  `MembershipSubscriptionChargeComponent` rows** (one per Xero invoice line —
+  label, description, annual/charged cents, prorated flag, account/item, order)
+  never change. Only delivery/status/Xero metadata may advance.
+- An annual fee has ≥1 `MembershipAnnualFeeComponent` at all times unless it is
+  `NO_INVOICE` (zero total, no components); the components' `amountCents` sum
+  exactly to the fee total (validated in the one transaction that writes the
+  fee), a charge's `chargedAmountCents` is Σ its components, and the invoice
+  carries one line per component. A single-component fee is byte-identical to the
+  pre-component single-line behaviour; a multi-component prorated fee may diverge
+  by up to (n−1) cents by design because the charge total is authoritative as Σ
+  components.
 - Every `MemberSubscription` can be covered by at most one charge. A
   season-scoped advisory lock plus the unique coverage constraint makes annual
   confirmation, approval replay, and concurrent operators idempotent.
@@ -53,6 +63,15 @@ Future reviews and issues should cite this file when proposing changes.
   family-resolution branches (including `MISSING_FAMILY` / `AMBIGUOUS_FAMILY` /
   `MISSING_FAMILY_RECIPIENT` / `INVALID_FAMILY_RECIPIENT`) unreachable in
   individual mode by construction.
+- A member in more than one family is billed for a `PER_FAMILY` fee only via
+  their admin-chosen `Member.billingFamilyGroupId` (consulted solely in
+  `BILL_FAMILY_VIA_BILLING_MEMBER` mode, through the same recipient checks as an
+  unambiguous family): valid selection bills that family, a stale selection
+  raises `INVALID_BILLING_FAMILY_SELECTION`, and an unset selection raises
+  `AMBIGUOUS_FAMILY`. The selection is NULLed in the same transaction as any
+  removal of the member from that family across all six removal paths, so a stale
+  pointer can only ever degrade to that visible exception — never silent
+  misbilling.
 - One family/membership-type/membership-year tuple can have at most one durable
   charge. A later family member produces a visible exception; neither coverage
   mutation nor a second invoice is allowed.
