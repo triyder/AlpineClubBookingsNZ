@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -461,7 +462,7 @@ function EntranceFeeTable({ isEditingMappings, items, codes, setCodes }: { isEdi
       <p className="text-xs text-muted-foreground">
         Map each joining fee category to a Xero Item. Joining fee <strong>amounts</strong> are
         not configured here — they are managed per membership type on the{" "}
-        <a href="/admin/fee-configuration" className="underline underline-offset-2">fee configuration</a> page.
+        <Link href="/admin/fee-configuration" className="underline underline-offset-2">fee configuration</Link> page.
       </p>
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">
