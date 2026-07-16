@@ -742,6 +742,9 @@ export async function modifyBookingDates({
             stayStart: newCheckIn,
             stayEnd: newCheckOut,
             priceCents: priceBreakdown.guests[i].priceCents,
+            // A date change re-bases every guest at current rates (#1930, E4):
+            // overwrite the rate-type snapshot with the newly priced total.
+            rateMembershipTypeId: priceBreakdown.guests[i].rateMembershipTypeId,
           },
         });
         await tx.bookingGuestNight.deleteMany({

@@ -471,6 +471,9 @@ export async function POST(
             stayStart: booking.checkIn,
             stayEnd: booking.checkOut,
             priceCents: priced.priceCents,
+            // Persist the rate-type snapshot at creation (#1930, E4) so a later
+            // Xero line picks the matching item code.
+            rateMembershipTypeId: priced.rateMembershipTypeId,
             nights: {
               create: (priced.nightDates ?? []).map((stayDate, k) => ({
                 stayDate,

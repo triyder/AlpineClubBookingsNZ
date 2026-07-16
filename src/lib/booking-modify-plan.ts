@@ -1269,6 +1269,9 @@ export async function applyGuestChanges(
           stayStart: entry.stayStart,
           stayEnd: entry.stayEnd,
           priceCents: entry.priceCents,
+          // Persist the resolved rate-type snapshot on the added guest (#1930,
+          // E4).
+          rateMembershipTypeId: g.rateMembershipTypeId,
         },
       });
       const envelope = await syncGuestNights(
@@ -1317,6 +1320,10 @@ export async function applyGuestChanges(
         stayStart: g.stayStart ?? newCheckIn,
         stayEnd: g.stayEnd ?? newCheckOut,
         priceCents: bg.priceCents,
+        // Persist the resolved rate-type snapshot on the added guest (#1930,
+        // E4).
+        rateMembershipTypeId: (bg as { rateMembershipTypeId?: string | null })
+          .rateMembershipTypeId,
       },
     });
     const envelope = await syncGuestNights(
@@ -1358,6 +1365,13 @@ export async function applyGuestChanges(
         stayStart: envelope.stayStart,
         stayEnd: envelope.stayEnd,
         priceCents: priceBreakdown.guests[i].priceCents,
+        // Overwrite the rate-type snapshot on the full-reprice path (#1930,
+        // E4). The in-progress-edit path builds guests without a snapshot, so
+        // this is undefined there and Prisma leaves the stored snapshot
+        // untouched — matching D5's "locked nights keep their stale snapshot".
+        rateMembershipTypeId: (
+          priceBreakdown.guests[i] as { rateMembershipTypeId?: string | null }
+        ).rateMembershipTypeId,
       },
     });
   }

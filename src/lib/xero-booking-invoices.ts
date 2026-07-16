@@ -180,10 +180,11 @@ export function buildInvoiceLineItems(
     lineItem: LineItem,
     guest: { ageTier: string; isMember: boolean; rateMembershipTypeId?: string | null },
   ) => {
-    // Resolve item code: prefer the per-guest membership-type resolver, fall
-    // back to the legacy flat code.
+    // Resolve item code: prefer the per-guest membership-type resolver (which
+    // itself falls back to the legacy flat hutFeeItem), then the single
+    // hutFeesIncome item code param, then none (#1930, E4).
     const guestItemCode = itemCodeResolver
-      ? resolveHutFeeItemCode(itemCodeResolver, guest, seasonType)
+      ? (resolveHutFeeItemCode(itemCodeResolver, guest, seasonType) ?? itemCode ?? null)
       : (itemCode ?? null);
 
     // If itemCode is set, Xero auto-fills the account from the Item's config.
@@ -415,7 +416,10 @@ export async function createXeroInvoiceForBooking(
     incomeCode,
     hutFeeMapping.itemCode,
     hutFeeMapping.codeExplicitlyConfigured,
-    hutFeeItemCodeMap.size > 0 ? hutFeeItemCodeMap : undefined,
+    // Always pass the resolver: it internally falls back to the legacy flat
+    // hutFeeItem, then buildInvoiceLineItems falls to hutFeeMapping.itemCode
+    // (#1930, E4). Byte-identical to the pre-refactor legacy-only path.
+    hutFeeItemCodeMap,
     bookingSeasonType,
   );
 
@@ -426,7 +430,7 @@ export async function createXeroInvoiceForBooking(
     const firstGuest = booking.guests[0];
 
     // Fall back to hut-fee item code for legacy / non-promo discounts.
-    const fallbackItemCode = (hutFeeItemCodeMap.size > 0 && bookingSeasonType && firstGuest)
+    const fallbackItemCode = (bookingSeasonType && firstGuest)
       ? (resolveHutFeeItemCode(hutFeeItemCodeMap, firstGuest, bookingSeasonType) ?? hutFeeMapping.itemCode)
       : hutFeeMapping.itemCode;
 
@@ -909,7 +913,7 @@ export async function updateXeroBookingInvoiceForBooking(
     incomeCode,
     hutFeeMapping.itemCode,
     hutFeeMapping.codeExplicitlyConfigured,
-    hutFeeItemCodeMap.size > 0 ? hutFeeItemCodeMap : undefined,
+    hutFeeItemCodeMap,
     bookingSeasonType,
   );
 

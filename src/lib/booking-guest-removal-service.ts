@@ -519,7 +519,12 @@ export async function removeBookingGuestInTransaction({
     remainingGuests.map((guest, index) =>
       tx.bookingGuest.update({
         where: { id: guest.id },
-        data: { priceCents: priceBreakdown.guests[index].priceCents },
+        // Overwrite the rate-type snapshot alongside the repriced total
+        // (#1930, E4).
+        data: {
+          priceCents: priceBreakdown.guests[index].priceCents,
+          rateMembershipTypeId: priceBreakdown.guests[index].rateMembershipTypeId,
+        },
       })
     )
   );

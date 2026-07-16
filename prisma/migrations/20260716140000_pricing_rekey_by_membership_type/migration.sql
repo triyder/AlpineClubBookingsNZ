@@ -98,8 +98,8 @@ SELECT
   mt."id",
   sr."ageTier",
   sr."pricePerNightCents",
-  CURRENT_TIMESTAMP,
-  CURRENT_TIMESTAMP
+  '2026-07-16 00:00:00',
+  '2026-07-16 00:00:00'
 FROM "SeasonRate" sr
 CROSS JOIN "MembershipType" mt
 WHERE sr."isMember" = true
@@ -114,8 +114,8 @@ SELECT
   mt."id",
   sr."ageTier",
   sr."pricePerNightCents",
-  CURRENT_TIMESTAMP,
-  CURRENT_TIMESTAMP
+  '2026-07-16 00:00:00',
+  '2026-07-16 00:00:00'
 FROM "SeasonRate" sr
 CROSS JOIN "MembershipType" mt
 WHERE sr."isMember" = false
@@ -135,8 +135,8 @@ SELECT
   NULL,
   mt."id",
   x."itemCode",
-  CURRENT_TIMESTAMP,
-  CURRENT_TIMESTAMP
+  '2026-07-16 00:00:00',
+  '2026-07-16 00:00:00'
 FROM "XeroItemCodeMapping" x
 CROSS JOIN "MembershipType" mt
 WHERE x."category" = 'HUT_FEE'
@@ -154,8 +154,8 @@ SELECT
   NULL,
   mt."id",
   x."itemCode",
-  CURRENT_TIMESTAMP,
-  CURRENT_TIMESTAMP
+  '2026-07-16 00:00:00',
+  '2026-07-16 00:00:00'
 FROM "XeroItemCodeMapping" x
 CROSS JOIN "MembershipType" mt
 WHERE x."category" = 'HUT_FEE'

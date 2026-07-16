@@ -458,21 +458,29 @@ export async function resolveGuestRateMembershipTypes<
       typeIdByKey.get(NON_MEMBER_MEMBERSHIP_TYPE_KEY),
       NON_MEMBER_MEMBERSHIP_TYPE_KEY,
     );
+  // Member-rate fallback for a member whose specific type cannot be resolved
+  // (no memberId — e.g. an orphaned guest whose member row was SetNull'd — or
+  // no policy row). Mirrors both the old engine (any isMember guest priced at
+  // the member rate) and the Xero NULL-snapshot fallback (isMember -> FULL), so
+  // day-one resolution stays byte-identical.
+  const fullTypeId = () => requireTypeId(typeIdByKey.get("FULL"), "FULL");
 
   return params.guests.map((guest) => {
-    if (!guest.isMember || !guest.memberId) {
+    if (!guest.isMember) {
+      // True non-member: the only class the group discount may substitute.
       return {
         ...guest,
         rateMembershipTypeId: nonMemberTypeId(),
         rateSource: "NON_MEMBER_DEFAULT" as const,
       };
     }
-    const policy = policies.get(guest.memberId);
+    const policy = guest.memberId ? policies.get(guest.memberId) : undefined;
     if (!policy) {
+      // A member with no resolvable type prices at the member (FULL) rate.
       return {
         ...guest,
-        rateMembershipTypeId: nonMemberTypeId(),
-        rateSource: "NON_MEMBER_DEFAULT" as const,
+        rateMembershipTypeId: fullTypeId(),
+        rateSource: "OWN_TYPE" as const,
       };
     }
     if (policy.bookingBehavior === "MEMBER_RATE") {
