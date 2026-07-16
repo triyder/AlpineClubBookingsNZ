@@ -62,8 +62,9 @@ an admin lowers the lodge capacity for those nights below what is booked, the
 deadline (no charge). Only an admin capacity cut can reclaim the bed; competing
 member bookings still cannot. The admin "Confirm pending guests" override
 (`/api/admin/bookings/[id]/confirm-pending-guests`) now runs the same
-`pg_advisory_xact_lock(1)` re-read + capacity re-check before flipping a booking
-to a capacity-holding status on its zero-dollar and charge-saved-card branches,
+global `pg_advisory_xact_lock(1)` then per-lodge capacity-lock re-read and
+capacity re-check before flipping a booking to a capacity-holding status on its
+zero-dollar and charge-saved-card branches,
 returning 409 unless an explicit overbook is requested (#1366). Its
 charge-saved-card branch follows the cron's claim-first shape (#1418): claim
 `PENDING -> CONFIRMED` (hold cleared) under the lock, charge outside it, then

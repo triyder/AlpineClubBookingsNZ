@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   recordBookingEvent: vi.fn(),
   sendBookingCancelledEmail: vi.fn(),
   restoreCreditFromBooking: vi.fn(),
+  lockMemberCreditLedger: vi.fn(),
   revokePaymentLinksForBooking: vi.fn(),
   processWaitlistForDates: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 vi.mock("@/lib/member-credit", () => ({
+  lockMemberCreditLedger: mocks.lockMemberCreditLedger,
   restoreCreditFromBooking: mocks.restoreCreditFromBooking,
 }));
 
@@ -160,6 +162,7 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
     // #1547: default = no applied credit on the released booking.
     mocks.restoreCreditFromBooking.mockResolvedValue(0);
+    mocks.lockMemberCreditLedger.mockResolvedValue(undefined);
     // #1597: default = no credit allocated to the invoice AS A XERO CREDIT NOTE,
     // so the clearing note is the full finalPrice.
     mocks.txMemberCreditAggregate.mockResolvedValue({
@@ -399,6 +402,14 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
     expect(
       mocks.repairLegacyAppliedCreditNoteAllocationsForBooking,
     ).toHaveBeenCalledWith("booking_ib_1", "inv_ib_1", txRef.current);
+    expect(mocks.lockMemberCreditLedger).toHaveBeenCalledWith(
+      "mem_1",
+      txRef.current,
+    );
+    expect(mocks.lockMemberCreditLedger.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.repairLegacyAppliedCreditNoteAllocationsForBooking.mock
+        .invocationCallOrder[0],
+    );
   });
 
   it("conserves on hold-expiry with #1620-allocated applied credit (reduced clearing + 100% restore)", async () => {

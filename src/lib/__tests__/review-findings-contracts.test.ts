@@ -549,6 +549,43 @@ describe("review finding source/schema contracts", () => {
     ).toContain("lockMemberCreditLedger(");
     const memberCredit = readRepoFile("src/lib/member-credit.ts");
     expect(memberCredit).toContain('"member-credit-ledger"');
+
+    // (6) #1887 integrates with #1881's later lock topology: cancel and IB
+    // expiry take global booking/money first, then the member-ledger lock, and
+    // only then inspect/repair precise Xero allocation state.
+    const cancelSource = stripComments(
+      readRepoFile("src/lib/booking-cancel.ts")
+    );
+    const neverCapturedCancel = sliceFrom(
+      cancelSource,
+      "if (!paidRefundPathEligible)",
+      "if (!claim.claimed)"
+    );
+    const cancelGlobal = neverCapturedCancel.indexOf(GLOBAL);
+    const cancelMember = neverCapturedCancel.indexOf("lockMemberCreditLedger(");
+    const cancelDeallocation = neverCapturedCancel.indexOf(
+      "findUnconvergedAppliedCreditDeallocation("
+    );
+    expect(cancelGlobal).toBeGreaterThanOrEqual(0);
+    expect(cancelMember).toBeGreaterThan(cancelGlobal);
+    expect(cancelDeallocation).toBeGreaterThan(cancelMember);
+
+    const expirySource = stripComments(
+      readRepoFile("src/lib/internet-banking-payment-cron.ts")
+    );
+    const releaseHold = sliceFrom(
+      expirySource,
+      "function releaseOneHold",
+      "export async function releaseExpiredInternetBankingHolds"
+    );
+    const expiryGlobal = releaseHold.indexOf(GLOBAL);
+    const expiryMember = releaseHold.indexOf("lockMemberCreditLedger(");
+    const expiryDeallocation = releaseHold.indexOf(
+      "findUnconvergedAppliedCreditDeallocation("
+    );
+    expect(expiryGlobal).toBeGreaterThanOrEqual(0);
+    expect(expiryMember).toBeGreaterThan(expiryGlobal);
+    expect(expiryDeallocation).toBeGreaterThan(expiryMember);
   });
 
   it("restores a failed second-stage zero-dollar waitlist claim to a retryable state (#1881 F11)", () => {

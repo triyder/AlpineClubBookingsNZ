@@ -641,6 +641,7 @@ describe("member-credit helpers", () => {
     function makeTx(appliedNetCents: number) {
       return {
         $executeRaw: vi.fn().mockResolvedValue(undefined),
+        xeroSyncOperation: { findMany: vi.fn().mockResolvedValue([]) },
         booking: { findUnique: vi.fn().mockResolvedValue(null) },
         memberCreditNoteAllocation: {
           aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }),
@@ -706,6 +707,31 @@ describe("member-credit helpers", () => {
         requestPayload: { queueType: "APPLIED_CREDIT_DEALLOCATION", bookingId: "booking-ib" },
         store: tx,
       }));
+    });
+
+    it("fences a competing clamp before its first ledger mutation", async () => {
+      const tx = makeTx(-4000);
+      tx.booking.findUnique.mockResolvedValue({
+        payment: { id: "payment-1", source: "INTERNET_BANKING", xeroInvoiceId: "inv-1" },
+      });
+      tx.xeroSyncOperation.findMany.mockResolvedValue([{
+        id: "dealloc-pending",
+        status: "PENDING",
+        requestPayload: { queueType: "APPLIED_CREDIT_DEALLOCATION" },
+      }]);
+      const { clampAppliedCreditToBookingPrice } = await import("@/lib/member-credit");
+
+      await expect(
+        clampAppliedCreditToBookingPrice(
+          { memberId: "member-1", bookingId: "booking-ib", newFinalPriceCents: 3000 },
+          tx as any,
+        ),
+      ).rejects.toThrow("dealloc-pending is PENDING");
+      expect(tx.memberCredit.create).not.toHaveBeenCalled();
+      expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
+      expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.xeroSyncOperation.findMany.mock.invocationCallOrder[0],
+      );
     });
 
     it("is a no-op when applied credit still fits the new price", async () => {

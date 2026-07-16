@@ -278,9 +278,10 @@ Future reviews and issues should cite this file when proposing changes.
   dependent and spans `BookingGuest` to `Booking`, which a Postgres partial
   unique index cannot reference. It is race-free because every transaction that
   **creates or re-dates** a member-linked `BookingGuest`/`BookingGuestNight`
-  footprint takes the global booking advisory lock (`pg_advisory_xact_lock(1)`)
-  before running the guard (`assertNoBookingMemberNightConflicts`); that
-  lock-before-guard ordering is frozen for every such writer by
+  footprint takes its per-lodge capacity lock before running
+  `assertNoBookingMemberNightConflicts`; the guard then self-takes sorted
+  per-member advisory locks before reading across all lodges. That
+  lodge-before-member ordering is frozen for every such writer by
   `review-findings-contracts.test.ts`. (`CONCURRENCY_AND_LOCKING.md` maps this
   lock alongside the per-lodge capacity and per-member credit locks and the
   ordering discipline each follows.) Writes that do not change the member-night
@@ -806,7 +807,13 @@ offset and `APPLIED_CREDIT_DEALLOCATION` outbox operation commit in the SAME
 member-credit-locked transaction. The worker later obtains Xero's real
 allocation IDs, checkpoints them, deletes the invoice allocations, recreates the
 reduced integer-cent target, verifies it, then reduces the local allocation
-slices. Multiple notes and multiple local lots per note are supported.
+slices. Before releasing the member lock it atomically snapshots the desired
+signed-ledger cents and every precise slice into the same durable operation.
+Inbound repair, a later clamp, and allocation planning inspect that RUNNING (or
+provider-ambiguous FAILED/PARTIAL) fence while holding the same member lock, so
+each mutation is wholly before the snapshot or deferred until convergence; no
+stale target can release newly valid credit. Multiple notes and multiple local
+lots per note are supported.
 
 After verification, the same local transaction deactivates the superseded
 synthetic/actual `APPLIED_CREDIT_ALLOCATION` row links (or the Payment-scoped
@@ -825,6 +832,9 @@ them without overlap instead of stranding both FAILED. A provider total that is
 neither exact local state nor a checkpointed
 partial/target is ambiguous (for example, a manual Xero edit): the operation
 fails visibly for operator retry/manual review and never guesses an ID or amount.
+The admin retry action never invokes either multi-call applied-credit handler
+inline: one atomic FAILED/PARTIAL-to-PENDING compare-and-set wins, then the
+outbox's PENDING-to-RUNNING claim remains the sole provider-call authority.
 Cancellation and Internet-Banking hold expiry derive the invoice's allocated
 credit from the precise positive `MemberCreditNoteAllocation.amountCents`
 aggregate, not the coarse historical `MemberCredit.xeroCreditNoteId` stamp,
@@ -843,7 +853,12 @@ missing or ambiguous provenance. Allocation rows are mutable working slices:
 provider-verified deallocation may reduce or delete them. Immutable-equivalent
 audit is retained in the deallocation operation's request checkpoint/history
 (prior and target cents, provider IDs and match rule) and the inactive/active
-`XeroObjectLink` history.
+`XeroObjectLink` history. Repair validates an existing slice against the signed
+ledger rather than accepting it merely because it exists; net-zero historical
+negative plus positive-clamp rows never recreate a fully deallocated slice.
+Inbound provider-observed increases/decreases reconcile the precise slice and
+append a signed offset instead of rewriting the historical negative application;
+superseded allocation links are deactivated, not erased.
 
 Every modification path also applies the same lifecycle transitions: a
 PAYMENT_PENDING booking whose EFFECTIVE (credit-reduced) price drops to zero
@@ -1190,8 +1205,8 @@ this exposure.
 
 School approval re-checks per-night capacity for the FINAL guest list on both
 branches — fresh-create and held-reuse (excluding the held booking's own
-guests) — under the global booking advisory lock, before anything flips to a
-capacity-holding status (#1352). A hold reserves only the originally held
+guests) — under the booking lodge's per-lodge capacity lock, before anything
+flips to a capacity-holding status (#1352). A hold reserves only the originally held
 guest count, so an admin child-count override at approval can never confirm
 more beds than actually remain on any night; the admin sees the same
 capacityExceeded outcome as the fresh path.

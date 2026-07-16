@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findUniqueOperation: vi.fn(),
+  updateManyOperation: vi.fn(),
   findUniquePayment: vi.fn(),
   findUniqueMember: vi.fn(),
   updatePayment: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroSyncOperation: {
       findUnique: mocks.findUniqueOperation,
+      updateMany: mocks.updateManyOperation,
     },
     payment: {
       findUnique: mocks.findUniquePayment,
@@ -269,6 +271,7 @@ describe("retryXeroSyncOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findUniqueMember.mockResolvedValue(null);
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
     // No SUCCEEDED ADDITIONAL capture exists unless a test says so (#1882).
     mocks.findFirstPaymentTransaction.mockResolvedValue(null);
     mocks.shouldRepairXeroContactNameOrder.mockResolvedValue(false);
@@ -1409,10 +1412,7 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
-  it("re-drives the applied-credit allocation engine on retry (#1620)", async () => {
-    // A FAILED applied-credit allocation op must re-run the idempotent engine
-    // (there is no auto FAILED->PENDING reaper), threading the op id so the
-    // engine completes/skips it.
+  it("atomically queues applied-credit allocation for sole outbox execution", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
         entityType: "ALLOCATION",
@@ -1428,16 +1428,22 @@ describe("retryXeroSyncOperation", () => {
 
     await expect(
       retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
-    ).resolves.toEqual({ message: "Retried applied-credit allocation." });
+    ).resolves.toEqual({ message: "Queued applied-credit allocation retry." });
 
-    expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalledWith("b1", {
-      createdByMemberId: "admin_1",
-      syncOperationId: "op_123",
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] } },
+      data: {
+        status: "PENDING",
+        startedAt: null,
+        completedAt: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      },
     });
-    // Must NOT fall through to the generic single-note allocation path.
+    expect(mocks.allocateAppliedCreditForBooking).not.toHaveBeenCalled();
     expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
   });
-  it("re-drives checkpointed applied-credit deallocation on retry (#1887)", async () => {
+  it("queues checkpointed applied-credit deallocation without an inline provider call", async () => {
     mocks.findUniqueOperation.mockResolvedValue(makeOperation({
       entityType: "ALLOCATION",
       operationType: "UPDATE",
@@ -1450,11 +1456,51 @@ describe("retryXeroSyncOperation", () => {
       },
     }));
     await expect(retryXeroSyncOperation("op_123")).resolves.toEqual({
-      message: "Retried applied-credit deallocation.",
+      message: "Queued applied-credit deallocation retry.",
     });
-    expect(mocks.deallocateExcessAppliedCreditForBooking).toHaveBeenCalledWith(
-      "b1", { syncOperationId: "op_123" }
-    );
+    expect(mocks.deallocateExcessAppliedCreditForBooking).not.toHaveBeenCalled();
+  });
+
+  it("lets only one of two simultaneous applied-credit retries win the CAS", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation({
+      entityType: "ALLOCATION",
+      operationType: "UPDATE",
+      localModel: "Payment",
+      localId: "pay_123",
+      requestPayload: {
+        queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
+        bookingId: "b1",
+        checkpoint: { allocationIds: ["alloc-1"] },
+      },
+    }));
+    mocks.updateManyOperation
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+
+    const results = await Promise.allSettled([
+      retryXeroSyncOperation("op_123"),
+      retryXeroSyncOperation("op_123"),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(mocks.deallocateExcessAppliedCreditForBooking).not.toHaveBeenCalled();
+  });
+
+  it("accepts PARTIAL applied-credit operations for outbox requeue", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation({
+      status: "PARTIAL",
+      entityType: "ALLOCATION",
+      operationType: "UPDATE",
+      localModel: "Payment",
+      localId: "pay_123",
+      requestPayload: {
+        queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
+        bookingId: "b1",
+      },
+    }));
+    await expect(retryXeroSyncOperation("op_123")).resolves.toEqual({
+      message: "Queued applied-credit deallocation retry.",
+    });
   });
 
   it("throws a typed retry error for unsupported operations", async () => {

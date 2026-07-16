@@ -38,8 +38,9 @@ import {
 } from "./xero-contacts";
 import { formatDate } from "./xero-invoice-helpers";
 import logger from "@/lib/logger";
-import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "./xero-operation-outbox-payload";
-import { XeroAppliedCreditOperationBusyError } from "./xero-applied-credit-operation-serialization";
+import {
+  assertNoAppliedCreditDeallocationFence,
+} from "./xero-applied-credit-operation-serialization";
 
 // XeroObjectLink roles for this engine's artefacts.
 const APPLIED_CREDIT_ALLOCATION_ROLE = "APPLIED_CREDIT_ALLOCATION";
@@ -388,23 +389,6 @@ export async function allocateAppliedCreditForBooking(
     return;
   }
   const payment = booking.payment;
-  if (syncOperationId) {
-    const deallocationInFlight = await prisma.xeroSyncOperation.findFirst({
-      where: {
-        id: { not: syncOperationId },
-        localModel: "Payment",
-        localId: payment.id,
-        queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
-        status: "RUNNING",
-      },
-      select: { id: true },
-    });
-    if (deallocationInFlight) {
-      throw new XeroAppliedCreditOperationBusyError(
-        `Applied-credit deallocation ${deallocationInFlight.id} is still running for booking ${bookingId}; retrying allocation`
-      );
-    }
-  }
   // Payment-method-agnostic (#1620/#1641): the engine keys on the booking's
   // invoice + BOOKING_APPLIED ledger, never on payment.source. The enqueue call
   // sites are Internet-Banking-only in #1620; #1641 will add a card caller
@@ -429,6 +413,12 @@ export async function allocateAppliedCreditForBooking(
   // the ledger lock. Mint-slice join rows are written after the note is minted.
   const plan = await prisma.$transaction(async (tx) => {
     await lockMemberCreditLedger(booking.memberId, tx);
+    await assertNoAppliedCreditDeallocationFence(payment.id, tx, {
+      // An older allocation must be allowed to complete before a fresh clamp's
+      // deallocation. Once that deallocation has a snapshot/checkpoint it is a
+      // hard fence and this worker returns to PENDING.
+      allowUncheckpointedPending: true,
+    });
     const lockedApplied = await unallocatedAppliedCents(bookingId, tx);
     if (lockedApplied === 0) {
       return null; // a concurrent run already stamped it

@@ -90,6 +90,12 @@ are the literal `1`.
 | **Per-lodge capacity** | `hashtextextended(<lodgeId>, 0)` | `acquireLodgeCapacityLock(tx, lodgeId)` (`capacity.ts`) | 1 | Capacity claims/checks for one lodge. |
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit). |
+| **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`) | — | Archive/delete of one member. |
+| **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
+| **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
+| **Roster generation** | `hashtext("roster:<date>")` | inline (`admin-roster-service.ts`) | — | Roster generation for one calendar date. |
+| **Config-transfer import** | `hashtext("config-transfer-import")` | `acquireConfigImportLock(tx)` (`config-transfer/apply.ts`) | — | Single-flights configuration-bundle apply. |
+| **Membership subscription billing** | `hashtext("membership-subscription-billing:<seasonYear>")` | `confirmSubscriptionBillingPreview` (`membership-subscription-billing.ts`) | — | Annual/approval charge snapshot creation for one membership year. |
 
 The F20 clamp inserts any required Xero deallocation outbox row before releasing
 the member-credit lock. Provider GET/delete/recreate calls run later, outside the
@@ -99,20 +105,25 @@ same Payment. Separate runners can claim both rows before either check, so this
 contention uses a dedicated transient result: each loser returns to PENDING
 (never FAILED), and a later scan runs them without overlap. Provider-verified
 local slice/link reconciliation retakes the member ledger lock.
-Cancellation and Internet-Banking hold expiry, while holding the global booking
-lock, query for any non-complete applied-credit deallocation before their first
-write. If one exists they defer the whole transition; a later retry computes
-the clearing amount from provider-converged slices. Legacy inbound rows missing
-those slices are repaired under the transaction/member-credit lock only when a
-unique positive funding lot proves provenance. Slice reduction/deletion is
-therefore working state, while the operation checkpoint/history and inactive /
-active object-link history preserve the durable audit trail.
-| **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`) | — | Archive/delete of one member. |
-| **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
-| **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
-| **Roster generation** | `hashtext("roster:<date>")` | inline (`admin-roster-service.ts`) | — | Roster generation for one calendar date. |
-| **Config-transfer import** | `hashtext("config-transfer-import")` | `acquireConfigImportLock(tx)` (`config-transfer/apply.ts`) | — | Single-flights configuration-bundle apply. |
-| **Membership subscription billing** | `hashtext("membership-subscription-billing:<seasonYear>")` | `confirmSubscriptionBillingPreview` (`membership-subscription-billing.ts`) | — | Annual/approval charge snapshot creation for one membership year. |
+The deallocation worker's first member-locked transaction records one durable
+snapshot of desired applied cents plus all precise slices. Clamp, inbound repair,
+and allocation planning query the deallocation fence under that same lock.
+A fresh PENDING row fences inbound/clamp writers so stale provider truth cannot
+undo the committed local target. Allocation/deallocation workers may pass it to
+preserve queue order only while it has no snapshot/checkpoint; a manually
+requeued checkpointed PENDING row remains fenced, as do RUNNING and any
+provider-ambiguous failure states. Manual retry only CAS-requeues to PENDING;
+the outbox claim is the sole authority that may execute provider calls.
+
+Cancellation and Internet-Banking hold expiry acquire global booking lock(1)
+first and the per-member credit-ledger lock second. While holding both, they
+query for any non-complete applied-credit deallocation before their first write.
+If one exists they defer the whole transition; a later retry computes the
+clearing amount from provider-converged slices. Legacy inbound rows missing
+those slices are repaired under the member-credit lock only when a unique
+positive funding lot proves provenance. Slice reduction/deletion is therefore
+working state, while the operation checkpoint/history and inactive/active
+object-link history preserve the durable audit trail.
 
 The first four are the **booking / capacity / credit cluster** — they interact,
 and are where the ordering discipline matters. Families 5–9 are independent

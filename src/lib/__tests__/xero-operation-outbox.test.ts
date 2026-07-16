@@ -1257,7 +1257,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       direction: "OUTBOUND",
       queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
     });
-    expect(args.where.queueType.in).toHaveLength(15);
+    expect(args.where.queueType.in).toHaveLength(16);
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
@@ -1314,6 +1314,59 @@ describe("processQueuedXeroOutboxOperations", () => {
         },
       });
     }
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("busy-requeues a manual retry, then executes its checkpointed deallocation once", async () => {
+    const queued = {
+      id: "op_dealloc_retry",
+      localId: "payment_1",
+      localModel: "Payment",
+      createdByMemberId: null,
+      requestPayload: {
+        queueType: "APPLIED_CREDIT_DEALLOCATION",
+        bookingId: "booking_1",
+        checkpoint: { allocationIds: ["alloc-1"], phase: "BEFORE_DELETE" },
+      },
+    };
+    mocks.findManyOperations.mockResolvedValue([queued]);
+    mocks.deallocateExcessAppliedCreditForBooking
+      .mockRejectedValueOnce(
+        new XeroAppliedCreditOperationBusyError(
+          "same-payment allocation is RUNNING",
+        ),
+      )
+      .mockResolvedValueOnce(undefined);
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 0,
+      failed: 0,
+      skipped: 1,
+    });
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_dealloc_retry", status: "RUNNING" },
+      data: {
+        status: "PENDING",
+        startedAt: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      },
+    });
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+    expect(mocks.deallocateExcessAppliedCreditForBooking).toHaveBeenCalledTimes(2);
+    expect(mocks.deallocateExcessAppliedCreditForBooking).toHaveBeenLastCalledWith(
+      "booking_1",
+      { syncOperationId: "op_dealloc_retry" },
+    );
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
   });
 

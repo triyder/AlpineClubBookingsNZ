@@ -8,6 +8,7 @@ import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
+import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 
 export async function resolvePaymentIdsByInvoiceTargets(
   creditNoteId: string,
@@ -528,6 +529,7 @@ export async function repairAccountCreditAllocationBusinessState(
     // #1234). DB-only work: no external Xero call runs inside this transaction.
     await prisma.$transaction(async (tx) => {
       await lockMemberCreditLedger(payment.booking.memberId, tx);
+      await assertNoAppliedCreditDeallocationFence(payment.id, tx);
 
       const existingAppliedCredits = await tx.memberCredit.findMany({
         where: {
@@ -559,13 +561,9 @@ export async function repairAccountCreditAllocationBusinessState(
       if (linkedAppliedCredits.length === 1) {
         const appliedCredit = linkedAppliedCredits[0];
         const updates: {
-          amountCents?: number;
           description?: string;
         } = {};
 
-        if (appliedCredit.amountCents !== expectedAmountCents) {
-          updates.amountCents = expectedAmountCents;
-        }
         if (appliedCredit.description !== expectedDescription) {
           updates.description = expectedDescription;
         }
@@ -580,16 +578,19 @@ export async function repairAccountCreditAllocationBusinessState(
           updatedAppliedCredits += 1;
         }
       } else if (linkedAppliedCredits.length > 1) {
-        skippedAllocations += 1;
-        logger.warn(
-          {
-            creditNoteId,
-            invoiceId: target.invoiceId,
-            bookingId: payment.bookingId,
-            appliedCredits: linkedAppliedCredits.length,
-          },
-          "Skipping account-credit allocation repair because multiple local applied-credit rows already point at this Xero credit note"
+        // Historical negative rows plus later positive/negative offsets are an
+        // intentional append-only record. The precise slice reconciler below,
+        // not destructive rewrites of those rows, determines provider truth.
+        const staleDescriptions = linkedAppliedCredits.filter(
+          (credit) => credit.description !== expectedDescription,
         );
+        if (staleDescriptions.length > 0) {
+          await tx.memberCredit.updateMany({
+            where: { id: { in: staleDescriptions.map((credit) => credit.id) } },
+            data: { description: expectedDescription },
+          });
+          updatedAppliedCredits += staleDescriptions.length;
+        }
       } else {
         const unlinkedExactCredits = existingAppliedCredits.filter(
           (credit) =>
@@ -638,7 +639,64 @@ export async function repairAccountCreditAllocationBusinessState(
         payment.bookingId,
         target.invoiceId,
         tx,
+        {
+          providerTarget: {
+            xeroCreditNoteId: creditNoteId,
+            amountCents: target.amountCents,
+          },
+        },
       );
+
+      // Provider-aware slice reconciliation is append-only at the credit-ledger
+      // layer. Bring the signed ledger total to precise allocated slices plus
+      // any genuinely unallocated (net-negative) rows. This preserves original
+      // negative applications and positive clamp offsets instead of rewriting
+      // history when a Xero user manually increases/decreases an allocation.
+      const [precise, unstamped, currentLedger] = await Promise.all([
+        tx.memberCreditNoteAllocation.aggregate({
+          where: { appliedToBookingId: payment.bookingId },
+          _sum: { amountCents: true },
+        }),
+        tx.memberCredit.aggregate({
+          where: {
+            memberId: payment.booking.memberId,
+            appliedToBookingId: payment.bookingId,
+            type: CreditType.BOOKING_APPLIED,
+            xeroCreditNoteId: null,
+          },
+          _sum: { amountCents: true },
+        }),
+        tx.memberCredit.aggregate({
+          where: {
+            memberId: payment.booking.memberId,
+            appliedToBookingId: payment.bookingId,
+            type: CreditType.BOOKING_APPLIED,
+          },
+          _sum: { amountCents: true },
+        }),
+      ]);
+      const preciseCents = precise._sum.amountCents ?? 0;
+      const unallocatedCents = Math.max(0, -(unstamped._sum.amountCents ?? 0));
+      const currentAppliedCents = Math.max(
+        0,
+        -(currentLedger._sum.amountCents ?? 0),
+      );
+      const providerAwareAppliedCents = preciseCents + unallocatedCents;
+      const ledgerDeltaCents = providerAwareAppliedCents - currentAppliedCents;
+      if (ledgerDeltaCents !== 0) {
+        await tx.memberCredit.create({
+          data: {
+            memberId: payment.booking.memberId,
+            amountCents: -ledgerDeltaCents,
+            type: CreditType.BOOKING_APPLIED,
+            description: `Xero allocation reconciliation for booking ${payment.bookingId.slice(0, 8)}`,
+            appliedToBookingId: payment.bookingId,
+            xeroCreditNoteId: creditNoteId,
+          },
+        });
+        if (ledgerDeltaCents > 0) createdAppliedCredits += 1;
+        else updatedAppliedCredits += 1;
+      }
 
       const aggregate = await tx.memberCredit.aggregate({
         where: {

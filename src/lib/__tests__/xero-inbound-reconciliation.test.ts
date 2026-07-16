@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   memberCreditFindMany: vi.fn(),
   memberCreditUpdate: vi.fn(),
   memberCreditUpdateMany: vi.fn(),
+  memberCreditNoteAllocationAggregate: vi.fn(),
   linkFindMany: vi.fn(),
   auditLogCreate: vi.fn(),
   bookingFindMany: vi.fn(),
@@ -53,6 +54,7 @@ const mocks = vi.hoisted(() => ({
   processWaitlist: vi.fn(),
   txLinkFindFirst: vi.fn(),
   txOperationFindFirst: vi.fn(),
+  txOperationFindMany: vi.fn(),
   repairLegacyAppliedCreditNoteAllocationsForBooking: vi.fn(),
 }));
 
@@ -298,6 +300,10 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.processWaitlist.mockResolvedValue(undefined);
     mocks.txLinkFindFirst.mockResolvedValue(null);
     mocks.txOperationFindFirst.mockResolvedValue(null);
+    mocks.txOperationFindMany.mockResolvedValue([]);
+    mocks.memberCreditNoteAllocationAggregate.mockResolvedValue({
+      _sum: { amountCents: 0 },
+    });
     mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
     mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
     mocks.xeroSyncCursorFindUnique.mockResolvedValue(null);
@@ -365,7 +371,14 @@ describe("processStoredXeroInboundEvents", () => {
           findMany: mocks.memberCreditFindMany,
           create: mocks.memberCreditCreate,
           update: mocks.memberCreditUpdate,
+          updateMany: mocks.memberCreditUpdateMany,
           aggregate: mocks.memberCreditAggregate,
+        },
+        memberCreditNoteAllocation: {
+          aggregate: mocks.memberCreditNoteAllocationAggregate,
+        },
+        xeroSyncOperation: {
+          findMany: mocks.txOperationFindMany,
         },
       })
     );
@@ -4287,11 +4300,13 @@ describe("processStoredXeroInboundEvents", () => {
     // The applied-credit repair re-reads the payment's current creditAppliedCents
     // under the advisory lock before comparing against the aggregated total.
     mocks.paymentFindUnique.mockResolvedValue({ creditAppliedCents: 0 });
-    mocks.memberCreditAggregate.mockResolvedValue({
-      _sum: {
-        amountCents: -2500,
-      },
+    mocks.memberCreditNoteAllocationAggregate.mockResolvedValue({
+      _sum: { amountCents: 2500 },
     });
+    mocks.memberCreditAggregate
+      .mockResolvedValueOnce({ _sum: { amountCents: 0 } })
+      .mockResolvedValueOnce({ _sum: { amountCents: -2500 } })
+      .mockResolvedValue({ _sum: { amountCents: -2500 } });
     const accountingApi = {
       getCreditNote: vi.fn().mockResolvedValue({
         body: {
@@ -4442,11 +4457,13 @@ describe("processStoredXeroInboundEvents", () => {
         },
       ]);
     mocks.paymentFindUnique.mockResolvedValue({ creditAppliedCents: 0 });
-    mocks.memberCreditAggregate.mockResolvedValue({
-      _sum: {
-        amountCents: -5000,
-      },
+    mocks.memberCreditNoteAllocationAggregate.mockResolvedValue({
+      _sum: { amountCents: 5000 },
     });
+    mocks.memberCreditAggregate
+      .mockResolvedValueOnce({ _sum: { amountCents: 0 } })
+      .mockResolvedValueOnce({ _sum: { amountCents: -5000 } })
+      .mockResolvedValue({ _sum: { amountCents: -5000 } });
     const accountingApi = {
       getCreditNote: vi.fn().mockResolvedValue({
         body: {
@@ -4489,7 +4506,17 @@ describe("processStoredXeroInboundEvents", () => {
     expect(mocks.txExecuteRaw).toHaveBeenCalled();
     expect(
       mocks.repairLegacyAppliedCreditNoteAllocationsForBooking,
-    ).toHaveBeenCalledWith("bk234567890", "inv_booking_1", expect.anything());
+    ).toHaveBeenCalledWith(
+      "bk234567890",
+      "inv_booking_1",
+      expect.anything(),
+      {
+        providerTarget: {
+          xeroCreditNoteId: "cn_credit_clamp",
+          amountCents: 2500,
+        },
+      },
+    );
     // Clamped to the payment amount, not the raw 5000 aggregate.
     expect(mocks.paymentUpdate).toHaveBeenCalledWith({
       where: { id: "pay_booking_1" },

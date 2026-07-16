@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => {
   logAudit: vi.fn(),
   createCancellationCredit: vi.fn(),
   restoreCreditFromBooking: vi.fn(),
+  lockMemberCreditLedger: vi.fn(),
   // #1547: the CANCELLED narrative event, so the credit-restore sentence in the
   // event reason can be asserted. booking-events is fire-and-swallow in prod.
   recordBookingEvent: vi.fn(),
@@ -121,6 +122,7 @@ vi.mock("@/lib/audit", () => ({
 
 vi.mock("@/lib/member-credit", () => ({
   createCancellationCredit: mocks.createCancellationCredit,
+  lockMemberCreditLedger: mocks.lockMemberCreditLedger,
   restoreCreditFromBooking: mocks.restoreCreditFromBooking,
 }));
 
@@ -305,6 +307,7 @@ describe("cancelBooking credit refunds", () => {
       creditRestorePercentage: 50,
     });
     mocks.restoreCreditFromBooking.mockResolvedValue(0);
+    mocks.lockMemberCreditLedger.mockResolvedValue(undefined);
     mocks.recordBookingEvent.mockResolvedValue(undefined);
     mocks.createCancellationCredit.mockResolvedValue(undefined);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
@@ -2376,6 +2379,16 @@ describe("cancelBooking credit refunds", () => {
       expect(
         mocks.repairLegacyAppliedCreditNoteAllocationsForBooking
       ).toHaveBeenCalledWith("bk_ib2", "inv_ib2", mocks.lastTx);
+      expect(mocks.lockMemberCreditLedger).toHaveBeenCalledWith(
+        "member_1",
+        mocks.lastTx,
+      );
+      expect(
+        mocks.lockMemberCreditLedger.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        mocks.repairLegacyAppliedCreditNoteAllocationsForBooking.mock
+          .invocationCallOrder[0],
+      );
     });
 
     it("defers cancellation before any write when clamp deallocation has not converged", async () => {

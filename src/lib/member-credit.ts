@@ -14,6 +14,7 @@ import logger from "@/lib/logger";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
+import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import {
   assertMatchingIdempotentAdjustmentRequest,
   calculateAppliedCreditAmount,
@@ -352,6 +353,15 @@ export async function clampAppliedCreditToBookingPrice(
 ): Promise<{ appliedCreditCents: number; refundedExcessCents: number }> {
   await lockMemberCreditLedger(memberId, tx);
 
+  const booking = await tx.booking.findUnique({
+    where: { id: bookingId },
+    select: { payment: { select: { id: true, source: true, xeroInvoiceId: true } } },
+  });
+  const payment = booking?.payment;
+  if (payment) {
+    await assertNoAppliedCreditDeallocationFence(payment.id, tx);
+  }
+
   const appliedCreditCents = await deriveBookingAppliedCreditCents(bookingId, tx);
   const excessCents = appliedCreditCents - Math.max(0, newFinalPriceCents);
 
@@ -369,11 +379,6 @@ export async function clampAppliedCreditToBookingPrice(
     },
   });
 
-  const booking = await tx.booking.findUnique({
-    where: { id: bookingId },
-    select: { payment: { select: { id: true, source: true, xeroInvoiceId: true } } },
-  });
-  const payment = booking?.payment;
   if (payment?.source === PaymentSource.INTERNET_BANKING && payment.xeroInvoiceId) {
     await repairLegacyAppliedCreditNoteAllocationsForBooking(
       bookingId,

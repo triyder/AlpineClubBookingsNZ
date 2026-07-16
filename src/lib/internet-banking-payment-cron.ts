@@ -10,7 +10,10 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
 import { sendBookingCancelledEmail } from "@/lib/email";
 import logger from "@/lib/logger";
-import { restoreCreditFromBooking } from "@/lib/member-credit";
+import {
+  lockMemberCreditLedger,
+  restoreCreditFromBooking,
+} from "@/lib/member-credit";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
 import {
@@ -63,6 +66,12 @@ function releaseOneHold(paymentId: string, now: Date) {
       ) {
         return { type: "skipped" as const };
       }
+
+      // Global booking/money first, then the per-member credit ledger (#1881).
+      // Holding both through the transition prevents inbound Xero repair and
+      // allocation/deallocation reconciliation from changing precise slices
+      // between this guard, the local restore, and the clearing aggregate.
+      await lockMemberCreditLedger(fresh.booking.memberId, tx);
 
       if (await findUnconvergedAppliedCreditDeallocation(fresh.id, tx)) {
         return {
@@ -164,9 +173,8 @@ function releaseOneHold(paymentId: string, now: Date) {
             fresh.xeroInvoiceId,
             tx,
           );
-          // Read the Xero-allocated applied credit under the same advisory lock,
-          // matching the cancel path's "read allocated credit under lock(1)"
-          // requirement so the aggregate is consistent.
+          // Read Xero-allocated applied credit while both global lock(1) and
+          // the per-member credit-ledger lock remain held, matching cancel.
           // Precise post-deallocation truth; the MemberCredit note stamp is a
           // coarse historical marker and cannot represent a partial target.
           const xeroAllocated = await tx.memberCreditNoteAllocation.aggregate({

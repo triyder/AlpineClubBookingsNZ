@@ -9,10 +9,18 @@ const h = vi.hoisted(() => {
       createdAt: new Date("2026-01-01"),
     },
   ];
+  const currentRows = { current: [...rows] };
   const bookingFindUnique = vi.fn();
   const operationFindFirst = vi.fn();
-  const operationFindUnique = vi.fn();
-  const operationUpdate = vi.fn();
+  const operationFindMany = vi.fn();
+  const operationPayload = { current: {} as Record<string, unknown> };
+  const operationFindUnique = vi.fn(async () => ({
+    requestPayload: operationPayload.current,
+  }));
+  const operationUpdate = vi.fn(async ({ data }: { data: { requestPayload: Record<string, unknown> } }) => {
+    operationPayload.current = data.requestPayload;
+    return {};
+  });
   const allocationFindMany = vi.fn();
   const allocationDelete = vi.fn();
   const allocationUpdate = vi.fn();
@@ -25,9 +33,15 @@ const h = vi.hoisted(() => {
   const complete = vi.fn();
   const fail = vi.fn();
   const deriveApplied = vi.fn();
+  const lockLedger = vi.fn();
 
   const tx = {
     $executeRaw: vi.fn(),
+    xeroSyncOperation: {
+      findMany: operationFindMany,
+      findUnique: operationFindUnique,
+      update: operationUpdate,
+    },
     memberCreditNoteAllocation: {
       findMany: allocationFindMany,
       delete: allocationDelete,
@@ -54,11 +68,14 @@ const h = vi.hoisted(() => {
   };
   return {
     rows,
+    currentRows,
     prisma,
     bookingFindUnique,
     operationFindFirst,
+    operationFindMany,
     operationFindUnique,
     operationUpdate,
+    operationPayload,
     allocationFindMany,
     allocationDelete,
     allocationUpdate,
@@ -71,13 +88,15 @@ const h = vi.hoisted(() => {
     complete,
     fail,
     deriveApplied,
+    lockLedger,
+    tx,
   };
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/member-credit", () => ({
   deriveBookingAppliedCreditCents: h.deriveApplied,
-  lockMemberCreditLedger: vi.fn(),
+  lockMemberCreditLedger: h.lockLedger,
 }));
 vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
   repairLegacyAppliedCreditNoteAllocationsForBooking: vi.fn(),
@@ -170,14 +189,33 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       },
     });
     h.operationFindFirst.mockResolvedValue(null);
-    h.operationFindUnique.mockResolvedValue({
-      requestPayload: {
-        queueType: "APPLIED_CREDIT_DEALLOCATION",
-        bookingId: "booking-1",
-      },
+    h.operationFindMany.mockResolvedValue([]);
+    h.operationPayload.current = {
+      queueType: "APPLIED_CREDIT_DEALLOCATION",
+      bookingId: "booking-1",
+    };
+    h.operationFindUnique.mockImplementation(async () => ({
+      requestPayload: h.operationPayload.current,
+    }));
+    h.operationUpdate.mockImplementation(async ({ data }) => {
+      h.operationPayload.current = data.requestPayload;
+      return {};
     });
     h.deriveApplied.mockResolvedValue(2500);
-    h.allocationFindMany.mockResolvedValue(h.rows);
+    h.currentRows.current = h.rows.map((row) => ({ ...row }));
+    h.allocationFindMany.mockImplementation(async () => h.currentRows.current);
+    h.allocationUpdate.mockImplementation(async ({ where, data }) => {
+      h.currentRows.current = h.currentRows.current.map((row) =>
+        row.id === where.id ? { ...row, ...data } : row,
+      );
+      return {};
+    });
+    h.allocationDelete.mockImplementation(async ({ where }) => {
+      h.currentRows.current = h.currentRows.current.filter(
+        (row) => row.id !== where.id,
+      );
+      return {};
+    });
     h.linkFindMany.mockResolvedValue([]);
     h.deleteCreditNoteAllocations.mockResolvedValue({
       body: { isDeleted: true },
@@ -195,6 +233,31 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       syncOperationId: "op-1",
     });
 
+    expect(h.operationUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "op-1" },
+        data: {
+          requestPayload: expect.objectContaining({
+            ledgerSnapshot: {
+              desiredAppliedCents: 2500,
+              rows: [{
+                id: "row-1",
+                xeroCreditNoteId: "cn-1",
+                amountCents: 4000,
+                createdAt: "2026-01-01T00:00:00.000Z",
+              }],
+            },
+          }),
+        },
+      }),
+    );
+    expect(h.deriveApplied).toHaveBeenCalledWith("booking-1", h.tx);
+    expect(h.lockLedger.mock.invocationCallOrder[0]).toBeLessThan(
+      h.deriveApplied.mock.invocationCallOrder[0],
+    );
+    expect(h.deriveApplied.mock.invocationCallOrder[0]).toBeLessThan(
+      h.operationUpdate.mock.invocationCallOrder[0],
+    );
     expect(h.operationUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "op-1" },
@@ -259,6 +322,43 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
         responsePayload: expect.objectContaining({ desiredAppliedCents: 2500 }),
       }),
     );
+    expect(h.operationPayload.current).toEqual(
+      expect.objectContaining({
+        ledgerSnapshot: {
+          desiredAppliedCents: 2500,
+          rows: [{
+            id: "row-1",
+            xeroCreditNoteId: "cn-1",
+            amountCents: 2500,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }],
+        },
+      }),
+    );
+  });
+
+  it("refuses a stale durable ledger snapshot before any provider call", async () => {
+    h.operationPayload.current = {
+        queueType: "APPLIED_CREDIT_DEALLOCATION",
+        bookingId: "booking-1",
+        ledgerSnapshot: {
+          desiredAppliedCents: 3000,
+          rows: [{
+            id: "row-1",
+            xeroCreditNoteId: "cn-1",
+            amountCents: 4000,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }],
+        },
+    };
+
+    await expect(
+      deallocateExcessAppliedCreditForBooking("booking-1", {
+        syncOperationId: "op-1",
+      }),
+    ).rejects.toThrow("refusing a stale provider target");
+    expect(h.getCreditNote).not.toHaveBeenCalled();
+    expect(h.deleteCreditNoteAllocations).not.toHaveBeenCalled();
   });
 
   it("refuses an ambiguous provider total without deleting anything", async () => {
@@ -293,8 +393,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
 
   it("resumes a checkpointed partial delete without guessing", async () => {
     h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
-    h.operationFindUnique.mockResolvedValue({
-      requestPayload: {
+    h.operationPayload.current = {
         queueType: "APPLIED_CREDIT_DEALLOCATION",
         bookingId: "booking-1",
         checkpoint: {
@@ -303,8 +402,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
           targetCents: 2500,
           allocationIds: ["alloc-deleted", "alloc-remaining"],
         },
-      },
-    });
+    };
     h.getCreditNote
       .mockResolvedValueOnce(providerNote(2000, "alloc-remaining"))
       .mockResolvedValueOnce(providerNote(2500, "alloc-new"));
@@ -324,8 +422,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
 
   it("heals a crash after recreate by linking the verified actual ID without recreating", async () => {
     h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
-    h.operationFindUnique.mockResolvedValue({
-      requestPayload: {
+    h.operationPayload.current = {
         queueType: "APPLIED_CREDIT_DEALLOCATION",
         bookingId: "booking-1",
         checkpoint: {
@@ -335,8 +432,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
           allocationIds: ["alloc-old"],
           phase: "BEFORE_DELETE",
         },
-      },
-    });
+    };
     h.getCreditNote.mockResolvedValue(providerNote(2500, "alloc-recreated"));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {

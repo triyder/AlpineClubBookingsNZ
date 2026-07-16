@@ -11,7 +11,11 @@ import { sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { recordBookingEvent } from "./booking-events";
 import { BookingEventType, BookingStatus, type Prisma } from "@prisma/client";
-import { createCancellationCredit, restoreCreditFromBooking } from "./member-credit";
+import {
+  createCancellationCredit,
+  lockMemberCreditLedger,
+  restoreCreditFromBooking,
+} from "./member-credit";
 import { processWaitlistForDates } from "./waitlist";
 import {
   enqueueXeroAccountCreditNoteOperation,
@@ -778,6 +782,12 @@ async function performBookingCancellation(
       if (await paymentEligibleForPaidCancelPath(fresh.payment, tx)) {
         return { claimed: false as const };
       }
+
+      // #1881 lock topology: this path already holds global lock(1); take the
+      // member-ledger lock second before inspecting deallocation state or
+      // repairing/reading precise allocation slices. Inbound Xero repair and
+      // allocation/deallocation workers use this same member key.
+      await lockMemberCreditLedger(fresh.memberId, tx);
 
       if (
         fresh.payment &&

@@ -38,6 +38,7 @@ const h = vi.hoisted(() => {
     lots: [] as Lot[],
     links: [] as Link[],
     allocCalls: 0,
+    deallocationFence: null as { id: string; status: string } | null,
   };
 
   const matchesApplied = (
@@ -49,7 +50,11 @@ const h = vi.hoisted(() => {
     (where.xeroCreditNoteId === null ? r.xeroCreditNoteId === null : true);
 
   const prismaStub = {
-    xeroSyncOperation: { findFirst: async () => null },
+    xeroSyncOperation: {
+      findMany: async () => state.deallocationFence
+        ? [{ ...state.deallocationFence, requestPayload: { ledgerSnapshot: {} } }]
+        : [],
+    },
     booking: {
       findUnique: async () => ({
         id: "b1",
@@ -296,6 +301,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     h.state.joinRows = [];
     h.state.links = [];
     h.state.allocCalls = 0;
+    h.state.deallocationFence = null;
     h.state.appliedRows = [
       {
         appliedToBookingId: "b1",
@@ -358,6 +364,16 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     expect(h.state.appliedRows[0].xeroCreditNoteId).toBe("cn1");
     // The op completed exactly once (attempt 1 threw before completion).
     expect(completeXeroSyncOperation).toHaveBeenCalledTimes(1);
+  });
+
+  it("fences allocation planning under the member lock before any local/provider mutation", async () => {
+    h.state.deallocationFence = { id: "dealloc-1", status: "RUNNING" };
+
+    await expect(
+      allocateAppliedCreditForBooking("b1", { syncOperationId: "allocation-1" }),
+    ).rejects.toThrow("dealloc-1 is RUNNING");
+    expect(h.state.joinRows).toHaveLength(0);
+    expect(allocateCreditNoteToInvoice).not.toHaveBeenCalled();
   });
 
   it("is a no-op skip when replayed after a fully-completed allocation", async () => {

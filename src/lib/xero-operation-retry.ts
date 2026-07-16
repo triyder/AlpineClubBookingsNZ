@@ -508,6 +508,23 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     };
   }
 
+  const queuedAppliedCredit = readQueuedOutboxPayload(operation.requestPayload);
+  const isQueuedAppliedCreditOperation =
+    operation.entityType === "ALLOCATION" &&
+    operation.localModel === "Payment" &&
+    ((queuedAppliedCredit?.queueType ===
+      XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE &&
+      operation.operationType === "ALLOCATE") ||
+      (queuedAppliedCredit?.queueType ===
+        XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE &&
+        operation.operationType === "UPDATE"));
+  if (
+    isQueuedAppliedCreditOperation &&
+    (operation.status === "FAILED" || operation.status === "PARTIAL")
+  ) {
+    return { supported: true, reason: null };
+  }
+
   if (operation.status === "PARTIAL") {
     if (operation.entityType === "INVOICE" && operation.operationType === "CREATE") {
       return parsePartialInvoiceRepairInput(operation)
@@ -603,12 +620,9 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
 
   if (operation.entityType === "ALLOCATION" && operation.operationType === "ALLOCATE") {
     // #1620 applied-credit allocation ops carry a {queueType, bookingId} queued
-    // payload (never the creditNoteId/invoiceId/amountCents shape parsed below),
-    // and there is no auto FAILED->PENDING reaper for outbox ops — so without
-    // this branch a transiently-failed allocation would strand here, leaving the
-    // IB invoice un-reduced and re-manifesting the #1620 double-pay. The engine
-    // replay is idempotent (join-key + per-note completion links + re-plan that
-    // excludes this booking's own rows).
+    // payload (never the generic single-allocation shape parsed below). The
+    // retry action CAS-requeues it; only the outbox may claim and execute the
+    // multi-provider-call engine.
     const queued = readQueuedOutboxPayload(operation.requestPayload);
     if (queued?.queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE) {
       return { supported: true, reason: null };
@@ -685,6 +699,49 @@ export async function retryXeroSyncOperation(
   const retryMeta = getXeroOperationRetryMeta(operation);
   if (!retryMeta.supported) {
     throw new XeroOperationRetryError(retryMeta.reason ?? "This Xero operation cannot be retried.");
+  }
+
+  const queuedAppliedCredit = readQueuedOutboxPayload(operation.requestPayload);
+  const isQueuedAppliedCreditOperation =
+    operation.entityType === "ALLOCATION" &&
+    operation.localModel === "Payment" &&
+    ((queuedAppliedCredit?.queueType ===
+      XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE &&
+      operation.operationType === "ALLOCATE") ||
+      (queuedAppliedCredit?.queueType ===
+        XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE &&
+        operation.operationType === "UPDATE"));
+  if (isQueuedAppliedCreditOperation) {
+    // These handlers make multi-step provider calls and have their own durable
+    // checkpoint/fencing protocol. Manual retry must never execute them inline:
+    // atomically return exactly one failed/partial row to the outbox, whose
+    // PENDING -> RUNNING claim is the sole provider-execution authority.
+    const queued = await prisma.xeroSyncOperation.updateMany({
+      where: {
+        id: operation.id,
+        status: { in: ["FAILED", "PARTIAL"] },
+      },
+      data: {
+        status: "PENDING",
+        startedAt: null,
+        completedAt: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      },
+    });
+    if (queued.count !== 1) {
+      throw new XeroOperationRetryError(
+        "This applied-credit operation was already queued or claimed by another retry.",
+        409,
+      );
+    }
+    return {
+      message:
+        queuedAppliedCredit.queueType ===
+        XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE
+          ? "Queued applied-credit allocation retry."
+          : "Queued applied-credit deallocation retry.",
+    };
   }
 
   const xero = await import("@/lib/xero");
@@ -1046,19 +1103,13 @@ export async function retryXeroSyncOperation(
   }
 
   if (operation.entityType === "ALLOCATION" && operation.operationType === "ALLOCATE") {
-    // #1620 applied-credit allocation: re-drive the idempotent engine, which
-    // completes (or skips) this op via its syncOperationId. See the matching
-    // note in getXeroOperationRetryMeta.
+    // Applied-credit queue shapes are intercepted by the CAS-requeue branch
+    // above. Keep this guard fail-closed if control flow is ever rearranged.
     const queued = readQueuedOutboxPayload(operation.requestPayload);
     if (queued?.queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE) {
-      const { allocateAppliedCreditForBooking } = await import(
-        "@/lib/xero-applied-credit-allocation"
+      throw new XeroOperationRetryError(
+        "Applied-credit allocation retries must be queued through the outbox.",
       );
-      await allocateAppliedCreditForBooking(queued.bookingId, {
-        createdByMemberId,
-        syncOperationId: operation.id,
-      });
-      return { message: "Retried applied-credit allocation." };
     }
 
     const retryInput = parseAllocationRetryInput(operation);
@@ -1084,13 +1135,9 @@ export async function retryXeroSyncOperation(
     if (queued?.queueType !== XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE) {
       throw new XeroOperationRetryError("Stored applied-credit deallocation payload is incomplete.");
     }
-    const { deallocateExcessAppliedCreditForBooking } = await import(
-      "@/lib/xero-applied-credit-deallocation"
+    throw new XeroOperationRetryError(
+      "Applied-credit deallocation retries must be queued through the outbox.",
     );
-    await deallocateExcessAppliedCreditForBooking(queued.bookingId, {
-      syncOperationId: operation.id,
-    });
-    return { message: "Retried applied-credit deallocation." };
   }
 
   if (operation.entityType === "SUBSCRIPTION" && operation.operationType === "FETCH") {
