@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   priceBookingGuests,
   toSeasonRateData,
+  type SeasonRateSource,
 } from "@/lib/policies/booking-route-decisions";
 
 /**
@@ -11,24 +12,29 @@ import {
  *
  * Both paths feed the SAME shared engine (`priceBookingGuests`) with their
  * guests forced to non-member: the public booking-request maps every guest to
- * `isMember: false` (booking-request.ts), and the on-behalf create forces typed
- * guests to non-member (verified by the "forces manually typed guests to
- * non-member pricing" test). This test asserts on quoted TOTALS only — never on
- * SeasonRate/isMember internals — so it survives E4's (#1930) rate re-key
- * regardless of merge order.
+ * the built-in NON_MEMBER rate type (booking-request.ts), and the on-behalf
+ * create forces typed guests to the same non-member type (verified by the
+ * "forces manually typed guests to non-member pricing" test). This test asserts
+ * on quoted TOTALS only — never on SeasonRate/rate-type internals — so it
+ * survives E4's (#1930) membership-type rate re-key regardless of merge order.
  */
 
-const rawSeasons = [
+// Built-in rate-type ids, mirroring the pure-engine fixtures in
+// pricing-rekey.test.ts: a member prices from FULL, a non-member from NON_MEMBER.
+const FULL = "type-full";
+const NON_MEMBER = "type-nonmember";
+
+const rawSeasons: SeasonRateSource[] = [
   {
     id: "s-winter",
     startDate: new Date("2026-06-01"),
     endDate: new Date("2026-09-30"),
-    type: "WINTER" as const,
-    rates: [
-      { ageTier: "ADULT" as const, isMember: false, pricePerNightCents: 6000 },
-      { ageTier: "ADULT" as const, isMember: true, pricePerNightCents: 4000 },
-      { ageTier: "CHILD" as const, isMember: false, pricePerNightCents: 3000 },
-      { ageTier: "CHILD" as const, isMember: true, pricePerNightCents: 2000 },
+    type: "WINTER",
+    membershipTypeRates: [
+      { membershipTypeId: NON_MEMBER, ageTier: "ADULT", pricePerNightCents: 6000 },
+      { membershipTypeId: FULL, ageTier: "ADULT", pricePerNightCents: 4000 },
+      { membershipTypeId: NON_MEMBER, ageTier: "CHILD", pricePerNightCents: 3000 },
+      { membershipTypeId: FULL, ageTier: "CHILD", pricePerNightCents: 2000 },
     ],
   },
 ];
@@ -38,11 +44,18 @@ const checkOut = new Date("2026-07-12"); // 2 nights
 const guestTiers = [{ ageTier: "ADULT" as const }, { ageTier: "CHILD" as const }];
 
 function totalFor(isMember: boolean) {
+  const rateMembershipTypeId = isMember ? FULL : NON_MEMBER;
+  const rateSource = isMember ? "OWN_TYPE" : "NON_MEMBER_DEFAULT";
   return priceBookingGuests({
     checkIn,
     checkOut,
     seasons,
-    guests: guestTiers.map((g) => ({ ageTier: g.ageTier, isMember })),
+    guests: guestTiers.map((g) => ({
+      ageTier: g.ageTier,
+      isMember,
+      rateMembershipTypeId,
+      rateSource,
+    })),
   }).totalPriceCents;
 }
 
