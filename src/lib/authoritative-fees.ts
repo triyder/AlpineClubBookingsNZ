@@ -1,6 +1,5 @@
 import type {
   AgeTier,
-  EntranceFeeCategory,
   FamilyBillingMode,
   MembershipFeeBillingBasis,
   MembershipFeeProrationRule,
@@ -42,13 +41,6 @@ export const MEMBERSHIP_FEE_PRORATION_RULES = [
   "NONE",
   "REMAINING_MONTHS_INCLUSIVE",
 ] as const satisfies readonly MembershipFeeProrationRule[];
-
-export const ENTRANCE_FEE_CATEGORIES = [
-  "ADULT",
-  "YOUTH",
-  "CHILD",
-  "FAMILY",
-] as const satisfies readonly EntranceFeeCategory[];
 
 export class FeeScheduleValidationError extends Error {
   constructor(message: string, public readonly status = 422) {
