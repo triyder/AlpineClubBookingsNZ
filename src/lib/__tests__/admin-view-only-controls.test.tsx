@@ -92,6 +92,9 @@ import { EmailMessageSettingsPanel } from "@/components/admin/email-settings/ema
 import { BookingMessagesPanel } from "@/components/admin/booking-messages/booking-messages-panel";
 import { FinanceReportMappingsPanel } from "@/components/admin/finance-report-mappings-panel";
 import { RoomsBedsManager } from "@/components/admin/rooms-beds-manager";
+// #1940 pass 2 panels.
+import { InternetBankingSettingsPanel } from "@/components/admin/internet-banking/internet-banking-settings-panel";
+import { NotificationDeliveryPolicySettings } from "@/components/admin/email-settings/notification-delivery-policy-settings";
 
 const SITE_CONTENT_DOCUMENTS = [
   { key: "FOOTER_BLURB", contentHtml: "<p>Blurb</p>", updatedAt: null },
@@ -887,5 +890,82 @@ describe("RoomsBedsManager view-only gating (#1940, bookings)", () => {
     expect(
       await screen.findByRole("button", { name: /Add Room/i }),
     ).toBeEnabled();
+  });
+});
+
+describe("InternetBankingSettingsPanel view-only gating (#1940, finance)", () => {
+  beforeEach(() => {
+    sessionMatrix = null;
+    stubFetchRoutes({
+      "/api/admin/internet-banking-settings": {
+        settings: { holdBedSlots: true, holdDays: 3, minimumDaysBeforeCheckIn: 2 },
+        moduleState: {
+          xeroIntegrationEnabled: true,
+          internetBankingPaymentsEnabled: true,
+          ready: true,
+        },
+        holdPolicySummary: "Summary",
+        xeroBehaviour: "Behaviour",
+      },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("disables Save Settings for a finance:view admin", async () => {
+    sessionMatrix = matrix("view", { finance: "view" });
+    render(<InternetBankingSettingsPanel />);
+
+    expect(
+      await screen.findByRole("button", { name: /Save Settings/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/can view Internet Banking settings but cannot change/i),
+    ).toBeInTheDocument();
+  });
+
+  it("enables Save Settings for a finance:edit admin", async () => {
+    sessionMatrix = matrix("view", { finance: "edit" });
+    render(<InternetBankingSettingsPanel />);
+
+    expect(
+      await screen.findByRole("button", { name: /Save Settings/i }),
+    ).toBeEnabled();
+  });
+});
+
+describe("NotificationDeliveryPolicySettings view-only gating (#1940, support)", () => {
+  const POLICIES = [
+    {
+      templateName: "WELCOME",
+      label: "Welcome",
+      mode: "always" as const,
+      defaultMode: "always" as const,
+      deliveryEditable: true,
+    },
+  ];
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("disables the delivery-mode select for a support:view admin", () => {
+    sessionMatrix = matrix("view", { support: "view" });
+    render(<NotificationDeliveryPolicySettings initialPolicies={POLICIES} />);
+
+    // The mode Select autosaves on change, so it must be disabled for a viewer.
+    expect(screen.getByRole("combobox")).toBeDisabled();
+    expect(
+      screen.getByText(/can view notification delivery rules but cannot change/i),
+    ).toBeInTheDocument();
+  });
+
+  it("enables the delivery-mode select for a support:edit admin", () => {
+    sessionMatrix = matrix("view", { support: "edit" });
+    render(<NotificationDeliveryPolicySettings initialPolicies={POLICIES} />);
+
+    expect(screen.getByRole("combobox")).toBeEnabled();
   });
 });
