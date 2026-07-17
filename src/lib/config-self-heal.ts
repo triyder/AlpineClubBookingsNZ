@@ -53,6 +53,23 @@ import logger from "@/lib/logger";
  *   - `currentValue()` — the current EFFECTIVE config value to persist
  *   - `write(db, v)`   — a create-if-absent write (upsert with `update:{}`)
  * Keep every write create-if-absent so the never-overwrite guarantee holds.
+ *
+ * ### Presence/write grain shapes
+ * A step's `isPresent`/`write` pair MUST agree on GRAIN, or a partial write can
+ * wedge the table. Two shapes exist today:
+ *   1. **Fixed-id singleton** — row-level presence (`findUnique` on a known id)
+ *      + a single create-if-absent upsert. One row, one write; there is nothing
+ *      to leave half-written. Example: `clubIdentitySelfHealStep`.
+ *   2. **Whole-table-empty presence + ATOMIC multi-row write** — presence is
+ *      "the table is empty" (`findFirst`) but the write inserts SEVERAL rows.
+ *      Example: `ageTierSelfHealStep`. The hazard is a grain mismatch:
+ *      per-row writes under a table-grain presence check can wedge a PARTIAL
+ *      set — a mid-write failure leaves e.g. INFANT+CHILD only, the next boot's
+ *      `findFirst` sees rows and skips forever, and classification silently
+ *      breaks. So the multi-row write MUST be all-or-nothing: wrap every row in
+ *      a single `$transaction` so an interrupted heal rolls back to an empty
+ *      table and the presence check retries cleanly on the next boot. Any
+ *      future multi-row step MUST use this atomic shape.
  */
 
 /**
@@ -193,11 +210,19 @@ interface AgeTierSelfHealRow {
  * - **Presence is table-empty, not a fixed id.** The write is skipped whenever
  *   ANY row already exists, so an admin who edited or pruned tiers is never
  *   touched (never-overwrite guarantee at the whole-table grain).
- * - **Per-row create-if-absent.** When empty, each configured tier is written
- *   with `upsert({ update: {} })` keyed on the unique `tier`, mirroring the seed
- *   exactly. Concurrent blue/green boots that both observe the table empty are
- *   safe: the create-only upsert never overwrites, and a raced INSERT that
- *   surfaces as P2002 is caught by the runner as already-present.
+ * - **Atomic multi-row create-if-absent.** When empty, ALL configured tiers are
+ *   written in a SINGLE `$transaction` of create-only `upsert({ update: {} })`
+ *   calls keyed on the unique `tier`, mirroring the seed rows exactly. The write
+ *   is all-or-nothing by necessity: presence is guarded at the whole-table grain
+ *   (`findFirst`) but the write spans several rows, so a per-row loop that failed
+ *   partway would leave a PARTIAL set (e.g. INFANT+CHILD only) that the next
+ *   boot's table-empty check mistakes for "present" and skips forever — wedging
+ *   the fork on an incomplete tier table. Wrapping the batch in one transaction
+ *   guarantees an interrupted heal rolls back to an EMPTY table so the presence
+ *   check retries cleanly next boot (the clean-retry property). Concurrent
+ *   blue/green boots that both observe the table empty are safe: the create-only
+ *   upsert never overwrites, and a raced INSERT that surfaces as P2002 rolls the
+ *   whole transaction back and is caught by the runner as already-present.
  *
  * Scope note: this heals TIERS only. Nightly RATES live independently in
  * `MembershipTypeSeasonRate` (the authoritative runtime rate source, #1930 E4)
@@ -228,18 +253,26 @@ export const ageTierSelfHealStep = defineSelfHealStep<AgeTierSelfHealRow[]>({
     }));
   },
   async write(db, rows) {
-    // Create-if-absent per row (`update: {}`), keyed on the unique `tier`.
-    // Never overwrites an existing tier; a concurrent booter's rows are left
-    // as-is. A raced INSERT that surfaces as P2002 propagates to the runner,
-    // which treats it as already-present.
-    for (const row of rows) {
-      await db.ageTierSetting.upsert({
-        where: { tier: row.tier },
-        create: row,
-        update: {},
-        select: { tier: true },
-      });
-    }
+    // ATOMIC multi-row write (see the step docblock's grain note). Presence is
+    // guarded at the whole-table grain but the write spans several rows, so the
+    // batch MUST be all-or-nothing — a per-row loop failing partway would leave
+    // a partial set the next boot mistakes for "present". Each element is the
+    // same create-if-absent upsert the seed uses (`prisma/seed.ts`
+    // seedAgeTierSettings), keyed on the unique `tier`, so an existing tier is
+    // never overwritten. `$transaction` gives all-or-nothing: an interrupted
+    // heal rolls back to an empty table (clean retry next boot), and a raced
+    // blue/green INSERT that surfaces as P2002 rolls the whole batch back and is
+    // caught by the runner as already-present.
+    await db.$transaction(
+      rows.map((row) =>
+        db.ageTierSetting.upsert({
+          where: { tier: row.tier },
+          create: row,
+          update: {},
+          select: { tier: true },
+        }),
+      ),
+    );
   },
 });
 

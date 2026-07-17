@@ -1,8 +1,9 @@
 /**
  * Tests for Issue 13 & 14: Age tier boundaries and configurable settings
  */
+import fs from "fs";
+import path from "path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { clubConfig } from "@/config/club";
 import {
   computeAgeTierWithSettings,
   AGE_TIER_DEFAULTS,
@@ -277,12 +278,27 @@ describe("AGE_TIER_DEFAULTS — hard-coded 4-tier TAC shape (config-independent)
     ]);
   });
 
-  it("equals the value a live boot resolves from the current config (byte-for-byte, catches drift)", () => {
-    // The demotion is only safe if the hard-coded net matches what
-    // clubConfig.ageTiers.map(...) resolved before (the seed contract). This
-    // guard fails loudly if config/club.example.json ageTiers ever drift from
-    // the hard-coded default so the two are kept in lockstep.
-    const configDerived = clubConfig.ageTiers.map((tier, sortOrder) => ({
+  it("equals the tiers config/club.example.json resolves (byte-for-byte, catches drift in the canonical repo)", () => {
+    // The demotion is only safe if the hard-coded net matches what the CANONICAL
+    // config/club.example.json ageTiers resolve to (the seed contract). Pin the
+    // assertion to the example file EXPLICITLY — not the effective `clubConfig`
+    // singleton — so a fork booting a valid custom config/club.json never gets a
+    // false CI failure, while the canonical repo still fails loudly if
+    // club.example.json ageTiers ever drift from the hard-coded default.
+    const examplePath = path.join(process.cwd(), "config", "club.example.json");
+    const exampleConfig = JSON.parse(
+      fs.readFileSync(examplePath, "utf8"),
+    ) as {
+      ageTiers: Array<{
+        id: string;
+        minAge: number;
+        maxAge: number | null;
+        label: string;
+        subscriptionRequiredForBooking: boolean;
+        familyGroupRequestCreateMemberAllowed: boolean;
+      }>;
+    };
+    const exampleDerived = exampleConfig.ageTiers.map((tier, sortOrder) => ({
       tier: tier.id,
       minAge: tier.minAge,
       maxAge: tier.maxAge,
@@ -292,7 +308,7 @@ describe("AGE_TIER_DEFAULTS — hard-coded 4-tier TAC shape (config-independent)
         tier.familyGroupRequestCreateMemberAllowed,
       sortOrder,
     }));
-    expect(AGE_TIER_DEFAULTS).toEqual(configDerived);
+    expect(AGE_TIER_DEFAULTS).toEqual(exampleDerived);
   });
 
   it("resolves an EMPTY table to the hard-coded default (no config dependency)", () => {
