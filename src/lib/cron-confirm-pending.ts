@@ -10,7 +10,11 @@ import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycl
 import { recordBookingEvent } from "@/lib/booking-events";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import logger from "@/lib/logger";
-import { revokePaymentLinksForBooking } from "@/lib/payment-link";
+import {
+  mintSplitGuestPaymentLinkIfAbsent,
+  revokePaymentLinksForBooking,
+} from "@/lib/payment-link";
+import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
@@ -25,9 +29,11 @@ import {
 import {
   sendAdminBookingRequestHoldExpiredEmail,
   sendAdminPaymentFailureAlert,
+  sendAdminSplitSettlementUnpaidAlert,
   sendBookingBumpedEmail,
   sendBookingConfirmedEmail,
   sendBookingGuestsCancelledEmail,
+  sendSplitGuestPaymentLinkEmail,
 } from "./email";
 import { processWaitlistForDates } from "./waitlist";
 
@@ -74,6 +80,15 @@ type HoldResolution =
       extendedHoldUntil: Date;
     }
   | { type: "missing_payment_method"; booking: PendingBooking }
+  | {
+      type: "split_child_payment_link";
+      booking: PendingBooking;
+      extendedHoldUntil: Date;
+      // The raw token when THIS run minted a fresh link (first transition —
+      // caller emails the member + alerts admins). Null when an active link
+      // already existed (idempotent: caller sends nothing).
+      paymentLinkToken: string | null;
+    }
   | {
       type: "claimed_for_charge";
       booking: PendingBooking;
@@ -385,6 +400,45 @@ async function resolveHoldWindowUnderLock(
           : { type: "already_processed" };
       }
 
+      // #1967: a split non-member child whose parent paid via Internet Banking
+      // (switch-at-pay) has no saved card and is not request-origin, so it
+      // cannot be auto-charged. Rather than stranding the guests unsettled (the
+      // old missing_payment_method → log-only path), reuse the #707 tokenised
+      // PaymentLink so the member can settle their guests' portion. Mirror the
+      // request-origin path: extend the hold to stop 15-minute churn, mint the
+      // link (idempotently) and notify the member + admins once. The child
+      // stays PENDING and holds no capacity, exactly as before.
+      if (booking.parentBookingId) {
+        const extendedHoldUntil = new Date(
+          now.getTime() + REQUEST_HOLD_EXTENSION_MS
+        );
+        const claimed = await tx.booking.updateMany({
+          where: {
+            id: booking.id,
+            status: BookingStatus.PENDING,
+            nonMemberHoldUntil: booking.nonMemberHoldUntil,
+          },
+          data: { nonMemberHoldUntil: extendedHoldUntil },
+        });
+        if (claimed.count === 0) {
+          return { type: "already_processed" };
+        }
+
+        // Mint only on the first transition; a pre-existing active link means a
+        // prior run already emailed the member and alerted admins.
+        const paymentLinkToken = await mintSplitGuestPaymentLinkIfAbsent(tx, {
+          id: booking.id,
+          checkIn: booking.checkIn,
+        });
+
+        return {
+          type: "split_child_payment_link",
+          booking,
+          extendedHoldUntil,
+          paymentLinkToken,
+        };
+      }
+
       return { type: "missing_payment_method", booking };
     }
 
@@ -573,6 +627,61 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             },
             "Failed to send admin hold-expired alert"
           );
+        }
+        continue;
+      }
+
+      if (resolution.type === "split_child_payment_link") {
+        // Only the first transition minted a token; a null token means an
+        // active link already exists and the member + admins were already
+        // notified on a prior run (idempotent across cron re-runs).
+        if (resolution.paymentLinkToken) {
+          const expiresAt = endOfDateOnlyForTimeZone(
+            formatDateOnly(resolution.booking.checkIn)
+          );
+          try {
+            await sendSplitGuestPaymentLinkEmail({
+              email: resolution.booking.member.email,
+              firstName: resolution.booking.member.firstName,
+              token: resolution.paymentLinkToken,
+              checkIn: resolution.booking.checkIn,
+              checkOut: resolution.booking.checkOut,
+              guestCount: resolution.booking.guests.length,
+              priceCents: resolution.booking.finalPriceCents,
+              bookingReference: resolution.booking.id,
+              expiresAt,
+              lodgeId: resolution.booking.lodgeId ?? null,
+            });
+          } catch (emailErr) {
+            logger.error(
+              {
+                err: emailErr,
+                bookingId: resolution.booking.id,
+                job: "confirmPendingBookings",
+              },
+              "Failed to send split-booking guest payment link email"
+            );
+          }
+
+          try {
+            await sendAdminSplitSettlementUnpaidAlert({
+              memberName: `${resolution.booking.member.firstName} ${resolution.booking.member.lastName}`,
+              checkIn: resolution.booking.checkIn,
+              checkOut: resolution.booking.checkOut,
+              guestCount: resolution.booking.guests.length,
+              totalCents: resolution.booking.finalPriceCents,
+              holdUntil: resolution.extendedHoldUntil,
+            });
+          } catch (alertErr) {
+            logger.error(
+              {
+                err: alertErr,
+                bookingId: resolution.booking.id,
+                job: "confirmPendingBookings",
+              },
+              "Failed to send admin split-settlement unpaid alert"
+            );
+          }
         }
         continue;
       }
