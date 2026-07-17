@@ -11,6 +11,16 @@ import { formatCents } from "@/lib/utils";
 interface PaymentFormProps {
   bookingId?: string;
   amountCents: number;
+  // #1976 — the amount the card is actually charged today, as returned by the
+  // server payment-intent route (never client arithmetic). Falls back to
+  // amountCents when the server figure is unavailable. For a split booking this
+  // is the member portion only.
+  chargedAmountCents?: number | null;
+  // #1976 — for a split parent (#738), the deferred non-member guest portion in
+  // cents (the child's server-priced total), charged closer to the stay rather
+  // than today. Null/absent for a non-split booking, which keeps the exact
+  // original single-total display.
+  deferredGuestAmountCents?: number | null;
   onSuccess: (paymentIntentId: string) => void;
   onError: (error: string) => void;
   returnUrl: string;
@@ -22,6 +32,8 @@ interface PaymentFormProps {
  */
 export default function PaymentForm({
   amountCents,
+  chargedAmountCents,
+  deferredGuestAmountCents,
   onSuccess,
   onError,
   returnUrl,
@@ -31,7 +43,14 @@ export default function PaymentForm({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPaid, setIsPaid] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const formattedAmount = formatCents(amountCents);
+  // #1976 — a split booking charges only the member portion today; show that
+  // server figure. A non-split booking has no deferred portion, so it keeps the
+  // exact original "Total: {amountCents}" display, byte-for-byte.
+  const isSplit =
+    deferredGuestAmountCents != null && deferredGuestAmountCents > 0;
+  const chargedToday =
+    isSplit && chargedAmountCents != null ? chargedAmountCents : amountCents;
+  const formattedAmount = formatCents(chargedToday);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,7 +112,8 @@ export default function PaymentForm({
 
       <div className="flex items-center justify-between">
         <p className="text-lg font-semibold">
-          Total: {formattedAmount}
+          {isSplit ? "Charged today: " : "Total: "}
+          {formattedAmount}
         </p>
         <button
           type="submit"
@@ -103,6 +123,13 @@ export default function PaymentForm({
           {isProcessing ? "Processing..." : "Pay Now"}
         </button>
       </div>
+      {isSplit && (
+        <p className="text-sm text-gray-600">
+          This covers the member places on your booking. Your non-member
+          guests&apos; places (about {formatCents(deferredGuestAmountCents!)})
+          are charged closer to your stay, not today.
+        </p>
+      )}
     </form>
   );
 }
