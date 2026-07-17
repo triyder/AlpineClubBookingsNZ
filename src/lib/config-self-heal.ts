@@ -67,7 +67,9 @@ import logger from "@/lib/logger";
  *     never overwrite an admin-set value or a concurrent booter's write. Worked
  *     example: `clubFacebookUrlSelfHealStep` — copy that pattern (and read its
  *     long-form comment for why a null on a later-added column cannot be admin
- *     intent).
+ *     intent). If the target table stops being a singleton (e.g. LodgeSettings
+ *     going per-lodge), drop the `id` predicate so the null-scoped `updateMany`
+ *     backfills every null row, not just the default one.
  * Either way the write must be incapable of overwriting an existing value so the
  * never-overwrite guarantee holds.
  */

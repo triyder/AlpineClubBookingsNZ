@@ -523,7 +523,7 @@ describe("facebookUrl self-heal step (C5 #1984)", () => {
     // backfill matched no row (count: 0), so the raced value is NOT overwritten.
     expect(summary.failed).toBe(0);
     expect(rows.get("default")).toMatchObject({ facebookUrl: RACED_VALUE });
-    expect(
+    await expect(
       settings.clubIdentitySettings.updateMany.mock.results[0]?.value,
     ).resolves.toMatchObject({ count: 0 });
   });
