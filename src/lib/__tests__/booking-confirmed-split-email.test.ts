@@ -15,6 +15,9 @@ vi.mock("@/lib/email/core", () => ({
 
 vi.mock("@/lib/email-message-settings", () => ({
   EMAIL_DEFAULT_LODGE_NAME: "Example Club Lodge",
+  // Search key the email `<title>` bakes (C6 #1985); required alongside
+  // EMAIL_DEFAULT_LODGE_NAME whenever this module is mocked and a template renders.
+  EMAIL_DEFAULT_FROM_NAME: "Example Club - Online Booking System",
   loadEmailMessageSettingsForLodge: vi.fn().mockResolvedValue({
     lodgeTravelNote: "Take the Bruce Road.",
     doorCode: null,
