@@ -1,6 +1,9 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { clubConfig, clubConfigSource, type ClubConfigSource } from "@/config/club";
-import { CLUB_CONFIG_LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import {
+  CLUB_CONFIG_LODGE_CAPACITY,
+  getDefaultLodgeCapacity,
+} from "@/lib/lodge-capacity";
 import logger from "@/lib/logger";
 
 /**
@@ -197,54 +200,125 @@ export const clubIdentitySelfHealStep = defineSelfHealStep<ClubIdentitySelfHealV
 const LODGE_SETTINGS_ID = "default";
 
 /**
+ * Best-effort resolution of the club default lodge id through the SelfHealDb
+ * surface (`db.lodge`). Returns null — never throws — when it cannot be
+ * resolved cheaply at boot: no Lodge row exists yet, or a structural test fake
+ * omits the `lodge` delegate. A null result degrades the capacity heal to an
+ * UNLINKED create (documented residual) rather than failing the step. Uses a
+ * dynamic import so this boot module's static graph stays free of `@/lib/lodges`
+ * (keeping the out-of-band `npm run config:self-heal` tsx entrypoint light).
+ */
+async function resolveDefaultLodgeIdSafe(db: SelfHealDb): Promise<string | null> {
+  try {
+    const { getDefaultLodgeId } = await import("@/lib/lodges");
+    return await getDefaultLodgeId(db);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Lodge-capacity step (epic #1943 C2 mechanism, collapse child #1982). Backfills
  * the DEFAULT lodge's `LodgeSettings.capacity` from the current club-config bed
- * total (`CLUB_CONFIG_LODGE_CAPACITY`). #1982 removed the runtime `club.json`
- * capacity fallback, so without this backfill a live upgrade — which runs only
+ * total (`CLUB_CONFIG_LODGE_CAPACITY`) — but ONLY when the default lodge would
+ * otherwise resolve to 0. #1982 removed the runtime `club.json` capacity
+ * fallback, so without this backfill a live upgrade — which runs only
  * `prisma migrate deploy`, never the seed — would drop a Bed-Allocation-off
  * default lodge with no capacity override to capacity 0 and refuse all bookings
  * (the exact tokoroa live-safety outage this child exists to prevent). Because
  * self-heal runs on boot, the DB is populated before the removed fallback can
  * bite.
  *
- * COLUMN-level presence (unlike the row-level identity step): `isPresent` checks
- * the `capacity` COLUMN on the default lodge's row, not merely that the row
+ * ## The gate — heal ONLY a lodge that would otherwise resolve to 0
+ * COLUMN-level presence (unlike the row-level identity step): `isPresent` keys
+ * on the `capacity` COLUMN of the default lodge's row, not merely that the row
  * exists — a `LodgeSettings` row may already exist (e.g. carrying
- * `hutLeaderLookaheadDays`) with a null capacity. The write therefore
- * create-if-absents the row and then atomically fills capacity ONLY
- * `WHERE capacity IS NULL`, so it tolerates every state safely:
+ * `hutLeaderLookaheadDays`) with a null capacity. But a null capacity is NOT
+ * always "unpopulated": on this OLD column it can be deliberate admin INTENT.
+ * With Bed Allocation ON and >=1 active bed the lodge resolves to its LIVE bed
+ * count and a null capacity means "no ceiling — use the bed count" (see
+ * `getLodgeCapacityStatus` step 1). Writing the config bed total there would
+ * install it as a per-lodge capacity OVERRIDE, which acts as a CEILING: the
+ * lodge would silently resolve to `min(beds, total)` — a capacity REDUCTION that
+ * violates never-overwrite-admin-intent and the "Bed Allocation on → behaviour
+ * unchanged" AC. So the presence probe:
+ *   1. an explicit capacity (admin-set OR previously healed) is present → skip;
+ *   2. capacity IS NULL but the default lodge already resolves > 0 (Bed
+ *      Allocation ON with active beds) → treated as present, NO write (the bed
+ *      count is authoritative; a null there is intent, not absence);
+ *   3. capacity IS NULL and the lodge resolves to 0 (Bed Allocation OFF, or ON
+ *      with zero active beds — the tokoroa case) → heal.
+ * The gate reuses `getDefaultLodgeCapacity`, so it can NEVER drift from the
+ * frozen capacity-resolution order it mirrors. A resolution failure (e.g. no
+ * Lodge row yet) degrades to "resolves to 0" → heal, matching the pre-gate
+ * behaviour for an unconfigured install.
+ *
+ * ## The write — create-if-absent, null-scoped fill, linked to the default lodge
+ * The write create-if-absents the legacy row and then atomically fills capacity
+ * ONLY `WHERE capacity IS NULL`, so it tolerates every state safely:
  *   - no row at all               → created with the capacity,
  *   - row present, null capacity   → filled,
  *   - row with an admin-set value  → NEVER overwritten, and
  *   - concurrent (blue/green) boots → the second `updateMany` matches zero rows.
+ * It also LINKS the healed row to the club default lodge (`lodgeId`), so its
+ * capacity serves ONLY the default lodge and can never leak to an additional
+ * lodge that lacks its own row (the #1982 additional-lodge=0 invariant — an
+ * UNLINKED legacy row applies club-wide via `loadLodgeCapacityOverride`).
+ * Linking is best-effort and null-scoped: a row already linked by migration
+ * 20260708000100 is never re-pointed, and an unresolvable default lodge leaves
+ * the row unlinked (still capacity-correct for a single-lodge club).
  * The whole-run provenance guard (see the module doc) additionally ensures this
  * only fires from a valid primary `config/club.json`.
  */
 export const lodgeCapacitySelfHealStep = defineSelfHealStep<number>({
   name: "lodge-capacity",
   async isPresent(db) {
+    // A 0-bed primary config has nothing meaningful to persist. Report
+    // already-present (mirrors the facebookUrl step's `currentFacebookUrl()
+    // === null` short-circuit) so the runner never records a phantom "healed"
+    // for a write that would no-op; it self-heals later once the config gains
+    // beds. Kept here (not only in write) for log honesty.
+    if (!Number.isFinite(CLUB_CONFIG_LODGE_CAPACITY) || CLUB_CONFIG_LODGE_CAPACITY <= 0) {
+      return true;
+    }
     const row = await db.lodgeSettings.findUnique({
       where: { id: LODGE_SETTINGS_ID },
       select: { capacity: true },
     });
-    return row?.capacity != null;
+    // (1) An explicit capacity — admin-set or previously healed — is present.
+    if (row?.capacity != null) return true;
+    // capacity IS NULL. (2)/(3): heal ONLY when the default lodge would
+    // otherwise resolve to 0. When it already resolves > 0 (Bed Allocation on
+    // with active beds), the null is deliberate "use the bed count" intent and
+    // writing a capping override would silently reduce capacity — so skip. The
+    // resolved figure comes from the frozen capacity-resolution order.
+    try {
+      const resolved = await getDefaultLodgeCapacity(
+        db as unknown as Parameters<typeof getDefaultLodgeCapacity>[0],
+      );
+      return resolved > 0;
+    } catch {
+      // Unresolvable (e.g. no Lodge row yet) → treat as unconfigured → heal.
+      return false;
+    }
   },
   currentValue() {
     // The current EFFECTIVE club-config bed total (clubConfig.beds.reduce).
     return CLUB_CONFIG_LODGE_CAPACITY;
   },
   async write(db, value) {
-    // A 0-bed primary config has nothing meaningful to persist: leave capacity
-    // null so it resolves to 0 (never overbook) + a readiness warning and can
-    // still self-heal once the config gains beds. Not expected in practice — the
-    // provenance guard already required a real primary config.
+    // Guarded by isPresent (a 0-bed config reports already-present); retained as
+    // a defensive backstop that can never persist a non-positive capacity.
     if (!Number.isFinite(value) || value <= 0) return;
+    // Resolve the default lodge id up front so both the create and the
+    // null-scoped link below point the healed row at the default lodge.
+    const defaultLodgeId = await resolveDefaultLodgeIdSafe(db);
     // Create-if-absent the legacy default row (mirrors the create-only upsert
     // the seed / updateLodgeSettings use: `update: {}` never touches an existing
     // row), then fill the capacity column atomically and only while still null.
     await db.lodgeSettings.upsert({
       where: { id: LODGE_SETTINGS_ID },
-      create: { id: LODGE_SETTINGS_ID, capacity: value },
+      create: { id: LODGE_SETTINGS_ID, capacity: value, lodgeId: defaultLodgeId },
       update: {},
       select: { id: true },
     });
@@ -252,6 +326,16 @@ export const lodgeCapacitySelfHealStep = defineSelfHealStep<number>({
       where: { id: LODGE_SETTINGS_ID, capacity: null },
       data: { capacity: value },
     });
+    // Link an UNLINKED legacy row to the default lodge (null-scoped, so a row
+    // already linked by migration 20260708000100 is never re-pointed). Only
+    // when the default lodge id was resolvable; otherwise the row stays unlinked
+    // (documented residual).
+    if (defaultLodgeId) {
+      await db.lodgeSettings.updateMany({
+        where: { id: LODGE_SETTINGS_ID, lodgeId: null },
+        data: { lodgeId: defaultLodgeId },
+      });
+    }
   },
 });
 

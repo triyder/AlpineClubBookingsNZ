@@ -175,6 +175,17 @@ non-primary `club.json`); the setup-readiness **Club Config** check flags it
 loudly (a warning) rather than handing it phantom capacity that could silently
 overbook.
 
+The self-heal backfill is **gated**: it fills the default lodge's null capacity
+only when the lodge would *otherwise resolve to 0* (Bed Allocation off, or on
+with zero active beds). When Bed Allocation is **on with active beds**, a null
+capacity is the deliberate "no ceiling — use the bed count" intent (step 1), so
+the heal leaves it null rather than writing the config bed total as a **capping
+override** that would silently reduce the lodge to `min(beds, total)`. The
+backfilled row is also linked to the default lodge, so its capacity never leaks
+to an additional lodge that lacks its own row. `prisma/seed.ts` seeds the same
+default-lodge capacity (create-only, null-scoped fill) so a freshly seeded DB is
+immediately bookable, matching a booted DB.
+
 Only an **explicit** per-lodge capacity acts as a ceiling. The unconfigured
 fallback (0) is never a ceiling, so enabling Bed Allocation on a lodge keeps
 using the bed count unless a capacity is set.
