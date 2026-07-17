@@ -53,6 +53,18 @@ const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
  */
 const PENDING_HOLD_AUTO_CHARGE_REASON = "pending_hold_auto_charge";
 
+/**
+ * The ledger `reason` the charge-saved-method route stamps on a saved-card
+ * charge left PROCESSING by a 3DS/SCA challenge
+ * (src/app/api/payments/charge-saved-method/route.ts). That route mints its
+ * intent under the SAME `pending_charge_<bookingId>` Stripe idempotency key
+ * this cron replays, so the #1992 pre-charge sweep must never cancel such a
+ * row either: Stripe would answer this cron's idempotent charge with the
+ * cancelled intent and the settlement would stall until the key expires
+ * (~24h). Keep this in sync with the route's literal.
+ */
+const PENDING_SAVED_METHOD_CHARGE_REASON = "pending_saved_method_charge";
+
 const pendingBookingInclude = {
   member: true,
   // Per-night sets (issue #713) for accurate capacity re-check at the hold window.
@@ -611,8 +623,14 @@ async function releaseChargeClaim(
  * inside a database transaction) and BEFORE the saved-card charge:
  *   - The claim revoked the booking's links under the lodge lock and the /pay
  *     intent path re-reads the link under that same lock (#1967 FIX-6), so no
- *     NEW link intent can be minted after the claim — the set swept here is
- *     frozen at claim time.
+ *     NEW link-intent mint can START after the claim. That does NOT freeze the
+ *     swept set at claim time: a mint that passed the link re-read just before
+ *     the claim records its PaymentTransaction row only after its Stripe
+ *     round-trip, outside the lodge lock, so the row can land after this
+ *     sweep's findMany and be missed entirely. The sweep is best-effort
+ *     narrowing of the window, nothing more; Option 2 (the #1992
+ *     duplicate-capture auto-refund below) is the authoritative backstop and
+ *     must never be removed as "redundant".
  *   - Cancelling before the charge minimises the window in which the member's
  *     browser can still capture. A cancel that LOSES that race (the intent
  *     already succeeded → not cancellable, or the cancel API errors against a
@@ -620,11 +638,14 @@ async function releaseChargeClaim(
  *     link intent's webhook lands on the then-PAID booking, where the #1992
  *     duplicate-capture auto-refund in markBookingPaymentSucceeded is the
  *     backstop for whichever capture arrives second.
- *   - The sweep EXCLUDES this cron's own auto-charge transactions (matched by
- *     PENDING_HOLD_AUTO_CHARGE_REASON): a prior run's still-PROCESSING charge
- *     intent is re-returned by Stripe under the shared
- *     `pending_charge_<bookingId>` idempotency key when this run charges, so
- *     cancelling it would cancel this run's own charge.
+ *   - The sweep EXCLUDES every transaction minted under the shared
+ *     `pending_charge_<bookingId>` Stripe idempotency key (matched by reason:
+ *     PENDING_HOLD_AUTO_CHARGE_REASON for this cron's own prior-run charge,
+ *     PENDING_SAVED_METHOD_CHARGE_REASON for charge-saved-method's
+ *     3DS-pending charge): Stripe re-returns that key's intent when this run
+ *     charges, so cancelling either row would cancel this run's own charge —
+ *     the idempotent replay would come back as the cancelled intent and the
+ *     settlement would stall until the key expires.
  *
  * Deliberately Stripe-side only and best-effort (no durable
  * CANCEL_PAYMENT_INTENT recovery operation): the durable cancel path's
@@ -647,12 +668,20 @@ async function cancelSupersededLinkIntentsBestEffort(
         status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
         stripePaymentIntentId: { not: null },
         amountCents: { gt: 0 },
-        // Never this cron's own idempotent saved-card charge intent from a
-        // prior run (see the ordering note above). `not` alone would also
-        // drop rows with a NULL reason, so include them explicitly.
+        // Never a `pending_charge_<bookingId>`-keyed saved-card charge — this
+        // cron's own from a prior run, or charge-saved-method's 3DS-pending
+        // one (see the ordering note above). `notIn` alone would also drop
+        // rows with a NULL reason, so include them explicitly.
         OR: [
           { reason: null },
-          { reason: { not: PENDING_HOLD_AUTO_CHARGE_REASON } },
+          {
+            reason: {
+              notIn: [
+                PENDING_HOLD_AUTO_CHARGE_REASON,
+                PENDING_SAVED_METHOD_CHARGE_REASON,
+              ],
+            },
+          },
         ],
       },
       select: { id: true, stripePaymentIntentId: true },
