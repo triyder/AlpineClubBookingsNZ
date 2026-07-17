@@ -391,3 +391,72 @@ describe("setup-readiness", () => {
     });
   });
 });
+
+describe("setup-readiness club-config reconcile (D3, epic #1943)", () => {
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function makeDir(): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-readiness-d3-"));
+    dirs.push(dir);
+    return dir;
+  }
+
+  function clubConfigCheck(configDir: string) {
+    const readiness = buildSetupReadiness({ configDir });
+    for (const category of readiness.categories) {
+      const check = category.checks.find((c) => c.id === "club-config");
+      if (check) return check;
+    }
+    throw new Error("club-config check not found");
+  }
+
+  it("reports blocked for a malformed primary and does NOT fall through to a valid example", () => {
+    const dir = makeDir();
+    fs.writeFileSync(path.join(dir, "club.json"), "{ not json");
+    fs.writeFileSync(
+      path.join(dir, "club.example.json"),
+      JSON.stringify({ ...validClubConfig, name: "Example Fallback" }, null, 2),
+    );
+
+    const check = clubConfigCheck(dir);
+    expect(check.status).toBe("blocked");
+    // Must not be silently satisfied by the example's identity.
+    expect(check.message).not.toContain("Example Fallback");
+  });
+
+  it("reports blocked for a schema-invalid primary even when a valid example exists", () => {
+    const dir = makeDir();
+    fs.writeFileSync(
+      path.join(dir, "club.json"),
+      JSON.stringify({ ...validClubConfig, supportEmail: "garbage" }, null, 2),
+    );
+    fs.writeFileSync(
+      path.join(dir, "club.example.json"),
+      JSON.stringify(validClubConfig, null, 2),
+    );
+
+    expect(clubConfigCheck(dir).status).toBe("blocked");
+  });
+
+  it("reports complete for an absent primary with a valid example", () => {
+    const dir = makeDir();
+    fs.writeFileSync(
+      path.join(dir, "club.example.json"),
+      JSON.stringify({ ...validClubConfig, name: "Adopter Club" }, null, 2),
+    );
+
+    const check = clubConfigCheck(dir);
+    expect(check.status).toBe("complete");
+    expect(check.message).toContain("Adopter Club");
+  });
+
+  it("reports blocked when neither file exists", () => {
+    expect(clubConfigCheck(makeDir()).status).toBe("blocked");
+  });
+});
