@@ -13,6 +13,7 @@ import {
   adminRefundRequestTemplate,
   preArrivalReminderTemplate,
   waitlistOfferTemplate,
+  adminSplitSettlementUnpaidTemplate,
 } from "../email-templates";
 import { getAppBaseUrl } from "../app-url";
 import { formatNZDateTime } from "../nzst-date";
@@ -32,6 +33,54 @@ describe("email-templates", () => {
 
       expect(html).toContain("background-color: #d4ddd7; color: #17231c;");
       expect(html).not.toContain("background-color: #d4ddd7; color: #57b3ab;");
+    });
+  });
+
+  describe("adminSplitSettlementUnpaidTemplate (#1993)", () => {
+    const base = {
+      memberName: "Jane Doe",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guestCount: 2,
+      totalCents: 12000,
+      holdUntil: new Date("2026-07-11T12:00:00.000Z"),
+      reviewUrl: "https://example.com/admin/bookings",
+      parentUnpaid: false,
+    };
+
+    it("recurring variant reports the hold extension and repeating cadence", () => {
+      const html = adminSplitSettlementUnpaidTemplate(base);
+      expect(html).toContain("Hold extended to");
+      expect(html).toContain("This alert repeats each time the hold is extended");
+      expect(html).not.toContain("automatically cancelled");
+    });
+
+    it("final-notice variant reports the auto-cancellation and drops the hold/repeat wording", () => {
+      const html = adminSplitSettlementUnpaidTemplate({
+        ...base,
+        finalNotice: true,
+      });
+      expect(html).toContain("Auto-Cancelled");
+      expect(html).toContain("automatically cancelled");
+      // No misleading "hold extended" row or "repeats each run" note on a
+      // terminal, one-off notice.
+      expect(html).not.toContain("Hold extended to");
+      expect(html).not.toContain("This alert repeats each time the hold is extended");
+    });
+
+    it("final-notice variant distinguishes parent-unpaid wording", () => {
+      const settled = adminSplitSettlementUnpaidTemplate({
+        ...base,
+        finalNotice: true,
+        parentUnpaid: false,
+      });
+      const parentUnpaid = adminSplitSettlementUnpaidTemplate({
+        ...base,
+        finalNotice: true,
+        parentUnpaid: true,
+      });
+      expect(settled).toContain("internet banking");
+      expect(parentUnpaid).toContain("member's own linked booking also unpaid");
     });
   });
 

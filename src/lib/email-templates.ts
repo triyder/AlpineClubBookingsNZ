@@ -2866,7 +2866,31 @@ export function adminSplitSettlementUnpaidTemplate(data: {
   holdUntil: Date;
   reviewUrl: string;
   parentUnpaid: boolean;
+  // #1993 Part A: terminal final-notice variant. When true this template
+  // reports the guest portion as auto-cancelled at the end of the check-in day
+  // rather than extended — no "hold extended" row, no "repeats each run" note.
+  finalNotice?: boolean;
 }): string {
+  if (data.finalNotice) {
+    return layout(`
+    ${heading("Split Booking Guest Portion Auto-Cancelled — Unpaid Past Check-in")}
+    ${paragraph(
+      data.parentUnpaid
+        ? "A split booking's non-member guest portion was still unpaid at the end of its check-in day, with no saved card to charge and the member's own linked booking also unpaid. The provisional guest booking has now been automatically cancelled. No payment was taken and no beds were held. The member has been notified; the member's own linked booking is unaffected."
+        : "A split booking's non-member guest portion was still unpaid at the end of its check-in day, with no saved card to charge (the member had paid their own place by internet banking). The provisional guest booking has now been automatically cancelled. No payment was taken and no beds were held. The member has been notified; the member's own linked booking is unaffected."
+    )}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Amount (unpaid)", value: formatCents(data.totalCents) },
+    ])}
+    ${paragraph("No further action is required for the guest portion. If these guests are in fact coming and the member intends to pay, create a new booking for them.")}
+    ${muted("This is a one-off notice; the recurring hold-extension alerts for this guest portion have stopped.")}
+    ${button("View Bookings", data.reviewUrl, { sameOrigin: true })}
+  `);
+  }
   return layout(`
     ${heading("Split Booking Guest Portion Unpaid — No Card on File")}
     ${paragraph(

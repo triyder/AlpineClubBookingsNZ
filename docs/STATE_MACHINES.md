@@ -95,12 +95,17 @@ so the member can settle the guest portion, and emails the member that link.
 The **member email fires once per mint** — `mintSplitGuestPaymentLinkIfAbsent`
 is guarded on the absence of an active (unrevoked, unused, unexpired)
 PaymentLink for the child — while the **admin alert
-(`sendAdminSplitSettlementUnpaidAlert`) fires on every hold-extension run**
-(~2-daily, the same cadence as the request-origin hold-expired alert) until the
-child settles. If the parent is NOT settled (e.g. an abandoned-card
+(`sendAdminSplitSettlementUnpaidAlert`) follows a derived cadence** (#1993 Part
+B): it fires on hold-extension windows 1, 2 and 3, then every 7th window
+thereafter, capping the previously-uncapped ~2-daily alert. The window number is
+a pure function of elapsed time — `floor((now − originalHoldExpiry) /
+REQUEST_HOLD_EXTENSION_MS) + 1`, where `originalHoldExpiry` is re-derived (no
+schema, no counter) as `max(checkIn − holdDays, createdAt)` — and the upstream
+extension CAS still fires exactly once per ~2-day window, so a cron rerun in the
+same window never re-alerts. If the parent is NOT settled (e.g. an abandoned-card
 `PAYMENT_PENDING` parent), no link is minted or emailed — the guest portion must
-not settle ahead of the member's own place — and the same admin alert fires each
-extension run with parent-unpaid wording instead.
+not settle ahead of the member's own place — and the same capped admin alert
+fires with parent-unpaid wording instead.
 
 Payment-link recovery and supersession (#1967). Raw tokens are never stored, so
 a minted-but-undelivered link would otherwise stall settlement forever behind
@@ -131,13 +136,29 @@ reconciled) or after the parent is CANCELLED — the parent-cancel sweep
 (`cancelLinkedProvisionalChildBookings`) only cancels children still PENDING
 (and revokes their links); an already-PAID child deliberately survives, exactly
 like any other paid booking (captured-money invariant), and needs the ordinary
-cancel/refund flow if the party is not coming. There is deliberately no
-auto-cancel/reaper for a split child left unsettled past check-in — that is an
-owner policy decision; the recurring admin alert is the backstop. The child
-stays PENDING and holds no capacity throughout; if the lodge fills, the
-capacity re-check bumps it and revokes its link like any other provisional
-child. Paying the parent by card instead keeps the automatic saved-card
-settlement path unchanged.
+cancel/refund flow if the party is not coming.
+
+Terminal state at check-in (#1993 Part A, owner-selected Option 1). A split
+child still `PENDING` (unsettled, no saved card) once its check-in day has ended
+is **auto-cancelled** by the settlement cron: `PENDING -> CANCELLED`. The boundary
+is the same one the link-mint stop uses
+(`endOfDateOnlyForTimeZone(formatDateOnly(checkIn)) <= now`), so the two can never
+disagree about "check-in has passed". Because the child holds no capacity this is
+bookkeeping + notification, not a capacity change: under the per-lodge lock a
+guarded `updateMany({ status: PENDING } -> CANCELLED)` CAS (count 0 => a payment
+won the lock seconds earlier — `already_processed`, safe), then bed reconcile,
+payment-link revocation and the `CANCELLED` booking event, all in the same
+transaction; post-commit the member gets a cancellation email (no payment taken,
+no refund) and admins get ONE final notice (the `finalNotice` variant of
+`sendAdminSplitSettlementUnpaidAlert`). A **PAID child is never reached** (it is
+not `PENDING`); the **parent is never touched**; and there is **no Xero void** —
+an unsettled child never had an invoice. A split child that DOES have a saved
+card is still auto-charged at its hold deadline as before (that path settles it,
+so the terminal cancel is only for the no-card link path). The child otherwise
+stays PENDING and holds no capacity throughout; if the lodge fills first, the
+capacity re-check bumps it and revokes its link like any other provisional child.
+Paying the parent by card instead keeps the automatic saved-card settlement path
+unchanged.
 
 Lodge check-in gate (F27 / #1372 + #1422) — status-preserving. A booking that
 carries a pending admin review (`requiresAdminReview` true and

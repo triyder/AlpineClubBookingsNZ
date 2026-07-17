@@ -383,12 +383,19 @@ export async function sendAdminSplitSettlementUnpaidAlert(data: {
   totalCents: number;
   holdUntil: Date;
   parentUnpaid: boolean;
+  // #1993 Part A: the terminal notice sent once when the guest portion is
+  // auto-cancelled at the end of the check-in day. Reuses this registered
+  // template with distinct final-notice wording — no new template registered.
+  finalNotice?: boolean;
 }) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/bookings`;
+  const finalNotice = data.finalNotice ?? false;
 
   await sendToAdmins({
-    subject: `Split booking guest portion unpaid — no card on file: ${data.memberName}`,
+    subject: finalNotice
+      ? `Split booking guest portion auto-cancelled — unpaid past check-in: ${data.memberName}`
+      : `Split booking guest portion unpaid — no card on file: ${data.memberName}`,
     html: adminSplitSettlementUnpaidTemplate({
       memberName: data.memberName,
       checkIn: data.checkIn,
@@ -398,6 +405,7 @@ export async function sendAdminSplitSettlementUnpaidAlert(data: {
       holdUntil: data.holdUntil,
       reviewUrl,
       parentUnpaid: data.parentUnpaid,
+      finalNotice,
     }),
     templateName: "admin-split-settlement-unpaid",
     templateData: {
@@ -409,6 +417,7 @@ export async function sendAdminSplitSettlementUnpaidAlert(data: {
       holdUntil: formatNZDateTime(data.holdUntil),
       reviewUrl,
       parentUnpaid: data.parentUnpaid,
+      finalNotice,
     },
     preferenceKey: "adminPaymentFailure",
   });
