@@ -110,4 +110,63 @@ describe("MyBookingsPage split-child nesting discriminator (#1975/#796)", () => 
     // The joiner still renders as its own top-level row.
     expect(html).toContain("/bookings/J");
   });
+
+  // #2002: the provisional-child label keys on the same discriminator as
+  // nesting, not raw parentBookingId — so a joiner's own top-level row must not
+  // wear the #738 split-child label.
+  it("does not label a #796 group joiner as a provisional split child (#2002)", async () => {
+    const organiser = booking({ id: "O", memberId: "organiser-X" });
+    const joiner = booking({
+      id: "J",
+      memberId: VIEWER_ID,
+      parentBookingId: "O",
+      hasNonMembers: false,
+      groupBookingJoin: { id: "gj-1" },
+      status: "CONFIRMED",
+      guests: [{ id: "g1" }],
+    });
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([organiser, joiner] as never);
+
+    const html = await renderPage();
+    // The joiner renders top-level but wears no linked/provisional label.
+    expect(html).toContain("/bookings/J");
+    expect(html).not.toContain("Provisional non-member guests");
+    expect(html).not.toContain("linked to your member booking");
+  });
+
+  // #2002 guard: a genuine #738 split child keeps its provisional label when it
+  // falls back to a top-level row (parent not in the visible set here).
+  it("keeps the provisional label on a genuine #738 split child in the fallback row (#2002)", async () => {
+    const splitChild = booking({
+      id: "C",
+      parentBookingId: "P",
+      hasNonMembers: true,
+      groupBookingJoin: null,
+      status: "PENDING",
+      guests: [{ id: "g1" }],
+    });
+    // Parent P is not returned, so the child cannot nest and falls back to its
+    // own top-level row — where the inline label must still show.
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([splitChild] as never);
+
+    const html = await renderPage();
+    expect(html).not.toContain('role="group"');
+    expect(html).toContain("Provisional non-member guests");
+  });
+
+  // #2002: the guest-linked label (viewer is a guest on someone else's booking)
+  // is a different case and stays unaffected by the discriminator fix.
+  it("still shows the guest-linked label for a booking the viewer is only a guest on (#2002)", async () => {
+    const guestBooking = booking({
+      id: "G",
+      memberId: "owner-Y",
+      parentBookingId: null,
+      guests: [{ id: "g-viewer" }],
+    });
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([guestBooking] as never);
+
+    const html = await renderPage();
+    expect(html).toContain("You are listed as a guest on this booking");
+    expect(html).not.toContain("Provisional non-member guests");
+  });
 });
