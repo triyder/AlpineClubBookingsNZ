@@ -30,6 +30,10 @@ import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import { BookingHelpDialog } from "@/components/booking-help-dialog";
+import {
+  NonMemberGuestsSection,
+  type NonMemberGuestChild,
+} from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { describeCancellationSchedule } from "@/lib/cancellation-schedule";
 import { WAITLIST_OFFER_HOURS } from "@/lib/waitlist";
@@ -103,6 +107,7 @@ const narrativeBannerClasses: Record<string, string> = {
 // set here (rather than re-deriving each card's render condition) is safe.
 const BOOKING_SECTIONS: SectionNavItem[] = [
   { id: "details", label: "Booking Details" },
+  { id: "non-member-guests", label: "Non-member Guests" },
   { id: "group", label: "Group Booking" },
   { id: "arrival", label: "Arrival Time" },
   { id: "room-request", label: "Room Request" },
@@ -216,6 +221,10 @@ export default async function BookingDetailPage({
           status: true,
           finalPriceCents: true,
           hasNonMembers: true,
+          // #1975: dates for the "Your non-member guests" section — shown only
+          // when they differ from the parent's stay dates.
+          checkIn: true,
+          checkOut: true,
           guests: { select: { id: true } },
           // Discriminates a genuine #738 split child from a #796 group joiner
           // (joiners also carry parentBookingId but always have a join row).
@@ -581,6 +590,36 @@ export default async function BookingDetailPage({
   );
   const hasProvisionalChildren = provisionalChildGuestCount > 0;
   const isProvisionalChild = Boolean(booking.parentBooking);
+  // #1975: the "Your non-member guests" section lists every genuine #738 split
+  // child regardless of status (a cancelled or bumped child must still be
+  // visible to the member paying for the party), unlike linkedProvisionalChildren
+  // above which is PENDING-only because it gates the guest-payment-link route.
+  // #796 group joiners (which carry a join row) stay excluded — the organiser
+  // group card presents them. Dates are compared as date-only NZ lodge nights.
+  const parentCheckInDate = booking.checkIn.toISOString().split("T")[0];
+  const parentCheckOutDate = booking.checkOut.toISOString().split("T")[0];
+  const nonMemberGuestChildren: NonMemberGuestChild[] = booking.linkedBookings
+    .filter((linked) => linked.hasNonMembers && !linked.groupBookingJoin)
+    .map((linked) => {
+      const childCheckIn = linked.checkIn.toISOString().split("T")[0];
+      const childCheckOut = linked.checkOut.toISOString().split("T")[0];
+      return {
+        id: linked.id,
+        status: linked.status,
+        guestCount: linked.guests.length,
+        finalPriceCents: linked.finalPriceCents,
+        datesDiffer:
+          childCheckIn !== parentCheckInDate ||
+          childCheckOut !== parentCheckOutDate,
+        checkIn: linked.checkIn,
+        checkOut: linked.checkOut,
+      };
+    });
+  // Owner and admin viewers see the section; a linked non-member guest viewer
+  // (someone listed on the child) does not manage the parent, so they never
+  // land on this member-facing parent card with children to present.
+  const showNonMemberGuestsSection =
+    !isDeleted && canManageBooking && nonMemberGuestChildren.length > 0;
   // #1967: once the member's own place is settled by Internet Banking there is
   // no card on file for the later guest charge, so keep the guest-payment-link
   // affordance visible AFTER the switch too (the pre-switch warning below only
@@ -991,6 +1030,20 @@ export default async function BookingDetailPage({
           canAdminOverride={canAdminOverride}
         />
       </section>
+
+      {/* #1975: "Your non-member guests" — the parent card surfaces each genuine
+          split child inline (status, differing dates, amount, link), so the
+          member reads one family stay with the guest portion nested, not a
+          disconnected sibling booking. Presentation only: no pricing, capacity,
+          settlement, or invoicing behaviour changes here. */}
+      {showNonMemberGuestsSection && (
+        <section id="non-member-guests" className="scroll-mt-20">
+          <NonMemberGuestsSection
+            guests={nonMemberGuestChildren}
+            nonOwnerAdminViewer={nonOwnerAdminViewer}
+          />
+        </section>
+      )}
 
       {showGroupSection && (
         <section id="group" className="scroll-mt-20">
