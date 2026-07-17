@@ -32,6 +32,9 @@ const mockTx = {
   member: { findUnique: vi.fn(), findMany: vi.fn() },
   memberSubscription: { findFirst: vi.fn() },
   lodge: { findFirst: vi.fn() },
+  // #1982: default lodge capacity is a self-healed DB override, not a club.json
+  // runtime fallback.
+  lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
   memberLodgeAccess: { findMany: vi.fn() },
   // Rate-membership-type snapshot resolution (#1930, E4): booking-create now
   // resolves every guest's rate type before pricing, reading these policy-db
@@ -110,6 +113,7 @@ vi.mock("@/lib/prisma", () => ({
     lodge: {
       findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
     },
+    lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     $transaction: vi.fn(),
   },
 }));

@@ -48,8 +48,6 @@
     // Intentional backward-compat alias
     // getMemberProfileCompleteness = evaluateMemberProfileCompleteness.
     "src/lib/member-profile-completeness.ts": ["duplicates"],
-    // Intentional backward-compat alias FALLBACK_LODGE_CAPACITY = CLUB_CONFIG_LODGE_CAPACITY.
-    "src/lib/lodge-capacity.ts": ["duplicates"],
     // Intentional documented alias SCHOOL_GROUP_SOFT_CAP = DEFAULT_SCHOOL_GROUP_SOFT_CAP
     // (both names live; landed 2026-07-08 school-bookings work).
     "src/lib/school-booking-constants.ts": ["duplicates"],

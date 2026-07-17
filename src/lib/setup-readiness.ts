@@ -74,6 +74,13 @@ export interface SetupDatabaseSnapshot {
   // for that type on some (or all) of those dates hard-throws at pricing, so
   // the Seasons And Rates step drops to a warning.
   membershipTypeRateGaps?: string[];
+  // Resolved booking capacity of the club's DEFAULT lodge
+  // (getDefaultLodgeCapacity). Since #1982 the club-config check warns when this
+  // is 0 — a default lodge with no active beds AND no capacity override accepts
+  // no bookings, the never-overbook signal for a fork whose boot self-heal was
+  // skipped. Undefined when the snapshot omits it (older callers / no DB) → no
+  // capacity warning is raised.
+  defaultLodgeCapacity?: number | null;
 }
 
 // One membership type × season pair for the rate-gap check (#1930, E4).
@@ -410,17 +417,56 @@ function unresolvedStatuses(checks: SetupStepCheck[]): SetupStatus[] {
 
 function buildClubConfigCheck(
   club: ClubConfigReadResult,
+  database: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
 ): SetupStepCheck {
-  const capacity =
+  // Since #1982 the RUNTIME source of a lodge's booking capacity is the DB
+  // (per-lodge LodgeSettings.capacity), not club.json. The config bed total is
+  // now only a SEED TEMPLATE for the "import rooms & beds from config"
+  // affordance — the default lodge's capacity is normally backfilled from it by
+  // the boot-time config self-heal.
+  const seedBedTotal =
     club.config?.beds.reduce((total, bed) => total + bed.capacity, 0) ?? 0;
+
+  // Never-overbook readiness signal (#1982): a default lodge that resolves to 0
+  // (no active beds AND no capacity override) accepts no bookings. This catches
+  // a fork whose boot self-heal was skipped (e.g. non-primary config), so it is
+  // surfaced loudly rather than presenting phantom capacity. Only evaluated when
+  // the snapshot carries the resolved capacity.
+  const defaultLodgeCapacity = database?.defaultLodgeCapacity;
+  const capacityUnconfigured =
+    Boolean(club.config) &&
+    defaultLodgeCapacity !== undefined &&
+    defaultLodgeCapacity !== null &&
+    defaultLodgeCapacity <= 0;
+
   const details = club.config
     ? [
         `Source: ${club.sourcePath}`,
         `Club: ${club.config.name}`,
-        `Configured capacity: ${capacity} beds`,
+        `Seed bed template: ${seedBedTotal} beds (importable into Rooms & Beds)`,
+        ...(defaultLodgeCapacity !== undefined && defaultLodgeCapacity !== null
+          ? [`Default lodge booking capacity: ${defaultLodgeCapacity}`]
+          : []),
+        ...(capacityUnconfigured
+          ? [
+              "Default lodge has no active beds and no capacity override, so it can accept no bookings. Set a capacity (Admin → Lodges) or configure Rooms & Beds. (A boot self-heal normally backfills this from the config bed total.)",
+            ]
+          : []),
       ]
     : [`Source: ${club.sourcePath}`, ...club.issues];
+
+  const status: SetupStatus = !club.config
+    ? "blocked"
+    : capacityUnconfigured
+      ? "warning"
+      : "complete";
+
+  const message = !club.config
+    ? "A valid config/club.json or config/club.example.json is required."
+    : capacityUnconfigured
+      ? `${club.config.name} is configured, but its default lodge has no bookable capacity yet.`
+      : `${club.config.name} is configured with a ${seedBedTotal}-bed seed template.`;
 
   return applyProgress(
     {
@@ -428,11 +474,9 @@ function buildClubConfigCheck(
       title: "Club Config",
       description:
         "Club identity, contact details, bed capacity, age tiers, and default rates.",
-      status: club.config ? "complete" : "blocked",
+      status,
       required: true,
-      message: club.config
-        ? `${club.config.name} is configured with ${capacity} total beds.`
-        : "A valid config/club.json or config/club.example.json is required.",
+      message,
       details,
       href: "/admin/setup",
     },
@@ -1147,7 +1191,7 @@ export function buildSetupReadiness(
 
   const checksByCategory: Record<SetupCategoryId, SetupStepCheck[]> = {
     foundation: [
-      buildClubConfigCheck(club, progress),
+      buildClubConfigCheck(club, input.database, progress),
       buildRuntimeEnvCheck(env, progress),
       buildSeedAdminCheck(input.database, progress),
       buildFeatureFlagCheck(input.database, progress),

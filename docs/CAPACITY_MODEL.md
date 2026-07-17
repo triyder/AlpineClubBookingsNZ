@@ -158,24 +158,54 @@ Effective capacity is decided in this order:
      surplus beds stay available for allocation but cannot be booked into.
 2. **Bed Allocation off, or on with no active beds** → the per-lodge
    `LodgeSettings.capacity` (source `capacity_override`).
-3. **Neither** → for the club's default lodge only, the club-config bed total
-   (`club.json` beds, source `club_config`). Additional lodges resolve to **0**
-   (source `unconfigured_lodge`) so a freshly created lodge is unbookable rather
-   than overbookable until configured.
+3. **Neither** → **0** (source `unconfigured_lodge`), for **every** lodge
+   including the default. A freshly created (or un-backfilled) lodge is
+   unbookable rather than overbookable until configured.
 
-Only an **explicit** per-lodge capacity acts as a ceiling. The club-config
-fallback is never a ceiling, so enabling Bed Allocation on the default lodge
-keeps using the bed count unless a capacity is set.
+**DB-only capacity (#1982).** The DB is the *sole* runtime source of a lodge's
+booking capacity — `club.json` is no longer read at runtime. The default lodge
+carries an **explicit** `LodgeSettings.capacity`, backfilled from the current
+`club.json` bed total by the boot-time config self-heal
+(`src/lib/config-self-heal.ts`, epic #1943 C2 mechanism), so it normally
+resolves via step 2. `club.json beds[]` survives only as a **seed template**
+(the "import rooms & beds from config" affordance and the admin lodge-settings
+"config suggests N beds" hint). A default lodge that still resolves to 0 at
+step 3 is genuinely unconfigured (its boot self-heal was skipped — e.g. a
+non-primary `club.json`); the setup-readiness **Club Config** check flags it
+loudly (a warning) rather than handing it phantom capacity that could silently
+overbook.
+
+The self-heal backfill is **gated**: it fills the default lodge's null capacity
+only when the lodge would *otherwise resolve to 0* (Bed Allocation off, or on
+with zero active beds). When Bed Allocation is **on with active beds**, a null
+capacity is the deliberate "no ceiling — use the bed count" intent (step 1), so
+the heal leaves it null rather than writing the config bed total as a **capping
+override** that would silently reduce the lodge to `min(beds, total)`. The
+backfilled row is also linked to the default lodge, so its capacity never leaks
+to an additional lodge that lacks its own row. `prisma/seed.ts` seeds the same
+default-lodge capacity (create-only, null-scoped fill) so a freshly seeded DB is
+immediately bookable, matching a booted DB.
+
+Known residual (deliberate trade-off): a transient module-flags read error at
+boot resolves as "Bed Allocation off", so a module-ON lodge with a deliberate
+null capacity could be healed with a capping override on that one boot. The
+failure direction only ever *reduces* capacity (never overbooks) and an admin
+can clear it by setting the capacity explicitly; degrading read errors to
+"skip healing" instead would reopen the cold-boot capacity-0 outage this
+mechanism exists to prevent.
+
+Only an **explicit** per-lodge capacity acts as a ceiling. The unconfigured
+fallback (0) is never a ceiling, so enabling Bed Allocation on a lodge keeps
+using the bed count unless a capacity is set.
 
 ## Scenario table
 
 | Bed Allocation | Active beds | Capacity set | Effective capacity | `source` |
 |---|---|---|---|---|
-| Off | — | 30 | 30 | `capacity_override` |
-| Off | — | unset (default lodge) | club-config total | `club_config` |
-| Off | — | unset (additional lodge) | 0 | `unconfigured_lodge` |
+| Off | — | 30 (default lodge, self-healed or admin-set) | 30 | `capacity_override` |
+| Off | — | unset (any lodge, un-backfilled) | 0 | `unconfigured_lodge` |
 | On | 0 | 30 | 30 | `capacity_override` |
-| On | 0 | unset (additional lodge) | 0 | `unconfigured_lodge` |
+| On | 0 | unset (any lodge) | 0 | `unconfigured_lodge` |
 | On | 40 | unset | 40 | `configured_beds` |
 | On | 40 | 40 | 40 | `configured_beds` |
 | On | 40 | 50 (≥ beds) | 40 | `configured_beds` |

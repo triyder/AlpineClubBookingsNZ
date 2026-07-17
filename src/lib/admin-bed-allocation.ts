@@ -393,6 +393,10 @@ export async function getRoomsAndBedsConfiguration(
 
   return {
     rooms: serializeRooms(rooms),
+    // `capacity` is resolved from the DB (getLodgePartnerSharedCapacityStatus).
+    // `configBeds` below is the club.json bed list used ONLY as a SEED TEMPLATE
+    // for the "import from config" affordance (#1982) — club.json is never a
+    // runtime capacity source; the resolved `capacity` above does not read it.
     capacity,
     canImportFromConfig: totalRoomCount === 0 && totalBedCount === 0,
     configBeds: clubConfig.beds.map((bed) => ({

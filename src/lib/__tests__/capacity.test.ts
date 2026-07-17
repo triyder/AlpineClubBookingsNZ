@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindMany: vi.fn(),
   clubModuleSettingsFindUnique: vi.fn(),
   lodgeBedCount: vi.fn(),
+  lodgeSettingsFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -24,6 +25,13 @@ vi.mock("@/lib/prisma", () => ({
     },
     lodgeBed: {
       count: mocks.lodgeBedCount,
+    },
+    // Since #1982 the default lodge carries an explicit LodgeSettings.capacity
+    // (backfilled by the boot self-heal); the club.json runtime fallback is
+    // gone. The engine tests that read capacity without passing their own db
+    // therefore model that self-healed override here.
+    lodgeSettings: {
+      findUnique: mocks.lodgeSettingsFindUnique,
     },
   },
 }));
@@ -54,8 +62,10 @@ const TEST_LODGE_CAPACITY = FALLBACK_LODGE_CAPACITY;
 const LODGE_A = "lodge-a";
 const LODGE_B = "lodge-b";
 
-// db without a lodge delegate: the requested lodge is treated as the default
-// lodge, preserving legacy single-lodge behaviour (club-config fallback).
+// db without a lodge delegate and, by default, without a lodgeSettings
+// delegate: the requested lodge resolves with no capacity override, so an
+// unconfigured lodge yields 0 (never overbook — #1982). Tests that need a
+// configured capacity pass their own `lodgeSettings` override.
 function singleLodgeDb(overrides: Record<string, unknown> = {}) {
   return {
     clubModuleSettings: {
@@ -84,18 +94,43 @@ describe("capacity calendar availability", () => {
     mocks.bookingFindMany.mockResolvedValue([]);
     mocks.clubModuleSettingsFindUnique.mockResolvedValue(null);
     mocks.lodgeBedCount.mockResolvedValue(0);
+    // Default lodge carries a self-healed capacity override (#1982) for the
+    // engine tests that read capacity through the global prisma mock.
+    mocks.lodgeSettingsFindUnique.mockResolvedValue({ capacity: TEST_LODGE_CAPACITY });
   });
 
-  it("uses club config capacity when the bed allocation module is off", async () => {
+  it("uses the self-healed capacity override for the default lodge when the module is off", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: false });
+
+    const status = await getLodgeCapacityStatus(
+      LODGE_A,
+      singleLodgeDb({
+        lodgeSettings: {
+          findUnique: vi.fn().mockResolvedValue({ capacity: TEST_LODGE_CAPACITY }),
+        },
+      }),
+    );
+
+    expect(status).toMatchObject({
+      capacity: TEST_LODGE_CAPACITY,
+      source: "capacity_override",
+      bedAllocationEnabled: false,
+      activeBedCount: 0,
+    });
+    expect(mocks.lodgeBedCount).not.toHaveBeenCalled();
+  });
+
+  it("resolves 0 (unconfigured) for a default lodge with no capacity override (module off, #1982 never-overbook)", async () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: false });
 
     const status = await getLodgeCapacityStatus(LODGE_A, singleLodgeDb());
 
     expect(status).toMatchObject({
-      capacity: TEST_LODGE_CAPACITY,
-      source: "club_config",
+      capacity: 0,
+      source: "unconfigured_lodge",
       bedAllocationEnabled: false,
       activeBedCount: 0,
+      fallbackCapacity: 0,
     });
     expect(mocks.lodgeBedCount).not.toHaveBeenCalled();
   });
@@ -125,15 +160,36 @@ describe("capacity calendar availability", () => {
     });
   });
 
-  it("falls back to club config when the bed allocation module is on with zero active beds", async () => {
+  it("resolves 0 (unconfigured) when the module is on with zero active beds and no override (#1982)", async () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     mocks.lodgeBedCount.mockResolvedValue(0);
 
     const status = await getLodgeCapacityStatus(LODGE_A, singleLodgeDb());
 
     expect(status).toMatchObject({
+      capacity: 0,
+      source: "unconfigured_lodge",
+      bedAllocationEnabled: true,
+      activeBedCount: 0,
+    });
+  });
+
+  it("uses the capacity override when the module is on with zero active beds", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(0);
+
+    const status = await getLodgeCapacityStatus(
+      LODGE_A,
+      singleLodgeDb({
+        lodgeSettings: {
+          findUnique: vi.fn().mockResolvedValue({ capacity: TEST_LODGE_CAPACITY }),
+        },
+      }),
+    );
+
+    expect(status).toMatchObject({
       capacity: TEST_LODGE_CAPACITY,
-      source: "club_config",
+      source: "capacity_override",
       bedAllocationEnabled: true,
       activeBedCount: 0,
     });
@@ -245,9 +301,9 @@ describe("capacity calendar availability", () => {
     });
   });
 
-  it("does not cap the bed count with the club-config fallback — only an explicit capacity caps (#1653)", async () => {
+  it("does not cap the bed count without an explicit capacity — only an explicit capacity caps (#1653)", async () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
-    // More active beds than the club-config total, and NO per-lodge capacity.
+    // More active beds than the reference total, and NO per-lodge capacity.
     mocks.lodgeBedCount.mockResolvedValue(TEST_LODGE_CAPACITY + 10);
 
     const status = await getLodgeCapacityStatus(LODGE_A, singleLodgeDb());
@@ -539,15 +595,38 @@ describe("multi-lodge capacity scoping", () => {
     });
   });
 
-  it("keeps the club-config fallback for the default lodge", async () => {
+  it("resolves 0 for the default lodge with no capacity override (#1982: club-config fallback removed)", async () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     mocks.lodgeBedCount.mockResolvedValue(0);
 
+    // twoLodgeDb has no lodgeSettings delegate → no override for the default
+    // lodge either. Without the removed club-config fallback it resolves to 0,
+    // the same never-overbook outcome as an unconfigured additional lodge; the
+    // boot self-heal is what gives a live default lodge its explicit override.
     const status = await getLodgeCapacityStatus(LODGE_A, twoLodgeDb());
 
     expect(status).toMatchObject({
+      capacity: 0,
+      source: "unconfigured_lodge",
+    });
+  });
+
+  it("uses the self-healed override for the default lodge in a multi-lodge club", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(0);
+
+    const status = await getLodgeCapacityStatus(
+      LODGE_A,
+      twoLodgeDb({
+        lodgeSettings: {
+          findUnique: vi.fn().mockResolvedValue({ capacity: TEST_LODGE_CAPACITY }),
+        },
+      }),
+    );
+
+    expect(status).toMatchObject({
       capacity: TEST_LODGE_CAPACITY,
-      source: "club_config",
+      source: "capacity_override",
     });
   });
 

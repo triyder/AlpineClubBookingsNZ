@@ -8,6 +8,7 @@ const prismaMocks = vi.hoisted(() => ({
   bookingGuestFindFirst: vi.fn(),
   bookingGuestFindMany: vi.fn(),
   choreAssignmentFindFirst: vi.fn(),
+  lodgeSettingsFindUnique: vi.fn(),
 }));
 
 vi.mock("../prisma", () => ({
@@ -21,6 +22,12 @@ vi.mock("../prisma", () => ({
     },
     choreAssignment: {
       findFirst: prismaMocks.choreAssignmentFindFirst,
+    },
+    // Since #1982 the default lodge's capacity is a DB override (self-healed
+    // from the config bed total), not a club.json runtime fallback. Model it so
+    // capacity resolves to LODGE_CAPACITY (set in beforeEach).
+    lodgeSettings: {
+      findUnique: prismaMocks.lodgeSettingsFindUnique,
     },
   },
 }));
@@ -62,6 +69,9 @@ function makeBooking(guestCount: number, status: BookingStatus) {
 describe("paid legacy CONFIRMED booking repair", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    prismaMocks.lodgeSettingsFindUnique.mockResolvedValue({
+      capacity: LODGE_CAPACITY,
+    });
   });
 
   it("promotes CONFIRMED bookings with succeeded payments after unpaid bookings are backfilled", () => {

@@ -172,7 +172,7 @@ silently lose the "held provisionally / charged later" explanation.
 | `socialLinks.facebook`                             | no       | Facebook URL used by public pages/footer. Must be an http(s) URL, like `publicUrl`. DB-first: admin-editable as **Facebook URL** under Club Identity (`ClubIdentitySettings.facebookUrl`); this file value is the seed/fallback. |
 | `beds[].id`                                        | yes      | Stable bed or lodge identifier.                                                                                  |
 | `beds[].name`                                      | yes      | User-facing bed/lodge name.                                                                                      |
-| `beds[].capacity`                                  | yes      | Positive integer fallback/import capacity.                                                                       |
+| `beds[].capacity`                                  | yes      | Positive integer. Seed-template/import capacity + the value the boot self-heal backfills into the default lodge (not read at runtime, #1982). |
 | `beds[].type`                                      | yes      | One of `dormitory`, `private`, or `shared`.                                                                      |
 | `ageTiers[].id`                                    | yes      | One of `INFANT`, `CHILD`, `YOUTH`, or `ADULT`. (`NOT_APPLICABLE` is the fixed organisation/school tier — server-managed, never configured here.) |
 | `ageTiers[].label`                                 | yes      | User-facing age-tier label.                                                                                      |
@@ -219,9 +219,16 @@ active bed count from that configurator — unless a per-lodge capacity is set
 below that count, which caps it (the lower of the two applies, so a lodge may
 have more beds than it is allowed to sleep). If the module is disabled, or the
 module is enabled but no active beds exist yet, the system falls back to the
-per-lodge capacity, else the `beds[].capacity` total in `config/club.json`. Use
-the Rooms & Beds import action to seed the configurator from `config/club.json`
-during transition. See `docs/CAPACITY_MODEL.md` for the full resolution table.
+per-lodge `LodgeSettings.capacity`; if that is also unset the lodge resolves to
+**0** (unbookable) and the setup-readiness Club Config check warns.
+
+Since #1982 the DB is the **sole runtime source** of booking capacity —
+`beds[].capacity` in `config/club.json` is **not** read at runtime. Instead the
+default lodge's `LodgeSettings.capacity` is backfilled from the `config/club.json`
+bed total by the boot-time config self-heal (see `DEPLOYMENT.md`), and
+`config/club.json` remains a **seed template**: use the Rooms & Beds import
+action to seed the configurator from it. See `docs/CAPACITY_MODEL.md` for the
+full resolution table.
 
 Keep all money values in integer cents.
 

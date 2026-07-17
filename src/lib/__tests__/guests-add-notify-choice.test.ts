@@ -32,6 +32,10 @@ vi.mock("@/lib/prisma", () => ({
     },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
+    // #1982: the default lodge's capacity is a DB override (self-healed from the
+    // config bed total), not a club.json runtime fallback. Model a configured
+    // lodge so the route's guest-count-vs-capacity guard resolves normally.
+    lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
   },
 }));
 
@@ -197,6 +201,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     payment: { update: vi.fn().mockResolvedValue({}) },
     season: { findMany: vi.fn().mockResolvedValue(CURRENT_SEASON) },
     lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
+    lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     promoRedemption: { update: vi.fn().mockResolvedValue({}) },
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),

@@ -63,6 +63,7 @@ const mockTx = {
   payment: { create: mockTxPaymentCreate, upsert: mockPaymentUpsert },
   promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   lodge: { findFirst: mockTxLodgeFindFirst },
+  lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
   memberLodgeAccess: { findMany: mockTxMemberLodgeAccessFindMany },
   // Rate resolver (#1930, E4): pricing is mocked, so the resolver only needs to
   // find the NON_MEMBER type id without throwing.
@@ -80,6 +81,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => mockPrismaTransaction(fn),
     lodge: { findFirst: mockTxLodgeFindFirst },
+    lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     member: {
       count: (...args: unknown[]) => mockMemberCount(...args),
       findUnique: (...args: unknown[]) => mockMemberFindUnique(...args),
