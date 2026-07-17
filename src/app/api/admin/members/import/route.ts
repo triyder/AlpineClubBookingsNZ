@@ -22,6 +22,7 @@ import {
   MEMBER_IMPORT_ADDRESS_MAX_LENGTHS,
   MEMBER_IMPORT_COMMENTS_MAX_LENGTH,
   MEMBER_IMPORT_DATE_FIELD_KEYS,
+  MEMBER_IMPORT_CANCELLED_DATE_FLAG_HINT,
   MEMBER_IMPORT_DATE_FORMAT_VALUES,
   MEMBER_IMPORT_FIELD_DEFINITIONS,
   MEMBER_IMPORT_OCCUPATION_MAX_LENGTH,
@@ -191,9 +192,13 @@ function normalizeImportDateField(
     dateFormats[fieldKey],
   );
   if (!normalized.ok) {
+    const cancelledFlagHint =
+      fieldKey === "cancelledDate"
+        ? ` — ${MEMBER_IMPORT_CANCELLED_DATE_FLAG_HINT}`
+        : "";
     return {
       date: null,
-      error: `${getImportFieldLabel(fieldKey)}${getImportColumnContext(row, fieldKey)} ${normalized.error}`,
+      error: `${getImportFieldLabel(fieldKey)}${getImportColumnContext(row, fieldKey)} ${normalized.error}${cancelledFlagHint}`,
     };
   }
 
@@ -314,6 +319,17 @@ export async function POST(req: NextRequest) {
     }),
   );
   const acceptedIdentityKeys = new Set<string>();
+  // Tracks whether the *kept* (first accepted) row for an identity carried a
+  // cancelled date, so a later duplicate that is skipped can tell the admin when
+  // it would have imported a different lifecycle state (issue #1946 review).
+  const acceptedCancelledStateByKey = new Map<string, boolean>();
+
+  // A row "carries" a cancelled date when its Cancelled Date column is populated;
+  // that alone decides the imported lifecycle (an unparseable value would have
+  // already failed validation), so presence is the right signal for the skip
+  // note even though the skip happens before dates are parsed.
+  const rowCarriesCancelledDate = (row: ImportRow) =>
+    Boolean(row.cancelledDate?.trim());
 
   // Pre-validate all rows before committing (all-or-nothing)
   interface ValidatedRow {
@@ -370,10 +386,21 @@ export async function POST(req: NextRequest) {
 
     if (acceptedIdentityKeys.has(identityKey)) {
       results.skipped++;
+      const keptCancelled =
+        acceptedCancelledStateByKey.get(identityKey) ?? false;
+      const skippedCancelled = rowCarriesCancelledDate(row);
+      // A silent first-wins skip hides a lifecycle mismatch: e.g. an active row
+      // is kept and a later cancelled duplicate is dropped, or vice versa. Call
+      // it out so the admin knows the dropped row's cancelled state was not
+      // applied. Still a skip, never an error (the import stays all-or-nothing).
+      const lifecycleNote =
+        keptCancelled !== skippedCancelled
+          ? `; the kept row is ${keptCancelled ? "cancelled" : "active"} but this skipped row is ${skippedCancelled ? "cancelled" : "active"}, so its cancelled state was not applied`
+          : "";
       results.skippedRows.push({
         row: rowNum,
         email,
-        reason: "Duplicate member identity already appears earlier in this import",
+        reason: `Duplicate member identity already appears earlier in this import${lifecycleNote}`,
       });
       continue;
     }
@@ -477,6 +504,7 @@ export async function POST(req: NextRequest) {
           : "Imported as Can't Login because an earlier row in this import uses this email for login";
 
     acceptedIdentityKeys.add(identityKey);
+    acceptedCancelledStateByKey.set(identityKey, isCancelled);
     if (canLogin) {
       loginEmailClaimed.add(email);
     }
