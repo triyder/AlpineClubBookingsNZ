@@ -22,7 +22,9 @@ import {
 import { getSetupDatabaseSnapshot } from "../src/lib/setup-readiness-db";
 import {
   applyWizardConfigToDatabase,
+  MAX_LODGE_CAPACITY,
   readWizardConfigState,
+  type WizardConfigState,
   type WizardConfigValues,
 } from "../src/lib/setup-wizard-db";
 
@@ -66,11 +68,15 @@ async function askInt(
   rl: ReturnType<typeof createInterface>,
   label: string,
   defaultValue: number,
+  options: { max?: number } = {},
 ) {
   const raw = await ask(rl, label, String(defaultValue));
   const value = Number.parseInt(raw, 10);
   if (!Number.isInteger(value) || value < 0) {
     throw new Error(`${label} must be a non-negative integer`);
+  }
+  if (options.max !== undefined && value > options.max) {
+    throw new Error(`${label} must be no greater than ${options.max}`);
   }
   return value;
 }
@@ -97,6 +103,30 @@ function sortAgeTiers(tiers: AgeTierConfig[]) {
   ]);
   return [...tiers].sort((left, right) => {
     return (order.get(left.id) ?? 99) - (order.get(right.id) ?? 99);
+  });
+}
+
+// On the overwrite path, prefer the CURRENT DB age-tier values over the
+// config-file defaults so an operator who keeps the defaults preserves prior
+// admin edits (label / age boundaries / subscription rule). Cold install (no DB
+// rows) keeps the config/SAFE_DEFAULT tiers unchanged. Rates and other fields
+// the wizard never collects ride along from the config defaults.
+function mergeAgeTierDefaults(
+  configDefaults: AgeTierConfig[],
+  dbTiers: WizardConfigState["current"]["ageTiers"],
+): AgeTierConfig[] {
+  if (dbTiers.length === 0) return configDefaults;
+  const byTier = new Map(dbTiers.map((tier) => [String(tier.tier), tier]));
+  return configDefaults.map((tier) => {
+    const dbTier = byTier.get(tier.id);
+    if (!dbTier) return tier;
+    return {
+      ...tier,
+      label: dbTier.label || tier.label,
+      minAge: dbTier.minAge,
+      maxAge: dbTier.maxAge,
+      subscriptionRequiredForBooking: dbTier.subscriptionRequiredForBooking,
+    };
   });
 }
 
@@ -154,26 +184,70 @@ async function runWizard() {
         "environment variables and manage rates/seasons at /admin/setup.\n",
     );
 
-    const name = await ask(rl, "Club name", defaults.name);
-    const shortName = await ask(rl, "Short name", defaults.shortName ?? "");
-    const supportEmail = await ask(rl, "Support email", defaults.supportEmail);
+    // Probe the DB first. A thrown error means it is unreachable or not yet
+    // migrated (pre-deploy) — never write; guide the operator to /admin/setup.
+    // Probing before the prompts lets the overwrite path pre-fill prompt
+    // defaults from the CURRENT DB values, so an operator who accepts the
+    // defaults preserves prior admin edits (W2c). A cold install leaves these
+    // null and the prompts fall back to config/SAFE_DEFAULT values.
+    let state: WizardConfigState;
+    try {
+      state = await readWizardConfigState();
+    } catch {
+      console.log(
+        "\nCould not reach the database, so nothing was written.\n" +
+          "The setup wizard now writes configuration to the database, not to a file.\n" +
+          "Complete the deploy first:\n" +
+          "- Set env values manually; do not commit secrets.\n" +
+          "- Run npm run db:migrate && npm run db:seed.\n" +
+          "- Then sign in as the seeded admin and finish setup at /admin/setup\n" +
+          "  (or re-run npm run setup:wizard once the database is reachable).",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const current = state.current;
+
+    const name = await ask(rl, "Club name", current.name ?? defaults.name);
+    const shortName = await ask(
+      rl,
+      "Short name",
+      current.shortName ?? defaults.shortName ?? "",
+    );
+    const supportEmail = await ask(
+      rl,
+      "Support email",
+      current.supportEmail ?? defaults.supportEmail,
+    );
     const contactEmail = await ask(
       rl,
       "Bookings/contact email",
-      defaults.contactEmail ?? defaults.supportEmail,
+      current.contactEmail ?? defaults.contactEmail ?? defaults.supportEmail,
     );
-    const publicUrl = (await ask(rl, "Public URL without trailing slash", defaults.publicUrl)).replace(/\/+$/, "");
+    const publicUrl = (
+      await ask(
+        rl,
+        "Public URL without trailing slash",
+        current.publicUrl ?? defaults.publicUrl,
+      )
+    ).replace(/\/+$/, "");
     const emailFromName = await ask(
       rl,
       "Email sender display name",
-      defaults.emailFromName || `${name} - Online Booking System`,
+      current.emailFromName ??
+        (defaults.emailFromName || `${name} - Online Booking System`),
     );
     const capacity = await askInt(
       rl,
       "Total bunk/bed capacity",
-      defaults.beds.reduce((total, bed) => total + bed.capacity, 0),
+      current.capacity ??
+        defaults.beds.reduce((total, bed) => total + bed.capacity, 0),
+      { max: MAX_LODGE_CAPACITY },
     );
-    const ageTiers = await collectAgeTiers(rl, defaults.ageTiers);
+    const ageTiers = await collectAgeTiers(
+      rl,
+      mergeAgeTierDefaults(defaults.ageTiers, current.ageTiers),
+    );
 
     const nextConfig: ClubConfig = {
       ...defaults,
@@ -227,25 +301,6 @@ async function runWizard() {
       })),
     };
 
-    // Probe the DB. A thrown error means it is unreachable or not yet migrated
-    // (pre-deploy) — never write a file; guide the operator to /admin/setup.
-    let state;
-    try {
-      state = await readWizardConfigState();
-    } catch {
-      console.log(
-        "\nCould not reach the database, so nothing was written.\n" +
-          "The setup wizard now writes configuration to the database, not to a file.\n" +
-          "Complete the deploy first:\n" +
-          "- Set env values manually; do not commit secrets.\n" +
-          "- Run npm run db:migrate && npm run db:seed.\n" +
-          "- Then sign in as the seeded admin and finish setup at /admin/setup\n" +
-          "  (or re-run npm run setup:wizard once the database is reachable).",
-      );
-      process.exitCode = 1;
-      return;
-    }
-
     // Never-overwrite guard, adapted for an interactive operator tool: an
     // already-configured DB is overwritten only after explicit confirmation.
     const alreadyConfigured =
@@ -261,7 +316,7 @@ async function runWizard() {
       );
       const overwrite = await askBoolean(
         rl,
-        "Overwrite the existing club identity, capacity, and age tiers with the values above",
+        "Overwrite the existing club identity, email/contact settings, capacity, and age tiers with the values above",
         false,
       );
       if (!overwrite) {
@@ -270,7 +325,20 @@ async function runWizard() {
       }
     }
 
-    await applyWizardConfigToDatabase(values);
+    // The DB was reachable at the probe above, but it can die between the probe
+    // and this write. Guard the write so that failure surfaces a clear message
+    // and a non-zero exit instead of an unhandled rejection (G1). The writes are
+    // idempotent upserts, so the wizard is safe to re-run.
+    try {
+      await applyWizardConfigToDatabase(values);
+    } catch {
+      console.error(
+        "\nConfiguration write failed; nothing may have been fully applied.\n" +
+          "The wizard is safe to re-run once the database is reachable.",
+      );
+      process.exitCode = 1;
+      return;
+    }
     console.log("\nWrote club configuration to the database.");
 
     const missingEnv = getSetupRequiredEnvNames().filter((name) => {

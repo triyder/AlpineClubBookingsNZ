@@ -32,6 +32,15 @@ import { prisma } from "@/lib/prisma";
 const CLUB_IDENTITY_SETTINGS_ID = "default";
 const LODGE_SETTINGS_ID = "default";
 
+/**
+ * Upper bound on lodge capacity, mirroring the admin lodge-settings editor
+ * (`z.number().int().positive().max(100000)` in
+ * src/app/api/admin/lodge-settings/route.ts). The wizard must never persist a
+ * capacity the admin editor would reject, so this bound is enforced on the write
+ * path (and surfaced earlier at the capacity prompt in scripts/setup.ts).
+ */
+export const MAX_LODGE_CAPACITY = 100000;
+
 export interface WizardAgeTier {
   tier: AgeTier;
   minAge: number;
@@ -64,23 +73,56 @@ interface WizardDelegate {
     where: Record<string, unknown>;
     select?: Record<string, boolean>;
   }): Promise<Record<string, unknown> | null>;
-  count(args?: unknown): Promise<number>;
+  findMany(args?: {
+    orderBy?: Record<string, unknown>;
+    select?: Record<string, boolean>;
+  }): Promise<Record<string, unknown>[]>;
 }
 
 /**
  * The subset of the Prisma client the wizard write path uses. The real client
  * satisfies this structurally; tests pass a mock exposing just these delegates.
+ * `$transaction` is the batch (array) form used to write all age tiers
+ * atomically — mirroring the admin age-tier route (route.ts) and the #1983
+ * atomic-heal precedent.
  */
 export interface WizardDbClient {
   clubIdentitySettings: WizardDelegate;
   emailMessageSetting: WizardDelegate;
   lodgeSettings: WizardDelegate;
   ageTierSetting: WizardDelegate;
+  $transaction(operations: Promise<unknown>[]): Promise<unknown[]>;
 }
 
 /** Default to the shared Prisma singleton for the real CLI run. */
 function defaultDb(): WizardDbClient {
   return prisma as unknown as WizardDbClient;
+}
+
+/**
+ * The current DB values behind each wizard prompt, used to pre-fill prompt
+ * defaults on the overwrite path so an operator who accepts the defaults
+ * PRESERVES prior admin edits instead of reverting them to config-file values.
+ * Every field is nullable: a cold install (empty DB) leaves them null and the
+ * wizard falls back to config/SAFE_DEFAULT defaults.
+ */
+export interface WizardCurrentAgeTier {
+  tier: AgeTier;
+  minAge: number;
+  maxAge: number | null;
+  label: string;
+  subscriptionRequiredForBooking: boolean;
+}
+
+export interface WizardCurrentValues {
+  name: string | null;
+  shortName: string | null;
+  supportEmail: string | null;
+  contactEmail: string | null;
+  publicUrl: string | null;
+  emailFromName: string | null;
+  capacity: number | null;
+  ageTiers: WizardCurrentAgeTier[];
 }
 
 export interface WizardConfigState {
@@ -89,6 +131,8 @@ export interface WizardConfigState {
   hasLodgeCapacity: boolean;
   ageTierCount: number;
   existingClubName: string | null;
+  /** Current DB values, for sourcing prompt defaults on the overwrite path. */
+  current: WizardCurrentValues;
 }
 
 function trimOptional(value: unknown): string | null {
@@ -96,40 +140,87 @@ function trimOptional(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
+function toAgeTier(value: unknown): AgeTier | null {
+  return typeof value === "string" ? (value as AgeTier) : null;
+}
+
 /**
  * Read the current DB configuration state used to gate the wizard's
- * overwrite confirmation. Deliberately does NOT swallow errors: the CLI treats
- * a thrown error (unreachable DB / un-migrated schema) as "cannot reach the
- * database" and prints post-deploy /admin/setup guidance instead of writing.
+ * overwrite confirmation AND to source prompt defaults on the overwrite path.
+ * Deliberately does NOT swallow errors: the CLI treats a thrown error
+ * (unreachable DB / un-migrated schema) as "cannot reach the database" and
+ * prints post-deploy /admin/setup guidance instead of writing.
  */
 export async function readWizardConfigState(
   db: WizardDbClient = defaultDb(),
 ): Promise<WizardConfigState> {
-  const [identity, email, lodge, ageTierCount] = await Promise.all([
+  const [identity, email, lodge, ageTierRows] = await Promise.all([
     db.clubIdentitySettings.findUnique({
       where: { id: CLUB_IDENTITY_SETTINGS_ID },
-      select: { name: true },
+      select: { name: true, shortName: true },
     }),
     db.emailMessageSetting.findUnique({
       where: { id: EMAIL_MESSAGE_SETTINGS_ID },
-      select: { clubName: true, supportEmail: true },
+      select: {
+        clubName: true,
+        supportEmail: true,
+        contactEmail: true,
+        publicUrl: true,
+        emailFromName: true,
+      },
     }),
     db.lodgeSettings.findUnique({
       where: { id: LODGE_SETTINGS_ID },
       select: { capacity: true },
     }),
-    db.ageTierSetting.count(),
+    db.ageTierSetting.findMany({
+      orderBy: { sortOrder: "asc" },
+      select: {
+        tier: true,
+        minAge: true,
+        maxAge: true,
+        label: true,
+        subscriptionRequiredForBooking: true,
+      },
+    }),
   ]);
+
+  const currentAgeTiers: WizardCurrentAgeTier[] = ageTierRows.flatMap((row) => {
+    const tier = toAgeTier(row.tier);
+    if (!tier) return [];
+    return [
+      {
+        tier,
+        minAge: typeof row.minAge === "number" ? row.minAge : 0,
+        maxAge: typeof row.maxAge === "number" ? row.maxAge : null,
+        label: typeof row.label === "string" ? row.label : "",
+        subscriptionRequiredForBooking: Boolean(row.subscriptionRequiredForBooking),
+      },
+    ];
+  });
+
+  const capacity =
+    typeof lodge?.capacity === "number" ? lodge.capacity : null;
 
   return {
     hasClubIdentity: Boolean(trimOptional(identity?.name)),
     hasEmailSettings: Boolean(
       email && (trimOptional(email.clubName) || trimOptional(email.supportEmail)),
     ),
-    hasLodgeCapacity: typeof lodge?.capacity === "number",
-    ageTierCount,
+    hasLodgeCapacity: capacity !== null,
+    ageTierCount: ageTierRows.length,
     existingClubName:
       trimOptional(identity?.name) ?? trimOptional(email?.clubName),
+    current: {
+      name: trimOptional(identity?.name) ?? trimOptional(email?.clubName),
+      shortName: trimOptional(identity?.shortName),
+      supportEmail: trimOptional(email?.supportEmail),
+      contactEmail: trimOptional(email?.contactEmail),
+      publicUrl: trimOptional(email?.publicUrl),
+      emailFromName: trimOptional(email?.emailFromName),
+      capacity,
+      ageTiers: currentAgeTiers,
+    },
   };
 }
 
@@ -143,6 +234,19 @@ export async function applyWizardConfigToDatabase(
   values: WizardConfigValues,
   db: WizardDbClient = defaultDb(),
 ): Promise<void> {
+  // Never persist a capacity the admin lodge-settings editor would reject
+  // (positive, <= MAX_LODGE_CAPACITY). This is the last-resort write-path guard;
+  // the capacity prompt rejects out-of-range input earlier.
+  if (
+    !Number.isInteger(values.capacity) ||
+    values.capacity <= 0 ||
+    values.capacity > MAX_LODGE_CAPACITY
+  ) {
+    throw new Error(
+      `capacity must be a positive integer no greater than ${MAX_LODGE_CAPACITY}`,
+    );
+  }
+
   await db.clubIdentitySettings.upsert({
     where: { id: CLUB_IDENTITY_SETTINGS_ID },
     update: {
@@ -158,9 +262,12 @@ export async function applyWizardConfigToDatabase(
     },
   });
 
-  const emailData = {
+  // The wizard collects every field below EXCEPT bookingsName, which it derives
+  // from the club name. Setting a derived value on UPDATE would clobber an
+  // admin-customized bookingsName the wizard never collected, so it is written
+  // on CREATE only and omitted from the update clause (W2a).
+  const emailUpdate = {
     clubName: values.name,
-    bookingsName: `${values.name} - Bookings`,
     emailFromName: values.emailFromName,
     supportEmail: values.supportEmail,
     contactEmail: values.contactEmail,
@@ -169,8 +276,12 @@ export async function applyWizardConfigToDatabase(
   };
   await db.emailMessageSetting.upsert({
     where: { id: EMAIL_MESSAGE_SETTINGS_ID },
-    update: emailData,
-    create: { id: EMAIL_MESSAGE_SETTINGS_ID, ...emailData },
+    update: emailUpdate,
+    create: {
+      id: EMAIL_MESSAGE_SETTINGS_ID,
+      ...emailUpdate,
+      bookingsName: `${values.name} - Bookings`,
+    },
   });
 
   await db.lodgeSettings.upsert({
@@ -183,20 +294,36 @@ export async function applyWizardConfigToDatabase(
     },
   });
 
-  for (const tier of values.ageTiers) {
-    const tierData = {
-      minAge: tier.minAge,
-      maxAge: tier.maxAge,
-      label: tier.label,
-      subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
-      familyGroupRequestCreateMemberAllowed:
-        tier.familyGroupRequestCreateMemberAllowed,
-      sortOrder: tier.sortOrder,
-    };
-    await db.ageTierSetting.upsert({
-      where: { tier: tier.tier },
-      update: tierData,
-      create: { tier: tier.tier, ...tierData },
-    });
-  }
+  // Write all age tiers atomically. A mid-loop failure in the old sequential
+  // loop left 1-3 arbitrary rows, which normalizeAgeTierSettings returns AS-IS
+  // (only an empty set or the legacy-3 shape fall back to defaults) -> wrong
+  // age classification and subscription gating until re-run. The batch
+  // $transaction rolls all four back on any failure, mirroring the admin
+  // age-tier route (W1).
+  await db.$transaction(
+    values.ageTiers.map((tier) =>
+      db.ageTierSetting.upsert({
+        where: { tier: tier.tier },
+        update: {
+          minAge: tier.minAge,
+          maxAge: tier.maxAge,
+          label: tier.label,
+          subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
+          familyGroupRequestCreateMemberAllowed:
+            tier.familyGroupRequestCreateMemberAllowed,
+          sortOrder: tier.sortOrder,
+        },
+        create: {
+          tier: tier.tier,
+          minAge: tier.minAge,
+          maxAge: tier.maxAge,
+          label: tier.label,
+          subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
+          familyGroupRequestCreateMemberAllowed:
+            tier.familyGroupRequestCreateMemberAllowed,
+          sortOrder: tier.sortOrder,
+        },
+      }),
+    ),
+  );
 }

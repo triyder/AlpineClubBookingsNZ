@@ -2,16 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgeTier } from "@prisma/client";
 import {
   applyWizardConfigToDatabase,
+  MAX_LODGE_CAPACITY,
   readWizardConfigState,
   type WizardConfigValues,
   type WizardDbClient,
 } from "@/lib/setup-wizard-db";
 
-function makeDelegate(findUniqueResult: Record<string, unknown> | null = null, countResult = 0) {
+function makeDelegate(
+  findUniqueResult: Record<string, unknown> | null = null,
+  findManyResult: Record<string, unknown>[] = [],
+) {
   return {
     upsert: vi.fn().mockResolvedValue({}),
     findUnique: vi.fn().mockResolvedValue(findUniqueResult),
-    count: vi.fn().mockResolvedValue(countResult),
+    findMany: vi.fn().mockResolvedValue(findManyResult),
   };
 }
 
@@ -19,13 +23,15 @@ function makeDb(overrides?: {
   identity?: Record<string, unknown> | null;
   email?: Record<string, unknown> | null;
   lodge?: Record<string, unknown> | null;
-  ageTierCount?: number;
+  ageTierRows?: Record<string, unknown>[];
 }): WizardDbClient {
   return {
     clubIdentitySettings: makeDelegate(overrides?.identity ?? null),
     emailMessageSetting: makeDelegate(overrides?.email ?? null),
     lodgeSettings: makeDelegate(overrides?.lodge ?? null),
-    ageTierSetting: makeDelegate(null, overrides?.ageTierCount ?? 0),
+    ageTierSetting: makeDelegate(null, overrides?.ageTierRows ?? []),
+    // Batch form: resolve all operations together; reject (roll back) if any do.
+    $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   } as unknown as WizardDbClient;
 }
 
@@ -78,7 +84,6 @@ describe("setup-wizard-db", () => {
       expect.objectContaining({
         update: expect.objectContaining({
           clubName: "Rimutaka Alpine Club",
-          bookingsName: "Rimutaka Alpine Club - Bookings",
           emailFromName: values.emailFromName,
           supportEmail: "support@rac.example",
           contactEmail: "bookings@rac.example",
@@ -110,9 +115,88 @@ describe("setup-wizard-db", () => {
         update: expect.objectContaining({ maxAge: null, subscriptionRequiredForBooking: true }),
       }),
     );
+    // Age tiers are written through the batch $transaction, not a bare loop.
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
   });
 
-  it("reports an unconfigured DB as empty state", async () => {
+  it("sets bookingsName on create only so an admin-customized value survives a re-run (W2a)", async () => {
+    const db = makeDb();
+    await applyWizardConfigToDatabase(values, db);
+    const email = db.emailMessageSetting.upsert as ReturnType<typeof vi.fn>;
+    const arg = email.mock.calls[0][0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    expect(arg.create.bookingsName).toBe("Rimutaka Alpine Club - Bookings");
+    expect(arg.update).not.toHaveProperty("bookingsName");
+  });
+
+  it("writes all age tiers atomically — a mid-set failure persists none, and a re-run completes (W1)", async () => {
+    const persisted: string[] = [];
+    let call = 0;
+    const ageTierUpsert = vi.fn((args: { where: { tier: string } }) => {
+      call += 1;
+      // Simulate the second tier write failing mid-batch.
+      if (call === 2) return Promise.reject(new Error("age tier write failed"));
+      return Promise.resolve({ tier: args.where.tier });
+    });
+    const db = {
+      clubIdentitySettings: makeDelegate(),
+      emailMessageSetting: makeDelegate(),
+      lodgeSettings: makeDelegate(),
+      ageTierSetting: {
+        upsert: ageTierUpsert,
+        findUnique: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      // Batch semantics: commit (record) only if every op resolves; otherwise
+      // reject and record nothing (rollback).
+      $transaction: vi.fn(async (ops: Promise<{ tier: string }>[]) => {
+        const results = await Promise.all(ops);
+        for (const r of results) persisted.push(r.tier);
+        return results;
+      }),
+    } as unknown as WizardDbClient;
+
+    await expect(applyWizardConfigToDatabase(values, db)).rejects.toThrow(
+      "age tier write failed",
+    );
+    expect(persisted).toEqual([]);
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+
+    // Re-run against a healthy DB completes and persists every tier.
+    const healthy = makeDb();
+    await expect(
+      applyWizardConfigToDatabase(values, healthy),
+    ).resolves.toBeUndefined();
+    expect(healthy.ageTierSetting.upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a capacity above the admin cap without writing anything (W3)", async () => {
+    const db = makeDb();
+    await expect(
+      applyWizardConfigToDatabase({ ...values, capacity: MAX_LODGE_CAPACITY + 1 }, db),
+    ).rejects.toThrow(String(MAX_LODGE_CAPACITY));
+    expect(db.clubIdentitySettings.upsert).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-positive capacity without writing", async () => {
+    const db = makeDb();
+    await expect(
+      applyWizardConfigToDatabase({ ...values, capacity: 0 }, db),
+    ).rejects.toThrow();
+    expect(db.clubIdentitySettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("accepts a capacity at the cap boundary", async () => {
+    const db = makeDb();
+    await expect(
+      applyWizardConfigToDatabase({ ...values, capacity: MAX_LODGE_CAPACITY }, db),
+    ).resolves.toBeUndefined();
+  });
+
+  it("reports an unconfigured DB as empty state with null current values (cold install)", async () => {
     const state = await readWizardConfigState(makeDb());
     expect(state).toEqual({
       hasClubIdentity: false,
@@ -120,16 +204,31 @@ describe("setup-wizard-db", () => {
       hasLodgeCapacity: false,
       ageTierCount: 0,
       existingClubName: null,
+      current: {
+        name: null,
+        shortName: null,
+        supportEmail: null,
+        contactEmail: null,
+        publicUrl: null,
+        emailFromName: null,
+        capacity: null,
+        ageTiers: [],
+      },
     });
   });
 
   it("detects an already-configured DB for the overwrite gate", async () => {
     const state = await readWizardConfigState(
       makeDb({
-        identity: { name: "Existing Club" },
+        identity: { name: "Existing Club", shortName: "EC" },
         email: { clubName: "Existing Club", supportEmail: "s@x.example" },
         lodge: { capacity: 30 },
-        ageTierCount: 4,
+        ageTierRows: [
+          { tier: "INFANT", minAge: 0, maxAge: 4, label: "Infant", subscriptionRequiredForBooking: false },
+          { tier: "CHILD", minAge: 5, maxAge: 12, label: "Child", subscriptionRequiredForBooking: false },
+          { tier: "YOUTH", minAge: 13, maxAge: 17, label: "Youth", subscriptionRequiredForBooking: false },
+          { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult", subscriptionRequiredForBooking: true },
+        ],
       }),
     );
     expect(state.hasClubIdentity).toBe(true);
@@ -139,9 +238,52 @@ describe("setup-wizard-db", () => {
     expect(state.existingClubName).toBe("Existing Club");
   });
 
+  it("returns current DB values so overwrite prompts default to admin edits (W2c)", async () => {
+    const state = await readWizardConfigState(
+      makeDb({
+        identity: { name: "Existing Club", shortName: "EC" },
+        email: {
+          clubName: "Existing Club",
+          supportEmail: "s@x.example",
+          contactEmail: "c@x.example",
+          publicUrl: "https://x.example",
+          emailFromName: "Existing Club - Bookings",
+        },
+        lodge: { capacity: 30 },
+        ageTierRows: [
+          {
+            tier: "ADULT",
+            minAge: 18,
+            maxAge: null,
+            label: "Grown-up",
+            subscriptionRequiredForBooking: true,
+          },
+        ],
+      }),
+    );
+    expect(state.current).toEqual({
+      name: "Existing Club",
+      shortName: "EC",
+      supportEmail: "s@x.example",
+      contactEmail: "c@x.example",
+      publicUrl: "https://x.example",
+      emailFromName: "Existing Club - Bookings",
+      capacity: 30,
+      ageTiers: [
+        {
+          tier: "ADULT",
+          minAge: 18,
+          maxAge: null,
+          label: "Grown-up",
+          subscriptionRequiredForBooking: true,
+        },
+      ],
+    });
+  });
+
   it("propagates a DB error so the CLI can treat it as unreachable", async () => {
     const db = makeDb();
-    (db.ageTierSetting.count as ReturnType<typeof vi.fn>).mockRejectedValue(
+    (db.ageTierSetting.findMany as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error("connect ECONNREFUSED"),
     );
     await expect(readWizardConfigState(db)).rejects.toThrow("ECONNREFUSED");
