@@ -306,6 +306,13 @@ export function bookingConfirmedTemplate(
     promoCode?: string;
     lodgeTravelNote?: string;
     doorCode?: string | null;
+    // Split-booking parent (#738): the non-member places on this party are held
+    // as a provisional linked booking, charged separately around the hold
+    // deadline. Present only when this confirmation is a split parent.
+    provisionalGuests?: {
+      guestCount: number;
+      holdUntil: Date;
+    };
   }
 ): string {
   const promoAdjustmentCents =
@@ -313,6 +320,20 @@ export function bookingConfirmedTemplate(
     (options?.discountCents && options.discountCents > 0
       ? -options.discountCents
       : 0);
+  const provisional = options?.provisionalGuests;
+  const provisionalSection =
+    provisional && provisional.guestCount > 0
+      ? alertBox(
+          `Your ${provisional.guestCount} non-member guest${
+            provisional.guestCount === 1 ? "" : "s"
+          } ${
+            provisional.guestCount === 1 ? "is" : "are"
+          } held provisionally as a linked booking — no bed is reserved for them yet, and the payment above covers only your member places. If beds remain around ${formatNZDateTime(
+            provisional.holdUntil,
+          )}, that guest portion is charged automatically to the same card and your guests are confirmed. If the lodge fills with member bookings first, that portion is not charged and those guests are bumped.`,
+          "warning",
+        )
+      : "";
   const rows: Array<{ label: string; value: string }> = [
     { label: "Check-in", value: formatNZDate(checkIn) },
     { label: "Check-out", value: formatNZDate(checkOut) },
@@ -339,6 +360,7 @@ export function bookingConfirmedTemplate(
     ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge booking has been confirmed!")}
     ${infoTable(rows)}
     ${alertBox("Payment has been processed successfully.", "success")}
+    ${provisionalSection}
     ${arrivalInstructionsSection({
       travelNote: options?.lodgeTravelNote ?? CLUB_LODGE_TRAVEL_NOTE,
       doorCode: options?.doorCode ?? null,

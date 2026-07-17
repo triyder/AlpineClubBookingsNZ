@@ -10,6 +10,7 @@ import {
 } from "@/lib/xero-operation-outbox";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert, sendSetupIntentFailedEmail } from "@/lib/email";
+import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
@@ -538,6 +539,12 @@ async function handlePaymentIntentSucceeded(
         include: { member: true, guests: true, promoRedemption: { include: { promoCode: true } } },
       });
       if (booking) {
+        // Split-booking parent (#738): describe the provisional non-member
+        // child so the confirmation explains the separate later charge.
+        const provisionalGuests = await getProvisionalNonMemberChildSummary({
+          id: booking.id,
+          memberId: booking.memberId,
+        });
         await sendBookingConfirmedEmail(
           booking.member.email,
           booking.member.firstName,
@@ -547,6 +554,7 @@ async function handlePaymentIntentSucceeded(
           booking.finalPriceCents,
           {
             lodgeId: booking.lodgeId,
+            ...(provisionalGuests ? { provisionalGuests } : {}),
             ...(booking.promoRedemption?.promoCode
               ? {
                   discountCents: booking.discountCents,

@@ -90,6 +90,33 @@ describe("email-templates", () => {
       expect(html).toContain("Take the Bruce Road and carry chains.");
       expect(html).not.toContain("Door code");
     });
+
+    it("explains the split provisional guest portion when this is a split parent (#1942)", () => {
+      const holdUntil = new Date("2026-07-08T00:30:00Z");
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 2, 10000, {
+        provisionalGuests: { guestCount: 2, holdUntil },
+      });
+
+      expect(html).toContain("2 non-member guests");
+      expect(html).toContain("held provisionally");
+      expect(html).toContain("no bed is reserved for them yet");
+      expect(html).toContain("covers only your member places");
+      expect(html).toContain(formatNZDateTime(holdUntil));
+    });
+
+    it("uses singular wording for a single provisional guest (#1942)", () => {
+      const holdUntil = new Date("2026-07-08T00:30:00Z");
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000, {
+        provisionalGuests: { guestCount: 1, holdUntil },
+      });
+
+      expect(html).toContain("1 non-member guest is held provisionally");
+    });
+
+    it("omits the provisional section for an ordinary (non-split) confirmation (#1942)", () => {
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 2, 10000);
+      expect(html).not.toContain("held provisionally");
+    });
   });
 
   describe("bookingPendingTemplate", () => {
