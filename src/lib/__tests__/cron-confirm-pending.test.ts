@@ -4,6 +4,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
 
 const mockChargePaymentMethod = vi.fn();
+// #1992: the auto-charge claim sweeps and cancels in-flight /pay link intents
+// before charging the saved card (best-effort, outside any transaction).
+const mockCancelPaymentIntentIfCancellable = vi.fn();
 const mockMarkBookingPaymentSucceeded = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({
@@ -19,6 +22,8 @@ const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(
 });
 vi.mock("../stripe", () => ({
   chargePaymentMethod: (...args: unknown[]) => mockChargePaymentMethod(...args),
+  cancelPaymentIntentIfCancellable: (...args: unknown[]) =>
+    mockCancelPaymentIntentIfCancellable(...args),
 }));
 vi.mock("../xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: (...args: unknown[]) =>
@@ -118,6 +123,8 @@ const mockBookingUpdate = vi.fn();
 const mockBookingUpdateMany = vi.fn();
 const mockPaymentUpdate = vi.fn();
 const mockPaymentUpsert = vi.fn();
+// #1992: the pre-charge sweep reads in-flight PRIMARY intents off the ledger.
+const mockPaymentTransactionFindMany = vi.fn();
 const mockPromoRedemptionFindUnique = vi.fn();
 const mockPrismaTransaction = vi.fn();
 const mockExecuteRaw = vi.fn();
@@ -133,6 +140,9 @@ vi.mock("../prisma", () => ({
     payment: {
       update: (...args: unknown[]) => mockPaymentUpdate(...args),
       upsert: (...args: unknown[]) => mockPaymentUpsert(...args),
+    },
+    paymentTransaction: {
+      findMany: (...args: unknown[]) => mockPaymentTransactionFindMany(...args),
     },
     promoRedemption: {
       findUnique: (...args: unknown[]) => mockPromoRedemptionFindUnique(...args),
@@ -298,6 +308,8 @@ describe("Cron: Confirm Pending Bookings", () => {
         id: create?.id ?? `pay_${where.bookingId}`,
       })
     );
+    mockPaymentTransactionFindMany.mockResolvedValue([]);
+    mockCancelPaymentIntentIfCancellable.mockResolvedValue(null);
     mockPromoRedemptionFindUnique.mockResolvedValue(null);
     mockDeletePromoRedemption.mockResolvedValue(undefined);
     mockRevokePaymentLinksForBooking.mockResolvedValue(0);
@@ -1300,5 +1312,180 @@ describe("Cron: Confirm Pending Bookings", () => {
     // The admin alert repeats per extension run (FIX-4).
     expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledTimes(2);
     expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
+  });
+
+  // #1992 (Option 1) — the auto-charge claim closes the residual #1967 window:
+  // an in-flight /pay link PaymentIntent (client secret already handed to the
+  // member's browser before the claim revoked the links) is best-effort
+  // cancelled on Stripe BEFORE the saved-card charge. A cancel that loses to
+  // the member's confirm is expected and tolerated: the #1992 duplicate-capture
+  // auto-refund in markBookingPaymentSucceeded is the backstop.
+  describe("#1992 superseded link-intent cancellation before the auto-charge", () => {
+    function primeChargeableSplitChild() {
+      const booking = makePendingBooking("child_1", {
+        hasPaymentMethod: false,
+        parentBookingId: "parent_1",
+        parentPayment: {
+          id: "pay_parent_1",
+          stripeCustomerId: "cus_parent_1",
+          stripePaymentMethodId: "pm_parent_1",
+        },
+        finalPriceCents: 12000,
+        guestCount: 1,
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 3,
+        nightDetails: [],
+      });
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_child_charge",
+        status: "succeeded",
+        amount: 12000,
+        payment_method: "pm_parent_1",
+      });
+      return booking;
+    }
+
+    it("cancels the in-flight link intent AND charges the saved card, cancel strictly before the charge", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockResolvedValue([
+        { id: "txn_link", stripePaymentIntentId: "pi_link_inflight" },
+      ]);
+      mockCancelPaymentIntentIfCancellable.mockResolvedValue({
+        id: "pi_link_inflight",
+        status: "canceled",
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(mockCancelPaymentIntentIfCancellable).toHaveBeenCalledTimes(1);
+      expect(mockCancelPaymentIntentIfCancellable).toHaveBeenCalledWith(
+        "pi_link_inflight"
+      );
+      expect(mockChargePaymentMethod).toHaveBeenCalledTimes(1);
+      // Ordering: the cancel narrows the window BEFORE the charge creates the
+      // second instrument.
+      expect(
+        mockCancelPaymentIntentIfCancellable.mock.invocationCallOrder[0]
+      ).toBeLessThan(mockChargePaymentMethod.mock.invocationCallOrder[0]);
+    });
+
+    it("scopes the sweep to in-flight PRIMARY Stripe intents on the claim's payment and EXCLUDES the cron's own prior auto-charge intent (shared pending_charge_ idempotency key)", async () => {
+      primeChargeableSplitChild();
+
+      await confirmPendingBookings();
+
+      expect(mockPaymentTransactionFindMany).toHaveBeenCalledWith({
+        where: {
+          paymentId: "pay_child_1",
+          kind: "PRIMARY",
+          source: "STRIPE",
+          status: { in: ["PENDING", "PROCESSING"] },
+          stripePaymentIntentId: { not: null },
+          amountCents: { gt: 0 },
+          // A prior run's still-PROCESSING auto-charge intent is re-returned
+          // by Stripe under the shared `pending_charge_<bookingId>` key when
+          // this run charges — cancelling it would cancel this run's own
+          // charge. NULL reasons stay in scope.
+          OR: [
+            { reason: null },
+            { reason: { not: "pending_hold_auto_charge" } },
+          ],
+        },
+        select: { id: true, stripePaymentIntentId: true },
+      });
+    });
+
+    it("makes no cancel call when no in-flight link intent exists", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockResolvedValue([]);
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(mockCancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
+      expect(mockChargePaymentMethod).toHaveBeenCalledTimes(1);
+    });
+
+    it("tolerates losing the cancel race (intent already succeeded → not cancellable): the charge still proceeds and the duplicate lands in the #1992 reconcile backstop", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockResolvedValue([
+        { id: "txn_link", stripePaymentIntentId: "pi_link_inflight" },
+      ]);
+      // cancelPaymentIntentIfCancellable returns null when the intent is in a
+      // non-cancellable state (e.g. it already succeeded).
+      mockCancelPaymentIntentIfCancellable.mockResolvedValue(null);
+      mockMarkBookingPaymentSucceeded.mockResolvedValue({
+        outcome: "duplicate_capture_refunded",
+        bookingId: "child_1",
+        bumpedBookingIds: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      // Charge recorded, no crash; the booking counts as settled.
+      expect(mockChargePaymentMethod).toHaveBeenCalledTimes(1);
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(result.failedBookingIds).toHaveLength(0);
+      // The settling link path already sent the confirmation email and queued
+      // the Xero invoice — the duplicate outcome must not repeat either.
+      expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
+      expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+    });
+
+    it("tolerates a cancel API error (best-effort): logged, charge proceeds, booking confirms", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockResolvedValue([
+        { id: "txn_link", stripePaymentIntentId: "pi_link_inflight" },
+      ]);
+      mockCancelPaymentIntentIfCancellable.mockRejectedValue(
+        new Error("Stripe cancel raced a parallel confirm")
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(result.failedBookingIds).toHaveLength(0);
+      expect(mockChargePaymentMethod).toHaveBeenCalledTimes(1);
+    });
+
+    it("tolerates the sweep lookup itself failing (best-effort): the charge is never blocked", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockRejectedValue(
+        new Error("ledger read failed")
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(mockCancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
+      expect(mockChargePaymentMethod).toHaveBeenCalledTimes(1);
+    });
+
+    it("cancels multiple in-flight intents independently: one cancel failing does not skip the next", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockResolvedValue([
+        { id: "txn_link_1", stripePaymentIntentId: "pi_link_1" },
+        { id: "txn_link_2", stripePaymentIntentId: "pi_link_2" },
+      ]);
+      mockCancelPaymentIntentIfCancellable
+        .mockRejectedValueOnce(new Error("boom"))
+        .mockResolvedValueOnce({ id: "pi_link_2", status: "canceled" });
+
+      const result = await confirmPendingBookings();
+
+      expect(mockCancelPaymentIntentIfCancellable).toHaveBeenNthCalledWith(
+        1,
+        "pi_link_1"
+      );
+      expect(mockCancelPaymentIntentIfCancellable).toHaveBeenNthCalledWith(
+        2,
+        "pi_link_2"
+      );
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+    });
   });
 });
