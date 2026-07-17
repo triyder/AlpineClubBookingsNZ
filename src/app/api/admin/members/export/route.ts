@@ -15,6 +15,7 @@ import {
 } from "@/lib/member-roles";
 import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
+import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const SUBSCRIPTION_STATUS_FILTERS = [
@@ -394,9 +395,18 @@ export async function GET(req: NextRequest) {
         { header: "Age Tier", value: (m: MemberRow) => m.ageTier },
         { header: "Active", value: (m: MemberRow) => (m.active ? "Yes" : "No") },
         {
+          // Emitted as an NZ date-only (yyyy-MM-dd), not a full ISO datetime,
+          // so the value round-trips back through the member import: the header
+          // normalizes to `cancelledat` (a cancelledDate alias) and the import
+          // only accepts date-only formats. A full ISO datetime would fail
+          // import parsing, and its UTC calendar date can trail the NZ date by a
+          // day for an early-morning-NZ cancellation. Converting to the club
+          // time zone matches how the app displays the cancellation date.
           header: "Cancelled At",
           value: (m: MemberRow) =>
-            m.cancelledAt ? new Date(m.cancelledAt).toISOString() : "",
+            m.cancelledAt
+              ? formatDateOnlyForTimeZone(new Date(m.cancelledAt))
+              : "",
         },
         {
           header: "Archived At",

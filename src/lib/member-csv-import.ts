@@ -226,17 +226,22 @@ export const MEMBER_IMPORT_FIELD_DEFINITIONS = [
     key: "cancelledDate",
     label: "Cancelled Date",
     required: false,
+    // Only date-specific aliases here. The bare `cancelled`/`resigned` aliases
+    // were removed (issue #1946 review): they auto-mapped a legacy Y/N flag
+    // column onto the cancelled date, and a "Yes"/"No" value then failed date
+    // parsing and blocked the whole all-or-nothing import. `cancelledat` closes
+    // the export round-trip — the export's "Cancelled At" header normalizes to
+    // `cancelledat` and now carries an NZ date-only value.
     aliases: [
       "cancelleddate",
       "cancellationdate",
-      "cancelled",
       "cancelledon",
+      "cancelledat",
       "membershipcancelleddate",
       "membershipenddate",
       "dateleft",
       "leftdate",
       "resigneddate",
-      "resigned",
     ],
   },
   {
@@ -308,6 +313,15 @@ export interface MemberImportPreview {
   fileErrors: string[];
   hasErrors: boolean;
 }
+
+/**
+ * Hint appended to a cancelled-date parse failure. The cancelled date is the
+ * one import field whose column is easily confused with a legacy Yes/No
+ * "cancelled?" flag, so a value like "Yes" that fails date parsing gets an
+ * actionable nudge to unmap the column rather than a bare format error.
+ */
+export const MEMBER_IMPORT_CANCELLED_DATE_FLAG_HINT =
+  "if this column is a Yes/No cancelled flag rather than a date, leave it unmapped";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES = new Set<string>(MEMBER_IMPORT_ROLE_VALUES);
@@ -977,8 +991,12 @@ export function buildMemberImportPreview(
         const definition = MEMBER_IMPORT_FIELD_DEFINITIONS.find(
           (field) => field.key === fieldKey,
         );
+        const cancelledFlagHint =
+          fieldKey === "cancelledDate"
+            ? ` — ${MEMBER_IMPORT_CANCELLED_DATE_FLAG_HINT}`
+            : "";
         errors.push(
-          `${definition?.label ?? fieldKey}${getColumnContext(sourceColumnLabels, fieldKey)} ${normalized.error}`,
+          `${definition?.label ?? fieldKey}${getColumnContext(sourceColumnLabels, fieldKey)} ${normalized.error}${cancelledFlagHint}`,
         );
       }
     }
