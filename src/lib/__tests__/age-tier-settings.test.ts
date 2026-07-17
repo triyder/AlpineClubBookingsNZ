@@ -2,6 +2,7 @@
  * Tests for Issue 13 & 14: Age tier boundaries and configurable settings
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { clubConfig } from "@/config/club";
 import {
   computeAgeTierWithSettings,
   AGE_TIER_DEFAULTS,
@@ -228,7 +229,158 @@ describe("getAgeTierSettings fallback", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Hard-coded default net (#1983): DB is the sole runtime source; AGE_TIER_DEFAULTS
+// no longer derives from config/club.json. Pin the exact array so the fallback
+// can never silently drift with an edited/absent config file.
+// ---------------------------------------------------------------------------
+
+describe("AGE_TIER_DEFAULTS — hard-coded 4-tier TAC shape (config-independent)", () => {
+  it("equals the post-20260412190000 / club.example.json TAC default, byte-for-byte", () => {
+    expect(AGE_TIER_DEFAULTS).toEqual([
+      {
+        tier: "INFANT",
+        minAge: 0,
+        maxAge: 4,
+        label: "Infant (under 5)",
+        subscriptionRequiredForBooking: false,
+        familyGroupRequestCreateMemberAllowed: true,
+        sortOrder: 0,
+      },
+      {
+        tier: "CHILD",
+        minAge: 5,
+        maxAge: 9,
+        label: "Child (5-9)",
+        subscriptionRequiredForBooking: false,
+        familyGroupRequestCreateMemberAllowed: true,
+        sortOrder: 1,
+      },
+      {
+        tier: "YOUTH",
+        minAge: 10,
+        maxAge: 17,
+        label: "Youth (10-17)",
+        subscriptionRequiredForBooking: true,
+        familyGroupRequestCreateMemberAllowed: false,
+        sortOrder: 2,
+      },
+      {
+        tier: "ADULT",
+        minAge: 18,
+        maxAge: null,
+        label: "Adult (18+)",
+        subscriptionRequiredForBooking: true,
+        familyGroupRequestCreateMemberAllowed: false,
+        sortOrder: 3,
+      },
+    ]);
+  });
+
+  it("equals the value a live boot resolves from the current config (byte-for-byte, catches drift)", () => {
+    // The demotion is only safe if the hard-coded net matches what
+    // clubConfig.ageTiers.map(...) resolved before (the seed contract). This
+    // guard fails loudly if config/club.example.json ageTiers ever drift from
+    // the hard-coded default so the two are kept in lockstep.
+    const configDerived = clubConfig.ageTiers.map((tier, sortOrder) => ({
+      tier: tier.id,
+      minAge: tier.minAge,
+      maxAge: tier.maxAge,
+      label: tier.label,
+      subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
+      familyGroupRequestCreateMemberAllowed:
+        tier.familyGroupRequestCreateMemberAllowed,
+      sortOrder,
+    }));
+    expect(AGE_TIER_DEFAULTS).toEqual(configDerived);
+  });
+
+  it("resolves an EMPTY table to the hard-coded default (no config dependency)", () => {
+    // An empty AgeTierSetting table (fresh fork before self-heal / seed) must
+    // still yield valid tiers so age classification never breaks.
+    expect(normalizeAgeTierSettings([])).toEqual(AGE_TIER_DEFAULTS);
+  });
+});
+
+describe("normalizeAgeTierSettings — populated non-legacy table is byte-identical", () => {
+  // The exact tokoroa/TAC-shaped rows a migrated DB holds after
+  // 20260412190000. Resolution must return them untouched (no fallback) so
+  // pricing is byte-identical before/after the config-fallback removal.
+  const postMigrationRows: AgeTierSettingData[] = [
+    {
+      tier: "INFANT",
+      minAge: 0,
+      maxAge: 4,
+      label: "Infant (under 5)",
+      subscriptionRequiredForBooking: false,
+      familyGroupRequestCreateMemberAllowed: true,
+      sortOrder: 0,
+    },
+    {
+      tier: "CHILD",
+      minAge: 5,
+      maxAge: 9,
+      label: "Child (5-9)",
+      subscriptionRequiredForBooking: false,
+      familyGroupRequestCreateMemberAllowed: true,
+      sortOrder: 1,
+    },
+    {
+      tier: "YOUTH",
+      minAge: 10,
+      maxAge: 17,
+      label: "Youth (10-17)",
+      subscriptionRequiredForBooking: true,
+      familyGroupRequestCreateMemberAllowed: false,
+      sortOrder: 2,
+    },
+    {
+      tier: "ADULT",
+      minAge: 18,
+      maxAge: null,
+      label: "Adult (18+)",
+      subscriptionRequiredForBooking: true,
+      familyGroupRequestCreateMemberAllowed: false,
+      sortOrder: 3,
+    },
+  ];
+
+  it("returns the DB rows unchanged (not the fallback)", () => {
+    expect(normalizeAgeTierSettings(postMigrationRows)).toEqual(postMigrationRows);
+  });
+
+  it("a migrated 4-tier DB does NOT match the legacy shape (CHILD is 5-9, not 0-9)", () => {
+    // The legacy-3-tier trap: because the migration shifts CHILD to 5-9 and adds
+    // INFANT, a migrated DB can never re-enter the legacy fallback branch. Prove
+    // it by confirming the rows survive normalization identically.
+    const normalized = normalizeAgeTierSettings(postMigrationRows);
+    expect(normalized.find((t) => t.tier === "CHILD")?.minAge).toBe(5);
+    expect(normalized).not.toBe(AGE_TIER_DEFAULTS); // distinct array (clone)
+    expect(normalized).toEqual(postMigrationRows);
+  });
+});
+
 describe("normalizeAgeTierSettings", () => {
+  it("legacy 3-tier DB resolves to the post-20260412190000 TAC values (no silent pricing change)", () => {
+    // A genuinely-unmigrated DB in the legacy shape (CHILD 0-9 / YOUTH / ADULT)
+    // falls back to the hard-coded default, which equals exactly what the
+    // 20260412190000 backfill would have written: INFANT 0-4, CHILD 5-9,
+    // YOUTH 10-17, ADULT 18+.
+    const legacyRows: AgeTierSettingData[] = [
+      { tier: "CHILD", minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },
+      { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
+      { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult", sortOrder: 3 },
+    ];
+
+    const resolved = normalizeAgeTierSettings(legacyRows);
+    expect(resolved).toEqual([
+      { tier: "INFANT", minAge: 0, maxAge: 4, label: "Infant (under 5)", subscriptionRequiredForBooking: false, familyGroupRequestCreateMemberAllowed: true, sortOrder: 0 },
+      { tier: "CHILD", minAge: 5, maxAge: 9, label: "Child (5-9)", subscriptionRequiredForBooking: false, familyGroupRequestCreateMemberAllowed: true, sortOrder: 1 },
+      { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", subscriptionRequiredForBooking: true, familyGroupRequestCreateMemberAllowed: false, sortOrder: 2 },
+      { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", subscriptionRequiredForBooking: true, familyGroupRequestCreateMemberAllowed: false, sortOrder: 3 },
+    ]);
+  });
+
   it("rewrites the legacy 3-tier settings to the default 4-tier layout", () => {
     const legacyRows: AgeTierSettingData[] = [
       { tier: "CHILD", minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },

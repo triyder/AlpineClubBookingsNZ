@@ -1,5 +1,4 @@
 import type { AgeTier } from "@prisma/client";
-import { clubConfig } from "@/config/club";
 import { getSeasonStartMonth } from "@/lib/financial-year";
 
 /**
@@ -32,17 +31,61 @@ export type AgeTierSettingData = {
   sortOrder: number;
 };
 
-export const AGE_TIER_DEFAULTS: AgeTierSettingData[] = clubConfig.ageTiers.map(
-  (tier, sortOrder) => ({
-    tier: tier.id as AgeTier,
-    minAge: tier.minAge,
-    maxAge: tier.maxAge,
-    label: tier.label,
-    subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
-    familyGroupRequestCreateMemberAllowed: tier.familyGroupRequestCreateMemberAllowed,
-    sortOrder,
-  }),
-);
+/**
+ * The hard-coded age-tier safety net (epic #1943, child C4 / issue #1983).
+ *
+ * The DB (`AgeTierSetting`) is the sole runtime source of age tiers; this array
+ * is only the fallback when the table is empty or the boot-time self-heal has
+ * not yet populated it (age classification must never break). It is NO LONGER
+ * derived from `config/club.json` — a configured install always reads DB, and
+ * `config/club.json ageTiers[]` is now a seed input only.
+ *
+ * These values are byte-for-byte what a live boot resolved before the config
+ * demotion: the 4-tier TAC default shape shared by `config/club.example.json`,
+ * `SAFE_DEFAULT_CONFIG` (`src/config/safe-default-config.ts`), and the state a
+ * legacy DB reaches after migration
+ * `20260412190000_backfill_infant_age_tier_settings` (INFANT 0-4, CHILD 5-9,
+ * YOUTH 10-17, ADULT 18+). Keeping it hard-coded means the fallback can never
+ * silently change with an edited/absent config file.
+ */
+export const AGE_TIER_DEFAULTS: AgeTierSettingData[] = [
+  {
+    tier: "INFANT",
+    minAge: 0,
+    maxAge: 4,
+    label: "Infant (under 5)",
+    subscriptionRequiredForBooking: false,
+    familyGroupRequestCreateMemberAllowed: true,
+    sortOrder: 0,
+  },
+  {
+    tier: "CHILD",
+    minAge: 5,
+    maxAge: 9,
+    label: "Child (5-9)",
+    subscriptionRequiredForBooking: false,
+    familyGroupRequestCreateMemberAllowed: true,
+    sortOrder: 1,
+  },
+  {
+    tier: "YOUTH",
+    minAge: 10,
+    maxAge: 17,
+    label: "Youth (10-17)",
+    subscriptionRequiredForBooking: true,
+    familyGroupRequestCreateMemberAllowed: false,
+    sortOrder: 2,
+  },
+  {
+    tier: "ADULT",
+    minAge: 18,
+    maxAge: null,
+    label: "Adult (18+)",
+    subscriptionRequiredForBooking: true,
+    familyGroupRequestCreateMemberAllowed: false,
+    sortOrder: 3,
+  },
+];
 
 const LEGACY_THREE_TIER_SETTINGS = [
   { tier: "CHILD" as AgeTier, minAge: 0, maxAge: 9 as number | null, sortOrder: 1 },

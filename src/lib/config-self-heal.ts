@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from "@prisma/client";
+import { Prisma, type AgeTier, type PrismaClient } from "@prisma/client";
 import { clubConfig, clubConfigSource, type ClubConfigSource } from "@/config/club";
 import logger from "@/lib/logger";
 
@@ -167,12 +167,90 @@ export const clubIdentitySelfHealStep = defineSelfHealStep<ClubIdentitySelfHealV
 });
 
 /**
+ * One `AgeTierSetting` row to create when the table is empty. Mirrors the seed's
+ * create-if-missing tier rows (`prisma/seed.ts` `seedAgeTierSettings` +
+ * `ageTierSetting.upsert`).
+ */
+interface AgeTierSelfHealRow {
+  tier: AgeTier;
+  minAge: number;
+  maxAge: number | null;
+  label: string;
+  subscriptionRequiredForBooking: boolean;
+  familyGroupRequestCreateMemberAllowed: boolean;
+  sortOrder: number;
+}
+
+/**
+ * Age-tier step (epic #1943, child C4 / issue #1983). Once `age-tier.ts` drops
+ * its `config/club.json` fallback and reads age tiers DB-only, a live fork that
+ * never re-runs the seed on a `migrate deploy` could otherwise be left with an
+ * EMPTY `AgeTierSetting` table and no source of tiers. This step guarantees a
+ * primary-config boot populates the table from the effective config tiers so
+ * the fork can never end up with zero tiers.
+ *
+ * Contract differences from the identity singleton step:
+ * - **Presence is table-empty, not a fixed id.** The write is skipped whenever
+ *   ANY row already exists, so an admin who edited or pruned tiers is never
+ *   touched (never-overwrite guarantee at the whole-table grain).
+ * - **Per-row create-if-absent.** When empty, each configured tier is written
+ *   with `upsert({ update: {} })` keyed on the unique `tier`, mirroring the seed
+ *   exactly. Concurrent blue/green boots that both observe the table empty are
+ *   safe: the create-only upsert never overwrites, and a raced INSERT that
+ *   surfaces as P2002 is caught by the runner as already-present.
+ *
+ * Scope note: this heals TIERS only. Nightly RATES live independently in
+ * `MembershipTypeSeasonRate` (the authoritative runtime rate source, #1930 E4)
+ * and are NOT self-healed here — the seed's tier block writes only
+ * `AgeTierSetting`, so this mirrors it exactly.
+ */
+export const ageTierSelfHealStep = defineSelfHealStep<AgeTierSelfHealRow[]>({
+  name: "age-tier-settings",
+  async isPresent(db) {
+    // Table-empty presence: any existing row means the table is populated (an
+    // admin edit / prior seed) and MUST NOT be touched.
+    const existing = await db.ageTierSetting.findFirst({ select: { tier: true } });
+    return existing !== null;
+  },
+  currentValue() {
+    // The EFFECTIVE config tiers (mirrors `seedAgeTierSettings` in
+    // prisma/seed.ts). Only reached when provenance === "primary" (the run
+    // guard), so `clubConfig` is the fork's real config, never a fallback.
+    return clubConfig.ageTiers.map((tier, sortOrder) => ({
+      tier: tier.id as AgeTier,
+      minAge: tier.minAge,
+      maxAge: tier.maxAge,
+      label: tier.label,
+      subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
+      familyGroupRequestCreateMemberAllowed:
+        tier.familyGroupRequestCreateMemberAllowed,
+      sortOrder,
+    }));
+  },
+  async write(db, rows) {
+    // Create-if-absent per row (`update: {}`), keyed on the unique `tier`.
+    // Never overwrites an existing tier; a concurrent booter's rows are left
+    // as-is. A raced INSERT that surfaces as P2002 propagates to the runner,
+    // which treats it as already-present.
+    for (const row of rows) {
+      await db.ageTierSetting.upsert({
+        where: { tier: row.tier },
+        create: row,
+        update: {},
+        select: { tier: true },
+      });
+    }
+  },
+});
+
+/**
  * The ordered registry of self-heal steps. C3/C4/C5 append their capacity /
  * age-tier steps here (see the module doc). Order is not significant — steps are
  * independent — but keep it stable for predictable logs.
  */
 export const SELF_HEAL_STEPS: readonly RegisteredSelfHealStep[] = [
   clubIdentitySelfHealStep,
+  ageTierSelfHealStep,
 ];
 
 // ---------------------------------------------------------------------------

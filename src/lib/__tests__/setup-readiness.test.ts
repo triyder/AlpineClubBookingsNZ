@@ -204,6 +204,27 @@ describe("setup-readiness", () => {
     expect(readiness.status).toBe("warning");
   });
 
+  it("reports the age-tier step against the DB/seed contract when club.json is absent (#1983)", () => {
+    // Age tiers are DB-only at runtime; club.json ageTiers[] is a seed input.
+    // With no config file present, the expected count falls back to the seed
+    // contract (4 tiers) so a populated DB still reports complete.
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-readiness-noconfig-"));
+    tempDirs.push(emptyDir);
+
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: emptyDir,
+      database: completeDatabase, // ageTierSettingCount: 4
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const bookingCategory = readiness.categories.find((c) => c.id === "booking");
+    const ageCheck = bookingCategory?.checks.find((c) => c.id === "age-tiers");
+    expect(ageCheck?.status).toBe("complete");
+    expect(ageCheck?.details).toContain("Expected age tiers: 4");
+    expect(ageCheck?.details).toContain("Database age-tier settings: 4");
+  });
+
   it("computes tier-aware membership-type rate gaps (#1930, E4 review F7)", async () => {
     const { computeMembershipTypeRateGaps } = await import("@/lib/setup-readiness");
     const types = [

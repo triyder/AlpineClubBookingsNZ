@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
+import { AGE_TIER_DEFAULTS } from "@/lib/policies/age-tier";
 import { clubConfigSchema, type ClubConfig } from "../config/schema";
 import {
   DEFAULT_ADMIN_MODULE_SETTINGS,
@@ -703,7 +704,13 @@ function buildAgeTierCheck(
     );
   }
 
-  const expected = club.config?.ageTiers.length ?? 0;
+  // The DB is the sole runtime source of age tiers (#1983). Age tiers are
+  // seeded / self-healed to the DB/seed contract, so the "expected" count comes
+  // from that contract (AGE_TIER_DEFAULTS), not `config/club.json` — the file may
+  // be absent once ageTiers[] is demoted to a seed-only input. When a primary
+  // config is present its tier count still refines the expectation for forks
+  // that configure a non-default number of tiers.
+  const expected = club.config?.ageTiers.length ?? AGE_TIER_DEFAULTS.length;
   const actual = db?.ageTierSettingCount ?? 0;
   const complete = expected > 0 && actual >= expected;
   return applyProgress(
@@ -718,7 +725,7 @@ function buildAgeTierCheck(
         ? "Database age-tier settings are populated."
         : "Seed or review age-tier settings before member imports.",
       details: [
-        `Config age tiers: ${expected || "unknown"}`,
+        `Expected age tiers: ${expected || "unknown"}`,
         `Database age-tier settings: ${actual}`,
       ],
       href: "/admin/age-tier-settings",

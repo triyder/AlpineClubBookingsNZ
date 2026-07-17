@@ -121,6 +121,22 @@ silently lose the "held provisionally / charged later" explanation.
 | `ageTiers[].nightlyRates.summer.memberCents`       | yes      | Summer member nightly rate in integer cents.                                                                     |
 | `ageTiers[].nightlyRates.summer.nonMemberCents`    | yes      | Summer non-member nightly rate in integer cents.                                                                 |
 
+> **Age tiers are DB-only at runtime (#1983).** `config/club.json ageTiers[]` is
+> a **seed input only**. At runtime the age tiers (boundaries, labels, per-tier
+> subscription/family flags) are read solely from the `AgeTierSetting` table;
+> `config/club.json` is never consulted for age classification once the DB is
+> populated. On a fresh install `prisma/seed.ts` create-only upserts the config
+> tiers into `AgeTierSetting`, and — because a routine `prisma migrate deploy`
+> never runs the seed — the app **self-heals the tiers on every boot**: if the
+> table is EMPTY it populates it from the current effective config tiers (only
+> from a valid primary `config/club.json`; never overwriting an existing row, so
+> admin edits survive). A hard-coded 4-tier TAC default (INFANT 0-4, CHILD 5-9,
+> YOUTH 10-17, ADULT 18+) is the last-resort safety net if the table is still
+> empty, so age classification never breaks. Nightly RATES are NOT self-healed
+> here — they live independently in `MembershipTypeSeasonRate` (see below). See
+> `src/lib/policies/age-tier.ts`, `src/lib/config-self-heal.ts`, and "Config
+> self-heal on boot" in `docs/DEPLOYMENT.md`.
+
 > **Hut rates are keyed by membership type (#1930, E4).** The `memberCents` /
 > `nonMemberCents` seed values above are fanned out at seed time into
 > per-membership-type `MembershipTypeSeasonRate` rows: `memberCents` seeds every
