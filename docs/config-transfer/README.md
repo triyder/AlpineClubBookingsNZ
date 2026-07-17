@@ -193,7 +193,8 @@ Intentionally excluded / deferred:
 - **Is:** a portable, human-editable, database-id-free interchange for
   *configuration, content, and lodge setup* — pages, settings, lodges, rooms,
   beds, seasons, rates, policies, instructions, chore templates, committee
-  roles, induction templates, Xero configuration mappings.
+  roles, induction templates, membership fee schedules (joining fees, annual
+  fees and their invoice-line components), Xero configuration mappings.
 - **Is not:** a database backup. The `pg_dump` subsystem (`src/lib/backup.ts`)
   remains the whole-database disaster-recovery tool. Import here **never
   deletes** — restoring a bundle will not remove things added after it was

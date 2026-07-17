@@ -1204,6 +1204,17 @@ composition heuristic is removed). Hut fees remain lodge season/rate
 configuration. See `docs/AUTHORITATIVE_FEES.md` for operator rules and the
 frozen Xero idempotency contract.
 
+These fee schedules are config-transferable (#1941): the `membership-fees`
+category of the configuration transfer tool carries `joining-fees.csv`,
+`annual-fees.csv`, and `annual-fee-components.csv` (money in integer cents), so a
+club can move its joining-fee and annual-fee schedules — with their per-line Xero
+components — between installs. This schedule takes **precedence** over the legacy
+Xero item-code-amount joining-fee materialisation: when a bundle carries the
+joining-fee schedule and the `membership-fees` category is applied, the
+authoritative amounts come from these CSVs and the old item-code fan-out is
+skipped (an import that deselects `membership-fees` keeps the legacy path). See
+`docs/config-transfer/README.md`.
+
 The consolidated `/admin/fees` page (#1933, E7) shows Hut Fees (per lodge →
 season → membership-type × age-tier nightly rates; edits need `bookings:edit`),
 Joining Fees, Annual Membership Fees, and (only when `familyBillingMode` is
