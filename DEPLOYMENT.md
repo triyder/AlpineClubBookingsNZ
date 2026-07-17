@@ -299,9 +299,17 @@ into its DB row **if — and only if — that row is still absent**. Properties:
 This mechanism — not migration/seed backfill — is what lets later config
 "collapse" changes remove a file/env fallback without stranding an existing
 deployment: the DB is already populated with the club's real value before the
-fallback is dropped. New settings register their own step in
-`SELF_HEAL_STEPS`; the first registered step backfills the club identity
-(`ClubIdentitySettings`).
+fallback is dropped. New settings register their own step in `SELF_HEAL_STEPS`.
+Registered steps:
+
+- **`club-identity-settings`** — backfills the club identity
+  (`ClubIdentitySettings`) from `config/club.json`.
+- **`lodge-capacity`** (#1982) — backfills the default lodge's
+  `LodgeSettings.capacity` from the `config/club.json` bed total (column-level:
+  it fills a null `capacity`, create-if-absent, and never overwrites an
+  admin-set value). This is what keeps a Bed-Allocation-off default lodge from
+  dropping to capacity 0 — and refusing all bookings — after the runtime
+  `club.json` capacity fallback was removed.
 
 For a deliberate two-phase deploy, or to heal a cold database out-of-band
 without a restart, run the same routine manually:

@@ -223,13 +223,12 @@ re-validates per lodge.
   index rejects a transient two-default state). Reassign the default before
   deactivating a lodge — a flagged-but-inactive lodge deliberately stays the
   default.
-  - **Known third resolver (#1656 review note):** `isDefaultLodge()` in
-    `src/lib/lodge-capacity.ts` gates the club-config capacity fallback with its
-    own oldest-active logic and does not consult the flag. On current
-    single-lodge data it names the same lodge, so nothing diverges today — but
-    any default-reassignment feature must route it through `getDefaultLodgeId()`
-    (or update it in the same PR), otherwise the capacity fallback follows the
-    oldest-active lodge instead of the flagged default.
+  - **Retired third resolver (#1656 review note, resolved by #1982):**
+    `isDefaultLodge()` in `src/lib/lodge-capacity.ts` used to gate the
+    club-config capacity fallback with its own oldest-active logic. #1982 removed
+    that runtime fallback (capacity is now DB-only), so the resolver — and the
+    divergence risk it carried — is gone. Any remaining default-lodge resolution
+    routes through `getDefaultLodgeId()` (the flag-aware resolver).
   - **Documented exception — reporting occupancy denominator.** The admin
     reports occupancy view and the finance booking-metrics occupancy summary
     may sum the capacity of all active lodges to form the "all lodges"

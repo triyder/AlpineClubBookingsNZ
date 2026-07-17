@@ -184,13 +184,16 @@ Future reviews and issues should cite this file when proposing changes.
   ceiling**: the effective capacity is the lower of the two, so a lodge may
   have more beds installed than it is allowed to sleep (`capped_beds`). No
   capacity set — or one at/above the bed count — leaves the bed count as the
-  figure (`configured_beds`); only an explicit capacity caps it, never the
-  club-config fallback. When the module is off, or on with no active beds, the
-  capacity is the per-lodge `LodgeSettings.capacity`, else the club-config bed
-  total for the default lodge only. An additional lodge with neither configured
-  beds nor a capacity resolves to capacity 0 (`unconfigured_lodge`), so a
-  freshly created lodge is unbookable rather than overbookable until it is set
-  up.
+  figure (`configured_beds`); only an explicit capacity caps it, never an
+  unconfigured fallback. When the module is off, or on with no active beds, the
+  capacity is the per-lodge `LodgeSettings.capacity`; if that is unset the lodge
+  resolves to capacity 0 (`unconfigured_lodge`). Since #1982 the DB is the sole
+  runtime source — `club.json` is no longer a runtime capacity fallback; the
+  default lodge's `LodgeSettings.capacity` is backfilled from the config bed
+  total by the boot-time self-heal, and any lodge (default or additional) with
+  neither configured beds nor a capacity is unbookable rather than overbookable
+  until it is set up (the setup-readiness Club Config check warns on a
+  default lodge left at 0).
 - A booking consumes beds when it is capacity-holding. The implementation
   source of truth is `capacityHoldingBookingFilter()` in
   `src/lib/booking-status.ts`, which every occupancy/availability query uses
