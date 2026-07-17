@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { clubConfig, clubConfigSource, type ClubConfigSource } from "@/config/club";
+import { CLUB_CONFIG_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import logger from "@/lib/logger";
 
 /**
@@ -166,13 +167,83 @@ export const clubIdentitySelfHealStep = defineSelfHealStep<ClubIdentitySelfHealV
   },
 });
 
+// The legacy singleton LodgeSettings row id (mirrors LODGE_SETTINGS_ID in
+// `src/lib/lodge-settings.ts`). Kept as a literal so this boot module needs no
+// import of that file (which statically pulls the Prisma client). In every
+// current deployment the club default lodge's capacity lives on this "default"
+// row — the legacy-row branch of `updateLodgeSettings` writes it, and
+// `loadLodgeCapacityOverride` reads it for the default lodge (own row absent,
+// legacy row unlinked or linked to the default lodge) — so this is the row the
+// capacity step heals.
+const LODGE_SETTINGS_ID = "default";
+
 /**
- * The ordered registry of self-heal steps. C3/C4/C5 append their capacity /
- * age-tier steps here (see the module doc). Order is not significant — steps are
+ * Lodge-capacity step (epic #1943 C2 mechanism, collapse child #1982). Backfills
+ * the DEFAULT lodge's `LodgeSettings.capacity` from the current club-config bed
+ * total (`CLUB_CONFIG_LODGE_CAPACITY`). #1982 removed the runtime `club.json`
+ * capacity fallback, so without this backfill a live upgrade — which runs only
+ * `prisma migrate deploy`, never the seed — would drop a Bed-Allocation-off
+ * default lodge with no capacity override to capacity 0 and refuse all bookings
+ * (the exact tokoroa live-safety outage this child exists to prevent). Because
+ * self-heal runs on boot, the DB is populated before the removed fallback can
+ * bite.
+ *
+ * COLUMN-level presence (unlike the row-level identity step): `isPresent` checks
+ * the `capacity` COLUMN on the default lodge's row, not merely that the row
+ * exists — a `LodgeSettings` row may already exist (e.g. carrying
+ * `hutLeaderLookaheadDays`) with a null capacity. The write therefore
+ * create-if-absents the row and then atomically fills capacity ONLY
+ * `WHERE capacity IS NULL`, so it tolerates every state safely:
+ *   - no row at all               → created with the capacity,
+ *   - row present, null capacity   → filled,
+ *   - row with an admin-set value  → NEVER overwritten, and
+ *   - concurrent (blue/green) boots → the second `updateMany` matches zero rows.
+ * The whole-run provenance guard (see the module doc) additionally ensures this
+ * only fires from a valid primary `config/club.json`.
+ */
+export const lodgeCapacitySelfHealStep = defineSelfHealStep<number>({
+  name: "lodge-capacity",
+  async isPresent(db) {
+    const row = await db.lodgeSettings.findUnique({
+      where: { id: LODGE_SETTINGS_ID },
+      select: { capacity: true },
+    });
+    return row?.capacity != null;
+  },
+  currentValue() {
+    // The current EFFECTIVE club-config bed total (clubConfig.beds.reduce).
+    return CLUB_CONFIG_LODGE_CAPACITY;
+  },
+  async write(db, value) {
+    // A 0-bed primary config has nothing meaningful to persist: leave capacity
+    // null so it resolves to 0 (never overbook) + a readiness warning and can
+    // still self-heal once the config gains beds. Not expected in practice — the
+    // provenance guard already required a real primary config.
+    if (!Number.isFinite(value) || value <= 0) return;
+    // Create-if-absent the legacy default row (mirrors the create-only upsert
+    // the seed / updateLodgeSettings use: `update: {}` never touches an existing
+    // row), then fill the capacity column atomically and only while still null.
+    await db.lodgeSettings.upsert({
+      where: { id: LODGE_SETTINGS_ID },
+      create: { id: LODGE_SETTINGS_ID, capacity: value },
+      update: {},
+      select: { id: true },
+    });
+    await db.lodgeSettings.updateMany({
+      where: { id: LODGE_SETTINGS_ID, capacity: null },
+      data: { capacity: value },
+    });
+  },
+});
+
+/**
+ * The ordered registry of self-heal steps. C4/C5 append their age-tier / rate
+ * steps here (see the module doc). Order is not significant — steps are
  * independent — but keep it stable for predictable logs.
  */
 export const SELF_HEAL_STEPS: readonly RegisteredSelfHealStep[] = [
   clubIdentitySelfHealStep,
+  lodgeCapacitySelfHealStep,
 ];
 
 // ---------------------------------------------------------------------------

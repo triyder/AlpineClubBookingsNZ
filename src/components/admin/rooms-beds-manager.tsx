@@ -769,8 +769,10 @@ export function RoomsBedsManager({
             <AlertTriangle className="h-4 w-4" />
             Capacity fallback active
           </div>
-          Booking capacity is using {payload.capacity.fallbackCapacity} beds from
-          club config until at least one active bed is configured.
+          Bed Allocation is on but no active beds are configured, so booking
+          capacity falls back to this lodge&apos;s capacity setting (
+          {payload.capacity.fallbackCapacity}) until at least one active bed is
+          added.
         </div>
       ) : null}
 
