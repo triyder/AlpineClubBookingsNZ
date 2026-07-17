@@ -6,6 +6,12 @@ const { mockPrisma } = vi.hoisted(() => ({
     booking: {
       findMany: vi.fn(),
     },
+    // #1982 — the default lodge's capacity is a DB override (self-healed from
+    // the config bed total), not a club.json runtime fallback. Return value set
+    // in beforeEach so it stays LODGE_CAPACITY.
+    lodgeSettings: {
+      findUnique: vi.fn(),
+    },
   },
 }));
 
@@ -28,6 +34,9 @@ function occupancyRate(occupiedBedNights: number, dayCount = 1): number {
 describe("finance-booking-metrics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.lodgeSettings.findUnique.mockResolvedValue({
+      capacity: LODGE_CAPACITY,
+    });
   });
 
   it("derives realized stays, forward pipeline, and payment summaries from booking rows", async () => {

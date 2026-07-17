@@ -284,14 +284,23 @@ describe("legacy install: lodge hub renders single-lodge presentation", () => {
 // ---------------------------------------------------------------------------
 
 describe("legacy install: booking-path capacity read is unchanged", () => {
-  it("resolves the default lodge to the club-config total (Off / unset / default lodge)", async () => {
-    // docs/CAPACITY_MODEL.md scenario table, row:
-    //   Bed Allocation Off | — | unset (default lodge) | club-config total | club_config
+  it("resolves the self-healed default lodge to the club-config total, unchanged (Off / healed capacity / default lodge, #1982)", async () => {
+    // #1982 collapsed the dual source: the club.json runtime fallback is gone
+    // and the default lodge's capacity is backfilled into LodgeSettings by the
+    // boot self-heal. The resolved capacity BEFORE fallback-removal (club-config
+    // total via club_config) == AFTER (same total via the healed override) — no
+    // drop to 0. This models the healed row (see config-self-heal.test.ts for
+    // the backfill itself).
+    mocks.lodgeSettingsFindUnique.mockResolvedValue({
+      ...LEGACY_LODGE_SETTINGS_ROW,
+      capacity: CLUB_CONFIG_LODGE_CAPACITY,
+    });
+
     const status = await getLodgeCapacityStatus(DEFAULT_LODGE_ID);
 
     expect(status).toMatchObject({
       capacity: CLUB_CONFIG_LODGE_CAPACITY,
-      source: "club_config",
+      source: "capacity_override",
       bedAllocationEnabled: false,
       activeBedCount: 0,
       fallbackCapacity: CLUB_CONFIG_LODGE_CAPACITY,
@@ -303,6 +312,23 @@ describe("legacy install: booking-path capacity read is unchanged", () => {
     expect(mocks.clubModuleSettingsFindUnique).toHaveBeenCalledWith(
       EXPECTED_SELECT,
     );
+  });
+
+  it("resolves an un-healed default lodge (null capacity) to 0, never overbooking (#1982)", async () => {
+    // The default `LEGACY_LODGE_SETTINGS_ROW` has a null capacity — the pre-heal
+    // (or self-heal-skipped) state. Without the removed club.json fallback it
+    // resolves to 0 with a loud unconfigured source, rather than phantom
+    // capacity that would silently overbook.
+    const status = await getLodgeCapacityStatus(DEFAULT_LODGE_ID);
+
+    expect(status).toMatchObject({
+      capacity: 0,
+      source: "unconfigured_lodge",
+      bedAllocationEnabled: false,
+      activeBedCount: 0,
+      fallbackCapacity: 0,
+    });
+    expect(await getLodgeCapacity(DEFAULT_LODGE_ID)).toBe(0);
   });
 
   it("honours an explicit per-lodge capacity override (Off / capacity set)", async () => {
