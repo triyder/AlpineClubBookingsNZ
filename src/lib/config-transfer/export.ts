@@ -12,6 +12,7 @@ import { lodgeOpsExporter } from "./categories/lodge-ops";
 import { displayExporter } from "./categories/display";
 import { committeeExporter } from "./categories/committee";
 import { inductionExporter } from "./categories/induction";
+import { membershipFeesExporter } from "./categories/membership-fees";
 import { xeroConfigExporter } from "./categories/xero-config";
 
 // Export orchestrator: runs the selected category exporters, bundles any
@@ -27,6 +28,7 @@ export const CATEGORY_EXPORTERS: CategoryExporter[] = [
   displayExporter,
   committeeExporter,
   inductionExporter,
+  membershipFeesExporter,
   xeroConfigExporter,
 ];
 
