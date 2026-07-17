@@ -6,6 +6,11 @@ import process from "node:process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { clubConfigSchema, type ClubConfig } from "../src/config/schema";
+// Single canonical boot-safe default (epic #1943, child C1). Imported from the
+// side-effect-free module so the setup CLI does not trigger club.ts's eager
+// `clubConfig` singleton load. This is the same constant the runtime loader uses
+// as its last-resort default — no duplicate default can drift out of sync.
+import { SAFE_DEFAULT_CONFIG } from "../src/config/safe-default-config";
 import {
   buildSetupReadiness,
   getSetupRequiredEnvNames,
@@ -18,66 +23,7 @@ const CONFIG_DIR = path.join(process.cwd(), "config");
 const CLUB_CONFIG_PATH = path.join(CONFIG_DIR, "club.json");
 const EXAMPLE_CONFIG_PATH = path.join(CONFIG_DIR, "club.example.json");
 
-const DEFAULT_CONFIG: ClubConfig = {
-  name: "Example Mountain Club",
-  shortName: "EMC",
-  supportEmail: "support@example.org",
-  contactEmail: "bookings@example.org",
-  publicUrl: "https://example.org",
-  emailFromName: "Example Mountain Club - Online Booking System",
-  lodgeTravelNote: "Please allow adequate travel time.",
-  beds: [{ id: "lodge", name: "Main Lodge", capacity: 20, type: "dormitory" }],
-  ageTiers: [
-    {
-      id: "INFANT",
-      label: "Infant (under 5)",
-      minAge: 0,
-      maxAge: 4,
-      subscriptionRequiredForBooking: false,
-      familyGroupRequestCreateMemberAllowed: true,
-      nightlyRates: {
-        winter: { memberCents: 0, nonMemberCents: 0 },
-        summer: { memberCents: 0, nonMemberCents: 0 },
-      },
-    },
-    {
-      id: "CHILD",
-      label: "Child (5-9)",
-      minAge: 5,
-      maxAge: 9,
-      subscriptionRequiredForBooking: false,
-      familyGroupRequestCreateMemberAllowed: true,
-      nightlyRates: {
-        winter: { memberCents: 1500, nonMemberCents: 2500 },
-        summer: { memberCents: 1000, nonMemberCents: 2000 },
-      },
-    },
-    {
-      id: "YOUTH",
-      label: "Youth (10-17)",
-      minAge: 10,
-      maxAge: 17,
-      subscriptionRequiredForBooking: true,
-      familyGroupRequestCreateMemberAllowed: false,
-      nightlyRates: {
-        winter: { memberCents: 3000, nonMemberCents: 4500 },
-        summer: { memberCents: 2500, nonMemberCents: 3500 },
-      },
-    },
-    {
-      id: "ADULT",
-      label: "Adult (18+)",
-      minAge: 18,
-      maxAge: null,
-      subscriptionRequiredForBooking: true,
-      familyGroupRequestCreateMemberAllowed: false,
-      nightlyRates: {
-        winter: { memberCents: 4500, nonMemberCents: 6500 },
-        summer: { memberCents: 3500, nonMemberCents: 5000 },
-      },
-    },
-  ],
-};
+const DEFAULT_CONFIG: ClubConfig = SAFE_DEFAULT_CONFIG;
 
 function readJson(filePath: string): unknown | null {
   if (!fs.existsSync(filePath)) return null;

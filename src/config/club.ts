@@ -1,9 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
+import logger from "@/lib/logger";
 import { clubConfigSchema, type ClubConfig } from "./schema";
+import { SAFE_DEFAULT_CONFIG } from "./safe-default-config";
 
 const PRIMARY_FILE = "club.json";
 const EXAMPLE_FILE = "club.example.json";
+
+// Re-export the single canonical boot-safe default (epic #1943, child C1) so
+// consumers can `import { SAFE_DEFAULT_CONFIG } from "@/config/club"`.
+export { SAFE_DEFAULT_CONFIG } from "./safe-default-config";
 
 export interface LoadClubConfigOptions {
   /** Directory to read club.json / club.example.json from. Defaults to `<cwd>/config`. */
@@ -14,45 +20,119 @@ function defaultConfigDir(): string {
   return path.join(process.cwd(), "config");
 }
 
-function readJsonIfExists(filePath: string): unknown | null {
-  if (!fs.existsSync(filePath)) return null;
-  const raw = fs.readFileSync(filePath, "utf8");
+type FileReadResult =
+  | { kind: "absent" }
+  | { kind: "malformed"; reason: string }
+  | { kind: "present"; data: unknown };
+
+/**
+ * Read + JSON-parse a config file, distinguishing "absent" (file does not
+ * exist) from "malformed" (present but unreadable / not valid JSON). Never
+ * throws — the boot path must not crash.
+ */
+function readJsonFile(filePath: string): FileReadResult {
+  if (!fs.existsSync(filePath)) return { kind: "absent" };
+  let raw: string;
   try {
-    return JSON.parse(raw);
+    raw = fs.readFileSync(filePath, "utf8");
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(`Invalid JSON in ${filePath}: ${reason}`);
+    return {
+      kind: "malformed",
+      reason: err instanceof Error ? err.message : String(err),
+    };
   }
+  try {
+    return { kind: "present", data: JSON.parse(raw) };
+  } catch (err) {
+    return {
+      kind: "malformed",
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+function warnClubConfig(message: string, context: Record<string, unknown>): void {
+  // Structured warning so a real misconfiguration is loud, never silently wrong.
+  logger.warn({ scope: "club-config", ...context }, message);
 }
 
 // test seam
 /**
- * Read and validate a club config. Tries `<configDir>/club.json` first, then falls back
- * to `<configDir>/club.example.json`. Throws if neither exists or the chosen file fails
- * schema validation.
+ * Read and validate the club config. Boot-safe: this function NEVER throws, so
+ * importing it (and the eager `clubConfig` singleton below) can never crash the
+ * app at boot.
+ *
+ * Resolution rules (epic #1943 owner decision D3 — kept in lockstep with
+ * `readClubConfig` in `src/lib/setup-readiness.ts`):
+ * - Valid primary `club.json` → returned as-is (zero behaviour change for
+ *   healthy installs).
+ * - **Malformed** primary `club.json` (present but bad JSON or schema-invalid)
+ *   → `SAFE_DEFAULT_CONFIG` + a logged warning. The `club.example.json`
+ *   fallback is intentionally SKIPPED so a broken primary is not silently
+ *   masked by the example's identity; setup-readiness reports this as *blocked*.
+ * - **Absent** primary → fall back to a valid `club.example.json`; if the
+ *   example is absent or itself malformed, resolve to `SAFE_DEFAULT_CONFIG` + a
+ *   logged warning.
  */
 export function loadClubConfig(options: LoadClubConfigOptions = {}): ClubConfig {
   const dir = options.configDir ?? defaultConfigDir();
   const primaryPath = path.join(dir, PRIMARY_FILE);
   const examplePath = path.join(dir, EXAMPLE_FILE);
 
-  const primary = readJsonIfExists(primaryPath);
-  const sourcePath = primary !== null ? primaryPath : examplePath;
-  const data = primary !== null ? primary : readJsonIfExists(examplePath);
+  const primary = readJsonFile(primaryPath);
 
-  if (data === null) {
-    throw new Error(
-      `No club config found. Looked for ${primaryPath} and ${examplePath}.`,
+  if (primary.kind === "present") {
+    const result = clubConfigSchema.safeParse(primary.data);
+    if (result.success) return result.data;
+    warnClubConfig(
+      `Invalid club config at ${primaryPath}; using SAFE_DEFAULT_CONFIG. ` +
+        `Fix config/club.json — the example fallback is skipped for a broken ` +
+        `primary so the misconfiguration is not masked. Issues:\n${formatZodError(result.error)}`,
+      { path: primaryPath, cause: "schema" },
     );
+    return SAFE_DEFAULT_CONFIG;
   }
 
-  const result = clubConfigSchema.safeParse(data);
-  if (!result.success) {
-    throw new Error(
-      `Invalid club config at ${sourcePath}:\n${formatZodError(result.error)}`,
+  if (primary.kind === "malformed") {
+    warnClubConfig(
+      `Malformed club config at ${primaryPath} (${primary.reason}); using ` +
+        `SAFE_DEFAULT_CONFIG. Fix config/club.json — the example fallback is ` +
+        `skipped for a broken primary so the misconfiguration is not masked.`,
+      { path: primaryPath, cause: "json", reason: primary.reason },
     );
+    return SAFE_DEFAULT_CONFIG;
   }
-  return result.data;
+
+  // Primary is absent — fall back to club.example.json when it is valid.
+  const example = readJsonFile(examplePath);
+
+  if (example.kind === "present") {
+    const result = clubConfigSchema.safeParse(example.data);
+    if (result.success) return result.data;
+    warnClubConfig(
+      `Invalid club config at ${examplePath}; using SAFE_DEFAULT_CONFIG. ` +
+        `Issues:\n${formatZodError(result.error)}`,
+      { path: examplePath, cause: "schema" },
+    );
+    return SAFE_DEFAULT_CONFIG;
+  }
+
+  if (example.kind === "malformed") {
+    warnClubConfig(
+      `Malformed club config at ${examplePath} (${example.reason}); using ` +
+        `SAFE_DEFAULT_CONFIG.`,
+      { path: examplePath, cause: "json", reason: example.reason },
+    );
+    return SAFE_DEFAULT_CONFIG;
+  }
+
+  warnClubConfig(
+    `No club config found (looked for ${primaryPath} and ${examplePath}); ` +
+      `using SAFE_DEFAULT_CONFIG. Run \`npm run setup:wizard\` or configure via ` +
+      `/admin/setup.`,
+    { path: primaryPath, cause: "absent" },
+  );
+  return SAFE_DEFAULT_CONFIG;
 }
 
 function formatZodError(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
@@ -64,5 +144,11 @@ function formatZodError(error: { issues: Array<{ path: PropertyKey[]; message: s
     .join("\n");
 }
 
-/** Eagerly loaded singleton for server-side config consumers. */
+/**
+ * Eagerly loaded singleton for server-side config consumers.
+ *
+ * Boot-safe: `loadClubConfig` never throws, so this import can never crash the
+ * app even with an absent/malformed `config/club.json`. See the bootstrap-layer
+ * contract documented in `src/config/club-identity.ts`.
+ */
 export const clubConfig: ClubConfig = loadClubConfig();
