@@ -639,6 +639,22 @@ at repay settlement (see `docs/DOMAIN_INVARIANTS.md`). The repay path assumes
 no saved card: it always goes through the immediate card-entry PaymentIntent
 flow.
 
+Duplicate capture on an already-PAID booking (#1992): when a success arrives
+carrying the SAME intent the booking settled with, every reconciliation path
+returns `already_paid` unchanged (webhook redelivery, confirm-payment racing
+the webhook, payment-link reconcile, charge-saved-method / cron reruns
+replaying their `pending_charge_` Stripe idempotency key,
+confirm-pending-guests retries). A success carrying a DIFFERENT intent while
+another captured PRIMARY transaction still holds net cash is double money (the
+residual #1967 split-child link-vs-auto-charge window) and is auto-refunded:
+the duplicate's transaction goes `SUCCEEDED -> REFUNDED` via a durable
+`duplicate_capture_<bookingId>_<pi>` recovery operation, the settlement
+transaction and the booking's PAID status are untouched, and
+`markBookingPaymentSucceeded` reports `duplicate_capture_refunded` /
+`duplicate_capture_refund_failed`. A fully `REFUNDED` prior capture is history
+(#1765), never a settlement a repay generation could "duplicate", and at most
+one side of a capture pair is ever refunded (adjudicated under `lock(1)`).
+
 To verify: whether Internet Banking uses the same `PaymentStatus` transitions
 or Xero invoice state as the effective settlement state.
 

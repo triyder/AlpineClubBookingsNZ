@@ -32,6 +32,46 @@ export function buildCapacityClaimFailedRefundStripeKeyPrefix(
   return `capacity_claim_failed_${bookingId}_${paymentIntentId}`;
 }
 
+// Duplicate-capture auto-refund (#1992): the recovery-operation dedup key for a
+// SECOND, distinct Stripe capture arriving on an already-PAID booking (the
+// residual #1967 window — an in-flight /pay link intent confirmed after the
+// auto-charge cron settled the split child, or vice versa). One row per
+// (booking, duplicate intent): a Stripe event redelivery for the same duplicate
+// upserts the same row, never a second refund debt. The key shape doubles as
+// the per-booking adjudication marker: markBookingPaymentSucceeded refuses to
+// open a second duplicate-capture refund for the SAME booking against a
+// DIFFERENT intent (that arriving intent is the settlement side of the pair the
+// first operation already adjudicated), which is what makes the refund
+// direction stable under webhook replays of both captures.
+export function buildDuplicateCaptureRefundRecoveryIdempotencyKey(
+  bookingId: string,
+  paymentIntentId: string,
+) {
+  return `${buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking(bookingId)}${paymentIntentId}`;
+}
+
+// The per-booking prefix of the duplicate-capture recovery key, used to ask
+// "has ANY duplicate-capture refund already been adjudicated for this booking?"
+// without knowing the other intent's id.
+export function buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking(
+  bookingId: string,
+) {
+  return `duplicate_capture_${bookingId}_`;
+}
+
+// The Stripe idempotency-key prefix for the duplicate-capture auto-refund
+// (#1992). Inline execution (payment-reconciliation.ts) and the recovery cron's
+// replay of the frozen plan share this prefix, so per-slice keys
+// `duplicate_capture_refund_<bookingId>_<pi>_<txn>_<amount>` are identical
+// between the inline attempt and any replay — Stripe answers a repeat with the
+// original refund and the ledger dedupes on refund id, never a double refund.
+export function buildDuplicateCaptureRefundStripeKeyPrefix(
+  bookingId: string,
+  paymentIntentId: string,
+) {
+  return `duplicate_capture_refund_${bookingId}_${paymentIntentId}`;
+}
+
 // #1494: the Stripe refund `metadata` for a booking-cancellation card refund.
 // The inline cancel path (which creates the Stripe refund) and the recovery
 // cron (which replays it under the shared `booking_cancel_refund_<bookingId>`
@@ -123,6 +163,14 @@ export function bookingModificationRefundReasonForKeyPrefix(
   // reconstructs the identical body from the persisted operation alone.
   if (keyPrefix?.startsWith("capacity_claim_failed_")) {
     return "capacity_claim_failed";
+  }
+  // Duplicate-capture auto-refund (#1992, a second distinct capture on an
+  // already-PAID booking). The inline path builds its Stripe metadata from
+  // buildBookingModificationRefundMetadata(bookingId, "duplicate_capture"), so
+  // a recovery replay under the stored duplicate_capture_refund_<...> prefix
+  // reconstructs the identical body from the persisted operation alone.
+  if (keyPrefix?.startsWith("duplicate_capture_refund_")) {
+    return "duplicate_capture";
   }
   return "booking_modification_refund_recovery";
 }

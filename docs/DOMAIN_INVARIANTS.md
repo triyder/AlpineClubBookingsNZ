@@ -223,10 +223,27 @@ Future reviews and issues should cite this file when proposing changes.
   At most one live token exists per booking (every mint revokes-then-creates
   under the per-lodge advisory lock; undelivered emails revoke their minted link
   by id so the next run re-mints), and the tokenised link and the saved-card
-  auto-charge are never both live (the charge claim revokes links; the /pay
-  intent path re-reads the link under the same lock; the on-demand path refuses
-  when a saved card exists). Money still stays integer cents and no beds are
-  held for the child until it is actually paid. The same machinery backs the
+  auto-charge never both settle durably (the charge claim revokes links; the
+  /pay intent path re-reads the link under the same lock; the on-demand path
+  refuses when a saved card exists — though a link PaymentIntent minted just
+  before the claim can still transiently coexist with the charge in flight).
+  That residual in-flight window is narrowed and backstopped (#1992): a link
+  PaymentIntent minted BEFORE the claim (client secret already
+  in the member's browser) is best-effort cancelled on Stripe by the charge
+  claim before it charges the saved card, and if the member's confirm still
+  wins that race, `markBookingPaymentSucceeded` auto-refunds whichever DISTINCT
+  capture arrives second on the already-PAID booking — durably
+  (enqueue-then-execute, exactly the duplicate's captured amount, pinned to the
+  duplicate's own transaction) with a loud admin alert — while a SAME-intent
+  replay keeps its byte-identical `already_paid` outcome and at most one side
+  of the pair can ever be refunded (adjudication under `lock(1)`). A capture
+  whose money is already owned by the superseded-intent recovery machinery (a
+  live `CANCEL_PAYMENT_INTENT` / `REFUND_SUPERSEDED_PAYMENT` operation, e.g.
+  the succeeded-superseded-intent handoff) is never mistaken for the
+  settlement side of such a pair: the real settlement's replay stays
+  `already_paid` and that machinery's cron refunds the superseded capture. Money still
+  stays integer cents and no beds are held for the child until it is actually
+  paid. The same machinery backs the
   on-demand `POST /api/bookings/[id]/send-guest-payment-link` re-send
   affordance. A child can end PAID while its parent is unpaid or later
   cancelled — the parent-cancel sweep only cancels still-PENDING children — and

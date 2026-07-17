@@ -262,6 +262,25 @@ captured (`payment_intent.succeeded` → settle) must still become `SUCCEEDED`, 
 settle legitimately overwrites `FAILED` → `SUCCEEDED`. `lock(1)` guarantees the
 two run whole-before-whole; it is not a veto on that transition.
 
+`lock(1)` also serialises the duplicate-capture adjudication (#1992). When a
+Stripe success arrives for an already-PAID booking, `markBookingPaymentSucceeded`
+refunds the arriving capture only if it is a DIFFERENT intent from a captured
+PRIMARY transaction still holding net cash, AND no duplicate-capture refund
+operation (`duplicate_capture_<bookingId>_<pi>`) already exists for the booking
+against another intent. That check-then-enqueue is race-free only because every
+caller runs it under `lock(1)`: interleaved webhook replays of BOTH captures
+would otherwise refund both sides and settle the booking at zero net cash. The
+refund itself follows the #1349 enqueue-then-execute shape — the durable
+operation (with the slice pinned to the duplicate's own transaction) commits
+with the detection, and the Stripe refund executes after commit under the
+shared `duplicate_capture_refund_<bookingId>_<pi>` key prefix the recovery cron
+replays. Relatedly, the auto-charge cron's pre-charge sweep that cancels
+superseded /pay link intents (#1992 Option 1) is a plain Stripe call strictly
+OUTSIDE any transaction, after the claim commit: the claim's link revocation
+under the lodge lock freezes the set of link intents, and the sweep excludes the
+cron's own `pending_hold_auto_charge` transactions because Stripe's shared
+`pending_charge_<bookingId>` idempotency key re-returns a prior run's intent.
+
 Organiser cancellation adds a durable veto before it releases the lock:
 `group-cancel.ts` writes `GroupBooking.status = CANCELLED` under `lock(1)`
 before voiding/refunding Stripe or cancelling children. Settlement apply
