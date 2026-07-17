@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ReviewStep } from "@/app/(authenticated)/book/_components/review-step";
 import type { PriceQuote } from "@/app/(authenticated)/book/_components/types";
 import type { GuestData } from "@/components/guest-form";
+import { sumDeferredGuestPortionCents } from "@/lib/deferred-guest-portion";
 
 vi.mock("@/components/time-picker", () => ({
   TimePicker: () => <div data-testid="time-picker" />,
@@ -166,6 +167,39 @@ describe("ReviewStep split provisional copy (#1942)", () => {
     ).not.toBeInTheDocument();
     // Explains the "why" using the hold-days from the quote.
     expect(screen.getByText(/more than 7 days away/i)).toBeInTheDocument();
+  });
+
+  it("renders the deferred guest portion from the single owner, not an ad-hoc sum (#2003)", () => {
+    // A composition with odd, non-round per-guest cents (two non-members) so
+    // the banner's figure is the exact integer sum the shared owner produces —
+    // the same figure the pay step shows for this composition.
+    const secondNonMember: GuestData = {
+      firstName: "Alex",
+      lastName: "Guest",
+      ageTier: "CHILD",
+      isMember: false,
+    };
+    const guests = [memberGuest, nonMemberGuest, secondNonMember];
+    const priceQuote: PriceQuote = {
+      guests: [
+        { ageTier: "ADULT", isMember: true, nights: 3, priceCents: 24000 },
+        { ageTier: "ADULT", isMember: false, nights: 3, priceCents: 12999 },
+        { ageTier: "CHILD", isMember: false, nights: 3, priceCents: 8331 },
+      ],
+      totalPriceCents: 24000 + 12999 + 8331,
+      nonMemberHoldDecision: splitHold,
+    };
+    const expectedCents = sumDeferredGuestPortionCents(priceQuote.guests);
+    expect(expectedCents).toBe(12999 + 8331); // 21330 → $213.30
+
+    renderReview(guests, splitHold, {
+      priceQuote,
+      reviewGuestPayload: guests,
+      remainingToPay: priceQuote.totalPriceCents,
+    });
+
+    // The banner renders the owner's figure ($213.30), not the party total.
+    expect(screen.getAllByText(/\$213\.30/).length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows no provisional copy for an all-member party (no split)", () => {

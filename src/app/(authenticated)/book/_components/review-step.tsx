@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { type LodgeOption } from "@/components/lodge-select";
+import { sumDeferredGuestPortionCents } from "@/lib/deferred-guest-portion";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
 import { CheckCircle2, CreditCard, Landmark } from "lucide-react";
@@ -193,10 +194,12 @@ export function ReviewStep({
   // The provisional (guest-portion) sub-amount, derived from the same quote the
   // member already sees — NOT recomputed. priceQuote.guests is index-parallel to
   // reviewGuestPayload, so summing the non-member rows gives the portion that is
-  // charged later rather than today.
-  const provisionalGuestPortionCents = priceQuote.guests.reduce(
-    (sum, guest) => (guest.isMember ? sum : sum + (guest.priceCents || 0)),
-    0,
+  // charged later rather than today. Uses the single owner of this figure
+  // (#2003) so this banner and the pay step's "about $X" cannot drift apart from
+  // two independent summations; it equals the server's deferred child
+  // finalPriceCents by construction (see src/lib/deferred-guest-portion.ts).
+  const provisionalGuestPortionCents = sumDeferredGuestPortionCents(
+    priceQuote.guests,
   );
   const holdDays = priceQuote.nonMemberHoldDecision?.holdDays ?? 0;
   // Approximate hold deadline: check-in minus the policy's hold-days. The exact

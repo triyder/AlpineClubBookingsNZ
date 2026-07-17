@@ -8,6 +8,13 @@ export interface ProvisionalChildSummary {
   // (#1976). This is the guest portion that is deferred — charged closer to the
   // stay, NOT today — while the parent's member portion is charged up front. It
   // is the child's server-side `finalPriceCents`, never a client re-computation.
+  //
+  // This is the pay-step half of the single deferred "guest portion" figure
+  // (#2003): booking-create stores `finalPriceCents = Σ non-member priceCents`
+  // on the child (no promo), which is exactly what
+  // `sumDeferredGuestPortionCents` (src/lib/deferred-guest-portion.ts) computes
+  // live for the pre-booking review banner — so the two "about $X" surfaces
+  // agree by construction rather than by two independent summations.
   deferredAmountCents: number;
 }
 
