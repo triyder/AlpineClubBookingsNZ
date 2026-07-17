@@ -13,6 +13,16 @@ import {
   type HtmlTokenDefinition,
   type TokenContextId,
 } from "@/lib/token-catalogue";
+import { parseTokenParameters } from "@/lib/token-parameters";
+
+// Surface the recognised parameter keys from a token's example so editors see
+// the grammar (comma-separated key=value) the renderer actually parses (#1933).
+// This shares the single client-safe parser with the public renderer.
+function parameterKeysFromExample(example: string | undefined): string[] {
+  if (!example) return [];
+  const match = example.match(/\{\{[^:{}]+:([^{}]+)\}\}/);
+  return [...parseTokenParameters(match?.[1]).params.keys()];
+}
 
 export type TokenChip = {
   token: string;
@@ -42,6 +52,7 @@ export function TokenChips({ tokens }: { tokens: TokenChip[] }) {
 }
 
 function TokenEntry({ definition }: { definition: HtmlTokenDefinition }) {
+  const parameterKeys = parameterKeysFromExample(definition.parameterExample);
   return (
     <div>
       <p>
@@ -57,6 +68,9 @@ function TokenEntry({ definition }: { definition: HtmlTokenDefinition }) {
         <p>
           With a parameter: <code>{definition.parameterExample}</code>
         </p>
+      ) : null}
+      {parameterKeys.length > 0 ? (
+        <p>Parameter keys: {parameterKeys.join(", ")}</p>
       ) : null}
       {definition.notes ? <p>{definition.notes}</p> : null}
       {definition.kind === "embed" && !definition.allowsLegacySingleBrace ? (

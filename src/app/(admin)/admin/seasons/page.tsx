@@ -1,27 +1,27 @@
 "use client"
 
-import type { AgeTier } from "@prisma/client"
 import { useEffect, useState, useCallback } from "react"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { APP_CURRENCY } from "@/config/operational"
-import { formatCents } from "@/lib/pricing"
+import { Alert } from "@/components/ui/alert"
+import { AdminPageHeader } from "@/components/admin/admin-page-header"
+import { AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import {
   LodgeSelect,
   initialLodgeIdFromLocation,
   useLodgeOptions,
 } from "@/components/lodge-select"
 
-// A hut nightly rate keyed by membership type + optional age tier (#1930, E4).
-interface MembershipTypeRate {
-  membershipTypeId: string
-  ageTier: AgeTier | null
-  pricePerNightCents: number
-}
+// Season WINDOWS only (#1933, E7): name, type, dates, and active state per
+// lodge. Nightly rates moved to the consolidated Fees console (Fees → Hut Fees)
+// — editing a window here PUTs without `membershipTypeRates`, so the season's
+// rates are left untouched. Creating a season (which requires at least one rate)
+// also lives in Fees → Hut Fees, so this page edits existing windows only.
 
 interface Season {
   id: string
@@ -30,125 +30,24 @@ interface Season {
   startDate: string
   endDate: string
   active: boolean
-  membershipTypeRates: MembershipTypeRate[]
-}
-
-interface AgeTierSetting {
-  tier: AgeTier
-  minAge: number
-  maxAge: number | null
-  label: string
-  sortOrder: number
-}
-
-// A membership type that carries its own hut rates: every MEMBER_RATE type plus
-// the built-in NON_MEMBER type. Others (NON_MEMBER_RATE except NON_MEMBER,
-// BLOCK_BOOKING) carry zero own rows (D2 invariant) and are not shown here.
-interface RateType {
-  id: string
-  key: string
-  name: string
-  bookingBehavior: "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING"
-  ageGroupsApply: boolean
-}
-
-const FALLBACK_TIERS: AgeTierSetting[] = [
-  { tier: "INFANT", minAge: 0, maxAge: 4, label: "Infant (under 5)", sortOrder: 0 },
-  { tier: "CHILD", minAge: 5, maxAge: 9, label: "Child (5-9)", sortOrder: 1 },
-  { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
-  { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
-]
-
-const FLAT_KEY = "FLAT"
-
-// Rate cell key. Flat types (ageGroupsApply=false) get one FLAT cell; age-keyed
-// types get one cell per tier.
-function rateKey(membershipTypeId: string, ageTier: AgeTier | typeof FLAT_KEY): string {
-  return `${membershipTypeId}::${ageTier}`
-}
-
-function cellsForType(type: RateType, tiers: AgeTierSetting[]): Array<AgeTier | typeof FLAT_KEY> {
-  return type.ageGroupsApply ? tiers.map((t) => t.tier) : [FLAT_KEY]
-}
-
-function emptyRates(types: RateType[], tiers: AgeTierSetting[]): Record<string, number> {
-  const rates: Record<string, number> = {}
-  for (const type of types) {
-    for (const cell of cellsForType(type, tiers)) {
-      rates[rateKey(type.id, cell)] = 0
-    }
-  }
-  return rates
-}
-
-function seasonToRatesMap(
-  rows: MembershipTypeRate[],
-  types: RateType[],
-  tiers: AgeTierSetting[],
-): Record<string, number> {
-  const map = emptyRates(types, tiers)
-  for (const row of rows) {
-    map[rateKey(row.membershipTypeId, row.ageTier ?? FLAT_KEY)] = row.pricePerNightCents
-  }
-  return map
 }
 
 export default function SeasonsPage() {
   const [seasons, setSeasons] = useState<Season[]>([])
-  const [ageTiers, setAgeTiers] = useState<AgeTierSetting[]>(FALLBACK_TIERS)
-  const [rateTypes, setRateTypes] = useState<RateType[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
-  const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const canEdit = useAdminAreaEditAccess("bookings")
   const { lodges, loading: lodgesLoading } = useLodgeOptions("admin")
   const [lodgeId, setLodgeId] = useState<string | null>(initialLodgeIdFromLocation)
 
-  // Form state
+  // Form state (window fields only)
   const [name, setName] = useState("")
   const [type, setType] = useState<"WINTER" | "SUMMER">("WINTER")
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [active, setActive] = useState(true)
-  const [rates, setRates] = useState<Record<string, number>>({})
   const [saving, setSaving] = useState(false)
-
-  const fetchAgeTiers = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/age-tier-settings")
-      if (!res.ok) return
-      const data = await res.json()
-      if (data.settings && data.settings.length > 0) {
-        setAgeTiers(data.settings)
-      }
-    } catch {
-      // Use fallback tiers
-    }
-  }, [])
-
-  const fetchRateTypes = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/membership-types")
-      if (!res.ok) return
-      const data = await res.json()
-      const types: RateType[] = (data.membershipTypes ?? [])
-        .filter(
-          (t: RateType & { isActive: boolean }) =>
-            t.isActive &&
-            (t.bookingBehavior === "MEMBER_RATE" || t.key === "NON_MEMBER"),
-        )
-        .map((t: RateType) => ({
-          id: t.id,
-          key: t.key,
-          name: t.name,
-          bookingBehavior: t.bookingBehavior,
-          ageGroupsApply: t.ageGroupsApply,
-        }))
-      setRateTypes(types)
-    } catch {
-      // No rate types available; the grid renders empty.
-    }
-  }, [])
 
   const fetchSeasons = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -156,7 +55,7 @@ export default function SeasonsPage() {
         lodgeId
           ? `/api/admin/seasons?lodgeId=${encodeURIComponent(lodgeId)}`
           : "/api/admin/seasons",
-        { signal }
+        { signal },
       )
       if (!res.ok) throw new Error("Failed to fetch seasons")
       const data = await res.json()
@@ -170,11 +69,6 @@ export default function SeasonsPage() {
   }, [lodgeId])
 
   useEffect(() => {
-    fetchAgeTiers()
-    fetchRateTypes()
-  }, [fetchAgeTiers, fetchRateTypes])
-
-  useEffect(() => {
     const controller = new AbortController()
     fetchSeasons(controller.signal)
     return () => controller.abort()
@@ -186,9 +80,7 @@ export default function SeasonsPage() {
     setStartDate("")
     setEndDate("")
     setActive(true)
-    setRates(emptyRates(rateTypes, ageTiers))
     setEditingId(null)
-    setShowForm(false)
     setError("")
   }
 
@@ -199,58 +91,29 @@ export default function SeasonsPage() {
     setStartDate(season.startDate.split("T")[0])
     setEndDate(season.endDate.split("T")[0])
     setActive(season.active)
-    setRates(seasonToRatesMap(season.membershipTypeRates, rateTypes, ageTiers))
-    setShowForm(true)
-  }
-
-  function startCreate() {
-    setRates(emptyRates(rateTypes, ageTiers))
-    setShowForm(true)
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!editingId) return
     setSaving(true)
     setError("")
 
-    const membershipTypeRates: MembershipTypeRate[] = Object.entries(rates).map(
-      ([key, price]) => {
-        const [membershipTypeId, tierPart] = key.split("::")
-        return {
-          membershipTypeId,
-          ageTier: tierPart === FLAT_KEY ? null : (tierPart as AgeTier),
-          pricePerNightCents: price,
-        }
-      },
-    )
-
-    const payload = {
-      name,
-      type,
-      startDate,
-      endDate,
-      active,
-      membershipTypeRates,
-      ...(editingId ? {} : { lodgeId: lodgeId ?? undefined }),
-    }
+    // Window-only PUT: omit membershipTypeRates so the [id] route leaves the
+    // season's existing rates untouched (see the route's `if (membershipTypeRates)`
+    // guard). Rates are edited in Fees → Hut Fees.
+    const payload = { name, type, startDate, endDate, active }
 
     try {
-      const url = editingId
-        ? `/api/admin/seasons/${editingId}`
-        : "/api/admin/seasons"
-      const method = editingId ? "PUT" : "POST"
-
-      const res = await fetch(url, {
-        method,
+      const res = await fetch(`/api/admin/seasons/${editingId}`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       })
-
       if (!res.ok) {
         const data = await res.json()
         throw new Error(data.error || "Failed to save season")
       }
-
       resetForm()
       fetchSeasons()
     } catch (err) {
@@ -262,7 +125,6 @@ export default function SeasonsPage() {
 
   async function handleDelete(id: string) {
     if (!confirm("Are you sure you want to delete this season?")) return
-
     try {
       const res = await fetch(`/api/admin/seasons/${id}`, { method: "DELETE" })
       if (!res.ok) {
@@ -292,64 +154,49 @@ export default function SeasonsPage() {
     }
   }
 
-  function handleRateChange(key: string, value: string) {
-    const dollars = parseFloat(value)
-    if (isNaN(dollars)) {
-      setRates((prev) => ({ ...prev, [key]: 0 }))
-    } else {
-      setRates((prev) => ({ ...prev, [key]: Math.round(dollars * 100) }))
-    }
-  }
-
-  if (loading) {
-    return <div className="text-center py-8">Loading seasons...</div>
-  }
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Hut Fees & Seasons</h1>
-          <p className="text-muted-foreground mt-1">
-            Configure seasonal pricing periods and nightly hut fee rates per membership type
-          </p>
-        </div>
-        {!showForm && <Button onClick={startCreate}>Add Season</Button>}
-      </div>
+      <AdminPageHeader
+        title="Seasons"
+        description="Season windows (name, type, dates, and active state) per lodge. Set nightly rates and add new seasons in Fees → Hut Fees."
+      />
+
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Bookings view access can inspect season windows. Bookings edit access is required to change them.
+        </AdminViewOnlyNotice>
+      )}
+
+      <Alert>
+        <span>
+          To add a season or change its nightly rates, use{" "}
+          <Link href="/admin/fees" className="underline font-medium">Fees → Hut Fees</Link>.
+          This page edits an existing season&apos;s window (dates, name, type, active) and leaves its rates untouched.
+        </span>
+      </Alert>
 
       <div className="max-w-xs">
         <LodgeSelect lodges={lodges} value={lodgeId} onChange={setLodgeId} loading={lodgesLoading} />
       </div>
 
       {error && (
-        <div
-          role="alert"
-          className="bg-destructive/10 text-destructive px-4 py-3 rounded-md"
-        >
+        <div role="alert" className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
           {error}
         </div>
       )}
 
-      {showForm && (
+      {editingId && canEdit && (
         <Card>
           <CardHeader>
-            <CardTitle>{editingId ? "Edit Season" : "New Season"}</CardTitle>
-            <CardDescription>
-              Configure the season period and set rates for each membership type
-            </CardDescription>
+            <CardTitle>Edit Season Window</CardTitle>
+            <CardDescription>Update the season period, name, type, and active state. Rates are unchanged.</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="name">Season Name</Label>
-                  <Input
-                    id="name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Winter 2026"
-                    required
-                  />
+                  <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Winter 2026" required />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="type">Type</Label>
@@ -365,132 +212,36 @@ export default function SeasonsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="startDate">Start Date</Label>
-                  <Input
-                    id="startDate"
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    required
-                  />
+                  <Input id="startDate" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="endDate">End Date</Label>
-                  <Input
-                    id="endDate"
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    required
-                  />
+                  <Input id="endDate" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} required />
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <Label className="text-base font-semibold">Nightly Rates ({APP_CURRENCY})</Label>
-                <p className="text-sm text-muted-foreground">
-                  Set the price per night for each membership type. Types with age
-                  groups get a rate per age tier; flat types get a single rate.
-                </p>
-
-                {rateTypes.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    No rate-bearing membership types found. Configure membership
-                    types first.
-                  </p>
-                ) : (
-                  <div className="space-y-6">
-                    {rateTypes.map((rt) => (
-                      <div key={rt.id}>
-                        <h4 className="text-sm font-semibold mb-2">{rt.name}</h4>
-                        {rt.ageGroupsApply ? (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                            {ageTiers.map((t) => {
-                              const key = rateKey(rt.id, t.tier)
-                              return (
-                                <div key={key} className="space-y-1">
-                                  <Label htmlFor={`rate-${key}`} className="text-sm">
-                                    {t.label}
-                                  </Label>
-                                  <div className="relative">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                                      $
-                                    </span>
-                                    <Input
-                                      id={`rate-${key}`}
-                                      type="number"
-                                      step="0.01"
-                                      min="0"
-                                      className="pl-7"
-                                      value={rates[key] ? (rates[key] / 100).toFixed(2) : ""}
-                                      onChange={(e) => handleRateChange(key, e.target.value)}
-                                      placeholder="0.00"
-                                    />
-                                  </div>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        ) : (
-                          <div className="max-w-xs space-y-1">
-                            <Label htmlFor={`rate-${rateKey(rt.id, FLAT_KEY)}`} className="text-sm">
-                              Flat rate (all ages)
-                            </Label>
-                            <div className="relative">
-                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                                $
-                              </span>
-                              <Input
-                                id={`rate-${rateKey(rt.id, FLAT_KEY)}`}
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                className="pl-7"
-                                value={
-                                  rates[rateKey(rt.id, FLAT_KEY)]
-                                    ? (rates[rateKey(rt.id, FLAT_KEY)] / 100).toFixed(2)
-                                    : ""
-                                }
-                                onChange={(e) => handleRateChange(rateKey(rt.id, FLAT_KEY), e.target.value)}
-                                placeholder="0.00"
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
               <div className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  id="active"
-                  checked={active}
-                  onChange={(e) => setActive(e.target.checked)}
-                  className="rounded border-input"
-                />
+                <input type="checkbox" id="active" checked={active} onChange={(e) => setActive(e.target.checked)} className="rounded border-input" />
                 <Label htmlFor="active">Active</Label>
               </div>
 
               <div className="flex space-x-3">
                 <Button type="submit" disabled={saving}>
-                  {saving ? "Saving..." : editingId ? "Update Season" : "Create Season"}
+                  {saving ? "Saving..." : "Update Season"}
                 </Button>
-                <Button type="button" variant="outline" onClick={resetForm}>
-                  Cancel
-                </Button>
+                <Button type="button" variant="outline" onClick={resetForm}>Cancel</Button>
               </div>
             </form>
           </CardContent>
         </Card>
       )}
 
-      {/* Seasons List */}
-      {seasons.length === 0 ? (
+      {loading ? (
+        <div className="text-center py-8">Loading seasons...</div>
+      ) : seasons.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
-            No seasons configured yet. Click &quot;Add Season&quot; to get started.
+            No seasons configured yet. Add one in Fees → Hut Fees.
           </CardContent>
         </Card>
       ) : (
@@ -501,90 +252,28 @@ export default function SeasonsPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
                     <CardTitle className="text-xl">{season.name}</CardTitle>
-                    <Badge variant={season.type === "WINTER" ? "default" : "secondary"}>
-                      {season.type}
-                    </Badge>
-                    <Badge variant={season.active ? "default" : "outline"}>
-                      {season.active ? "Active" : "Inactive"}
-                    </Badge>
+                    <Badge variant={season.type === "WINTER" ? "default" : "secondary"}>{season.type}</Badge>
+                    <Badge variant={season.active ? "default" : "outline"}>{season.active ? "Active" : "Inactive"}</Badge>
                   </div>
-                  <div className="flex space-x-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleToggleActive(season)}
-                    >
-                      {season.active ? "Deactivate" : "Activate"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => startEdit(season)}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => handleDelete(season.id)}
-                    >
-                      Delete
-                    </Button>
-                  </div>
+                  {canEdit && (
+                    <div className="flex space-x-2">
+                      <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => handleToggleActive(season)}>
+                        {season.active ? "Deactivate" : "Activate"}
+                      </ViewOnlyActionButton>
+                      <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => startEdit(season)}>
+                        Edit window
+                      </ViewOnlyActionButton>
+                      <ViewOnlyActionButton canEdit={canEdit} variant="destructive" size="sm" onClick={() => handleDelete(season.id)}>
+                        Delete
+                      </ViewOnlyActionButton>
+                    </div>
+                  )}
                 </div>
                 <CardDescription>
                   {new Date(season.startDate).toLocaleDateString("en-NZ")} &mdash;{" "}
                   {new Date(season.endDate).toLocaleDateString("en-NZ")}
                 </CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {rateTypes.map((rt) => (
-                    <div key={rt.id}>
-                      <h4 className="text-sm font-semibold mb-2">{rt.name}</h4>
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Age Group</TableHead>
-                            <TableHead className="text-right">Price/Night</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {rt.ageGroupsApply ? (
-                            ageTiers.map((t) => {
-                              const rate = season.membershipTypeRates.find(
-                                (r) => r.membershipTypeId === rt.id && r.ageTier === t.tier,
-                              )
-                              return (
-                                <TableRow key={t.tier}>
-                                  <TableCell>{t.label}</TableCell>
-                                  <TableCell className="text-right font-mono">
-                                    {rate ? formatCents(rate.pricePerNightCents) : "Not set"}
-                                  </TableCell>
-                                </TableRow>
-                              )
-                            })
-                          ) : (
-                            (() => {
-                              const rate = season.membershipTypeRates.find(
-                                (r) => r.membershipTypeId === rt.id && r.ageTier === null,
-                              )
-                              return (
-                                <TableRow>
-                                  <TableCell>All ages (flat)</TableCell>
-                                  <TableCell className="text-right font-mono">
-                                    {rate ? formatCents(rate.pricePerNightCents) : "Not set"}
-                                  </TableCell>
-                                </TableRow>
-                              )
-                            })()
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
             </Card>
           ))}
         </div>

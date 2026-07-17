@@ -301,7 +301,10 @@ export default function LodgeConfigurationHubPage() {
       enabled: true,
       title: "Seasons & Rates",
       icon: CalendarRange,
-      href: `/admin/seasons?lodgeId=${encodeURIComponent(lodgeId)}`,
+      // Consolidated fee console (#1933, E7): hut nightly rates now live in
+      // Fees → Hut Fees with the lodge pre-selected (?lodgeId=). Season windows
+      // remain editable on /admin/seasons.
+      href: `/admin/fees?lodgeId=${encodeURIComponent(lodgeId)}`,
       summary: seasons,
       emptyHint: "No seasons yet — nights here cannot be priced until one exists.",
       unit: "season",

@@ -59,6 +59,7 @@ import {
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
 import {
+  canAccessConsolidatedFeesPage,
   canViewAdminHrefWithMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
@@ -76,6 +77,12 @@ interface NavSection {
     icon: typeof LayoutDashboard;
     /** Shown only to Full Admins (e.g. access-role management). */
     fullAdminOnly?: boolean;
+    /**
+     * Custom visibility predicate replacing the single-area prefix check. Used
+     * by the consolidated /admin/fees console (#1933, E7), whose admission is OR
+     * (bookings OR finance) and cannot be expressed by canViewAdminHrefWithMatrix.
+     */
+    orAccess?: (matrix: AdminPermissionMatrix) => boolean;
   }>;
 }
 
@@ -190,9 +197,10 @@ const navSections: NavSection[] = [
   {
     label: "Rates & Policies",
     items: [
-      // Hut Fees & Seasons is lodge-scoped (#130, ADR-005) — reached via the
-      // lodge hub's "Seasons & Rates" card (/admin/lodges/[id]), not a standalone
-      // sidebar entry.
+      // Hut nightly rates now live in the consolidated Fees console (#1933, E7,
+      // see the Finance group "Fees" entry); /admin/seasons is reduced to season
+      // windows and stays lodge-scoped (#130, ADR-005) — reached from Fees → Hut
+      // Fees and the lodge hub's "Seasons & Rates" card, not a standalone entry.
       { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
       { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
       {
@@ -205,7 +213,10 @@ const navSections: NavSection[] = [
   {
     label: "Finance",
     items: [
-      { href: "/admin/fee-configuration", label: "Membership & Joining Fees", icon: DollarSign },
+      // Consolidated fee console (#1933, E7): Hut Fees (bookings) + Joining &
+      // Annual Fees (finance). Shown to anyone with view on either area via the
+      // OR predicate, since its prefix resolves to bookings only.
+      { href: "/admin/fees", label: "Fees", icon: DollarSign, orAccess: canAccessConsolidatedFeesPage },
       { href: "/admin/payments", label: "Payments", icon: CreditCard },
       {
         href: "/admin/internet-banking",
@@ -360,7 +371,9 @@ export function getVisibleAdminNavSections(
             isFeatureHrefVisible(item.href, features) &&
             (!item.fullAdminOnly || isFullAdmin) &&
             (!permissionMatrix ||
-              canViewAdminHrefWithMatrix(permissionMatrix, item.href)),
+              (item.orAccess
+                ? item.orAccess(permissionMatrix)
+                : canViewAdminHrefWithMatrix(permissionMatrix, item.href))),
         )
         .map((item) =>
           item.href === "/admin/hut-leaders"

@@ -130,10 +130,16 @@ recommended reading paths.
    existing future bookings are not automatically repriced by this change.
    Membership editors also maintain the distinct public description and must
    explicitly enable public listing; migrated and new types start hidden.
-   Finance editors use **Admin > Membership & Joining Fees** for effective-dated
-   amounts and explicit family billing members. Joining fees key on membership
-   type and age tier, and the Family fee is strictly type-driven. See
-   `docs/AUTHORITATIVE_FEES.md`.
+   All fees live on one consolidated **Admin > Fees** page (`/admin/fees`, #1933
+   E7) with three sections: **Hut Fees** (per lodge → season → membership-type ×
+   age-tier nightly rates), **Joining Fees**, and **Annual Membership Fees**
+   (effective-dated schedules, E6 invoice-line components, and family billing
+   recipients). Page admission needs view on **finance or bookings**; Hut Fees
+   edits require `bookings:edit` while Joining and Annual fee edits require
+   `finance:edit`. **Admin > Seasons** now holds only season windows
+   (name/type/dates/active), and **Admin > Fee Configuration** redirects to the
+   Fees page. Joining fees key on membership type and age tier, and the Family
+   fee is strictly type-driven. See `docs/AUTHORITATIVE_FEES.md`.
    Treasurers then use **Admin > Subscriptions** to preview an annual billing
    batch, resolve configuration/recipient exceptions, set invoice due days
    (30 by default), and explicitly confirm immutable charges before authorised,
