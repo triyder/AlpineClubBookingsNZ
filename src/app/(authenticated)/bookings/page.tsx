@@ -37,6 +37,9 @@ export default async function MyBookingsPage() {
     guestCount: booking.guests.length,
     finalPriceCents: booking.finalPriceCents,
     status: booking.status,
+    // #1975: expose the parent link so the list can nest a provisional child
+    // as a sub-row inside its parent's card.
+    parentBookingId: booking.parentBookingId,
     linkLabel:
       booking.memberId !== session.user.id
         ? "guest-linked"
