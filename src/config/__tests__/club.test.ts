@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadClubConfig, SAFE_DEFAULT_CONFIG } from "@/config/club";
+import { loadClubConfig, loadClubConfigWithSource, SAFE_DEFAULT_CONFIG } from "@/config/club";
 import logger from "@/lib/logger";
 
 const nightlyRates = {
@@ -125,5 +125,40 @@ describe("loadClubConfig", () => {
     const cfg = loadClubConfig({ configDir: tmpDir });
     expect(cfg).toBe(SAFE_DEFAULT_CONFIG);
     expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // --- Provenance: which branch resolved the config (drives the self-heal guard) ---
+
+  it("reports provenance 'primary' for a valid club.json", () => {
+    writeJson("club.json", validConfig);
+    const { config, source } = loadClubConfigWithSource({ configDir: tmpDir });
+    expect(source).toBe("primary");
+    expect(config.name).toBe("Example Mountain Club");
+  });
+
+  it("reports provenance 'example' when primary is absent and the example is valid", () => {
+    writeJson("club.example.json", { ...validConfig, name: "Fallback Club" });
+    const { config, source } = loadClubConfigWithSource({ configDir: tmpDir });
+    expect(source).toBe("example");
+    expect(config.name).toBe("Fallback Club");
+  });
+
+  it("reports provenance 'safe-default' for a malformed primary", () => {
+    fs.writeFileSync(path.join(tmpDir, "club.json"), "{ not json");
+    const { config, source } = loadClubConfigWithSource({ configDir: tmpDir });
+    expect(source).toBe("safe-default");
+    expect(config).toBe(SAFE_DEFAULT_CONFIG);
+  });
+
+  it("reports provenance 'safe-default' for a schema-invalid primary", () => {
+    writeJson("club.json", { ...validConfig, supportEmail: "garbage" });
+    const { source } = loadClubConfigWithSource({ configDir: tmpDir });
+    expect(source).toBe("safe-default");
+  });
+
+  it("reports provenance 'safe-default' when neither file exists", () => {
+    const { config, source } = loadClubConfigWithSource({ configDir: tmpDir });
+    expect(source).toBe("safe-default");
+    expect(config).toBe(SAFE_DEFAULT_CONFIG);
   });
 });
