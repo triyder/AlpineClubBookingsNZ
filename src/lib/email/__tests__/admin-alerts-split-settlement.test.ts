@@ -9,7 +9,9 @@ const h = vi.hoisted(() => ({
   sendToAdmins: vi.fn(),
   shouldSendDirectAdminSystemEmail: vi.fn().mockResolvedValue(true),
   unpaidTemplate: vi.fn(() => "<html>split settlement unpaid</html>"),
-  cancelledTemplate: vi.fn(() => "<html>split settlement cancelled</html>"),
+  cancelledTemplate: vi.fn(
+    (..._args: unknown[]) => "<html>split settlement cancelled</html>",
+  ),
 }));
 
 vi.mock("../admin-alerts-shared", () => ({
