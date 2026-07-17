@@ -75,6 +75,29 @@ so if the promotion fails the booking stays CONFIRMED holding its beds, admins
 are alerted, and the Stripe webhook finishes the promotion idempotently —
 captured money is never silently orphaned.
 
+Split-booking guest-portion settlement with no card on file (#1967). A split
+non-member child (#738) is normally auto-charged at its hold deadline to the
+member's saved card inherited from the parent payment
+(`savedPaymentMethodForBooking`). But a `PAYMENT_PENDING` parent can legitimately
+pay by **Internet Banking** (switch-at-pay), which leaves the parent payment with
+no `stripeCustomerId`/`stripePaymentMethodId` — so the child resolves to no saved
+card and is not `originBookingRequest`. Rather than stranding the guests (the old
+`missing_payment_method` path only logged), `cron-confirm-pending.ts` now mirrors
+the #707 request-origin path: it extends the hold, mints a tokenised
+`/pay/<token>` PaymentLink (reusing the #707 machinery) so the member can settle
+the guest portion, emails the member that link, and fires a dedicated admin alert
+(`sendAdminSplitSettlementUnpaidAlert`). All three side effects fire **once** —
+the mint (`mintSplitGuestPaymentLinkIfAbsent`) is guarded on the absence of an
+active PaymentLink for the child, and only the run that actually mints a fresh
+token notifies; later cron runs re-extend the hold silently, so re-runs never
+re-email or re-alert. The child stays PENDING and holds no capacity throughout,
+exactly as before; if the lodge fills, the capacity re-check bumps it and revokes
+its link like any other provisional child. The member can also trigger this
+proactively from the booking-detail page when switching to Internet Banking
+(`POST /api/bookings/[id]/send-guest-payment-link` → `issueSplitGuestPaymentLink`,
+the same idempotent mint-and-email), warned but never blocked. Paying the parent
+by card instead keeps the automatic saved-card settlement path unchanged.
+
 Lodge check-in gate (F27 / #1372 + #1422) — status-preserving. A booking that
 carries a pending admin review (`requiresAdminReview` true and
 `adminReviewStatus = PENDING`) is BLOCKED from lodge check-in, but the block

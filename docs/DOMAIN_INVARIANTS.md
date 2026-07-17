@@ -206,6 +206,17 @@ Future reviews and issues should cite this file when proposing changes.
   cancelled. Because #737's member-priority bumping only ever touched
   non-holding PENDING rows, an accepted-but-unpaid quote can no longer be bumped
   by a later member booking — this is the intended capacity-priority change.
+- Split-booking guest portion always settles or is notified, never silently
+  stranded (#1967). A split non-member child (#738) is auto-charged at its hold
+  deadline to the member's card inherited from the parent payment. When the
+  parent paid by Internet Banking there is no saved card, so
+  `cron-confirm-pending.ts` instead mints a tokenised `/pay/<token>` PaymentLink
+  (the #707 machinery), emails it to the member, and fires an admin alert — each
+  exactly **once**, deduped on the absence of an active PaymentLink for the child
+  (`mintSplitGuestPaymentLinkIfAbsent`); later cron runs only re-extend the hold.
+  Money still stays integer cents and no beds are held for the child until it is
+  actually paid. The same idempotent mint-and-email backs the on-demand
+  `POST /api/bookings/[id]/send-guest-payment-link` affordance.
 - Bed-allocation eligibility (`BED_ALLOCATABLE_BOOKING_STATUSES`) is a status-
   only superset of capacity-holding; the `capacity-holding ⊆ bed-allocatable`
   invariant still holds because rule (b) only extends holding to PENDING, which
