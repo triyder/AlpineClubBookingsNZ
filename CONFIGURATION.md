@@ -148,9 +148,9 @@ address in production; the DB `supportEmail` is never used as the sender address
 The now-dead `NEXT_PUBLIC_CONTACT_EMAIL` build arg was deleted at the same time.
 **Upgrade note:** a deployment that previously routed the contact form via the
 `CONTACT_EMAIL` env var must set the DB `contactEmail` under Admin > Email
-Messages; if left unset it falls back to the support address per the precedence
-above (via the boot self-heal chain), so removing the env var causes no hard
-break.
+Messages; if left unset it falls back to `club.json`'s `contactEmail`, then to
+the support address, per the precedence above (via the boot self-heal chain),
+so removing the env var causes no hard break.
 
 Split-booking confirmations depend on the `{{provisionalGuestsNote}}` token in
 the **booking-confirmed** body (Admin > Email Messages): it renders the
