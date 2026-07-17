@@ -56,13 +56,21 @@ export default async function MyBookingsPage() {
       status: booking.status,
       // #1975: expose the parent link ONLY for a genuine split child, so the
       // list nests it as a sub-row inside its parent's card. A #796 joiner
-      // (join row present) keeps its pre-existing label but is never carried
-      // for nesting.
+      // (join row present) is never carried for nesting.
       parentBookingId: isNestableSplitChild ? booking.parentBookingId : null,
+      // #2002: the "provisional non-member guests · linked to your member
+      // booking" label must key on the SAME discriminator as nesting, not raw
+      // parentBookingId. A #796 group joiner also carries parentBookingId, so
+      // keying on it alone falsely labelled the member's own joiner booking as
+      // a #738 split child on its own top-level row. A joiner is simply the
+      // member's own booking here (its group presentation lives on the
+      // organiser's card, matching [id]/page.tsx's `!groupBookingJoin` gate),
+      // so it shows no special linked label. `guest-linked` (viewer is a guest
+      // on someone else's booking) and `linked-parent` are unaffected.
       linkLabel:
         booking.memberId !== session.user.id
           ? "guest-linked"
-          : booking.parentBookingId
+          : isNestableSplitChild
             ? "provisional-child"
             : memberBookingIdsWithLinkedGuests.has(booking.id)
               ? "linked-parent"
