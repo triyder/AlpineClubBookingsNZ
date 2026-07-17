@@ -1,6 +1,22 @@
 import type { ClubConfig } from "./schema";
 
 /**
+ * Recursively freeze the safe default so no future consumer can mutate the
+ * canonical constant in place (the loader returns it by reference on every
+ * fallback branch, so a mutation would silently corrupt the single source of
+ * truth for the "unconfigured club" state).
+ */
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    for (const key of Object.getOwnPropertyNames(value)) {
+      deepFreeze((value as Record<string, unknown>)[key]);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+/**
  * The single canonical hard-coded club configuration used as the last-resort
  * boot-safe default (epic #1943, child C1).
  *
@@ -20,7 +36,7 @@ import type { ClubConfig } from "./schema";
  * `club.ts`) so that importing the default never triggers `club.ts`'s eager
  * `clubConfig` singleton load; `club.ts` re-exports it as the public surface.
  */
-export const SAFE_DEFAULT_CONFIG: ClubConfig = {
+export const SAFE_DEFAULT_CONFIG: ClubConfig = deepFreeze({
   name: "Example Mountain Club",
   shortName: "EMC",
   supportEmail: "support@example.org",
@@ -79,4 +95,4 @@ export const SAFE_DEFAULT_CONFIG: ClubConfig = {
       },
     },
   ],
-};
+});
