@@ -24,6 +24,21 @@ async function main() {
 
   const summary = await runConfigSelfHeal({ db: prisma });
 
+  // Fallback guard: the routine refuses to persist a non-primary config. An
+  // operator running this out-of-band expects healing, so make the skip loud
+  // and exit non-zero — a silent exit-0 no-op would defeat the purpose.
+  if (summary.skipped) {
+    console.error(
+      `Config self-heal SKIPPED — effective config provenance is ` +
+        `"${summary.provenance}", not a valid primary config/club.json. ` +
+        `Nothing was written to the database. Fix config/club.json, then rerun ` +
+        `\`npm run config:self-heal\` (the app also self-heals automatically on ` +
+        `the next boot once a valid primary config is present).`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   for (const result of summary.results) {
     const detail = result.error ? ` — ${result.error}` : "";
     console.log(`  ${result.name}: ${result.outcome}${detail}`);
@@ -41,7 +56,13 @@ async function main() {
 
 main()
   .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
+    // Collapse a multiline driver error (e.g. Prisma) to a single line so the
+    // operator sees a concise cause, not a full stack/panic dump.
+    if (error instanceof Error) {
+      console.error(`${error.name}: ${error.message.split("\n")[0]}`);
+    } else {
+      console.error(error);
+    }
     process.exitCode = 1;
   })
   .finally(async () => {

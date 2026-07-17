@@ -282,6 +282,19 @@ into its DB row **if — and only if — that row is still absent**. Properties:
 - **Best-effort.** Self-heal runs regardless of `CRON_ENABLED` and can never
   block or fail startup; a step failure is logged (`scope: "config-self-heal"`)
   and boot continues.
+- **Fallback-guarded.** Healing runs **only when the effective config came from
+  a valid primary `config/club.json`** (loader provenance `"primary"`). If the
+  primary is missing, unreadable, or malformed, the app boots on the
+  `club.example.json` identity or the hard-coded safe default — and the
+  self-heal **skips every step** rather than freezing that placeholder identity
+  (or safe-default capacity and rates) into the create-if-absent DB rows. Those
+  rows are DB-first authoritative and are never overwritten, so one bad boot
+  would otherwise strand the site on `"Example Mountain Club"` until an admin
+  edit or DB surgery. A skipped run logs a warning
+  (`scope: "config-self-heal"`) naming the provenance; **it self-repairs
+  automatically on the next boot** once a valid primary config is present. Every
+  step (including the capacity / age-tier / rate steps later collapse children
+  register) inherits this guard automatically.
 
 This mechanism — not migration/seed backfill — is what lets later config
 "collapse" changes remove a file/env fallback without stranding an existing
@@ -298,7 +311,11 @@ npm run config:self-heal
 ```
 
 It prints, per registered setting, whether the row was `healed`,
-`already-present`, or `failed`, and exits non-zero if any step failed.
+`already-present`, or `failed`, and exits non-zero if any step failed. If the
+effective config is a fallback (no valid primary `config/club.json`), it writes
+nothing, prints the provenance and the remediation ("fix `config/club.json`,
+then rerun"), and **exits non-zero** — an out-of-band run that silently no-oped
+would hide the misconfiguration.
 
 ## Staging
 

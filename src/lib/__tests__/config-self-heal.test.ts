@@ -75,7 +75,7 @@ describe("runConfigSelfHeal — cold un-backfilled DB", () => {
   it("populates the identity row from the effective config on first run", async () => {
     const { rows, db } = makeIdentityDb();
 
-    const summary = await runConfigSelfHeal({ db, log: silentLog });
+    const summary = await runConfigSelfHeal({ db, log: silentLog, provenance: "primary" });
 
     expect(summary.healed).toBe(1);
     expect(summary.alreadyPresent).toBe(0);
@@ -97,12 +97,12 @@ describe("runConfigSelfHeal — cold un-backfilled DB", () => {
   it("is a no-op on the second run (idempotent)", async () => {
     const { rows, db } = makeIdentityDb();
 
-    await runConfigSelfHeal({ db, log: silentLog });
+    await runConfigSelfHeal({ db, log: silentLog, provenance: "primary" });
     const upsertCallsAfterFirst = (
       db as unknown as { clubIdentitySettings: { upsert: { mock: { calls: unknown[] } } } }
     ).clubIdentitySettings.upsert.mock.calls.length;
 
-    const second = await runConfigSelfHeal({ db, log: silentLog });
+    const second = await runConfigSelfHeal({ db, log: silentLog, provenance: "primary" });
 
     expect(second.healed).toBe(0);
     expect(second.alreadyPresent).toBe(1);
@@ -127,7 +127,7 @@ describe("runConfigSelfHeal — never overwrites an admin edit", () => {
       hutLeaderLabel: null, // an intentional null the admin left blank
     });
 
-    const summary = await runConfigSelfHeal({ db, log: silentLog });
+    const summary = await runConfigSelfHeal({ db, log: silentLog, provenance: "primary" });
 
     expect(summary.healed).toBe(0);
     expect(summary.alreadyPresent).toBe(1);
@@ -158,7 +158,7 @@ describe("runConfigSelfHeal — best-effort resilience", () => {
       },
     } as unknown as SelfHealDb;
 
-    const summary = await runConfigSelfHeal({ db, log: silentLog });
+    const summary = await runConfigSelfHeal({ db, log: silentLog, provenance: "primary" });
 
     expect(summary.failed).toBe(1);
     expect(summary.healed).toBe(0);
@@ -191,6 +191,7 @@ describe("runConfigSelfHeal — best-effort resilience", () => {
       db: {} as SelfHealDb,
       steps: [failing, ok],
       log: silentLog,
+      provenance: "primary",
     });
 
     expect(summary.failed).toBe(1);
@@ -228,14 +229,100 @@ describe("runConfigSelfHeal — blue/green double-boot", () => {
       },
     } as unknown as SelfHealDb;
 
-    const first = await runConfigSelfHeal({ db, log: silentLog });
-    const second = await runConfigSelfHeal({ db, log: silentLog });
+    const first = await runConfigSelfHeal({ db, log: silentLog, provenance: "primary" });
+    const second = await runConfigSelfHeal({ db, log: silentLog, provenance: "primary" });
 
     expect(first.results[0].outcome).toBe("healed");
     expect(second.results[0].outcome).toBe("already-present");
     expect(second.failed).toBe(0);
     // Exactly one populated row despite two boots both seeing it absent.
     expect(rows.size).toBe(1);
+  });
+});
+
+describe("runConfigSelfHeal — config-fallback guard (never freeze a fallback)", () => {
+  it("skips ALL healing on a cold DB when provenance is safe-default (zero writes, skip result, warning)", async () => {
+    const { rows, db } = makeIdentityDb();
+    const log = { info: vi.fn(), warn: vi.fn() };
+
+    const summary = await runConfigSelfHeal({
+      db,
+      log,
+      provenance: "safe-default",
+    });
+
+    expect(summary.skipped).toBe(true);
+    expect(summary.provenance).toBe("safe-default");
+    expect(summary.healed).toBe(0);
+    expect(summary.alreadyPresent).toBe(0);
+    expect(summary.failed).toBe(0);
+    expect(summary.results).toEqual([]);
+
+    // Nothing touched the DB at all — not even a presence read.
+    expect(rows.size).toBe(0);
+    expect(
+      (db as unknown as { clubIdentitySettings: { findUnique: ReturnType<typeof vi.fn> } })
+        .clubIdentitySettings.findUnique,
+    ).not.toHaveBeenCalled();
+    expect(
+      (db as unknown as { clubIdentitySettings: { upsert: ReturnType<typeof vi.fn> } })
+        .clubIdentitySettings.upsert,
+    ).not.toHaveBeenCalled();
+
+    // A loud, greppable warning names the provenance.
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(log.warn.mock.calls[0][0]).toMatchObject({
+      scope: "config-self-heal",
+      provenance: "safe-default",
+    });
+    expect(log.warn.mock.calls[0][1]).toMatch(/self-heal skipped/i);
+  });
+
+  it("skips ALL healing when booting on the example config (never persists the example identity)", async () => {
+    const { rows, db } = makeIdentityDb();
+
+    const summary = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "example",
+    });
+
+    expect(summary.skipped).toBe(true);
+    expect(summary.provenance).toBe("example");
+    expect(summary.healed).toBe(0);
+    expect(rows.size).toBe(0);
+    expect(
+      (db as unknown as { clubIdentitySettings: { upsert: ReturnType<typeof vi.fn> } })
+        .clubIdentitySettings.upsert,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("heals on a later boot once config/club.json is fixed (skipped boot leaves the DB cold, next primary boot backfills)", async () => {
+    const { rows, db } = makeIdentityDb();
+
+    // Boot 1: a bad/absent primary resolved to safe-default → skipped, DB cold.
+    const skippedRun = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "safe-default",
+    });
+    expect(skippedRun.skipped).toBe(true);
+    expect(rows.size).toBe(0);
+
+    // Boot 2: operator fixed config/club.json → provenance "primary" → heals.
+    const healedRun = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "primary",
+    });
+    expect(healedRun.skipped).toBe(false);
+    expect(healedRun.healed).toBe(1);
+    expect(rows.get("default")).toMatchObject({
+      id: "default",
+      name: clubConfig.name,
+      shortName: clubConfig.shortName ?? null,
+      hutLeaderLabel: clubConfig.hutLeaderLabel ?? null,
+    });
   });
 });
 

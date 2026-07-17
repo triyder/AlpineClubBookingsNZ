@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { clubConfig } from "@/config/club";
+import { clubConfig, clubConfigSource, type ClubConfigSource } from "@/config/club";
 import logger from "@/lib/logger";
 
 /**
@@ -32,6 +32,19 @@ import logger from "@/lib/logger";
  *   logged and the remaining steps still run. The boot integration
  *   (`src/instrumentation.node.ts`) additionally wraps the call so self-heal can
  *   never block or fail startup.
+ * - **Fallback-guarded.** Healing runs ONLY when the effective config came from
+ *   a valid primary `config/club.json` (`clubConfigSource === "primary"`). If
+ *   the config resolved to the `club.example.json` identity or the hard-coded
+ *   `SAFE_DEFAULT_CONFIG` (a missing / unreadable / malformed primary — a real
+ *   path: the Docker runner image does not copy gitignored `config/`, fork
+ *   provisioning can fail on one boot), EVERY step is skipped. Otherwise ONE bad
+ *   boot would freeze `"Example Mountain Club"` / safe-default capacity + rates
+ *   into the create-if-absent DB rows, which are then DB-first authoritative and
+ *   never overwritten — the exact outage class epic #1943 exists to prevent.
+ *   Healing self-repairs automatically on the next boot once a valid primary
+ *   config is present. Every registered step (C3/C4/C5 capacity / age-tier /
+ *   rate steps included) inherits this guard automatically — it gates the whole
+ *   run, not per step.
  *
  * ## Registering a new step (C3/C4/C5)
  * Add another `defineSelfHealStep({...})` to `SELF_HEAL_STEPS` below. A step
@@ -179,6 +192,14 @@ export interface SelfHealSummary {
   healed: number;
   alreadyPresent: number;
   failed: number;
+  /**
+   * True when the whole run was skipped because the effective config is a
+   * non-`"primary"` fallback (see the fallback guard in the module doc). No DB
+   * reads or writes happened; `results` is empty and the counts are all zero.
+   */
+  skipped: boolean;
+  /** The config provenance the run observed — drives the fallback guard. */
+  provenance: ClubConfigSource;
   results: SelfHealStepResult[];
 }
 
@@ -191,6 +212,13 @@ export interface RunConfigSelfHealOptions {
   steps?: readonly RegisteredSelfHealStep[];
   /** Override the logger (tests silence output). Defaults to the app logger. */
   log?: SelfHealLogger;
+  /**
+   * Effective config provenance. Healing runs ONLY when this is `"primary"`;
+   * any fallback (`"example"` / `"safe-default"`) skips the whole run so a bad
+   * boot cannot freeze fallback values into the DB. Defaults to the loader's
+   * `clubConfigSource` (the eager singleton's provenance). Injected in tests.
+   */
+  provenance?: ClubConfigSource;
 }
 
 /**
@@ -204,7 +232,34 @@ export async function runConfigSelfHeal(
   const { db } = options;
   const steps = options.steps ?? SELF_HEAL_STEPS;
   const log = options.log ?? logger;
+  const provenance = options.provenance ?? clubConfigSource;
   const results: SelfHealStepResult[] = [];
+
+  // Fallback guard: never persist a non-primary config into create-if-absent DB
+  // rows. A fallback (example / safe-default) resolves when config/club.json is
+  // absent/unreadable/malformed; freezing it would make the placeholder identity
+  // (or safe-default capacity + rates) DB-first authoritative and unrecoverable
+  // without admin edit / DB surgery. Skipped healing self-repairs on the next
+  // boot once a valid primary config is present.
+  if (provenance !== "primary") {
+    log.warn(
+      { scope: "config-self-heal", provenance },
+      `Config self-heal skipped: effective config provenance is "${provenance}", ` +
+        `not a valid primary config/club.json. Refusing to persist fallback ` +
+        `values into create-if-absent DB rows (they would become DB-first ` +
+        `authoritative and never be overwritten). Fix config/club.json; healing ` +
+        `self-repairs automatically on the next boot once a valid primary config ` +
+        `is present.`,
+    );
+    return {
+      healed: 0,
+      alreadyPresent: 0,
+      failed: 0,
+      skipped: true,
+      provenance,
+      results: [],
+    };
+  }
 
   for (const step of steps) {
     try {
@@ -241,6 +296,8 @@ export async function runConfigSelfHeal(
     healed: results.filter((r) => r.outcome === "healed").length,
     alreadyPresent: results.filter((r) => r.outcome === "already-present").length,
     failed: results.filter((r) => r.outcome === "failed").length,
+    skipped: false,
+    provenance,
     results,
   };
 }
