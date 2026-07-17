@@ -232,12 +232,20 @@ or configuration.
 Resolution reads `JoiningFee` only: pick the type's row for the member's age
 tier, else the type's flat NULL-tier row; a type with no rows raises no joining
 fee (graceful skip). The N/A age tier (organisations/schools) is exempt, checked
-**before** type resolution. Config-transfer accepts old `ENTRANCE_FEE`-labelled
-item-code bundles (normalised to `JOINING_FEE`), and materialises imported
-legacy amounts into `JoiningFee` windows via the same fan-out whenever the
-target has no covering window for a category — so importing a pre-#1931 club's
-config into a fresh install cannot silently produce a zero joining fee.
-First-class joining-fee schedule transfer is follow-up #1941.
+**before** type resolution. Config-transfer now transfers the joining-fee (and
+annual-fee) schedules **first-class** via the `membership-fees` category
+(#1941): `membership-fees/joining-fees.csv` carries `JoiningFee` rows keyed by
+`membershipTypeKey × ageTier × effectiveFrom` (amounts in integer cents), so an
+export→import reproduces the schedule exactly. When a bundle carries that file
+it is authoritative and **supersedes** the legacy fallback below.
+
+For **old-format bundles only** (no `joining-fees.csv`), config-transfer still
+accepts old `ENTRANCE_FEE`-labelled item-code bundles (normalised to
+`JOINING_FEE`) and materialises the imported legacy amounts into `JoiningFee`
+windows via the same fan-out whenever the target has no covering window for a
+category — so importing a pre-#1931 club's config into a fresh install cannot
+silently produce a zero joining fee. See `docs/config-transfer/README.md`
+(membership-fees) for the precedence rule.
 
 ## Safety checks
 
