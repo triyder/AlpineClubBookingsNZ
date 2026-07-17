@@ -14,6 +14,7 @@ import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { enqueueXeroAccountCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import { createAuditLog } from "@/lib/audit";
+import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import { formatCents } from "@/lib/utils";
 
 function isPaidXeroInvoice(invoice: Invoice): boolean {
@@ -1068,6 +1069,14 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       reason: "Internet Banking payment reconciled from Xero.",
     });
 
+    // Split-booking parent (#738/#1942): describe the provisional non-member
+    // child so the Internet-Banking/invoice-settled confirmation explains the
+    // separate later charge. Read-only; null on non-split bookings.
+    const provisionalGuests = await getProvisionalNonMemberChildSummary({
+      id: outcome.payment.bookingId,
+      memberId: outcome.payment.booking.memberId,
+    });
+
     sendBookingConfirmedEmail(
       outcome.payment.booking.member.email,
       outcome.payment.booking.member.firstName,
@@ -1079,6 +1088,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         // Always thread the booking's lodge so the confirmation email carries
         // that lodge's name/travel note/door code, promo or not (multi-lodge).
         lodgeId: outcome.payment.booking.lodgeId,
+        ...(provisionalGuests ? { provisionalGuests } : {}),
         ...(outcome.payment.booking.promoRedemption?.promoCode
           ? {
               discountCents: outcome.payment.booking.discountCents,

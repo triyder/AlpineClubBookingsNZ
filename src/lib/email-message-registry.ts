@@ -84,6 +84,9 @@ const GLOBAL_EMAIL_TEMPLATE_TOKENS = [
 const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
   // Lodge the warning is about; empty for single-lodge clubs (ADR-002).
   "admin-capacity-warning": ["lodgeName"],
+  // Split-booking parent (#738): a pre-composed sentence describing the
+  // provisional non-member portion; empty for a non-split confirmation.
+  "booking-confirmed": ["provisionalGuestsNote"],
   "booking-modified": [
     "additionalPaymentMethod",
     "paymentReference",
@@ -642,6 +645,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "pin",
   "position",
   "promoCode",
+  "provisionalGuestsNote",
   "quoteOptions",
   "reason",
   "recipientLabel",

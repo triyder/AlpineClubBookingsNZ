@@ -13,6 +13,7 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { getTodayDateOnly } from "@/lib/date-only";
 import { sendBookingConfirmedEmail } from "@/lib/email";
+import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { z } from "zod";
@@ -287,6 +288,13 @@ export async function POST(
     const { booking, overbooked, overbookDates, auditAction, status, unpaidFinishedStay } = result;
 
     if (status === BookingStatus.PAID && notifyMember !== false) {
+      // Split-booking parent (#738/#1942): describe the provisional non-member
+      // child so the force-confirm confirmation explains the separate later
+      // charge. Read-only; null on non-split bookings.
+      const provisionalGuests = await getProvisionalNonMemberChildSummary({
+        id: booking.id,
+        memberId: booking.memberId,
+      });
       sendBookingConfirmedEmail(
         booking.member.email,
         booking.member.firstName,
@@ -296,6 +304,7 @@ export async function POST(
         booking.finalPriceCents,
         {
           lodgeId: booking.lodgeId,
+          ...(provisionalGuests ? { provisionalGuests } : {}),
           ...(booking.promoRedemption?.promoCode
             ? {
                 discountCents: booking.discountCents,

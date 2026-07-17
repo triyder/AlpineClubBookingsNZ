@@ -25,6 +25,10 @@ const mocks = vi.hoisted(() => ({
   auditLogCreate: vi.fn(),
   bookingFindMany: vi.fn(),
   bookingUpdate: vi.fn(),
+  // Split-parent describe helper (getProvisionalNonMemberChildSummary) reads the
+  // provisional non-member child via prisma.booking.findFirst; default null =
+  // not a split parent.
+  bookingFindFirst: vi.fn().mockResolvedValue(null),
   bookingModificationFindMany: vi.fn(),
   paymentFindMany: vi.fn(),
   paymentFindUnique: vi.fn(),
@@ -102,6 +106,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     booking: {
       findMany: mocks.bookingFindMany,
+      findFirst: mocks.bookingFindFirst,
       update: mocks.bookingUpdate,
     },
     bookingModification: {
@@ -973,6 +978,156 @@ describe("processStoredXeroInboundEvents", () => {
       // the email renders that lodge's identity (undefined here because the
       // fixture booking has no lodgeId).
       { lodgeId: undefined }
+    );
+  });
+
+  it("threads the provisional non-member child into the Internet-Banking split-parent confirmation email (#1942 FIX 4a)", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_ib_1",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_ib_1",
+        correlationKey: "corr_ib_1",
+        payload: { resourceId: "inv_ib_1" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_ib_1" });
+    mocks.linkFindMany
+      .mockResolvedValueOnce([
+        {
+          localModel: "Payment",
+          localId: "pay_ib_1",
+          xeroObjectType: "INVOICE",
+          role: "PRIMARY_INVOICE",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    mocks.paymentFindMany
+      .mockResolvedValueOnce([
+        { id: "pay_ib_1", xeroInvoiceId: null, xeroInvoiceNumber: null },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_ib_1",
+          bookingId: "booking_ib_1",
+          amountCents: 12345,
+          status: "PENDING",
+          source: "INTERNET_BANKING",
+          reference: "BOOKING-ABC12345",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          booking: {
+            id: "booking_ib_1",
+            memberId: "mem_1",
+            checkIn: new Date("2026-07-10"),
+            checkOut: new Date("2026-07-12"),
+            status: "PAYMENT_PENDING",
+            finalPriceCents: 12345,
+            discountCents: 0,
+            promoAdjustmentCents: 0,
+            member: {
+              email: "member@example.com",
+              firstName: "Alice",
+              lastName: "Smith",
+            },
+            guests: [{ id: "guest_1" }],
+            promoRedemption: null,
+          },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_ib_1",
+          bookingId: "booking_ib_1",
+          booking: { memberId: "mem_1" },
+        },
+      ]);
+    mocks.paymentFindUnique.mockResolvedValue({
+      id: "pay_ib_1",
+      bookingId: "booking_ib_1",
+      amountCents: 12345,
+      status: "PENDING",
+      source: "INTERNET_BANKING",
+      reference: "BOOKING-ABC12345",
+      xeroInvoiceId: null,
+      xeroInvoiceNumber: null,
+      internetBankingHoldSlots: true,
+      booking: {
+        id: "booking_ib_1",
+        memberId: "mem_1",
+        checkIn: new Date("2026-07-10"),
+        checkOut: new Date("2026-07-12"),
+        status: "PAYMENT_PENDING",
+        finalPriceCents: 12345,
+        discountCents: 0,
+        promoAdjustmentCents: 0,
+        member: {
+          email: "member@example.com",
+          firstName: "Alice",
+          lastName: "Smith",
+        },
+        guests: [{ id: "guest_1" }],
+        promoRedemption: null,
+      },
+    });
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    // This IB parent is a split parent: describe its provisional non-member
+    // child so the confirmation email carries the provisional section.
+    const holdUntil = new Date("2026-07-03T00:30:00.000Z");
+    mocks.bookingFindFirst.mockResolvedValue({
+      nonMemberHoldUntil: holdUntil,
+      _count: { guests: 2 },
+    });
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_ib_1",
+              invoiceNumber: "INV-IB-001",
+              date: "2026-07-01",
+              status: "PAID",
+              fullyPaidOnDate: "2026-07-02",
+              contact: { contactID: "contact_1" },
+              payments: [
+                {
+                  paymentID: "xpay_ib_1",
+                  amount: 123.45,
+                  invoiceNumber: "INV-IB-001",
+                  status: "PAID",
+                },
+              ],
+              lineItems: [{ accountCode: "200" }],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(sendBookingConfirmedEmail).toHaveBeenCalledWith(
+      "member@example.com",
+      "Alice",
+      new Date("2026-07-10"),
+      new Date("2026-07-12"),
+      1,
+      12345,
+      expect.objectContaining({
+        provisionalGuests: { guestCount: 2, holdUntil },
+      }),
     );
   });
 

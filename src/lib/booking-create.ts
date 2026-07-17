@@ -59,6 +59,7 @@ import {
   sendBookingPendingEmail,
   sendWaitlistConfirmationEmail,
 } from "@/lib/email";
+import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import {
   enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroBookingInvoiceOperation,
@@ -1258,6 +1259,15 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         // The member confirmation email is suppressed when an admin on-behalf
         // create opts out (#1695); the Xero invoice below is still queued.
         if (notifyMember) {
+          // Split-booking parent (#738/#1942): a zero-dollar/credit-covered
+          // parent can still carry a provisional non-member child. Describe it
+          // so the confirmation explains the separate later charge. Read-only;
+          // null on non-split bookings. (Only the email call site is touched
+          // here — the split engine above is untouched.)
+          const provisionalGuests = await getProvisionalNonMemberChildSummary({
+            id: fullBooking.id,
+            memberId: fullBooking.memberId,
+          });
           sendBookingConfirmedEmail(
             fullBooking.member.email,
             fullBooking.member.firstName,
@@ -1267,6 +1277,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
             fullBooking.finalPriceCents,
             {
               lodgeId: fullBooking.lodgeId,
+              ...(provisionalGuests ? { provisionalGuests } : {}),
               ...(fullBooking.promoRedemption?.promoCode
                 ? {
                     discountCents: fullBooking.discountCents,

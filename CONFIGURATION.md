@@ -52,6 +52,13 @@ Messages) → `ClubIdentitySettings.name` → `config/club.json`. Email template
 default subjects keep the config-derived lodge name as their stable search key;
 the live lodge name is substituted at send time.
 
+Split-booking confirmations depend on the `{{provisionalGuestsNote}}` token in
+the **booking-confirmed** body (Admin > Email Messages): it renders the
+provisional non-member portion story on a split parent and nothing otherwise
+(the `{{paymentNote}}` precedent). An operator who overrides the
+booking-confirmed body must keep this token, or split-parent confirmations
+silently lose the "held provisionally / charged later" explanation.
+
 | Field                                              | Required | Description                                                                                                      |
 | -------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
 | `name`                                             | yes      | Full public club name.                                                                                           |

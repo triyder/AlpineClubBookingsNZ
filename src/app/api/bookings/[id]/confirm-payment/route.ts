@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getPaymentIntent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { sendBookingConfirmedEmail } from "@/lib/email";
+import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -165,6 +166,12 @@ export async function POST(
           },
         });
         if (booking) {
+          // Split-booking parent (#738): describe the provisional non-member
+          // child so the confirmation explains the separate later charge.
+          const provisionalGuests = await getProvisionalNonMemberChildSummary({
+            id: booking.id,
+            memberId: booking.memberId,
+          });
           await sendBookingConfirmedEmail(
             booking.member.email,
             booking.member.firstName,
@@ -174,6 +181,7 @@ export async function POST(
             booking.finalPriceCents,
             {
               lodgeId: booking.lodgeId,
+              ...(provisionalGuests ? { provisionalGuests } : {}),
               ...(booking.promoRedemption?.promoCode
                 ? {
                     discountCents: booking.discountCents,
