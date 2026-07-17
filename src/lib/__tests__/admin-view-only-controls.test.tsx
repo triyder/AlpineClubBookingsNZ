@@ -95,6 +95,14 @@ import { RoomsBedsManager } from "@/components/admin/rooms-beds-manager";
 // #1940 pass 2 panels.
 import { InternetBankingSettingsPanel } from "@/components/admin/internet-banking/internet-banking-settings-panel";
 import { NotificationDeliveryPolicySettings } from "@/components/admin/email-settings/notification-delivery-policy-settings";
+// #1940 pass 3 panels (support / finance / bookings settings editors).
+import { AdminNotificationSettings } from "@/app/(admin)/admin/notifications/notifications-settings";
+import AdminModulesPage from "@/app/(admin)/admin/modules/page";
+import { MODULE_KEYS } from "@/config/modules";
+import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel";
+import type { XeroRecordActivityData } from "@/lib/xero-record-types";
+import AgeTierSettingsPage from "@/app/(admin)/admin/age-tier-settings/page";
+import { PromoCodesPageClient } from "@/app/(admin)/admin/promo-codes/promo-codes-page-client";
 
 const SITE_CONTENT_DOCUMENTS = [
   { key: "FOOTER_BLURB", contentHtml: "<p>Blurb</p>", updatedAt: null },
@@ -967,5 +975,257 @@ describe("NotificationDeliveryPolicySettings view-only gating (#1940, support)",
     render(<NotificationDeliveryPolicySettings initialPolicies={POLICIES} />);
 
     expect(screen.getByRole("combobox")).toBeEnabled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1940 pass 3: support / finance / bookings settings editors.
+// ---------------------------------------------------------------------------
+
+describe("AdminNotificationSettings view-only gating (#1940, support)", () => {
+  const ADMINS = [
+    {
+      id: "a1",
+      name: "Ada Admin",
+      email: "ada@example.com",
+      preferences: {
+        adminNewBooking: true,
+        adminPaymentFailure: true,
+        adminPendingDeadline: true,
+        adminBookingBumped: true,
+        adminXeroSyncError: true,
+        adminCapacityWarning: true,
+        adminDailyDigest: true,
+        adminWaitlistOffer: true,
+        adminFamilyGroupRequest: true,
+        adminBookingChangeRequest: true,
+        adminRefundRequest: true,
+        adminIssueReport: true,
+        adminBookingRequest: true,
+        adminBookingReviewRequired: true,
+        adminMemberDeleteRequest: true,
+      },
+    },
+  ];
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("disables the Edit button for a support:view admin", () => {
+    sessionMatrix = matrix("view", { support: "view" });
+    render(<AdminNotificationSettings initialAdmins={ADMINS} />);
+
+    expect(screen.getByRole("button", { name: /^Edit$/i })).toBeDisabled();
+    expect(
+      screen.getByText(
+        /can view admin notification preferences but cannot change/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("enables the Edit button for a support:edit admin", () => {
+    sessionMatrix = matrix("view", { support: "edit" });
+    render(<AdminNotificationSettings initialAdmins={ADMINS} />);
+
+    expect(screen.getByRole("button", { name: /^Edit$/i })).toBeEnabled();
+  });
+});
+
+describe("AdminModulesPage view-only gating (#1940, support)", () => {
+  const MODULE_SETTINGS = Object.fromEntries(
+    MODULE_KEYS.map((key) => [key, false]),
+  );
+
+  beforeEach(() => {
+    sessionMatrix = null;
+    stubFetchRoutes({
+      "/api/admin/modules": {
+        settings: MODULE_SETTINGS,
+        modules: [
+          {
+            key: MODULE_KEYS[0],
+            label: "Test Module",
+            description: "A module.",
+            adminEnabled: false,
+            effectiveEnabled: false,
+            readiness: {
+              status: "admin_disabled",
+              message: "off",
+              dependencies: [],
+            },
+          },
+        ],
+        updatedAt: null,
+        updatedByMemberId: null,
+      },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("disables the module toggle and Save for a support:view admin", async () => {
+    sessionMatrix = matrix("view", { support: "view" });
+    render(<AdminModulesPage />);
+
+    expect(await screen.findByRole("checkbox")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Save$/i })).toBeDisabled();
+    expect(
+      screen.getByText(/can view the module settings but cannot change/i),
+    ).toBeInTheDocument();
+  });
+
+  it("enables the module toggle for a support:edit admin", async () => {
+    sessionMatrix = matrix("view", { support: "edit" });
+    render(<AdminModulesPage />);
+
+    expect(await screen.findByRole("checkbox")).toBeEnabled();
+  });
+});
+
+describe("XeroRecordActivityPanel view-only gating (#1940, finance)", () => {
+  const XERO_DATA = {
+    rootRecord: { label: "Member X", localModel: "member", localId: "m1", url: null },
+    summary: {
+      totalOperations: 1,
+      failedOperations: 1,
+      partialOperations: 0,
+      pendingOperations: 0,
+      activeLinks: 0,
+    },
+    scopeRecords: [],
+    relatedRecords: [],
+    links: [],
+    operations: [
+      {
+        id: "op1",
+        status: "FAILED",
+        entityType: "INVOICE",
+        operationType: "PUSH",
+        createdAt: "2026-07-01T00:00:00.000Z",
+        direction: "OUTBOUND",
+        attemptCount: 1,
+        localModel: "member",
+        localId: "m1",
+        localUrl: null,
+        localLabel: "Member X",
+        xeroObjectId: null,
+        xeroObjectNumber: null,
+        xeroObjectUrl: null,
+        lastErrorMessage: null,
+        lastErrorCode: null,
+        supported: true,
+        reason: null,
+        requestPayload: null,
+        responsePayload: null,
+      },
+    ],
+    inboundEvents: [],
+  } as unknown as XeroRecordActivityData;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("disables Retry in background for a finance:view admin", () => {
+    sessionMatrix = matrix("view", { finance: "view" });
+    render(
+      <XeroRecordActivityPanel localModel="member" localId="m1" initialData={XERO_DATA} />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Retry in background/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/can view Xero activity but cannot retry or replay/i),
+    ).toBeInTheDocument();
+  });
+
+  it("enables Retry in background for a finance:edit admin", () => {
+    sessionMatrix = matrix("view", { finance: "edit" });
+    render(
+      <XeroRecordActivityPanel localModel="member" localId="m1" initialData={XERO_DATA} />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Retry in background/i }),
+    ).toBeEnabled();
+  });
+});
+
+describe("AgeTierSettingsPage view-only gating (#1940, bookings)", () => {
+  beforeEach(() => {
+    sessionMatrix = null;
+    stubFetchRoutes({
+      "/api/admin/age-tier-settings": { settings: [] },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("disables the Edit button for a bookings:view admin", async () => {
+    sessionMatrix = matrix("view", { bookings: "view" });
+    render(<AgeTierSettingsPage />);
+
+    expect(
+      await screen.findByRole("button", { name: /^Edit$/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/can view the age tier settings but cannot change/i),
+    ).toBeInTheDocument();
+  });
+
+  it("enables the Edit button for a bookings:edit admin", async () => {
+    sessionMatrix = matrix("view", { bookings: "edit" });
+    render(<AgeTierSettingsPage />);
+
+    expect(
+      await screen.findByRole("button", { name: /^Edit$/i }),
+    ).toBeEnabled();
+  });
+});
+
+describe("PromoCodesPageClient view-only gating (#1940, bookings)", () => {
+  beforeEach(() => {
+    sessionMatrix = null;
+    stubFetchRoutes({
+      "/api/admin/promo-codes": [],
+      "/api/admin/lodges": { lodges: [] },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("disables Add Promo Code for a bookings:view admin", async () => {
+    render(
+      <PromoCodesPageClient
+        permissionMatrix={matrix("view", { bookings: "view" })}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: /Add Promo Code/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/can view promo codes but cannot change/i),
+    ).toBeInTheDocument();
+  });
+
+  it("enables Add Promo Code for a bookings:edit admin", async () => {
+    render(
+      <PromoCodesPageClient
+        permissionMatrix={matrix("view", { bookings: "edit" })}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: /Add Promo Code/i }),
+    ).toBeEnabled();
   });
 });
