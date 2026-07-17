@@ -37,6 +37,7 @@ export interface PersistedClubIdentity {
   name: string | null;
   shortName: string | null;
   hutLeaderLabel: string | null;
+  facebookUrl: string | null;
 }
 
 const HARD_DEFAULT_HUT_LEADER_LABEL = "Hut Leader";
@@ -66,14 +67,24 @@ export function resolveClubIdentity(
   // Lodge display name = the default lodge's name; only if no Lodge row resolves
   // do we fall back to the derived "<name> Lodge" shape (matches the email path).
   const lodgeName = trimOptional(defaultLodgeName) ?? `${name} Lodge`;
+  // Facebook URL is now admin-editable (C5 #1984): DB -> club.json
+  // socialLinks.facebook -> undefined. It is the ONE club-level identity field
+  // with its own DB column here; the other social links (none today) stay
+  // config-derived. Preserve any other config socialLinks keys.
+  const facebookUrl =
+    trimOptional(persisted?.facebookUrl) ?? clubConfig.socialLinks?.facebook;
+  const socialLinks = { ...configClubIdentity.socialLinks };
+  if (facebookUrl) socialLinks.facebook = facebookUrl;
+  else delete socialLinks.facebook;
 
   return {
-    // Non-identity fields (emails, URLs, social links, travel note, host,
-    // capacity) are not admin-editable here and stay config-derived.
+    // Non-identity fields (emails, URLs, travel note, host, capacity) are not
+    // admin-editable here and stay config-derived.
     ...configClubIdentity,
     name,
     shortName,
     hutLeaderLabel,
+    socialLinks,
     lodgeName,
     bookingsName: `${name} - Bookings`,
   };
@@ -96,7 +107,12 @@ export async function loadPersistedClubIdentity(): Promise<PersistedClubIdentity
   try {
     return await delegate.findUnique({
       where: { id: CLUB_IDENTITY_SETTINGS_ID },
-      select: { name: true, shortName: true, hutLeaderLabel: true },
+      select: {
+        name: true,
+        shortName: true,
+        hutLeaderLabel: true,
+        facebookUrl: true,
+      },
     });
   } catch {
     return null;

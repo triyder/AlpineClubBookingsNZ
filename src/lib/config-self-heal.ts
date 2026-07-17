@@ -49,10 +49,29 @@ import logger from "@/lib/logger";
  * ## Registering a new step (C3/C4/C5)
  * Add another `defineSelfHealStep({...})` to `SELF_HEAL_STEPS` below. A step
  * describes exactly three things:
- *   - `isPresent(db)`  — is the DB row already populated? (guard the write)
+ *   - `isPresent(db)`  — is the DB value already populated? (guard the write)
  *   - `currentValue()` — the current EFFECTIVE config value to persist
- *   - `write(db, v)`   — a create-if-absent write (upsert with `update:{}`)
- * Keep every write create-if-absent so the never-overwrite guarantee holds.
+ *   - `write(db, v)`   — a write that MUST NOT overwrite an existing value
+ *
+ * ### Row-level vs column-level presence — choose the one that matches the migration
+ * The unit of "presence" depends on what the enabling migration added:
+ *   - **New TABLE / singleton row → ROW-LEVEL.** `isPresent` checks whether the
+ *     ROW exists; `write` is a create-if-absent upsert (`update: {}`) that never
+ *     touches an existing row. Worked example: `clubIdentitySelfHealStep`.
+ *   - **New nullable COLUMN on an EXISTING singleton row → COLUMN-LEVEL.** A
+ *     row-level check would wrongly skip every install whose row predates the new
+ *     column (it would never backfill), so `isPresent` checks the COLUMN (is it
+ *     non-null?). `write` is a create-if-absent row upsert (covers a brand-new
+ *     install) THEN an atomic `updateMany` scoped to the null column
+ *     (`where: { id, col: null }`), so it fills ONLY a still-null column and can
+ *     never overwrite an admin-set value or a concurrent booter's write. Worked
+ *     example: `clubFacebookUrlSelfHealStep` — copy that pattern (and read its
+ *     long-form comment for why a null on a later-added column cannot be admin
+ *     intent). If the target table stops being a singleton (e.g. LodgeSettings
+ *     going per-lodge), drop the `id` predicate so the null-scoped `updateMany`
+ *     backfills every null row, not just the default one.
+ * Either way the write must be incapable of overwriting an existing value so the
+ * never-overwrite guarantee holds.
  */
 
 /**
@@ -166,13 +185,101 @@ export const clubIdentitySelfHealStep = defineSelfHealStep<ClubIdentitySelfHealV
   },
 });
 
+/** The effective config Facebook URL, trimmed to null when blank/absent. */
+function currentFacebookUrl(): string | null {
+  const trimmed = clubConfig.socialLinks?.facebook?.trim();
+  return trimmed ? trimmed : null;
+}
+
+/**
+ * Facebook-URL step (epic #1943, child C5/#1984 — the `facebookUrl` column the
+ * 20260717220000_add_club_identity_facebook_url migration added to the SAME
+ * ClubIdentitySettings singleton). Backfills the column from the effective
+ * `config/club.json socialLinks.facebook` iff the column is still null.
+ *
+ * ## Why this needs COLUMN-level (not row-level) presence semantics
+ * The C1 identity step above is row-level create-if-absent: once the row exists
+ * it is never touched. But `facebookUrl` is a NEW column added long after the row
+ * (C1 created it with name/shortName/hutLeaderLabel only), so a create-if-absent
+ * row-level check would skip every existing install and the column would never
+ * backfill. This step therefore keys presence on the COLUMN: `isPresent` is true
+ * only when `facebookUrl` is already non-null.
+ *
+ * ## Why column-level backfill still honours "never overwrite admin intent"
+ * The never-overwrite guarantee protects a value an admin deliberately set (or an
+ * intentional null they left on a field that EXISTED when they edited). A null
+ * `facebookUrl` on a row created before this migration CANNOT be admin intent —
+ * the column did not exist when any prior edit was made, so its null is purely
+ * "column absent / never populated", exactly the migration-completion case
+ * self-heal exists for. The write is additionally guarded so it can only ever
+ * fill a null:
+ *   - `isPresent` skips the write once the column is non-null (admin-set OR
+ *     already-healed), so a configured value is never re-touched;
+ *   - the backfill is an atomic `updateMany` scoped to `facebookUrl: null`, so it
+ *     cannot clobber a value written between the presence read and the write
+ *     (an admin edit or a concurrent booter), and cannot overwrite a non-null;
+ *   - it only runs at all when the effective config actually has a Facebook URL,
+ *     and only under the run-level primary-config provenance guard.
+ * A later intentional admin CLEAR to null is a documented residual: because a
+ * null column and a set-from-config column resolve to the identical value today
+ * (the resolver falls back to the same `club.json` link), a re-heal is
+ * value-preserving at heal time. See the carry-forward note in the PR.
+ *
+ * ## Order-independence with the identity step
+ * The write is a full create-if-absent of the identity row (name/shortName/
+ * hutLeaderLabel + facebookUrl) followed by the null-scoped backfill, so the two
+ * steps produce the same final row in EITHER execution order: whichever runs
+ * first creates the row from the same effective config; the other then no-ops its
+ * create (`update: {}`) and, for this step, backfills only its own null column.
+ */
+export const clubFacebookUrlSelfHealStep = defineSelfHealStep<string | null>({
+  name: "club-identity-facebook-url",
+  async isPresent(db) {
+    // Nothing to backfill when the effective config has no Facebook URL.
+    if (currentFacebookUrl() === null) return true;
+    const row = await db.clubIdentitySettings.findUnique({
+      where: { id: CLUB_IDENTITY_SETTINGS_ID },
+      select: { facebookUrl: true },
+    });
+    return row?.facebookUrl != null;
+  },
+  currentValue() {
+    return currentFacebookUrl();
+  },
+  async write(db, value) {
+    if (value === null) return; // guarded by isPresent; defensive.
+    // 1) Ensure the singleton row exists (create-if-absent). Mirrors the identity
+    //    step's create-only upsert so this step is order-independent w.r.t. it —
+    //    an existing row is left untouched (`update: {}`).
+    await db.clubIdentitySettings.upsert({
+      where: { id: CLUB_IDENTITY_SETTINGS_ID },
+      create: {
+        id: CLUB_IDENTITY_SETTINGS_ID,
+        name: clubConfig.name,
+        shortName: clubConfig.shortName ?? null,
+        hutLeaderLabel: clubConfig.hutLeaderLabel ?? null,
+        facebookUrl: value,
+      },
+      update: {},
+      select: { id: true },
+    });
+    // 2) Backfill the column ONLY while it is still null — atomic, so it can
+    //    never overwrite an admin-set value or a concurrent booter's write.
+    await db.clubIdentitySettings.updateMany({
+      where: { id: CLUB_IDENTITY_SETTINGS_ID, facebookUrl: null },
+      data: { facebookUrl: value },
+    });
+  },
+});
+
 /**
  * The ordered registry of self-heal steps. C3/C4/C5 append their capacity /
- * age-tier steps here (see the module doc). Order is not significant — steps are
- * independent — but keep it stable for predictable logs.
+ * age-tier / identity steps here (see the module doc). Order is not significant —
+ * steps are independent — but keep it stable for predictable logs.
  */
 export const SELF_HEAL_STEPS: readonly RegisteredSelfHealStep[] = [
   clubIdentitySelfHealStep,
+  clubFacebookUrlSelfHealStep,
 ];
 
 // ---------------------------------------------------------------------------

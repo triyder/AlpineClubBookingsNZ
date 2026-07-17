@@ -404,6 +404,10 @@ async function main() {
       name: clubConfig.name,
       shortName: clubConfig.shortName ?? null,
       hutLeaderLabel: clubConfig.hutLeaderLabel ?? null,
+      // Normalise identically to the self-heal step (currentFacebookUrl in
+      // config-self-heal.ts): trim and collapse blank → null, so a seed-created
+      // row and a boot-healed row hold byte-identical values (#1984).
+      facebookUrl: clubConfig.socialLinks?.facebook?.trim() || null,
     },
   });
   console.log("Club identity settings seeded (create-only)");

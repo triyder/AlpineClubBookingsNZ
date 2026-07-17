@@ -3324,6 +3324,7 @@ model ClubIdentitySettings {
   name              String?
   shortName         String?
   hutLeaderLabel    String?
+  facebookUrl       String?
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

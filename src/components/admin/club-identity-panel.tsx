@@ -15,12 +15,14 @@ type Settings = {
   name: string | null;
   shortName: string | null;
   hutLeaderLabel: string | null;
+  facebookUrl: string | null;
 };
 
 const fields: Array<[keyof Settings, string, string]> = [
   ["name", "Club name", "e.g. Alpine Sports Club"],
   ["shortName", "Short name", "Optional — defaults to the club name"],
   ["hutLeaderLabel", "Hut-leader label", 'Optional — defaults to "Hut Leader"'],
+  ["facebookUrl", "Facebook URL", "Optional — https://www.facebook.com/yourclub"],
 ];
 
 export function ClubIdentityPanel() {
@@ -73,6 +75,7 @@ export function ClubIdentityPanel() {
           name: settings.name ?? "",
           shortName: settings.shortName ?? "",
           hutLeaderLabel: settings.hutLeaderLabel ?? "",
+          facebookUrl: settings.facebookUrl ?? "",
         }),
       });
       if (!response.ok) throw new Error();

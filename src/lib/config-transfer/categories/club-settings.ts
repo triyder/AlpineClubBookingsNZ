@@ -100,7 +100,7 @@ export const SINGLETONS: SingletonSpec[] = [
     // importing them moves only the admin-set overrides.
     entity: "club-identity-settings",
     delegate: "clubIdentitySettings",
-    fields: ["name", "shortName", "hutLeaderLabel"],
+    fields: ["name", "shortName", "hutLeaderLabel", "facebookUrl"],
   },
   {
     entity: "email-message-setting",

@@ -7,7 +7,7 @@ import {
   imagePublicUrl,
   resolveInImagesRoot,
 } from "@/lib/image-storage";
-import { CLUB_FACEBOOK_URL, CLUB_PUBLIC_URL } from "@/config/club-identity";
+import { CLUB_PUBLIC_URL } from "@/config/club-identity";
 import { getClubIdentity } from "@/lib/club-identity-settings";
 import { APP_CURRENCY } from "@/config/operational";
 import {
@@ -290,7 +290,14 @@ export async function resolveTextTokens(contentHtml: string): Promise<string> {
           // content, but not as an href target: a javascript: scheme survives
           // HTML-escaping, so safeTokenUrl vets the scheme first.
           return escapeHtmlText(
-            safeTokenUrl("facebook-url", CLUB_FACEBOOK_URL ?? CLUB_PUBLIC_URL),
+            safeTokenUrl(
+              "facebook-url",
+              // DB-first (C5 #1984): the admin-editable facebookUrl resolved via
+              // getClubIdentity() wins over the static config constant, matching
+              // {{club-name}}/{{hut-leader}} above. Falls back to the public URL
+              // when no link is configured.
+              clubIdentity.socialLinks?.facebook ?? CLUB_PUBLIC_URL,
+            ),
           );
         default:
           return "";

@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/config/club-identity", () => ({
   CLUB_NAME: "Club <Name>",
-  CLUB_FACEBOOK_URL: "https://facebook.com/test-club?ref=a&b",
   CLUB_PUBLIC_URL: "https://alpine.example.nz",
 }));
 vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD" }));
@@ -12,10 +11,13 @@ vi.mock("@/lib/lodge-capacity", () => ({
   // The parameterised {{lodge-capacity:slug}} fallback path (multi-lodge).
   getDefaultLodgeCapacity: vi.fn(async () => 42),
 }));
+// {{facebook-url}} now resolves DB-first via getClubIdentity (C5 #1984), so the
+// facebook link is surfaced through socialLinks.facebook, not the config constant.
 vi.mock("@/lib/club-identity-settings", () => ({
   getClubIdentity: vi.fn(async () => ({
     name: "Club <Name>",
     hutLeaderLabel: "Hut Leader",
+    socialLinks: { facebook: "https://facebook.com/test-club?ref=a&b" },
   })),
 }));
 vi.mock("@/lib/prisma", () => ({

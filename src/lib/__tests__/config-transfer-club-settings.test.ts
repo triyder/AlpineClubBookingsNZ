@@ -88,6 +88,50 @@ describe("config-transfer club-settings", () => {
     expect("doorCode" in email).toBe(false);
   });
 
+  it("round-trips the club-identity facebookUrl and leaves the email fields on their own entry (C5 #1984)", async () => {
+    const IDENTITY = {
+      name: "Renamed Club",
+      shortName: "RC",
+      hutLeaderLabel: "Warden",
+      facebookUrl: "https://www.facebook.com/renamed-club",
+    };
+    const { zip } = await buildConfigExport({
+      db: stubDb({
+        clubModuleSettings: MODULES,
+        emailMessageSetting: EMAIL,
+        clubIdentitySettings: IDENTITY,
+      }),
+      categories: ["club-settings"],
+      includeDoorCodes: false,
+      appVersion: "0.10.1",
+      prismaMigration: null,
+      generatedAt: "2026-07-08T00:00:00.000Z",
+    });
+    const { files } = readBundle(zip);
+
+    // facebookUrl travels on the club-identity-settings entry...
+    const identity = JSON.parse(
+      strFromU8(files.get("club-settings/club-identity-settings.json")!),
+    );
+    expect(identity.facebookUrl).toBe(IDENTITY.facebookUrl);
+    expect(identity.name).toBe("Renamed Club");
+
+    // ...and NOT on the email-message-setting entry (the four email fields stay
+    // there; facebookUrl must never leak across).
+    const email = JSON.parse(
+      strFromU8(files.get("club-settings/email-message-setting.json")!),
+    );
+    expect("facebookUrl" in email).toBe(false);
+    expect(email.supportEmail).toBe("s@x.nz");
+
+    // Import round-trips: an absent target plans a create carrying facebookUrl.
+    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const identityItem = plan.categories[0].items.find(
+      (i) => i.entity === "club-identity-settings",
+    );
+    expect(identityItem?.action).toBe("create");
+  });
+
   it("plans singleton create vs update against the target DB", async () => {
     const { zip } = await exportBundle(false);
     // Target: module settings differ (update); email settings absent (create).

@@ -51,12 +51,22 @@ placeholder only — a real deployment must still configure the club.
 
 ### DB-first identity (admin-editable)
 
-The club **name**, **short name**, and **hut-leader label** are DB-first: an
-admin edits them under **Admin > Site Appearance & Content > Club Identity** (no
-redeploy). Each field resolves through a per-field fallback chain —
+The club **name**, **short name**, **hut-leader label**, and **Facebook URL** are
+DB-first: an admin edits them under **Admin > Site Appearance & Content > Club
+Identity** (no redeploy). Each field resolves through a per-field fallback chain —
 **database (`ClubIdentitySettings`) → `config/club.json` → hard default** — so an
 empty/absent row keeps working from the file config, and clearing a field in the
-admin UI restores the configured default. Changes propagate to the site header,
+admin UI restores the configured default. The Facebook URL resolves
+**`ClubIdentitySettings.facebookUrl` → `config/club.json` `socialLinks.facebook` →
+undefined** and, when set, must be a valid http(s) URL. **Clearing the Facebook
+URL is not durable like the other three fields.** Clearing the name, short name,
+or hut-leader label leaves that column null permanently, so it keeps tracking
+`config/club.json` on every later boot; clearing the Facebook URL is only transient, because
+`facebookUrl` is filled by a **column-level** boot backfill (not a row-level
+create-if-absent) — the next boot re-heals it from the *then-current*
+`socialLinks.facebook`, after which the column holds that snapshot and stops
+tracking subsequent `club.json` edits. To change it durably, set the new value in
+the admin UI rather than clearing it to fall back to the file. Changes propagate to the site header,
 footer, page titles, and emails within a few seconds (a 15s tagged cache; the
 TOTP issuer label used at 2FA enrolment can lag by a short process-cache TTL and
 only affects new enrolments). `config/club.json` is never modified by these
@@ -105,7 +115,7 @@ silently lose the "held provisionally / charged later" explanation.
 | `emailFromName`                                    | yes      | Display name for outbound email sender headers.                                                                  |
 | `lodgeTravelNote`                                  | no       | Email reminder travel/location note.                                                                             |
 | `hutLeaderLabel`                                   | no       | User-facing label for the hut-leader **role** (e.g. `Lodge Leader`, `Warden`, `Duty Manager`), rendered wherever `{{hut-leader}}` appears — it is the role name, never a specific person. Defaults to `Hut Leader`. Who currently holds the role is assigned separately under Admin > Hut Leaders. |
-| `socialLinks.facebook`                             | no       | Facebook URL used by public pages/footer. Must be an http(s) URL, like `publicUrl`.                              |
+| `socialLinks.facebook`                             | no       | Facebook URL used by public pages/footer. Must be an http(s) URL, like `publicUrl`. DB-first: admin-editable as **Facebook URL** under Club Identity (`ClubIdentitySettings.facebookUrl`); this file value is the seed/fallback. |
 | `beds[].id`                                        | yes      | Stable bed or lodge identifier.                                                                                  |
 | `beds[].name`                                      | yes      | User-facing bed/lodge name.                                                                                      |
 | `beds[].capacity`                                  | yes      | Positive integer fallback/import capacity.                                                                       |

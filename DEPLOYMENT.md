@@ -271,10 +271,25 @@ To close that gap the app runs a **boot-time config self-heal**
 (`src/lib/config-self-heal.ts`, invoked from `src/instrumentation.node.ts`).
 On every Node process start it walks a registry of self-heal steps and, for each
 registered setting, copies the current **effective `config/club.json` value**
-into its DB row **if — and only if — that row is still absent**. Properties:
+into the DB — using one of two presence rules, depending on whether the migration
+that enabled the setting added a whole **row** or a single **column**. Properties:
 
-- **Create-if-absent only.** An admin's configured value (or an intentional
-  null on an existing row) is never overwritten.
+- **Never overwrites admin intent.** Two write shapes, both guarded so a value an
+  admin (or an earlier boot) already set is never touched:
+  - **Row-level create-if-absent** — for a setting that owns its table/singleton
+    row (e.g. the club identity row). The step writes only when the row is
+    **absent** and leaves an existing row — including one an admin deliberately
+    left partially null — completely untouched (`update: {}`).
+  - **Column-level backfill** — for a **new nullable column** added to an existing
+    singleton row long after that row was created (e.g.
+    `ClubIdentitySettings.facebookUrl`, C5 #1984). A row-level check would skip
+    every install whose row predates the column, so presence is keyed on the
+    **column** instead: the step create-if-absent-upserts the row, then fills the
+    column with an atomic `updateMany` scoped to `WHERE facebookUrl IS NULL`. It
+    can therefore only ever populate a **still-null** column and never clobbers an
+    admin-set value or a concurrent booter's write. A null on such a
+    later-added column cannot be admin intent — the column did not exist when any
+    prior admin edit was made.
 - **Idempotent.** A healthy install re-checks and writes nothing on later boots.
 - **Blue/green-safe.** When both slots boot at once, the second writer's
   unique-constraint conflict (Prisma `P2002`) is treated as already-present, so

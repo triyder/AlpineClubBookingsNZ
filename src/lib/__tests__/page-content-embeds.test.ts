@@ -4,6 +4,10 @@ vi.mock("server-only", () => ({}));
 
 // Mutable identity state so URL-token tests can vary the configured values;
 // getters make the mocked module read the current state on every access.
+// `facebookUrl` here is the DB-set value surfaced through getClubIdentity() —
+// the {{facebook-url}} token now resolves DB-first (C5 #1984), NOT from the
+// static CLUB_FACEBOOK_URL config constant (kept below only to prove the token
+// no longer reads it).
 const identityState = vi.hoisted(() => ({
   facebookUrl: undefined as string | undefined,
   publicUrl: "https://club.example.org",
@@ -11,18 +15,21 @@ const identityState = vi.hoisted(() => ({
 
 vi.mock("@/config/club-identity", () => ({
   CLUB_NAME: "Club <Name>",
-  get CLUB_FACEBOOK_URL() {
-    return identityState.facebookUrl;
-  },
+  // A distinct sentinel: the token must NOT read this static constant anymore.
+  CLUB_FACEBOOK_URL: "https://config-only.example/should-not-appear",
   get CLUB_PUBLIC_URL() {
     return identityState.publicUrl;
   },
 }));
-// {{club-name}}/{{hut-leader}} now resolve DB-first via getClubIdentity (E3 #1929).
+// {{club-name}}/{{hut-leader}}/{{facebook-url}} now resolve DB-first via
+// getClubIdentity (E3 #1929, C5 #1984). socialLinks.facebook mirrors the DB row.
 vi.mock("@/lib/club-identity-settings", () => ({
   getClubIdentity: vi.fn(async () => ({
     name: "Club <Name>",
     hutLeaderLabel: "Hut Leader",
+    socialLinks: identityState.facebookUrl
+      ? { facebook: identityState.facebookUrl }
+      : {},
   })),
 }));
 vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD & GST" }));
@@ -324,6 +331,21 @@ describe("resolveTextTokens URL scheme validation", () => {
       '<a href="https://www.facebook.com/exampleclub">Facebook</a>',
     );
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("prefers the DB-set facebook URL over the static config constant", async () => {
+    identityState.facebookUrl = "https://www.facebook.com/db-club";
+
+    const resolved = await resolveTextTokens(
+      '<a href="{{facebook-url}}">Facebook</a>',
+    );
+
+    expect(resolved).toBe(
+      '<a href="https://www.facebook.com/db-club">Facebook</a>',
+    );
+    // Proves the token no longer sources CLUB_FACEBOOK_URL (the config mock's
+    // sentinel value must never appear).
+    expect(resolved).not.toContain("config-only.example");
   });
 
   it("passes a mailto value through unchanged", async () => {
