@@ -317,6 +317,17 @@ export function normalizeSetupProgress(
   };
 }
 
+/**
+ * Setup-readiness view of the club config, kept in lockstep with the runtime
+ * loader `loadClubConfig` (`src/config/club.ts`) under owner decision D3
+ * (epic #1943, child C1):
+ * - When `club.json` exists it is the source (even if malformed) — a malformed
+ *   PRIMARY is reported *blocked* and NEVER falls through to `club.example.json`,
+ *   so the app never boots on the example's identity while readiness is blocked.
+ * - Only an ABSENT primary falls back to `club.example.json`.
+ * The runtime loader mirrors this (malformed primary → SAFE_DEFAULT_CONFIG;
+ * absent primary → valid example, else SAFE_DEFAULT_CONFIG) so the two agree.
+ */
 function readClubConfig(configDir: string): ClubConfigReadResult {
   const primaryPath = path.join(configDir, "club.json");
   const examplePath = path.join(configDir, "club.example.json");

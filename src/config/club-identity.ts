@@ -1,3 +1,25 @@
+/**
+ * Bootstrap layer — the boot-critical club identity values that must resolve
+ * SYNCHRONOUSLY at module import, before any database read is possible (epic
+ * #1943, child C1).
+ *
+ * These top-level `CLUB_*` exports are derived from the `clubConfig` singleton.
+ * `clubConfig` is now boot-safe: on an absent/malformed `config/club.json` the
+ * loader (`src/config/club.ts`) resolves to `SAFE_DEFAULT_CONFIG` and logs a
+ * warning instead of throwing, so this module can never crash the app at boot.
+ *
+ * In particular `new URL(clubConfig.publicUrl)` below is a genuine boot-crash
+ * path: it runs at import time and throws on a blank/invalid `publicUrl`.
+ * `SAFE_DEFAULT_CONFIG.publicUrl` is guaranteed to be a valid absolute http(s)
+ * URL (enforced by `clubConfigSchema`, pinned by `safe-default-config.test.ts`),
+ * so this line cannot throw under the safe default.
+ *
+ * The DB is authoritative wherever an async read is possible; these synchronous
+ * sites are the intentional bootstrap layer. The genuine bootstrap env inputs
+ * are `NEXTAUTH_URL` (app origin, via `src/lib/app-url.ts`) and `EMAIL_FROM`
+ * (envelope sender). Later epic children (C6) convert the async-context readers
+ * of the collapsing identity fields to DB-first reads.
+ */
 import { clubConfig } from "@/config/club";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
