@@ -150,7 +150,11 @@ The now-dead `NEXT_PUBLIC_CONTACT_EMAIL` build arg was deleted at the same time.
 `CONTACT_EMAIL` env var must set the DB `contactEmail` under Admin > Email
 Messages; if left unset it falls back to `club.json`'s `contactEmail`, then to
 the support address, per the precedence above (via the boot self-heal chain),
-so removing the env var causes no hard break.
+so removing the env var causes no hard break. As a safety net, if any of the
+removed vars (`EMAIL_FROM_NAME`, `SUPPORT_EMAIL`, `CONTACT_EMAIL`,
+`NEXT_PUBLIC_CONTACT_EMAIL`) is still set at boot, the server logs a single
+warning naming it (scope `ignored-email-env`) so an operator knows the value is
+ignored and identity is admin-managed.
 
 Split-booking confirmations depend on the `{{provisionalGuestsNote}}` token in
 the **booking-confirmed** body (Admin > Email Messages): it renders the
