@@ -31,6 +31,14 @@ export function NonMemberGuestsSection({
 }) {
   if (guests.length === 0) return null;
 
+  // #1975: the intro must stay truthful per state. When every child is
+  // CANCELLED/BUMPED the provisional booking is no longer holding anything, so
+  // the "held ... until confirmed and paid" copy would actively misinform. Any
+  // child that is not cancelled/bumped counts as live and keeps the held copy.
+  const anyLive = guests.some(
+    (child) => child.status !== "CANCELLED" && child.status !== "BUMPED",
+  );
+
   return (
     <Card className="border-sky-200">
       <CardHeader>
@@ -42,9 +50,13 @@ export function NonMemberGuestsSection({
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-sky-900">
-          {nonOwnerAdminViewer
-            ? "The non-member portion of this party is held in a linked provisional booking. No beds are reserved for these guests until they are confirmed and paid for closer to the stay."
-            : "The non-member portion of your party is held in a linked provisional booking. No beds are reserved for these guests until they are confirmed and paid for closer to your stay."}
+          {anyLive
+            ? nonOwnerAdminViewer
+              ? "The non-member portion of this party is held in a linked provisional booking. No beds are reserved for these guests until they are confirmed and paid for closer to the stay."
+              : "The non-member portion of your party is held in a linked provisional booking. No beds are reserved for these guests until they are confirmed and paid for closer to your stay."
+            : nonOwnerAdminViewer
+              ? "The linked provisional booking for the member's non-member guests is no longer active."
+              : "The linked provisional booking for your non-member guests is no longer active."}
         </p>
         <ul className="space-y-2">
           {guests.map((child) => (

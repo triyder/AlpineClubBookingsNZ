@@ -130,6 +130,61 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
     expect(screen.getByText("Bumped")).toBeInTheDocument();
   });
 
+  it("swaps to no-longer-active intro copy when every child is cancelled/bumped", () => {
+    render(
+      <NonMemberGuestsSection
+        guests={[
+          child({ id: "child-1", status: "CANCELLED" as BookingStatus }),
+          child({ id: "child-2", status: "BUMPED" as BookingStatus }),
+        ]}
+        nonOwnerAdminViewer={false}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "The linked provisional booking for your non-member guests is no longer active.",
+      ),
+    ).toBeInTheDocument();
+    // The stale "held ... until confirmed" copy must be gone — it would
+    // misinform the member that a cancelled portion is still reserved.
+    expect(screen.queryByText(/held in a linked provisional booking/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/until they are confirmed and paid for/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses the third-person no-longer-active copy for an admin viewer when all children are cancelled", () => {
+    render(
+      <NonMemberGuestsSection
+        guests={[child({ status: "CANCELLED" as BookingStatus })]}
+        nonOwnerAdminViewer
+      />,
+    );
+    expect(
+      screen.getByText(
+        "The linked provisional booking for the member's non-member guests is no longer active.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the held intro copy when at least one child is still live", () => {
+    render(
+      <NonMemberGuestsSection
+        guests={[
+          child({ id: "child-1", status: "CANCELLED" as BookingStatus }),
+          child({ id: "child-2", status: "PENDING" as BookingStatus }),
+        ]}
+        nonOwnerAdminViewer={false}
+      />,
+    );
+    expect(
+      screen.getByText(/held in a linked provisional booking/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/no longer active/),
+    ).not.toBeInTheDocument();
+  });
+
   it("uses the singular noun for a single guest", () => {
     render(
       <NonMemberGuestsSection
