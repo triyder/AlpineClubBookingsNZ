@@ -16,6 +16,27 @@ export interface LoadClubConfigOptions {
   configDir?: string;
 }
 
+/**
+ * Provenance of the effective club config — which loader branch resolved it.
+ *
+ * - `"primary"`      — a valid `config/club.json` (the club's real config).
+ * - `"example"`      — the `config/club.example.json` identity (primary absent).
+ * - `"safe-default"` — the hard-coded `SAFE_DEFAULT_CONFIG` (primary/example
+ *   absent or malformed/invalid).
+ *
+ * Only `"primary"` is a real, club-specific config. The boot-time config
+ * self-heal (`src/lib/config-self-heal.ts`) uses this to REFUSE persisting a
+ * fallback identity/defaults into the DB, where they would become DB-first
+ * authoritative and never be overwritten (epic #1943, child C2 guard).
+ */
+export type ClubConfigSource = "primary" | "example" | "safe-default";
+
+/** The effective config plus the loader branch (provenance) that produced it. */
+export interface LoadedClubConfig {
+  config: ClubConfig;
+  source: ClubConfigSource;
+}
+
 function defaultConfigDir(): string {
   return path.join(process.cwd(), "config");
 }
@@ -75,6 +96,19 @@ function warnClubConfig(message: string, context: Record<string, unknown>): void
  *   logged warning.
  */
 export function loadClubConfig(options: LoadClubConfigOptions = {}): ClubConfig {
+  return loadClubConfigWithSource(options).config;
+}
+
+/**
+ * Like {@link loadClubConfig}, but also reports the provenance (which branch
+ * resolved the config). Consumers that must NOT act on a fallback config —
+ * notably the boot-time self-heal — key off the `source`. Behaviour is
+ * identical to `loadClubConfig`; the only addition is the branch label, so the
+ * healthy-install path is byte-for-byte unchanged.
+ */
+export function loadClubConfigWithSource(
+  options: LoadClubConfigOptions = {},
+): LoadedClubConfig {
   const dir = options.configDir ?? defaultConfigDir();
   const primaryPath = path.join(dir, PRIMARY_FILE);
   const examplePath = path.join(dir, EXAMPLE_FILE);
@@ -83,14 +117,14 @@ export function loadClubConfig(options: LoadClubConfigOptions = {}): ClubConfig 
 
   if (primary.kind === "present") {
     const result = clubConfigSchema.safeParse(primary.data);
-    if (result.success) return result.data;
+    if (result.success) return { config: result.data, source: "primary" };
     warnClubConfig(
       `Invalid club config at ${primaryPath}; using SAFE_DEFAULT_CONFIG. ` +
         `Fix config/club.json — the example fallback is skipped for a broken ` +
         `primary so the misconfiguration is not masked. Issues:\n${formatZodError(result.error)}`,
       { path: primaryPath, cause: "schema" },
     );
-    return SAFE_DEFAULT_CONFIG;
+    return { config: SAFE_DEFAULT_CONFIG, source: "safe-default" };
   }
 
   if (primary.kind === "malformed") {
@@ -100,7 +134,7 @@ export function loadClubConfig(options: LoadClubConfigOptions = {}): ClubConfig 
         `skipped for a broken primary so the misconfiguration is not masked.`,
       { path: primaryPath, cause: "json", reason: primary.reason },
     );
-    return SAFE_DEFAULT_CONFIG;
+    return { config: SAFE_DEFAULT_CONFIG, source: "safe-default" };
   }
 
   // Primary is absent — fall back to club.example.json when it is valid.
@@ -108,13 +142,13 @@ export function loadClubConfig(options: LoadClubConfigOptions = {}): ClubConfig 
 
   if (example.kind === "present") {
     const result = clubConfigSchema.safeParse(example.data);
-    if (result.success) return result.data;
+    if (result.success) return { config: result.data, source: "example" };
     warnClubConfig(
       `Invalid club config at ${examplePath}; using SAFE_DEFAULT_CONFIG. ` +
         `Issues:\n${formatZodError(result.error)}`,
       { path: examplePath, cause: "schema" },
     );
-    return SAFE_DEFAULT_CONFIG;
+    return { config: SAFE_DEFAULT_CONFIG, source: "safe-default" };
   }
 
   if (example.kind === "malformed") {
@@ -123,7 +157,7 @@ export function loadClubConfig(options: LoadClubConfigOptions = {}): ClubConfig 
         `SAFE_DEFAULT_CONFIG.`,
       { path: examplePath, cause: "json", reason: example.reason },
     );
-    return SAFE_DEFAULT_CONFIG;
+    return { config: SAFE_DEFAULT_CONFIG, source: "safe-default" };
   }
 
   warnClubConfig(
@@ -132,7 +166,7 @@ export function loadClubConfig(options: LoadClubConfigOptions = {}): ClubConfig 
       `/admin/setup.`,
     { path: primaryPath, cause: "absent" },
   );
-  return SAFE_DEFAULT_CONFIG;
+  return { config: SAFE_DEFAULT_CONFIG, source: "safe-default" };
 }
 
 function formatZodError(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
@@ -151,4 +185,13 @@ function formatZodError(error: { issues: Array<{ path: PropertyKey[]; message: s
  * app even with an absent/malformed `config/club.json`. See the bootstrap-layer
  * contract documented in `src/config/club-identity.ts`.
  */
-export const clubConfig: ClubConfig = loadClubConfig();
+const loadedClubConfig: LoadedClubConfig = loadClubConfigWithSource();
+
+export const clubConfig: ClubConfig = loadedClubConfig.config;
+
+/**
+ * Provenance of the eager {@link clubConfig} singleton — which loader branch
+ * resolved it at boot. The config self-heal reads this to skip persisting a
+ * non-`"primary"` fallback into the DB (epic #1943, child C2 guard).
+ */
+export const clubConfigSource: ClubConfigSource = loadedClubConfig.source;

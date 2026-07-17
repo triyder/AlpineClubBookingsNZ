@@ -1679,7 +1679,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       ).toBeLessThan(mockChargePaymentMethod.mock.invocationCallOrder[0]);
     });
 
-    it("scopes the sweep to in-flight PRIMARY Stripe intents on the claim's payment and EXCLUDES the cron's own prior auto-charge intent (shared pending_charge_ idempotency key)", async () => {
+    it("scopes the sweep to in-flight PRIMARY Stripe intents on the claim's payment and EXCLUDES every pending_charge_-keyed charge (the cron's own prior auto-charge AND charge-saved-method's 3DS-pending charge)", async () => {
       primeChargeableSplitChild();
 
       await confirmPendingBookings();
@@ -1692,17 +1692,79 @@ describe("Cron: Confirm Pending Bookings", () => {
           status: { in: ["PENDING", "PROCESSING"] },
           stripePaymentIntentId: { not: null },
           amountCents: { gt: 0 },
-          // A prior run's still-PROCESSING auto-charge intent is re-returned
-          // by Stripe under the shared `pending_charge_<bookingId>` key when
-          // this run charges — cancelling it would cancel this run's own
-          // charge. NULL reasons stay in scope.
+          // Both reasons mint under the shared `pending_charge_<bookingId>`
+          // Stripe idempotency key this run's charge replays — cancelling
+          // either row would make Stripe answer this run's charge with the
+          // cancelled intent (settlement stalls until the key expires). NULL
+          // reasons stay in scope.
           OR: [
             { reason: null },
-            { reason: { not: "pending_hold_auto_charge" } },
+            {
+              reason: {
+                notIn: [
+                  "pending_hold_auto_charge",
+                  "pending_saved_method_charge",
+                ],
+              },
+            },
           ],
         },
         select: { id: true, stripePaymentIntentId: true },
       });
+    });
+
+    it("never sweeps charge-saved-method's 3DS-pending intent (reason pending_saved_method_charge shares the pending_charge_ key), while a link intent alongside it is still cancelled", async () => {
+      primeChargeableSplitChild();
+      // Exercise the REAL OR-filter semantics against a mixed ledger: a
+      // 3DS-pending saved-method charge row (must be excluded) and an
+      // in-flight link intent with a NULL reason (must stay in scope).
+      const rows = [
+        {
+          id: "txn_saved_method_3ds",
+          stripePaymentIntentId: "pi_saved_method_3ds",
+          reason: "pending_saved_method_charge",
+        },
+        {
+          id: "txn_link",
+          stripePaymentIntentId: "pi_link_inflight",
+          reason: null,
+        },
+      ];
+      mockPaymentTransactionFindMany.mockImplementation(
+        async (args: {
+          where: {
+            OR: [
+              { reason: null },
+              { reason: { notIn: string[] } },
+            ];
+          };
+        }) => {
+          const excluded = args.where.OR[1].reason.notIn;
+          return rows
+            .filter(
+              (row) => row.reason === null || !excluded.includes(row.reason)
+            )
+            .map(({ id, stripePaymentIntentId }) => ({
+              id,
+              stripePaymentIntentId,
+            }));
+        }
+      );
+      mockCancelPaymentIntentIfCancellable.mockResolvedValue({
+        id: "pi_link_inflight",
+        status: "canceled",
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(mockCancelPaymentIntentIfCancellable).toHaveBeenCalledTimes(1);
+      expect(mockCancelPaymentIntentIfCancellable).toHaveBeenCalledWith(
+        "pi_link_inflight"
+      );
+      expect(mockCancelPaymentIntentIfCancellable).not.toHaveBeenCalledWith(
+        "pi_saved_method_3ds"
+      );
     });
 
     it("makes no cancel call when no in-flight link intent exists", async () => {

@@ -43,7 +43,9 @@ const bodyField = z.object({
 });
 
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   const layouts = await prisma.displayLayout.findMany({
@@ -71,7 +73,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: z.infer<typeof bodyField>;

@@ -36,7 +36,9 @@ async function resolveLodgeId(requested: string | null): Promise<string> {
 }
 
 export async function GET(req: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   const lodgeId = await resolveLodgeId(req.nextUrl.searchParams.get("lodgeId"));
@@ -65,7 +67,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: z.infer<typeof putSchema>;

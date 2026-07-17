@@ -5,6 +5,12 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import {
   TableBody,
   TableCell,
@@ -83,6 +89,9 @@ function normalizeAgeTierRows(rows: AgeTierRow[]): AgeTierRow[] {
 }
 
 export default function AgeTierSettingsPage() {
+  // Age-tier boundaries are a bookings-area setting; a bookings:view admin sees
+  // the panel read-only (#1940). The PUT route enforces bookings:edit.
+  const canEdit = useAdminAreaEditAccess("bookings");
   const [settings, setSettings] = useState<AgeTierRow[]>([]);
   const [savedSettings, setSavedSettings] = useState<AgeTierRow[]>([]);
   const [saving, setSaving] = useState(false);
@@ -141,6 +150,10 @@ export default function AgeTierSettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ settings: payload }),
       });
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
+      }
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? "Failed to save");
@@ -181,7 +194,8 @@ export default function AgeTierSettingsPage() {
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Age Tier Boundaries</CardTitle>
           {!editing && (
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               variant="outline"
               size="sm"
               onClick={() => {
@@ -190,13 +204,20 @@ export default function AgeTierSettingsPage() {
               }}
             >
               Edit
-            </Button>
+            </ViewOnlyActionButton>
           )}
         </CardHeader>
         <CardContent className="space-y-6">
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading settings...</p>
           ) : null}
+
+          {!canEdit && (
+            <AdminViewOnlyNotice>
+              Your admin role can view the age tier settings but cannot change
+              them. Bookings edit access is required.
+            </AdminViewOnlyNotice>
+          )}
 
           {sorted.map((setting) => {
             const isLastTier = lastTier && setting.tier === lastTier.tier;

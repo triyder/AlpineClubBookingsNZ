@@ -621,6 +621,34 @@ export async function POST(
       );
     }
 
+    if (
+      reconciliation.outcome === "duplicate_capture_refunded" ||
+      reconciliation.outcome === "duplicate_capture_refund_failed"
+    ) {
+      // #1992 — the booking had ALREADY been settled by a different capture
+      // (e.g. the member paid an in-flight /pay link intent in the same
+      // window), so the charge this route just made was duplicate money. The
+      // reconciler auto-refunded it (or, on an inline failure, left a durable
+      // refund operation for the recovery cron) and alerted admins either
+      // way. The booking IS finalised — by the other capture — so a 500
+      // "could not be finalised" here was inaccurate; report the settled
+      // booking and the duplicate refund truthfully. The settling path
+      // already sent the confirmation email and queued the Xero invoice, so
+      // neither is repeated for the duplicate.
+      await audit(`charged_${reconciliation.outcome}`, true);
+      return NextResponse.json({
+        success: true,
+        status: "PAID",
+        charged: false,
+        duplicateChargeRefunded:
+          reconciliation.outcome === "duplicate_capture_refunded",
+        message:
+          reconciliation.outcome === "duplicate_capture_refunded"
+            ? "The booking was already paid by another payment; this duplicate charge was automatically refunded in full."
+            : "The booking was already paid by another payment; the refund of this duplicate charge failed inline and has been queued for automatic retry. Admins have been alerted.",
+      });
+    }
+
     if (reconciliation.outcome !== "paid" && reconciliation.outcome !== "already_paid") {
       // cancelled_refund_failed (the reconciler has already alerted the refund
       // failure) or an unexpected outcome: surface an accurate error.

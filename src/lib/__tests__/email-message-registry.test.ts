@@ -5,6 +5,7 @@ import {
   getSensitiveEmailSubjectTokens,
   getDefaultDeliveryMode,
   getEmailTemplateDefinition,
+  isAdminSystemTemplate,
 } from "@/lib/email-message-registry";
 import {
   neutraliseSensitiveSubjectContent,
@@ -286,6 +287,38 @@ describe("newly-registered hardcoded email templates (#1797)", () => {
     expect(definition.audience).toBe("admin");
     expect(definition.deliveryEditable).toBe(false);
     expect(getDefaultDeliveryMode("admin-school-manual-invoice")).toBe("always");
+  });
+});
+
+describe("#1967/#1994 split-settlement email templates", () => {
+  it("registers the admin split-settlement alert with delivery-mode policy control", () => {
+    const definition = getEmailTemplateDefinition("admin-split-settlement-unpaid");
+    if (!definition) throw new Error("missing admin-split-settlement-unpaid");
+
+    // Ships via sendToAdmins, so it must classify as an admin alert. Unlike the
+    // money-critical admin-school-manual-invoice it is NOT delivery-locked: it
+    // is an operational nudge (the member already has their payment link), so
+    // admins keep full delivery-mode control. That editable classification is
+    // exactly what makes isAdminSystemTemplate true, so shouldSendAdminSystemEmail
+    // resolves its policy from the registry instead of always-sending blindly.
+    expect(definition.audience).toBe("admin");
+    expect(isAdminSystemTemplate("admin-split-settlement-unpaid")).toBe(true);
+    expect(definition.deliveryEditable).toBe(true);
+    expect(getDefaultDeliveryMode("admin-split-settlement-unpaid")).toBe("always");
+  });
+
+  it("registers the member split-guest payment link as a token-bearing member template", () => {
+    const definition = getEmailTemplateDefinition("split-guest-payment-link");
+    if (!definition) throw new Error("missing split-guest-payment-link");
+
+    // Member-facing token-bearing link: audience "member", not an admin system
+    // template, and the /pay/<token> bearer link is a required body token so an
+    // override can never drop it (and it stays in the sensitive-log set).
+    expect(definition.audience).toBe("member");
+    expect(isAdminSystemTemplate("split-guest-payment-link")).toBe(false);
+    expect(definition.requiredTokens).toContain("token");
+    expect(definition.deliveryEditable).toBe(false);
+    expect(getDefaultDeliveryMode("split-guest-payment-link")).toBe("always");
   });
 });
 

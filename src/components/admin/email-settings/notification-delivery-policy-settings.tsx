@@ -11,6 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import type { NotificationDeliveryModeValue } from "@/lib/email-message-registry";
 
 interface Policy {
@@ -37,6 +39,10 @@ export function NotificationDeliveryPolicySettings({
   const [policies, setPolicies] = useState(initialPolicies);
   const [stalePolicyCount] = useState(initialStalePolicyCount);
   const [savingTemplate, setSavingTemplate] = useState<string | null>(null);
+  // Delivery policies live under Support & System (the write route enforces
+  // support:edit). The mode Select autosaves on change, so it must be disabled
+  // for a support:view admin or it would silently 403 (#1940).
+  const canEdit = useAdminAreaEditAccess("support");
 
   async function updatePolicy(
     templateName: string,
@@ -75,6 +81,12 @@ export function NotificationDeliveryPolicySettings({
 
   return (
     <div className="space-y-4">
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view notification delivery rules but cannot change
+          them. Support &amp; System edit access is required.
+        </AdminViewOnlyNotice>
+      ) : null}
       {stalePolicyCount > 0 ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           {stalePolicyCount} stale delivery rule
@@ -99,7 +111,7 @@ export function NotificationDeliveryPolicySettings({
               {policy.deliveryEditable ? (
                 <Select
                   value={policy.mode}
-                  disabled={savingTemplate === policy.templateName}
+                  disabled={savingTemplate === policy.templateName || !canEdit}
                   onValueChange={(value) =>
                     updatePolicy(
                       policy.templateName,

@@ -15,6 +15,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminForbiddenSaveNotice,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 interface BookingMessageOverride {
   bodyText: string;
@@ -40,6 +46,10 @@ export function BookingMessagesPanel() {
   const [previewText, setPreviewText] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [forbiddenSave, setForbiddenSave] = useState(false);
+  // Booking messages are edited under the Support & System area (the write
+  // routes enforce support:edit), so gate the editor on that area (#1940).
+  const canEdit = useAdminAreaEditAccess("support");
 
   const currentMessage = useMemo(
     () => messages.find((message) => message.key === selectedKey) ?? null,
@@ -85,6 +95,7 @@ export function BookingMessagesPanel() {
   async function saveMessage() {
     if (!currentMessage) return;
     setSaving(true);
+    setForbiddenSave(false);
     try {
       const response = await fetch("/api/admin/booking-messages", {
         method: "PUT",
@@ -97,6 +108,7 @@ export function BookingMessagesPanel() {
       });
       const responseBody = await response.json().catch(() => null);
       if (!response.ok) {
+        if (response.status === 403) setForbiddenSave(true);
         throw new Error(
           responseBody?.issues?.join(" ") ??
             responseBody?.error ??
@@ -115,6 +127,7 @@ export function BookingMessagesPanel() {
   async function resetMessage() {
     if (!currentMessage) return;
     setSaving(true);
+    setForbiddenSave(false);
     try {
       const response = await fetch("/api/admin/booking-messages/reset", {
         method: "POST",
@@ -124,6 +137,7 @@ export function BookingMessagesPanel() {
       });
       const responseBody = await response.json().catch(() => null);
       if (!response.ok) {
+        if (response.status === 403) setForbiddenSave(true);
         throw new Error(responseBody?.error ?? "Failed to restore default");
       }
       setBodyText(currentMessage.defaultBody);
@@ -169,6 +183,12 @@ export function BookingMessagesPanel() {
 
   return (
     <div className="space-y-6">
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view booking messages but cannot change them.
+          Support &amp; System edit access is required.
+        </AdminViewOnlyNotice>
+      ) : null}
       <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
         <div>
           <Label htmlFor="booking-message-select">Template</Label>
@@ -214,23 +234,35 @@ export function BookingMessagesPanel() {
           id="booking-message-body"
           className="mt-1 min-h-72 font-mono text-sm"
           value={bodyText}
+          disabled={!canEdit}
           onChange={(event) => setBodyText(event.target.value)}
         />
       </div>
 
+      {forbiddenSave ? <AdminForbiddenSaveNotice /> : null}
+
       <div className="flex flex-wrap gap-2">
-        <Button onClick={saveMessage} disabled={saving || !currentMessage}>
+        <ViewOnlyActionButton
+          canEdit={canEdit}
+          onClick={saveMessage}
+          disabled={saving || !currentMessage}
+        >
           <Save className="h-4 w-4" />
           {saving ? "Saving" : "Save Message"}
-        </Button>
+        </ViewOnlyActionButton>
         <Button variant="outline" onClick={previewMessage} disabled={!currentMessage}>
           <Eye className="h-4 w-4" />
           Preview
         </Button>
-        <Button variant="outline" onClick={resetMessage} disabled={saving || !currentMessage}>
+        <ViewOnlyActionButton
+          canEdit={canEdit}
+          variant="outline"
+          onClick={resetMessage}
+          disabled={saving || !currentMessage}
+        >
           <RotateCcw className="h-4 w-4" />
           Restore Default
-        </Button>
+        </ViewOnlyActionButton>
       </div>
 
       {previewText ? (

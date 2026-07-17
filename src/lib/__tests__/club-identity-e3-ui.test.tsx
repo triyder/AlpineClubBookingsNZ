@@ -18,6 +18,27 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// #1940: the Lodges page reads the session permission matrix for view-only
+// gating; provide an edit-level admin session so the create-payload case works.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
+
 const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
   canEdit: vi.fn(() => true),
@@ -35,6 +56,10 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/hooks/use-admin-area-edit-access", () => ({
   useAdminAreaEditAccess: () => mocks.canEdit(),
+  // ViewOnlyActionButton (rendered by the now-gated Lodges page) imports this
+  // reason string from the same module, so the mock must expose it too (#1940).
+  ADMIN_VIEW_ONLY_ACTION_REASON:
+    "Your admin role can view this area but cannot make changes.",
 }));
 
 import AdminLodgesPage from "@/app/(admin)/admin/lodges/page";

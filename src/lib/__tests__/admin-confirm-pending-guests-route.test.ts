@@ -474,6 +474,80 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(mocks.sendConfirmedEmail).not.toHaveBeenCalled();
   });
 
+  // #1992 — this route's charge can lose the settlement race to a different
+  // capture (e.g. the member paid an in-flight /pay link intent in the same
+  // window): the reconciler auto-refunds THIS route's duplicate charge while
+  // the booking stays settled by the other capture. That is a finalised
+  // booking, not a failure — a 500 "could not be finalised" here was
+  // inaccurate.
+  it("reports a duplicate charge accurately: booking settled by the other capture, this charge auto-refunded — not a 500 (#1992)", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+    mocks.chargePaymentMethod.mockResolvedValue({
+      id: "pi_dup",
+      status: "succeeded",
+      amount: 10000,
+      payment_method: "pm_1",
+    });
+    mocks.markBookingPaymentSucceeded.mockResolvedValue({
+      outcome: "duplicate_capture_refunded",
+      bookingId: "b1",
+      bumpedBookingIds: [],
+    });
+
+    const res = await POST(makeRequest(), { params });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({
+      success: true,
+      status: "PAID",
+      charged: false,
+      duplicateChargeRefunded: true,
+    });
+    expect(body.message).toContain("automatically refunded");
+    // The settling capture's path already sent the confirmation email and
+    // queued the Xero invoice — the duplicate outcome repeats neither.
+    expect(mocks.sendConfirmedEmail).not.toHaveBeenCalled();
+    expect(mocks.enqueueXero).not.toHaveBeenCalled();
+    expect(mocks.createStructuredAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          outcome: "charged_duplicate_capture_refunded",
+        }),
+      })
+    );
+  });
+
+  it("reports the queued-refund variant accurately when the duplicate's inline refund failed (#1992)", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+    mocks.chargePaymentMethod.mockResolvedValue({
+      id: "pi_dup",
+      status: "succeeded",
+      amount: 10000,
+      payment_method: "pm_1",
+    });
+    mocks.markBookingPaymentSucceeded.mockResolvedValue({
+      outcome: "duplicate_capture_refund_failed",
+      bookingId: "b1",
+      bumpedBookingIds: [],
+      refundError: "Stripe is unavailable (503)",
+    });
+
+    const res = await POST(makeRequest(), { params });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({
+      success: true,
+      status: "PAID",
+      charged: false,
+      duplicateChargeRefunded: false,
+    });
+    expect(body.message).toContain("queued");
+    expect(mocks.sendConfirmedEmail).not.toHaveBeenCalled();
+    expect(mocks.enqueueXero).not.toHaveBeenCalled();
+  });
+
   it("moves a no-card (request-origin) booking to payment-owed without charging or capacity gate", async () => {
     mocks.bookingFindUnique.mockResolvedValue(makeBooking({ payment: null }));
 

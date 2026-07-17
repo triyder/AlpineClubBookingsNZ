@@ -23,6 +23,11 @@ import { APP_CURRENCY, APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { formatCents } from "@/lib/pricing";
 import { useLodgeOptions } from "@/components/lodge-select";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 
 interface MemberOption {
@@ -121,6 +126,10 @@ export function PromoCodesPageClient({
   // form falls back to its manual code inputs. Seeded roles that reach this page
   // all hold finance view, so they are unaffected.
   const canFinance = permissionMatrix.finance !== "none";
+  // Promo codes are a bookings-area setting; a bookings:view admin sees this
+  // page read-only (#1940). The create/edit/toggle/delete routes enforce
+  // bookings:edit.
+  const canEdit = permissionMatrix.bookings === "edit";
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
   const [archivedCodes, setArchivedCodes] = useState<PromoCode[]>([]);
   const [loading, setLoading] = useState(true);
@@ -480,6 +489,9 @@ export function PromoCodesPageClient({
         body: JSON.stringify(payload),
       });
 
+      if (res.status === 403) {
+        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON);
+      }
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || "Failed to save promo code");
@@ -506,6 +518,9 @@ export function PromoCodesPageClient({
       const res = await fetch(`/api/admin/promo-codes/${promo.id}`, {
         method: "DELETE",
       });
+      if (res.status === 403) {
+        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON);
+      }
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || "Failed to delete");
@@ -522,6 +537,9 @@ export function PromoCodesPageClient({
       const res = await fetch(`/api/admin/promo-codes/${id}`, {
         method: "PATCH",
       });
+      if (res.status === 403) {
+        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON);
+      }
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || "Failed to restore");
@@ -540,6 +558,9 @@ export function PromoCodesPageClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ active: !promo.active }),
       });
+      if (res.status === 403) {
+        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON);
+      }
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || "Failed to update");
@@ -621,36 +642,40 @@ export function PromoCodesPageClient({
             </div>
             <div className="flex space-x-2">
               {isArchived ? (
-                <Button
+                <ViewOnlyActionButton
+                  canEdit={canEdit}
                   variant="outline"
                   size="sm"
                   onClick={() => handleRestore(promo.id)}
                 >
                   Restore
-                </Button>
+                </ViewOnlyActionButton>
               ) : (
                 <>
-                  <Button
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     variant="outline"
                     size="sm"
                     onClick={() => handleToggleActive(promo)}
                   >
                     {promo.active ? "Deactivate" : "Activate"}
-                  </Button>
-                  <Button
+                  </ViewOnlyActionButton>
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     variant="outline"
                     size="sm"
                     onClick={() => startEdit(promo)}
                   >
                     Edit
-                  </Button>
-                  <Button
+                  </ViewOnlyActionButton>
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     variant="destructive"
                     size="sm"
                     onClick={() => handleDelete(promo)}
                   >
                     {promo.redemptions.length > 0 ? "Archive" : "Delete"}
-                  </Button>
+                  </ViewOnlyActionButton>
                 </>
               )}
             </div>
@@ -769,9 +794,18 @@ export function PromoCodesPageClient({
           </p>
         </div>
         {!showForm && (
-          <Button onClick={() => setShowForm(true)}>Add Promo Code</Button>
+          <ViewOnlyActionButton canEdit={canEdit} onClick={() => setShowForm(true)}>
+            Add Promo Code
+          </ViewOnlyActionButton>
         )}
       </div>
+
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view promo codes but cannot change them. Bookings
+          edit access is required.
+        </AdminViewOnlyNotice>
+      )}
 
       {error && (
         <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
@@ -1386,13 +1420,13 @@ export function PromoCodesPageClient({
               </div>
 
               <div className="flex space-x-3">
-                <Button type="submit" disabled={saving}>
+                <ViewOnlyActionButton canEdit={canEdit} type="submit" disabled={saving}>
                   {saving
                     ? "Saving..."
                     : editingId
                       ? "Update Promo Code"
                       : "Create Promo Code"}
-                </Button>
+                </ViewOnlyActionButton>
                 <Button type="button" variant="outline" onClick={resetForm}>
                   Cancel
                 </Button>

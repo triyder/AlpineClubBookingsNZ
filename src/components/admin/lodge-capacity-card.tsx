@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Save } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -15,6 +14,12 @@ import { Label } from "@/components/ui/label";
 import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 interface LodgeSettingsResponse {
   capacity: number | null;
@@ -29,6 +34,10 @@ export function LodgeCapacityCard() {
   // hut-leader lookahead stays club-wide whichever lodge is selected.
   const { lodges, loading: lodgesLoading } = useLodgeOptions("admin");
   const [lodgeId, setLodgeId] = useState<string | null>(null);
+  // Lodge capacity settings write to /api/admin/lodge-settings (area "lodge"),
+  // so gate the editor on lodge:edit — a lodge:view admin can read but not
+  // change (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge");
   const { hutLeaderLabel } = useClubIdentity();
   // This card writes the label as a hyphenated compound adjective ("hut-leader"),
   // so hyphenate the lowercased label to keep the default render byte-identical.
@@ -155,6 +164,12 @@ export function LodgeCapacityCard() {
           ...(lodgeId ? { lodgeId } : {}),
         }),
       });
+      // A stale tab whose permissions were narrowed after load surfaces a
+      // persistent forbidden-save message rather than the generic failure (#1940).
+      if (response.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
+      }
       if (!response.ok) throw new Error("Failed to save lodge settings");
       const body = (await response.json()) as LodgeSettingsResponse;
       setClubConfigCapacity(body.clubConfigCapacity);
@@ -187,6 +202,12 @@ export function LodgeCapacityCard() {
           onChange={setLodgeId}
           loading={lodgesLoading}
         />
+        {!canEdit ? (
+          <AdminViewOnlyNotice>
+            Your admin role can view the lodge capacity settings but cannot
+            change them. Lodge edit access is required.
+          </AdminViewOnlyNotice>
+        ) : null}
         {(error || savedMessage) && (
           <div
             ref={feedbackRef}
@@ -221,7 +242,7 @@ export function LodgeCapacityCard() {
                 setCapacityValue(event.target.value);
                 setSavedMessage("");
               }}
-              disabled={loading || saving}
+              disabled={loading || saving || !canEdit}
             />
           </div>
           <div className="space-y-1">
@@ -240,7 +261,7 @@ export function LodgeCapacityCard() {
                 setHutLeaderLookaheadValue(event.target.value);
                 setSavedMessage("");
               }}
-              disabled={loading || saving}
+              disabled={loading || saving || !canEdit}
             />
           </div>
           <div className="space-y-1">
@@ -259,7 +280,7 @@ export function LodgeCapacityCard() {
                 setSoftCapValue(event.target.value);
                 setSavedMessage("");
               }}
-              disabled={loading || saving}
+              disabled={loading || saving || !canEdit}
             />
             <p className="text-xs text-slate-500">
               School groups above this many beds are warned they need a club
@@ -267,14 +288,19 @@ export function LodgeCapacityCard() {
               limit stays the capacity above.
             </p>
           </div>
-          <Button type="button" onClick={() => void save()} disabled={loading || saving}>
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            type="button"
+            onClick={() => void save()}
+            disabled={loading || saving}
+          >
             {saving ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
               <Save className="mr-2 h-4 w-4" />
             )}
             Save
-          </Button>
+          </ViewOnlyActionButton>
         </div>
 
         <p className="text-xs text-slate-500">

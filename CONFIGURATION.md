@@ -62,6 +62,21 @@ TOTP issuer label used at 2FA enrolment can lag by a short process-cache TTL and
 only affects new enrolments). `config/club.json` is never modified by these
 edits — it remains the seed and the fallback.
 
+On a fresh install `prisma/seed.ts` create-only upserts the `config/club.json`
+identity into `ClubIdentitySettings` so the admin card shows the configured
+values. A routine production upgrade runs `prisma migrate deploy` **only** (the
+seed never fires, and a SQL migration cannot read `config/club.json`), so the
+app also **self-heals this row on every boot**: it copies the current effective
+config value into the DB row if — and only if — the row is still absent, and
+never overwrites an admin edit. Healing runs **only from a valid primary
+`config/club.json`** — a boot that fell back to the example or the safe default
+(missing/malformed primary) skips healing so a placeholder identity is never
+frozen into the DB, and self-repairs on a later boot once the primary is fixed
+(the manual `npm run config:self-heal` exits non-zero on such a fallback skip).
+This is what lets later collapse work drop the file/env fallbacks without
+stranding a live deploy. See "Config self-heal on boot" in `docs/DEPLOYMENT.md`
+and `src/lib/config-self-heal.ts`.
+
 The **lodge display name** is not stored in club identity: it always resolves
 from the **default lodge**'s `Lodge.name` (edit it under Club Identity > Lodge
 details, or Admin > Setup > Lodges for multi-lodge clubs). The lodge also carries
@@ -746,6 +761,16 @@ Xero contact-group rules, and committee assignment are separate axes:
   **Lodge** area. The matching route handlers require `content` (or `lodge`)
   `view` on reads and `edit` on writes, so a stale-tab save is rejected with a
   visible error even if the editors were still on screen.
+  The same read-only pattern extends to the settings/config editors in the other
+  areas (#1940), each gating on its own area: **Membership** — Nomination gate
+  (Induction Settings), Induction checklist templates, and Membership
+  Cancellation settings; **Support & System** — Email Settings/Templates and
+  Booking Messages; **Finance** — Finance Report Mappings; **Bookings** — the
+  Rooms & Beds manager (its writes hit the bed-allocation APIs, which enforce
+  `bookings:edit`, even though the page lives under Lodge Operations). A viewer
+  sees disabled inputs, a "view only" notice, and, on a stale-tab 403 save, a
+  persistent forbidden-save error. Message/template **Preview** actions are pure
+  renders and stay available to viewers.
 - `MembershipType` stores admin-configurable seasonal categories and policy:
   Full, Associate (renameable, including Reserve naming), Life, School,
   Non-Member, Family, or club-created types. The `/admin/membership-types`

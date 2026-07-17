@@ -6,6 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import {
   ADMIN_NOTIFICATION_PREFERENCE_KEYS,
   ADMIN_NOTIFICATION_PREFERENCE_META,
@@ -25,6 +31,9 @@ export function AdminNotificationSettings({
 }: {
   initialAdmins: AdminNotificationUser[];
 }) {
+  // Admin notification preferences are a support-area setting; a support:view
+  // admin sees the panel read-only (#1940). The PUT route enforces support:edit.
+  const canEdit = useAdminAreaEditAccess("support");
   const [admins, setAdmins] = useState(initialAdmins);
   const [savedAdmins, setSavedAdmins] = useState(initialAdmins);
   const [editing, setEditing] = useState(false);
@@ -88,6 +97,9 @@ export function AdminNotificationSettings({
           });
           const data = await response.json().catch(() => null);
           if (!response.ok) {
+            if (response.status === 403) {
+              throw new Error(ADMIN_FORBIDDEN_SAVE_REASON);
+            }
             throw new Error(data?.error ?? "Failed to update notification preferences");
           }
           return { memberId, preferences: data.preferences as AdminNotificationPreferences };
@@ -125,12 +137,23 @@ export function AdminNotificationSettings({
 
   return (
     <div className="space-y-4">
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view admin notification preferences but cannot
+          change them. Support edit access is required.
+        </AdminViewOnlyNotice>
+      )}
       <div className="flex items-center justify-between">
         <div />
         {!editing ? (
-          <Button variant="outline" size="sm" onClick={handleEdit}>
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            variant="outline"
+            size="sm"
+            onClick={handleEdit}
+          >
             Edit
-          </Button>
+          </ViewOnlyActionButton>
         ) : (
           <div className="flex gap-3">
             <Button size="sm" onClick={handleSave} disabled={saving}>

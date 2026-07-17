@@ -20,6 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 
 const MONTH_NAMES = [
@@ -73,6 +77,18 @@ export function SubscriptionLockoutSettingsPanel({
   const canMembership = permissionMatrix.membership !== "none";
   const canFinance = permissionMatrix.finance !== "none";
   const canBookings = permissionMatrix.bookings !== "none";
+
+  // Edit gating (#1927/#1940). Each control is gated on the area its OWN backing
+  // route enforces at `edit`: the lockout enable, the financial-year override,
+  // and the invoice-text fallback all write the membership-area
+  // membership-lockout-settings route; the detection account/item codes write
+  // the finance-area xero/account-mappings route. A view-level admin sees the
+  // data but every editor is disabled.
+  const membershipCanEdit = permissionMatrix.membership === "edit";
+  const financeCanEdit = permissionMatrix.finance === "edit";
+  // Save fans out to at most two writes; enable it when the viewer can edit at
+  // least one, and skip each write below unless its own area is editable.
+  const canSave = membershipCanEdit || financeCanEdit;
 
   const [settings, setSettings] = useState<LockoutSettings | null>(null);
   const [subscriptionCode, setSubscriptionCode] = useState<string | null>(null);
@@ -189,32 +205,42 @@ export function SubscriptionLockoutSettingsPanel({
     if (!settings) return;
     setSaving(true);
     try {
-      const lockoutRes = await fetch("/api/admin/membership-lockout-settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({
-          enabled: settings.enabled,
-          financialYearEndMonthOverride: settings.financialYearEndMonthOverride,
-          textFallbackEnabled: settings.textFallbackEnabled,
-        }),
-      });
-      const lockoutBody = await lockoutRes.json().catch(() => ({}));
-      if (!lockoutRes.ok) {
-        toast.error(lockoutBody.error ?? "Failed to save settings");
-        return;
-      }
-      if (lockoutBody.settings) {
-        setSettings(lockoutBody.settings as LockoutSettings);
+      // Membership-area write: gated on membership edit. A membership-view admin
+      // (finance-only editor) skips it — the lockout/year/text controls are
+      // disabled for them, so there is nothing to persist and the route would
+      // 403.
+      if (membershipCanEdit) {
+        const lockoutRes = await fetch(
+          "/api/admin/membership-lockout-settings",
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({
+              enabled: settings.enabled,
+              financialYearEndMonthOverride:
+                settings.financialYearEndMonthOverride,
+              textFallbackEnabled: settings.textFallbackEnabled,
+            }),
+          },
+        );
+        const lockoutBody = await lockoutRes.json().catch(() => ({}));
+        if (!lockoutRes.ok) {
+          toast.error(lockoutBody.error ?? "Failed to save settings");
+          return;
+        }
+        if (lockoutBody.settings) {
+          setSettings(lockoutBody.settings as LockoutSettings);
+        }
       }
 
       // Persist the detection codes via the shared Xero account-mappings row so
       // there is a single source of truth with the Xero mappings panel. Send
-      // only the subscriptionIncome key so other mappings are untouched. Skipped
-      // for a viewer without finance access, whose detection card is hidden and
-      // whose codes were never loaded (writing them would 403 and — worse —
-      // attempt to null out a mapping they cannot see).
-      if (canFinance) {
+      // only the subscriptionIncome key so other mappings are untouched. Gated on
+      // finance edit: a viewer without finance edit has their detection card
+      // hidden or read-only, so writing them would 403 and — worse — attempt to
+      // null out a mapping they cannot change.
+      if (financeCanEdit) {
         const mappingsRes = await fetch("/api/admin/xero/account-mappings", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -268,6 +294,12 @@ export function SubscriptionLockoutSettingsPanel({
 
   return (
     <div className="space-y-6">
+      {!membershipCanEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view the subscription lockout settings but cannot
+          change them.
+        </AdminViewOnlyNotice>
+      ) : null}
       <Card>
         <CardHeader>
           <CardTitle>Booking lockout</CardTitle>
@@ -280,6 +312,7 @@ export function SubscriptionLockoutSettingsPanel({
             <Checkbox
               className="mt-0.5"
               checked={settings.enabled}
+              disabled={!membershipCanEdit}
               onCheckedChange={(checked) =>
                 update({ enabled: checked === true })
               }
@@ -347,6 +380,7 @@ export function SubscriptionLockoutSettingsPanel({
             <Label htmlFor="fy-override">Financial year-end month</Label>
             <Select
               value={overrideValue}
+              disabled={!membershipCanEdit}
               onValueChange={(value) =>
                 update({
                   financialYearEndMonthOverride:
@@ -398,6 +432,13 @@ export function SubscriptionLockoutSettingsPanel({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          {!financeCanEdit ? (
+            <AdminViewOnlyNotice>
+              Your admin role can view the paid-subscription detection settings
+              but cannot change them.
+            </AdminViewOnlyNotice>
+          ) : null}
+
           {!xeroConnected && (
             <p className="text-sm text-muted-foreground">
               <Link href="/admin/xero/setup" className="font-medium underline">
@@ -414,7 +455,7 @@ export function SubscriptionLockoutSettingsPanel({
               onValueChange={(value) =>
                 setSubscriptionCode(value === NONE ? null : value)
               }
-              disabled={!xeroConnected}
+              disabled={!xeroConnected || !financeCanEdit}
             >
               <SelectTrigger id="sub-account" className="w-full sm:w-[360px]">
                 <SelectValue placeholder="Not set" />
@@ -443,7 +484,7 @@ export function SubscriptionLockoutSettingsPanel({
               onValueChange={(value) =>
                 setSubscriptionItemCode(value === NONE ? null : value)
               }
-              disabled={!xeroConnected}
+              disabled={!xeroConnected || !financeCanEdit}
             >
               <SelectTrigger id="sub-item" className="w-full sm:w-[360px]">
                 <SelectValue placeholder="Not set" />
@@ -469,6 +510,7 @@ export function SubscriptionLockoutSettingsPanel({
             <Checkbox
               className="mt-0.5"
               checked={settings.textFallbackEnabled}
+              disabled={!membershipCanEdit}
               onCheckedChange={(checked) =>
                 update({ textFallbackEnabled: checked === true })
               }
@@ -525,9 +567,9 @@ export function SubscriptionLockoutSettingsPanel({
       </Card>
       ) : null}
 
-      <Button onClick={save} disabled={saving}>
+      <ViewOnlyActionButton canEdit={canSave} onClick={save} disabled={saving}>
         {saving ? "Saving…" : "Save settings"}
-      </Button>
+      </ViewOnlyActionButton>
     </div>
   );
 }

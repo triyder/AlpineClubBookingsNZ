@@ -17,7 +17,14 @@ export default async function MyBookingsPage() {
         { guests: { some: { memberId: session.user.id } } },
       ],
     },
-    include: { guests: true },
+    include: {
+      guests: true,
+      // #796 discriminator: a group joiner also links to its organiser via
+      // parentBookingId, so the list needs the join row to tell it apart from a
+      // genuine #738 split child. Mirrors [id]/page.tsx's nonMemberGuestChildren
+      // filter (`hasNonMembers && !groupBookingJoin`).
+      groupBookingJoin: { select: { id: true } },
+    },
     // Newest start date first, with a stable createdAt tiebreaker (#771).
     orderBy: [{ checkIn: "desc" }, { createdAt: "desc" }],
   });
@@ -30,22 +37,38 @@ export default async function MyBookingsPage() {
       .filter((id): id is string => Boolean(id)),
   );
 
-  const items: MyBookingItem[] = bookings.map((booking) => ({
-    id: booking.id,
-    checkIn: booking.checkIn.toISOString(),
-    checkOut: booking.checkOut.toISOString(),
-    guestCount: booking.guests.length,
-    finalPriceCents: booking.finalPriceCents,
-    status: booking.status,
-    linkLabel:
-      booking.memberId !== session.user.id
-        ? "guest-linked"
-        : booking.parentBookingId
-          ? "provisional-child"
-          : memberBookingIdsWithLinkedGuests.has(booking.id)
-            ? "linked-parent"
-            : null,
-  }));
+  const items: MyBookingItem[] = bookings.map((booking) => {
+    // #1975/#796: only a genuine #738 split child (a provisional non-member
+    // booking) is nestable. A group joiner also carries parentBookingId but is
+    // presented by the organiser group card, not nested here. Mirror the detail
+    // page's discriminator exactly ([id]/page.tsx nonMemberGuestChildren:
+    // `hasNonMembers && !groupBookingJoin`).
+    const isNestableSplitChild =
+      Boolean(booking.parentBookingId) &&
+      booking.hasNonMembers &&
+      !booking.groupBookingJoin;
+    return {
+      id: booking.id,
+      checkIn: booking.checkIn.toISOString(),
+      checkOut: booking.checkOut.toISOString(),
+      guestCount: booking.guests.length,
+      finalPriceCents: booking.finalPriceCents,
+      status: booking.status,
+      // #1975: expose the parent link ONLY for a genuine split child, so the
+      // list nests it as a sub-row inside its parent's card. A #796 joiner
+      // (join row present) keeps its pre-existing label but is never carried
+      // for nesting.
+      parentBookingId: isNestableSplitChild ? booking.parentBookingId : null,
+      linkLabel:
+        booking.memberId !== session.user.id
+          ? "guest-linked"
+          : booking.parentBookingId
+            ? "provisional-child"
+            : memberBookingIdsWithLinkedGuests.has(booking.id)
+              ? "linked-parent"
+              : null,
+    };
+  });
 
   return (
     <div className="space-y-6">

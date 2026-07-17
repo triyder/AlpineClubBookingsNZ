@@ -8,6 +8,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminForbiddenSaveNotice,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 interface XeroGroup {
   groupId: string;
@@ -60,6 +66,10 @@ export function MembershipCancellationSettingsPanel() {
     useState<EditableMembershipCancellationSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [forbiddenSave, setForbiddenSave] = useState(false);
+  // Membership cancellation config lives under the membership area (its write
+  // route enforces membership:edit), so gate the editor on that area (#1940).
+  const canEdit = useAdminAreaEditAccess("membership");
 
   async function load() {
     setLoading(true);
@@ -135,6 +145,7 @@ export function MembershipCancellationSettingsPanel() {
     if (!settings) return;
 
     setSaving(true);
+    setForbiddenSave(false);
     try {
       const response = await fetch("/api/admin/membership-cancellation-settings", {
         method: "PUT",
@@ -152,6 +163,9 @@ export function MembershipCancellationSettingsPanel() {
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
+        // Stale-tab / narrowed-permission save surfaces a persistent inline
+        // error, not only a transient toast (#1940).
+        if (response.status === 403) setForbiddenSave(true);
         throw new Error(
           responseErrorMessage(body, "Failed to save membership cancellation settings"),
         );
@@ -177,11 +191,18 @@ export function MembershipCancellationSettingsPanel() {
 
   return (
     <div className="space-y-6">
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view membership cancellation settings but cannot
+          change them. Membership edit access is required.
+        </AdminViewOnlyNotice>
+      ) : null}
       <div className="space-y-2">
         <Label htmlFor="membership-cancellation-warning">Cancellation warning</Label>
         <Textarea
           id="membership-cancellation-warning"
           className="min-h-28"
+          disabled={!canEdit}
           value={settings.warningText}
           onChange={(event) =>
             setSettings((current) =>
@@ -198,6 +219,7 @@ export function MembershipCancellationSettingsPanel() {
         <Textarea
           id="membership-cancellation-rejoin"
           className="min-h-28"
+          disabled={!canEdit}
           value={settings.rejoinProcessText}
           onChange={(event) =>
             setSettings((current) =>
@@ -212,10 +234,16 @@ export function MembershipCancellationSettingsPanel() {
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <Label className="text-base font-medium">Xero cancelled contact groups</Label>
-          <Button type="button" variant="outline" size="sm" onClick={addGroup}>
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={addGroup}
+          >
             <Plus className="h-4 w-4" />
             Add Group
-          </Button>
+          </ViewOnlyActionButton>
         </div>
 
         <div className="space-y-3">
@@ -231,6 +259,7 @@ export function MembershipCancellationSettingsPanel() {
                 <Input
                   id={`membership-cancellation-xero-group-id-${index}`}
                   className="mt-1"
+                  disabled={!canEdit}
                   value={group.groupId}
                   onChange={(event) =>
                     updateGroup(index, { groupId: event.target.value })
@@ -244,13 +273,15 @@ export function MembershipCancellationSettingsPanel() {
                 <Input
                   id={`membership-cancellation-xero-group-name-${index}`}
                   className="mt-1"
+                  disabled={!canEdit}
                   value={group.groupName}
                   onChange={(event) =>
                     updateGroup(index, { groupName: event.target.value })
                   }
                 />
               </div>
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 type="button"
                 variant="ghost"
                 size="icon"
@@ -259,7 +290,7 @@ export function MembershipCancellationSettingsPanel() {
                 onClick={() => removeGroup(index)}
               >
                 <Trash2 className="h-4 w-4" />
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           ))}
         </div>
@@ -268,6 +299,7 @@ export function MembershipCancellationSettingsPanel() {
       <div className="flex items-center gap-2">
         <Checkbox
           id="membership-cancellation-xero-archive"
+          disabled={!canEdit}
           checked={settings.xeroArchiveContactsOnCancellation}
           onCheckedChange={(checked) =>
             setSettings((current) =>
@@ -285,10 +317,11 @@ export function MembershipCancellationSettingsPanel() {
         </Label>
       </div>
 
-      <Button onClick={saveSettings} disabled={saving}>
+      {forbiddenSave ? <AdminForbiddenSaveNotice /> : null}
+      <ViewOnlyActionButton canEdit={canEdit} onClick={saveSettings} disabled={saving}>
         {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
         {saving ? "Saving" : "Save Cancellation Settings"}
-      </Button>
+      </ViewOnlyActionButton>
     </div>
   );
 }

@@ -88,7 +88,9 @@ function buildResponseBody(rows: ItemCodeMappingRow[]) {
  * keys are `${membershipTypeId}_${seasonType}_${ageTier|FLAT}` (#1930, E4).
  */
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   try {
     const rows = await prisma.xeroItemCodeMapping.findMany();
@@ -144,7 +146,9 @@ const UpdateItemCodeMappingsSchema = z.object({
  * `amountCents` blanks only the code.
  */
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: unknown;

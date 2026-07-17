@@ -74,7 +74,10 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ date: string }> }
 ) {
-  const guard = await requireAdmin(adminGuardOptions)
+  const guard = await requireAdmin({
+    ...adminGuardOptions,
+    permission: { area: "lodge", level: "view" },
+  })
   if (!guard.ok) return guard.response
 
   const parsedParams = paramsSchema.safeParse(await params)
@@ -120,7 +123,10 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ date: string }> }
 ) {
-  const guard = await requireAdmin(adminGuardOptions)
+  const guard = await requireAdmin({
+    ...adminGuardOptions,
+    permission: { area: "lodge", level: "edit" },
+  })
   if (!guard.ok) return guard.response
 
   const parsedParams = paramsSchema.safeParse(await params)

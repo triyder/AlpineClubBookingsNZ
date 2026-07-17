@@ -6,6 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 // Lobby display device management (fork issue #33, epic #25): list devices
 // with pairing/last-seen state, create a device, arm pairing by entering the
@@ -59,6 +65,11 @@ export default function AdminDisplayDevicesPage() {
   const [loading, setLoading] = useState(true);
   const [displayUrl, setDisplayUrl] = useState("/display");
   const [copied, setCopied] = useState(false);
+  // Display devices resolve to the "lodge" area (create/pair/revoke/template/
+  // poll are all lodge:edit writes), so gate the management controls on
+  // lodge:edit — a lodge:view admin can read the device list but not change it
+  // (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge");
 
   useEffect(() => {
     setDisplayUrl(`${window.location.origin}/display`);
@@ -104,6 +115,10 @@ export default function AdminDisplayDevicesPage() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: newName, ...(newLodgeId ? { lodgeId: newLodgeId } : {}) }),
     });
+    if (response.status === 403) {
+      setMessage(ADMIN_FORBIDDEN_SAVE_REASON);
+      return;
+    }
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       setMessage(body?.error ?? "Could not create the device");
@@ -127,7 +142,9 @@ export default function AdminDisplayDevicesPage() {
     setMessage(
       response.ok
         ? "Pairing armed — the display will connect within a few seconds."
-        : body?.error ?? "Pairing failed"
+        : response.status === 403
+          ? ADMIN_FORBIDDEN_SAVE_REASON
+          : body?.error ?? "Pairing failed"
     );
     if (response.ok) {
       setCodeByDevice((current) => ({ ...current, [deviceId]: "" }));
@@ -148,6 +165,10 @@ export default function AdminDisplayDevicesPage() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
     });
+    if (response.status === 403) {
+      setMessage(ADMIN_FORBIDDEN_SAVE_REASON);
+      return;
+    }
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       setMessage(body?.error ?? "Could not assign the template");
@@ -181,6 +202,10 @@ export default function AdminDisplayDevicesPage() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ pollSeconds }),
     });
+    if (response.status === 403) {
+      setMessage(ADMIN_FORBIDDEN_SAVE_REASON);
+      return;
+    }
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       setMessage(body?.error ?? "Could not update the refresh interval");
@@ -194,6 +219,10 @@ export default function AdminDisplayDevicesPage() {
     const response = await fetch(`/api/admin/display/devices/${deviceId}/revoke`, {
       method: "POST",
     });
+    if (response.status === 403) {
+      setMessage(ADMIN_FORBIDDEN_SAVE_REASON);
+      return;
+    }
     if (!response.ok) {
       setMessage("Could not revoke the device");
       return;
@@ -220,6 +249,14 @@ export default function AdminDisplayDevicesPage() {
           Lodges.
         </p>
       </div>
+
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view the lobby display devices but cannot change
+          them. Lodge edit access is required to create, pair, revoke, or
+          re-template a screen.
+        </AdminViewOnlyNotice>
+      ) : null}
 
       {message && <p className="text-sm font-medium">{message}</p>}
 
@@ -264,6 +301,7 @@ export default function AdminDisplayDevicesPage() {
               id="device-name"
               value={newName}
               placeholder="Lobby TV"
+              disabled={!canEdit}
               onChange={(event) => setNewName(event.target.value)}
             />
           </div>
@@ -274,6 +312,7 @@ export default function AdminDisplayDevicesPage() {
                 id="device-lodge"
                 className="border-input bg-background h-9 rounded-md border px-3 text-sm"
                 value={newLodgeId}
+                disabled={!canEdit}
                 onChange={(event) => setNewLodgeId(event.target.value)}
               >
                 {lodges.map((lodge) => (
@@ -284,9 +323,13 @@ export default function AdminDisplayDevicesPage() {
               </select>
             </div>
           )}
-          <Button onClick={() => void createDevice()} disabled={!newName}>
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            onClick={() => void createDevice()}
+            disabled={!newName}
+          >
             Create device
-          </Button>
+          </ViewOnlyActionButton>
         </CardContent>
       </Card>
 
@@ -334,6 +377,7 @@ export default function AdminDisplayDevicesPage() {
                         placeholder="TV code"
                         maxLength={6}
                         value={codeByDevice[device.id] ?? ""}
+                        disabled={!canEdit}
                         onChange={(event) =>
                           setCodeByDevice((current) => ({
                             ...current,
@@ -341,13 +385,14 @@ export default function AdminDisplayDevicesPage() {
                           }))
                         }
                       />
-                      <Button
+                      <ViewOnlyActionButton
+                        canEdit={canEdit}
                         variant="outline"
                         onClick={() => void armPairing(device.id)}
                         disabled={(codeByDevice[device.id] ?? "").length !== 6}
                       >
                         Pair
-                      </Button>
+                      </ViewOnlyActionButton>
                     </div>
                     <div className="flex items-center gap-2">
                       <Label className="text-xs" htmlFor={`template-${device.id}`}>
@@ -361,6 +406,7 @@ export default function AdminDisplayDevicesPage() {
                             ? templateValue(device.templateId)
                             : CLUB_DEFAULT
                         }
+                        disabled={!canEdit}
                         onChange={(event) =>
                           void assignTemplate(device.id, event.target.value)
                         }
@@ -396,6 +442,7 @@ export default function AdminDisplayDevicesPage() {
                           // reflows the input to the persisted (or default) state.
                           key={`poll-${device.id}-${device.pollSeconds ?? "default"}`}
                           defaultValue={device.pollSeconds ?? ""}
+                          disabled={!canEdit}
                           onBlur={(event) =>
                             void savePollSeconds(device.id, event.target.value)
                           }
@@ -416,9 +463,13 @@ export default function AdminDisplayDevicesPage() {
                         Preview
                       </a>
                     </Button>
-                    <Button variant="destructive" onClick={() => void revoke(device.id)}>
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
+                      variant="destructive"
+                      onClick={() => void revoke(device.id)}
+                    >
                       Revoke
-                    </Button>
+                    </ViewOnlyActionButton>
                   </>
                 )}
               </div>

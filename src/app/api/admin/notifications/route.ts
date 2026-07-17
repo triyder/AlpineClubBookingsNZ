@@ -42,7 +42,9 @@ const updateSchema = z.object({
 });
 
 export async function PUT(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "support", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: unknown;

@@ -23,7 +23,9 @@ const bulkSchema = z
  * contract release, so a clashing prefix rejects the whole batch.
  */
 export async function POST(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) {
     return guard.response;
   }

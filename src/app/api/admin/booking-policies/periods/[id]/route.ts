@@ -46,7 +46,9 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   const { id } = await params;
   const period = await prisma.bookingPeriod.findUnique({ where: { id } });
@@ -65,7 +67,9 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const { id } = await params;
 
@@ -131,7 +135,9 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const { id } = await params;
 

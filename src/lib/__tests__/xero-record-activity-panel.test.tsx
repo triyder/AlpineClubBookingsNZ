@@ -1,7 +1,30 @@
 // @vitest-environment jsdom
 
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// #1940: the panel reads the session permission matrix for view-only gating of
+// its retry/replay controls; provide an edit-level admin session so the render
+// case is unchanged.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
+
 import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel";
 import type { XeroRecordActivityData } from "@/lib/xero-record-types";
 

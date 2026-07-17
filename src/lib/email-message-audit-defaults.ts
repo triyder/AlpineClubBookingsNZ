@@ -314,6 +314,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Your booking request has been approved — {{CLUB_NAME}}",
     "defaultBody": "Booking Request Approved\n\nHi {{firstName}}, great news — your booking request has been approved!\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal: {{price}}\nBooking reference: {{bookingReference}}\n\nPlease complete payment to confirm your booking.\n\nPay Now: {{BASE_URL}}/pay/{{token}}\n\nThis payment link expires on {{expiresAt}}. If it expires before you pay, please contact the club to request a new link."
   },
+  "split-guest-payment-link": {
+    "defaultSubject": "Pay for your guests to confirm their place — {{CLUB_NAME}}",
+    "defaultBody": "Pay for Your Guests to Confirm Their Place\n\nHi {{firstName}}, your own place is confirmed, but your non-member guests still need to be paid for before we can hold beds for them. There is no card on file for this part of your booking, so please use the secure link below to pay for your guests.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nAmount due: {{price}}\n\nPay for My Guests: {{BASE_URL}}/pay/{{token}}\n\nUntil payment is received, no beds are held for your guests and their place may be bumped if the lodge fills for these dates.\n\nThis payment link expires on {{expiresAt}}. If you have any questions, just reply to this email or contact the club."
+  },
   "booking-request-quote": {
     "defaultSubject": "Your booking quote is ready — {{CLUB_NAME}}",
     "defaultBody": "Booking Quote Ready\n\nHi {{firstName}}, the club has prepared a quote for your lodge request.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\n{{quoteOptions}}\n\nRespond to Quote: {{BASE_URL}}/booking-requests/respond/{{token}}\n\nThis quote link expires on {{expiresAt}}. You can use it to accept, cancel, request changes, or send a question."
@@ -329,6 +333,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
   "admin-booking-request-hold-expired": {
     "defaultSubject": "Request booking unpaid at hold expiry: {{requesterName}}",
     "defaultBody": "Request Booking Unpaid at Hold Expiry\n\n{{requesterName}}'s request-origin booking has reached its hold deadline without payment.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal due: {{total}}\nHold until: {{holdUntil}}\n\nReview Bookings: {{reviewUrl}}"
+  },
+  "admin-split-settlement-unpaid": {
+    "defaultSubject": "Split booking guest portion unpaid — no card on file: {{memberName}}",
+    "defaultBody": "Split Booking Guest Portion Unpaid — No Card on File\n\nA split booking reached its hold deadline for the non-member guest portion, but there is no saved card to charge — the member paid their own place by internet banking. A secure payment link has been emailed to the member so they can pay for their guests, and the hold has been extended. [when the member's own linked booking is also unpaid: no payment link is sent and a human must chase payment for the whole booking, because the guest portion must not settle ahead of the member's own place]\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nAmount due: {{total}}\nHold extended to: {{holdUntil}}\n\nNo beds are held for these guests until payment is received. Follow up with the member or cancel the guest portion if payment is not expected.\n\nThis alert repeats each time the hold is extended while the guest portion remains unpaid.\n\nView Bookings: {{reviewUrl}}"
   },
   "booking-review-approved": {
     "defaultSubject": "Your booking has been approved - {{CLUB_LODGE_NAME}}",

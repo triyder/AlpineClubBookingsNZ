@@ -24,6 +24,12 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 // Lodge configuration hub (ADR-003): one place to see a lodge's setup state,
 // with links into the existing per-area pages pre-filtered via ?lodgeId=.
@@ -58,6 +64,9 @@ const CAPACITY_SOURCE_LABELS: Record<string, string> = {
 export default function LodgeConfigurationHubPage() {
   const params = useParams<{ id: string }>();
   const lodgeId = params.id;
+  // Lodge capacity is lodge config; the write route enforces lodge:edit, so a
+  // lodge:view admin sees this screen read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge");
   const [lodge, setLodge] = useState<LodgeRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -242,6 +251,10 @@ export default function LodgeConfigurationHubPage() {
           body: JSON.stringify({ capacity, lodgeId }),
         },
       );
+      if (res.status === 403) {
+        setCapacityMessage({ type: "error", text: ADMIN_FORBIDDEN_SAVE_REASON });
+        return;
+      }
       if (!res.ok) {
         const data = await res.json().catch(() => null);
         throw new Error(data?.error ?? "Failed to save capacity");
@@ -417,6 +430,12 @@ export default function LodgeConfigurationHubPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!canEdit && (
+            <AdminViewOnlyNotice>
+              Your admin role can view this lodge&apos;s capacity but cannot
+              change it. Lodge edit access is required.
+            </AdminViewOnlyNotice>
+          )}
           <div className="text-sm">
             <p className="text-muted-foreground">Current capacity</p>
             <p className="font-medium">
@@ -449,14 +468,16 @@ export default function LodgeConfigurationHubPage() {
                 min="1"
                 value={capacityOverride}
                 onChange={(e) => setCapacityOverride(e.target.value)}
+                disabled={!canEdit}
                 className="w-28"
               />
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 onClick={() => void saveCapacityOverride()}
                 disabled={savingCapacity || capacityOverride.trim() === savedCapacityOverride.trim()}
               >
                 {savingCapacity ? "Saving..." : "Save"}
-              </Button>
+              </ViewOnlyActionButton>
             </div>
             <p className="text-xs text-muted-foreground">
               Leave blank to fall back to the club default (default lodge) or

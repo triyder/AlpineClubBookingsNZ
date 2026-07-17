@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BookingStatus,
+  PaymentRecoveryOperationStatus,
+  PaymentRecoveryOperationType,
   PaymentSource,
   PaymentStatus,
   PaymentTransactionKind,
@@ -32,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   bookingUpdateMany: vi.fn(),
   paymentUpsert: vi.fn(),
   paymentTransactionFindFirst: vi.fn(),
+  paymentRecoveryOperationFindMany: vi.fn(),
+  paymentRecoveryOperationFindFirst: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
   findPaymentTransactionByIntentId: vi.fn(),
   refundPaymentTransactions: vi.fn(),
@@ -140,6 +144,16 @@ const tx = {
   paymentTransaction: {
     findFirst: (...args: unknown[]) => mocks.paymentTransactionFindFirst(...args),
   },
+  // #1992 superseded-handoff exclusion: guards (b′)/(c′) read the recovery
+  // operations inside the same lock(1) transaction. Deliberately NO write
+  // methods here — the reconciliation path must never touch (complete, retry,
+  // clobber) a superseded-machinery operation, so any write would crash a test.
+  paymentRecoveryOperation: {
+    findMany: (...args: unknown[]) =>
+      mocks.paymentRecoveryOperationFindMany(...args),
+    findFirst: (...args: unknown[]) =>
+      mocks.paymentRecoveryOperationFindFirst(...args),
+  },
 };
 
 type LedgerRow = {
@@ -177,7 +191,7 @@ function primeLedger(transactions: LedgerRow[]) {
         kind: PaymentTransactionKind;
         source: PaymentSource;
         status: { in: PaymentStatus[] };
-        stripePaymentIntentId: { not: string };
+        stripePaymentIntentId: { not: string; notIn: string[] };
       };
     }) => {
       const { where } = args;
@@ -188,7 +202,14 @@ function primeLedger(transactions: LedgerRow[]) {
             transaction.source === where.source &&
             where.status.in.includes(transaction.status) &&
             transaction.stripePaymentIntentId !== null &&
-            transaction.stripePaymentIntentId !== where.stripePaymentIntentId.not
+            transaction.stripePaymentIntentId !==
+              where.stripePaymentIntentId.not &&
+            // #1992 superseded-handoff exclusion (guard b′): intents whose
+            // money a live superseded-machinery operation owns are excluded
+            // from the candidate set.
+            !where.stripePaymentIntentId.notIn.includes(
+              transaction.stripePaymentIntentId
+            )
         ) ?? null
       );
     }
@@ -197,6 +218,56 @@ function primeLedger(transactions: LedgerRow[]) {
     async ({ paymentIntentId }: { paymentIntentId: string }) =>
       transactions.find(
         (transaction) => transaction.stripePaymentIntentId === paymentIntentId
+      ) ?? null
+  );
+}
+
+type RecoveryOperationRow = {
+  id: string;
+  type: PaymentRecoveryOperationType;
+  status: PaymentRecoveryOperationStatus;
+  paymentId: string;
+  paymentIntentId: string;
+};
+
+/**
+ * Drive BOTH superseded-machinery guard lookups (b′ findMany scoped to the
+ * payment, c′ findFirst by intent id) from one operation list with the REAL
+ * where-clause semantics: type-in filter, non-SUCCEEDED ("live") status
+ * filter, payment scoping / intent-id equality. This makes the regression
+ * tests exercise the actual predicates rather than a canned return value.
+ */
+function primeRecoveryOperations(operations: RecoveryOperationRow[]) {
+  mocks.paymentRecoveryOperationFindMany.mockImplementation(
+    async (args: {
+      where: {
+        paymentId: string;
+        type: { in: PaymentRecoveryOperationType[] };
+        status: { not: PaymentRecoveryOperationStatus };
+      };
+    }) =>
+      operations
+        .filter(
+          (operation) =>
+            operation.paymentId === args.where.paymentId &&
+            args.where.type.in.includes(operation.type) &&
+            operation.status !== args.where.status.not
+        )
+        .map((operation) => ({ paymentIntentId: operation.paymentIntentId }))
+  );
+  mocks.paymentRecoveryOperationFindFirst.mockImplementation(
+    async (args: {
+      where: {
+        paymentIntentId: string;
+        type: { in: PaymentRecoveryOperationType[] };
+        status: { not: PaymentRecoveryOperationStatus };
+      };
+    }) =>
+      operations.find(
+        (operation) =>
+          operation.paymentIntentId === args.where.paymentIntentId &&
+          args.where.type.in.includes(operation.type) &&
+          operation.status !== args.where.status.not
       ) ?? null
   );
 }
@@ -232,6 +303,9 @@ beforeEach(() => {
   mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.paymentUpsert.mockResolvedValue({ id: "payment-1" });
   mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+  // Default: no live superseded-machinery operations (guards b′/c′ find none).
+  mocks.paymentRecoveryOperationFindMany.mockResolvedValue([]);
+  mocks.paymentRecoveryOperationFindFirst.mockResolvedValue(null);
   mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
   mocks.findPaymentTransactionByIntentId.mockResolvedValue(null);
   mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
@@ -412,7 +486,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     );
   });
 
-  it("pins the distinctness predicate's where-clause: captured PRIMARY Stripe transactions with net cash only (SUCCEEDED/PARTIALLY_REFUNDED — never fully REFUNDED), excluding the arriving intent and NULL intent ids", async () => {
+  it("pins the distinctness predicate's where-clause: captured PRIMARY Stripe transactions with net cash only (SUCCEEDED/PARTIALLY_REFUNDED — never fully REFUNDED), excluding the arriving intent, NULL intent ids and superseded-machinery-owned intents", async () => {
     primeDuplicateCaptureLedger();
 
     await markBookingPaymentSucceeded({
@@ -431,11 +505,28 @@ describe("#1992 duplicate-capture auto-refund", () => {
           status: {
             in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
           },
-          stripePaymentIntentId: { not: DUPLICATE_PI },
+          stripePaymentIntentId: { not: DUPLICATE_PI, notIn: [] },
           NOT: { stripePaymentIntentId: null },
         },
       })
     );
+
+    // Guard (b′) query shape: live (non-SUCCEEDED) CANCEL_PAYMENT_INTENT /
+    // REFUND_SUPERSEDED_PAYMENT operations on this payment, run inside the
+    // same lock(1) transaction (the tx client's own delegate was used).
+    expect(mocks.paymentRecoveryOperationFindMany).toHaveBeenCalledWith({
+      where: {
+        paymentId: "payment-1",
+        type: {
+          in: [
+            PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
+            PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+          ],
+        },
+        status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+      },
+      select: { paymentIntentId: true },
+    });
   });
 
   it("still refunds the duplicate when the settling capture has since been PARTIALLY refunded (net cash is still held)", async () => {
@@ -545,6 +636,215 @@ describe("#1992 duplicate-capture auto-refund", () => {
     });
     expect(mocks.enqueueDuplicateCaptureRefundRecovery).not.toHaveBeenCalled();
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+  });
+
+  // The BLOCKER regression: the pre-existing superseded-intent machinery
+  // transiently creates a SUCCEEDED PRIMARY Stripe capture whose money is
+  // already spoken for. Superseded intent X's late capture is diverted by the
+  // webhook (queueSupersededPaymentIntentRefundRecovery) or by the recovery
+  // cron's cancel-lost-race handoff into markSupersededTransactionSucceeded —
+  // X becomes SUCCEEDED/refunded=0 with a queued REFUND_SUPERSEDED_PAYMENT
+  // operation, and X never passes through markBookingPaymentSucceeded, so no
+  // duplicate_capture adjudication marker exists. If the member then pays
+  // fresh intent Y (booking → PAID via the route) and Y's own first webhook
+  // delivery arrives (#772 route-vs-webhook race — event dedup does not
+  // apply), the unguarded predicate would find X, see no adjudication marker,
+  // and refund Y — the REAL settlement — in full, while the cron later
+  // refunds X: booking PAID at zero net cash, both sides refunded.
+  describe("superseded-intent handoff window: the arriving REAL settlement stays already_paid, never refunded (#1992 guards b′/c′)", () => {
+    const SUPERSEDED_PI = "pi_superseded_x";
+    const SETTLEMENT_PI = "pi_fresh_settlement_y";
+
+    function primeHandoffLedger() {
+      primeLedger([
+        // X: the superseded intent's late capture after the handoff — from
+        // the ledger alone, indistinguishable from a settlement.
+        ledgerRow({
+          id: "txn-superseded-x",
+          stripePaymentIntentId: SUPERSEDED_PI,
+          status: PaymentStatus.SUCCEEDED,
+          amountCents: 10000,
+          refundedAmountCents: 0,
+        }),
+        // Y: the fresh intent that actually settled the booking via the route.
+        ledgerRow({
+          id: "txn-settlement-y",
+          stripePaymentIntentId: SETTLEMENT_PI,
+          status: PaymentStatus.SUCCEEDED,
+          amountCents: 10000,
+        }),
+      ]);
+    }
+
+    it("X handed off (SUCCEEDED + queued REFUND_SUPERSEDED_PAYMENT op): Y's webhook replay is already_paid — no refund op for Y, no refund, no admin email; X's queued refund op is left for the cron untouched", async () => {
+      primeHandoffLedger();
+      primeRecoveryOperations([
+        {
+          id: "op-refund-superseded-x",
+          type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+          status: PaymentRecoveryOperationStatus.PENDING,
+          paymentId: "payment-1",
+          paymentIntentId: SUPERSEDED_PI,
+        },
+      ]);
+
+      const result = await markBookingPaymentSucceeded({
+        bookingId: "booking-1",
+        paymentIntentId: SETTLEMENT_PI,
+        amountCents: 10000,
+        paymentMethodId: "pm_1",
+      });
+
+      expect(result).toEqual({
+        outcome: "already_paid",
+        bookingId: "booking-1",
+        bumpedBookingIds: [],
+      });
+      // The real settlement Y is NEVER refunded and no duplicate-capture
+      // refund debt is opened against it.
+      expect(mocks.enqueueDuplicateCaptureRefundRecovery).not.toHaveBeenCalled();
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      // Admins are NOT emailed — this is the benign replay outcome, not an
+      // anomaly.
+      expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+      // X's money still belongs to the superseded machinery: its queued
+      // REFUND_SUPERSEDED_PAYMENT operation is read, never written (the tx
+      // stub exposes NO write methods on paymentRecoveryOperation, so any
+      // attempt to complete/clobber it would have crashed this test). The
+      // cron then refunds X normally — that replay (including its
+      // idempotency-by-ledger retry safety) is pinned in
+      // payment-recovery.test.ts ("queues refund recovery when the superseded
+      // PaymentIntent already succeeded" / "does not double-count a
+      // previously written refund when the recovery retries").
+      expect(mocks.paymentRecoveryOperationFindMany).toHaveBeenCalled();
+    });
+
+    it("CANCEL_PAYMENT_INTENT variant: X mid-handoff (cancel op still live, refund op not yet enqueued) — Y's replay stays already_paid with no refund", async () => {
+      primeHandoffLedger();
+      // The cancel-lost-race handoff window: markSupersededTransactionSucceeded
+      // has committed (X is SUCCEEDED) but the REFUND_SUPERSEDED_PAYMENT op is
+      // not yet enqueued and the CANCEL_PAYMENT_INTENT op has not yet been
+      // completed — it is the live marker that X's money is spoken for.
+      primeRecoveryOperations([
+        {
+          id: "op-cancel-superseded-x",
+          type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
+          status: PaymentRecoveryOperationStatus.PROCESSING,
+          paymentId: "payment-1",
+          paymentIntentId: SUPERSEDED_PI,
+        },
+      ]);
+
+      const result = await markBookingPaymentSucceeded({
+        bookingId: "booking-1",
+        paymentIntentId: SETTLEMENT_PI,
+        amountCents: 10000,
+        paymentMethodId: "pm_1",
+      });
+
+      expect(result.outcome).toBe("already_paid");
+      expect(mocks.enqueueDuplicateCaptureRefundRecovery).not.toHaveBeenCalled();
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    });
+
+    it("an exhausted (FAILED) superseded refund op still owns X's money: Y's replay stays already_paid", async () => {
+      primeHandoffLedger();
+      primeRecoveryOperations([
+        {
+          id: "op-refund-superseded-x",
+          type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+          status: PaymentRecoveryOperationStatus.FAILED,
+          paymentId: "payment-1",
+          paymentIntentId: SUPERSEDED_PI,
+        },
+      ]);
+
+      const result = await markBookingPaymentSucceeded({
+        bookingId: "booking-1",
+        paymentIntentId: SETTLEMENT_PI,
+        amountCents: 10000,
+        paymentMethodId: "pm_1",
+      });
+
+      expect(result.outcome).toBe("already_paid");
+      expect(mocks.enqueueDuplicateCaptureRefundRecovery).not.toHaveBeenCalled();
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    });
+
+    it("guard (c′) belt-and-braces: even if the candidate slips the (b′) notIn exclusion, the direct intent-id re-check suppresses the refund", async () => {
+      primeHandoffLedger();
+      // Simulate a (b′) miss with a divergent query shape: the payment-scoped
+      // findMany returns nothing, while the direct intent-id findFirst still
+      // sees the live operation.
+      mocks.paymentRecoveryOperationFindMany.mockResolvedValue([]);
+      mocks.paymentRecoveryOperationFindFirst.mockResolvedValue({
+        id: "op-refund-superseded-x",
+      });
+
+      const result = await markBookingPaymentSucceeded({
+        bookingId: "booking-1",
+        paymentIntentId: SETTLEMENT_PI,
+        amountCents: 10000,
+        paymentMethodId: "pm_1",
+      });
+
+      expect(result.outcome).toBe("already_paid");
+      expect(mocks.enqueueDuplicateCaptureRefundRecovery).not.toHaveBeenCalled();
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      // (c′) query shape: direct lookup by the CANDIDATE's intent id (X, the
+      // matched "settlement"), the same live-status/type filter as (b′).
+      expect(mocks.paymentRecoveryOperationFindFirst).toHaveBeenCalledWith({
+        where: {
+          paymentIntentId: SUPERSEDED_PI,
+          type: {
+            in: [
+              PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
+              PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+            ],
+          },
+          status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+        },
+        select: { id: true },
+      });
+    });
+
+    it("terminal (SUCCEEDED) superseded-machinery ops do NOT suppress the true double-charge path: the arriving distinct capture is still auto-refunded", async () => {
+      // The true #1967 double-charge shape (auto-charge X vs link capture Y,
+      // NEITHER owned by a live superseded/cancel op) must keep auto-refunding.
+      // Long-completed superseded machinery elsewhere on the payment is
+      // history, not ownership.
+      primeDuplicateCaptureLedger();
+      primeRecoveryOperations([
+        {
+          id: "op-old-cancel",
+          type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
+          status: PaymentRecoveryOperationStatus.SUCCEEDED,
+          paymentId: "payment-1",
+          paymentIntentId: SETTLED_PI,
+        },
+        {
+          id: "op-old-refund",
+          type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+          status: PaymentRecoveryOperationStatus.SUCCEEDED,
+          paymentId: "payment-1",
+          paymentIntentId: SETTLED_PI,
+        },
+      ]);
+
+      const result = await markBookingPaymentSucceeded({
+        bookingId: "booking-1",
+        paymentIntentId: DUPLICATE_PI,
+        amountCents: 10000,
+        paymentMethodId: "pm_1",
+      });
+
+      expect(result.outcome).toBe("duplicate_capture_refunded");
+      expect(mocks.enqueueDuplicateCaptureRefundRecovery).toHaveBeenCalledTimes(
+        1
+      );
+      expect(mocks.refundPaymentTransactions).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("a redelivery of the duplicate AFTER its refund executed stays already_paid via the #1765 refunded-history guard (no second refund op, no ledger clobber)", async () => {

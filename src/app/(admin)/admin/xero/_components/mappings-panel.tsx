@@ -6,6 +6,12 @@ import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
 import { fetchJson } from "./api"
 import {
   allHutFeeCellKeys,
@@ -103,6 +109,9 @@ export function MappingsPanel({
   const panelRef = useRef<HTMLDivElement>(null)
   const errorRef = useRef<HTMLParagraphElement>(null)
   const { scrollToError, scrollToTop } = useScrollToFeedback()
+  // Xero account mappings gate on the finance area (write routes enforce
+  // finance:edit); a finance:view admin sees them read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("finance")
 
   const fetchMappings = useCallback(async (options?: { forceRefresh?: boolean }) => {
     setLoading(true)
@@ -194,6 +203,10 @@ export function MappingsPanel({
       setSaved(true)
       window.setTimeout(() => setSaved(false), 3000)
     } catch (err) {
+      if (err instanceof Error && /\b403\b|forbidden/i.test(err.message)) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON)
+        return
+      }
       setError(err instanceof Error ? err.message : "Failed to save mappings")
     } finally {
       setSaving(false)
@@ -231,6 +244,12 @@ export function MappingsPanel({
             </p>
           ) : null}
           {saved ? <p className="text-sm text-success">Account mappings saved.</p> : null}
+          {!canEdit ? (
+            <AdminViewOnlyNotice>
+              Your admin role can view the Xero account mappings but cannot change
+              them. Finance edit access is required.
+            </AdminViewOnlyNotice>
+          ) : null}
           <div className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3 text-xs text-muted-foreground md:flex-row md:items-center md:justify-between">
             <div className="space-y-1">
               <p>{formatReferenceCacheLabel("Accounts", accountCacheMeta)}</p>
@@ -275,7 +294,7 @@ export function MappingsPanel({
                 <Button variant="outline" onClick={cancelEditing} disabled={saving}>Cancel</Button>
               </>
             ) : (
-              <Button variant="outline" onClick={() => setEditing(true)}>Edit Mappings</Button>
+              <ViewOnlyActionButton canEdit={canEdit} variant="outline" onClick={() => setEditing(true)}>Edit Mappings</ViewOnlyActionButton>
             )}
           </div>
         </div>

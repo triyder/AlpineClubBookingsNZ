@@ -8,6 +8,26 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // the computed overlay, and drive selection / month-change from the test.
 const calendar = vi.hoisted(() => ({ lastProps: null as Record<string, unknown> | null }));
 
+// #1940: HutLeadersPage reads the session permission matrix for view-only
+// gating; provide an edit-level admin session so the flow cases keep working.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
 vi.mock("@/components/club-identity-provider", () => ({
   useClubIdentity: () => ({ hutLeaderLabel: "Hut Leader" }),
 }));

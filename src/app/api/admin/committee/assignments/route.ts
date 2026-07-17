@@ -49,7 +49,9 @@ const assignmentSchema = z
   });
 
 export async function GET(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   const url = new URL(request.url);
@@ -73,7 +75,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
 

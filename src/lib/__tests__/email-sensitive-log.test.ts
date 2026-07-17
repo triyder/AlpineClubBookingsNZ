@@ -18,6 +18,13 @@ describe("sensitive EmailLog HTML classification", () => {
     expect(shouldPersistEmailHtml("chore-roster")).toBe(false);
   });
 
+  it("redacts the split-guest payment link, whose HTML carries a live /pay/<token> link (#1967/#1994)", () => {
+    // Registering the template must not weaken #1885 suppression truthfulness:
+    // its rendered HTML embeds a bearer /pay/<token> link, so it must never be
+    // persisted at rest in EmailLog or the retry table.
+    expect(shouldPersistEmailHtml("split-guest-payment-link")).toBe(false);
+  });
+
   it("continues to retain HTML for a non-sensitive template", () => {
     expect(shouldPersistEmailHtml("booking-request-declined")).toBe(true);
   });

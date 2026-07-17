@@ -60,7 +60,9 @@ const policySchema = z
   })
 
 export async function GET(req: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   // Exact partition, not null-tolerant: null rows are the club-wide rules
   // and a lodge's rows are its override set (replace, never merge).
@@ -84,7 +86,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const body = await req.json()

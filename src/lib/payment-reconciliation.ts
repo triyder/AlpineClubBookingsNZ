@@ -2,6 +2,8 @@ import { prisma } from "@/lib/prisma";
 import {
   BookingEventType,
   BookingStatus,
+  PaymentRecoveryOperationStatus,
+  PaymentRecoveryOperationType,
   PaymentSource,
   PaymentStatus,
   PaymentTransactionKind,
@@ -77,6 +79,75 @@ const PAYABLE_SUCCESS_STATUS_LIST = [
 ] as const;
 
 const PAYABLE_SUCCESS_STATUSES = new Set<string>(PAYABLE_SUCCESS_STATUS_LIST);
+
+// #1992 (superseded-handoff exclusion) — the pre-existing superseded-intent
+// machinery (booking-payment-cleanup queues a CANCEL_PAYMENT_INTENT recovery
+// operation; when the cancel loses to a late capture, payment-recovery's
+// handoff marks that transaction SUCCEEDED and queues a
+// REFUND_SUPERSEDED_PAYMENT operation for the cron) transiently produces
+// EXACTLY the shape the duplicate-capture predicate below hunts for: another
+// SUCCEEDED PRIMARY Stripe capture with net cash under a different intent id,
+// with no duplicate_capture adjudication marker (the handoff never passes
+// through markBookingPaymentSucceeded). That capture's money is already spoken
+// for — the recovery cron will refund it under its
+// `payment_recovery_refund_<txn>_<pi>` key — so treating it as "the
+// settlement" would refund the REAL settlement as the duplicate and, once the
+// cron also refunds the superseded capture, leave the booking PAID at zero net
+// cash. A superseded-machinery operation counts as LIVE while it is not
+// SUCCEEDED: PENDING, PROCESSING and FAILED (retrying or exhausted, where the
+// money is still adjudicated to that machinery and admins were alerted). A
+// SUCCEEDED cancel operation either actually cancelled the intent (its
+// transaction is FAILED — never a predicate candidate) or handed off to a
+// refund operation that is enqueued BEFORE the cancel operation completes; a
+// SUCCEEDED refund operation leaves the transaction REFUNDED, which predicate
+// (b) already excludes. So `status != SUCCEEDED` across both types covers the
+// whole handoff window with no gap.
+const SUPERSEDED_INTENT_OPERATION_TYPES = [
+  PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
+  PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+] as const;
+
+/**
+ * Guard (b′): every intent id on this payment whose money a live
+ * superseded-intent recovery operation already owns. Run under lock(1) inside
+ * the reconciliation transaction; the result feeds the `notIn` exclusion of
+ * the duplicate-capture candidate query.
+ */
+async function listLiveSupersededIntentIds(
+  tx: Prisma.TransactionClient,
+  paymentId: string
+): Promise<string[]> {
+  const operations = await tx.paymentRecoveryOperation.findMany({
+    where: {
+      paymentId,
+      type: { in: [...SUPERSEDED_INTENT_OPERATION_TYPES] },
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+    },
+    select: { paymentIntentId: true },
+  });
+  return [...new Set(operations.map((operation) => operation.paymentIntentId))];
+}
+
+/**
+ * Guard (c′), belt-and-braces sibling of (b′) with a deliberately DIFFERENT
+ * query shape (direct intent-id lookup, not scoped to a payment): does a live
+ * superseded-intent recovery operation own this specific intent's money? Used
+ * to re-check the matched "settlement" candidate so that even if it slipped
+ * the (b′) exclusion, the arriving capture stays plain already_paid.
+ */
+async function findLiveSupersededIntentOperation(
+  tx: Prisma.TransactionClient,
+  paymentIntentId: string
+) {
+  return tx.paymentRecoveryOperation.findFirst({
+    where: {
+      paymentIntentId,
+      type: { in: [...SUPERSEDED_INTENT_OPERATION_TYPES] },
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+    },
+    select: { id: true },
+  });
+}
 
 async function alertRefundFailure({
   booking,
@@ -247,6 +318,15 @@ export async function markBookingPaymentSucceeded({
       //       REFUNDED, so a #1765 repay-generation replay arriving alongside
       //       its refunded predecessor is never treated as a duplicate) exists
       //       on this payment under a different intent id;
+      //   (b′) that other capture's money is NOT already owned by the
+      //       superseded-intent machinery (a live CANCEL_PAYMENT_INTENT /
+      //       REFUND_SUPERSEDED_PAYMENT recovery operation — see
+      //       SUPERSEDED_INTENT_OPERATION_TYPES). The handoff of a superseded
+      //       intent's late capture sets it SUCCEEDED with a queued refund
+      //       WITHOUT ever passing through this function, so from the ledger
+      //       alone it is indistinguishable from a settlement; refunding the
+      //       arriving capture against it would refund the REAL settlement
+      //       while the cron refunds the superseded one — zero net cash;
       //   (c) no duplicate-capture refund has already been adjudicated for
       //       this booking against a DIFFERENT intent. Without (c), webhook
       //       replays of BOTH captures would refund both sides (Y settles, X
@@ -254,8 +334,17 @@ export async function markBookingPaymentSucceeded({
       //       different → refund Y too) and settle the booking at zero net
       //       cash. lock(1), held by every caller of this function, serialises
       //       the check-then-enqueue, so exactly one side of the pair can ever
-      //       open a refund operation.
+      //       open a refund operation;
+      //   (c′) belt-and-braces re-check of (b′) against the matched candidate
+      //       directly (different query shape) — if a live superseded-intent
+      //       operation owns the candidate's money, the arriving capture is
+      //       the settlement side and stays plain already_paid.
+      // All of these run inside the same lock(1) transaction.
       if (!refundedIntentHistory) {
+        const liveSupersededIntentIds = await listLiveSupersededIntentIds(
+          tx,
+          payment.id
+        );
         const otherSettledCapture = await tx.paymentTransaction.findFirst({
           where: {
             paymentId: payment.id,
@@ -264,7 +353,10 @@ export async function markBookingPaymentSucceeded({
             status: {
               in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
             },
-            stripePaymentIntentId: { not: paymentIntentId },
+            stripePaymentIntentId: {
+              not: paymentIntentId,
+              notIn: liveSupersededIntentIds,
+            },
             NOT: { stripePaymentIntentId: null },
           },
           select: { id: true, stripePaymentIntentId: true },
@@ -278,16 +370,28 @@ export async function markBookingPaymentSucceeded({
               store: tx,
             });
 
+          // (c′) — the candidate's own intent id re-checked against the live
+          // superseded-machinery operations. Skipped when (c) already settled
+          // the adjudication.
+          const supersededOwnsOtherCapture =
+            adjudicatedElsewhere || !otherSettledCapture.stripePaymentIntentId
+              ? null
+              : await findLiveSupersededIntentOperation(
+                  tx,
+                  otherSettledCapture.stripePaymentIntentId
+                );
+
           // Re-read the arriving duplicate's row AFTER the upsert above so the
           // frozen refund slice targets exactly this capture's transaction and
           // its outstanding captured amount — never a newest-first allocation
           // that could touch the settlement capture.
-          const duplicateTransaction = adjudicatedElsewhere
-            ? null
-            : await findPaymentTransactionByIntentId({
-                paymentIntentId,
-                store: tx,
-              });
+          const duplicateTransaction =
+            adjudicatedElsewhere || supersededOwnsOtherCapture
+              ? null
+              : await findPaymentTransactionByIntentId({
+                  paymentIntentId,
+                  store: tx,
+                });
           const duplicateRefundCents = duplicateTransaction
             ? Math.min(
                 amountCents,

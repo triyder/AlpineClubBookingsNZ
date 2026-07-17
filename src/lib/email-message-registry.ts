@@ -52,6 +52,13 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-booking-request-pending",
   "admin-booking-request-hold-expired",
   "admin-school-manual-invoice",
+  // #1967/#1994: split non-member guest portion unpaid at hold expiry (no card
+  // on file). Ships via sendToAdmins, so it classifies as an admin alert.
+  // Deliberately NOT in LOCKED_DELIVERY_TEMPLATE_NAMES — it is an operational
+  // nudge (the member already has their payment link; no money is lost if an
+  // admin mutes it), so admins keep full delivery-mode control. Still gated by
+  // the adminPaymentFailure notification preference at send time (#1422).
+  "admin-split-settlement-unpaid",
 ]);
 
 // Admin/system templates whose delivery mode admins must NOT be able to change.
@@ -143,6 +150,10 @@ const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> =
   "age-up-parent-email-handoff": ["targetAgeTier", "targetAgeTierMinAge"],
   "booking-request-verification": ["verifyUrl"],
   "booking-request-approved": ["payUrl"],
+  // #1967/#1994: the send passes a pre-built {{payUrl}} alongside the raw
+  // {{token}}, so allow admins to reference it in an override (mirrors
+  // booking-request-approved).
+  "split-guest-payment-link": ["payUrl"],
   "booking-request-quote": ["respondUrl"],
 };
 
@@ -212,9 +223,15 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "bulk-communication": ["adminEnteredBody"],
   "booking-request-verification": ["token"],
   "booking-request-approved": ["token"],
+  // #1967/#1994: the tokenised /pay/<token> bearer link is the essential body
+  // content — the required "token" blocks an override that drops the pay link.
+  // Sensitive-log redaction is driven separately by SENSITIVE_EMAIL_LOG_TEMPLATES
+  // in src/lib/email/internal.ts, which already contains this template.
+  "split-guest-payment-link": ["token"],
   "booking-request-quote": ["token"],
   "admin-booking-request-pending": ["requesterName", "reviewUrl"],
   "admin-booking-request-hold-expired": ["requesterName", "reviewUrl"],
+  "admin-split-settlement-unpaid": ["memberName", "reviewUrl"],
   "admin-partner-share-swept": ["memberName", "partnerName", "reason"],
   "booking-review-approved": ["bookingId"],
   "induction-sign-off-request": ["inductionUrl"],
@@ -360,6 +377,18 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "admin-booking-request-hold-expired": {
     triggerSummary: "Request-origin booking unpaid at hold expiry",
     frequency: "Per hold-expiry check on an unpaid request booking",
+  },
+  "admin-split-settlement-unpaid": {
+    triggerSummary:
+      "Split booking's non-member guest portion reached its hold deadline with no card on file (member paid their own place by internet banking, or their own place is also unpaid)",
+    frequency:
+      "Once per hold extension while the guest portion stays unpaid (roughly every two days, matching the request-origin hold-expired cadence)",
+  },
+  "split-guest-payment-link": {
+    triggerSummary:
+      "Split booking's guest portion needs settling with no saved card, so the member is emailed a secure /pay/<token> link",
+    frequency:
+      "Once per fresh payment-link mint (idempotent across cron re-runs); also on the on-demand booking-detail issue action",
   },
   "booking-review-approved": {
     triggerSummary:

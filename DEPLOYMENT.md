@@ -260,6 +260,63 @@ verification queries, sequencing, and the ledger entries that release needs;
 each contract migration must name its `previous_expand_release` in
 `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`.
 
+## Config Self-Heal On Boot
+
+A routine production deploy runs `prisma migrate deploy` **only**. The seed
+(`prisma/seed.ts`) does **not** run on an upgrade, and a SQL migration **cannot
+read `config/club.json`** — so any config value the DB is expected to hold
+cannot be backfilled by the migration or the seed on a live upgrade.
+
+To close that gap the app runs a **boot-time config self-heal**
+(`src/lib/config-self-heal.ts`, invoked from `src/instrumentation.node.ts`).
+On every Node process start it walks a registry of self-heal steps and, for each
+registered setting, copies the current **effective `config/club.json` value**
+into its DB row **if — and only if — that row is still absent**. Properties:
+
+- **Create-if-absent only.** An admin's configured value (or an intentional
+  null on an existing row) is never overwritten.
+- **Idempotent.** A healthy install re-checks and writes nothing on later boots.
+- **Blue/green-safe.** When both slots boot at once, the second writer's
+  unique-constraint conflict (Prisma `P2002`) is treated as already-present, so
+  exactly one row is populated and no error surfaces.
+- **Best-effort.** Self-heal runs regardless of `CRON_ENABLED` and can never
+  block or fail startup; a step failure is logged (`scope: "config-self-heal"`)
+  and boot continues.
+- **Fallback-guarded.** Healing runs **only when the effective config came from
+  a valid primary `config/club.json`** (loader provenance `"primary"`). If the
+  primary is missing, unreadable, or malformed, the app boots on the
+  `club.example.json` identity or the hard-coded safe default — and the
+  self-heal **skips every step** rather than freezing that placeholder identity
+  (or safe-default capacity and rates) into the create-if-absent DB rows. Those
+  rows are DB-first authoritative and are never overwritten, so one bad boot
+  would otherwise strand the site on `"Example Mountain Club"` until an admin
+  edit or DB surgery. A skipped run logs a warning
+  (`scope: "config-self-heal"`) naming the provenance; **it self-repairs
+  automatically on the next boot** once a valid primary config is present. Every
+  step (including the capacity / age-tier / rate steps later collapse children
+  register) inherits this guard automatically.
+
+This mechanism — not migration/seed backfill — is what lets later config
+"collapse" changes remove a file/env fallback without stranding an existing
+deployment: the DB is already populated with the club's real value before the
+fallback is dropped. New settings register their own step in
+`SELF_HEAL_STEPS`; the first registered step backfills the club identity
+(`ClubIdentitySettings`).
+
+For a deliberate two-phase deploy, or to heal a cold database out-of-band
+without a restart, run the same routine manually:
+
+```bash
+npm run config:self-heal
+```
+
+It prints, per registered setting, whether the row was `healed`,
+`already-present`, or `failed`, and exits non-zero if any step failed. If the
+effective config is a fallback (no valid primary `config/club.json`), it writes
+nothing, prints the provenance and the remediation ("fix `config/club.json`,
+then rerun"), and **exits non-zero** — an out-of-band run that silently no-oped
+would hide the misconfiguration.
+
 ## Staging
 
 Use staging for browser checks, accessibility review, and integration rehearsal.

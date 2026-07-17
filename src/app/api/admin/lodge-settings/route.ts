@@ -45,7 +45,9 @@ const settingsSchema = z
   .strict();
 
 export async function GET(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   const lodgeId = new URL(request.url).searchParams.get("lodgeId");
@@ -62,7 +64,9 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   const json = await parseJsonRequestBody(request);

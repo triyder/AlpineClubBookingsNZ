@@ -3,6 +3,28 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// The panel reads the merged permission matrix off the session for its view-only
+// gating (#1940); a finance:view stub is enough here since these cases only
+// exercise the 403-load hide-the-panel backstop (#1548), never a save.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "u1",
+        adminPermissionMatrix: {
+          overview: "view",
+          bookings: "view",
+          membership: "view",
+          finance: "view",
+          lodge: "view",
+          content: "view",
+          support: "view",
+        },
+      },
+    },
+  }),
+}));
+
 import { FinanceReportMappingsPanel } from "@/components/admin/finance-report-mappings-panel";
 
 // Route either load into a finance-area denial; the other succeeds. A 403 on

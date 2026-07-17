@@ -20,7 +20,9 @@ const VALID_KEYS = [
  * Returns all Xero account code and item code mappings.
  */
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   try {
     const mappings = await prisma.xeroAccountMapping.findMany({
@@ -65,7 +67,9 @@ const UpdateMappingsSchema = z.object({
  * Updates Xero account code and item code mappings. Accepts partial updates.
  */
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: unknown;

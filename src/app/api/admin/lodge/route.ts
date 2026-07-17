@@ -127,7 +127,9 @@ function serializeLodge(lodge: {
  * Returns the lodge account details. Auto-creates if missing.
  */
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let accounts = await prisma.member.findMany({
@@ -217,7 +219,9 @@ const updateSchema = z.object({
  * Updates the lodge account email and/or password.
  */
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const body = await request.json();
@@ -335,7 +339,9 @@ const createSchema = z.object({
  * lodge device), optionally bound to a lodge via a STAFF grant.
  */
 export async function POST(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   // Separation of duties (upstream #1012): creating an account that holds

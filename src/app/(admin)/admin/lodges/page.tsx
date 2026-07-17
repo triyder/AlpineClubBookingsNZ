@@ -16,6 +16,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 type LodgeRecord = {
   id: string;
@@ -61,6 +67,9 @@ function formPayload(form: LodgeFormState) {
 
 export default function AdminLodgesPage() {
   const router = useRouter();
+  // Lodge properties are lodge config; the write routes enforce lodge:edit, so
+  // a lodge:view admin sees this screen read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge");
   const [lodges, setLodges] = useState<LodgeRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,6 +136,10 @@ export default function AdminLodgesPage() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(formPayload(form)),
           });
+      if (response.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
+      }
       if (!response.ok) {
         const data = (await response.json().catch(() => null)) as {
           error?: string;
@@ -158,6 +171,10 @@ export default function AdminLodgesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(force ? { active, force: true } : { active }),
       });
+      if (response.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
+      }
       if (!response.ok) {
         const data = (await response.json().catch(() => null)) as {
           error?: string;
@@ -215,11 +232,18 @@ export default function AdminLodgesPage() {
             change once a second active lodge exists.
           </p>
         </div>
-        <Button onClick={startCreate} disabled={saving || showForm}>
+        <ViewOnlyActionButton canEdit={canEdit} onClick={startCreate} disabled={saving || showForm}>
           <Plus className="mr-2 h-4 w-4" />
           Add lodge
-        </Button>
+        </ViewOnlyActionButton>
       </div>
+
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view the lodge properties but cannot change them.
+          Lodge edit access is required.
+        </AdminViewOnlyNotice>
+      )}
 
       {error ? (
         <p className="text-sm text-destructive" role="alert">
@@ -289,9 +313,9 @@ export default function AdminLodgesPage() {
               />
             </div>
             <div className="flex gap-2">
-              <Button onClick={() => void submitForm()} disabled={saving}>
+              <ViewOnlyActionButton canEdit={canEdit} onClick={() => void submitForm()} disabled={saving}>
                 {saving ? "Saving..." : "Save"}
-              </Button>
+              </ViewOnlyActionButton>
               <Button variant="outline" onClick={cancelEdit} disabled={saving}>
                 <X className="mr-2 h-4 w-4" />
                 Cancel
@@ -344,7 +368,8 @@ export default function AdminLodgesPage() {
                         Configure
                       </Link>
                     </Button>
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       variant="outline"
                       size="sm"
                       onClick={() => startEdit(lodge)}
@@ -352,15 +377,16 @@ export default function AdminLodgesPage() {
                     >
                       <Pencil className="mr-2 h-4 w-4" />
                       Edit
-                    </Button>
-                    <Button
+                    </ViewOnlyActionButton>
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       variant="outline"
                       size="sm"
                       onClick={() => void setActive(lodge, !lodge.active)}
                       disabled={saving}
                     >
                       {lodge.active ? "Deactivate" : "Activate"}
-                    </Button>
+                    </ViewOnlyActionButton>
                   </div>
                 </li>
               ))}
