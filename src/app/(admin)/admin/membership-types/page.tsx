@@ -40,6 +40,12 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { getSeasonYear } from "@/lib/utils";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
 type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED";
@@ -291,6 +297,7 @@ interface MembershipTypeEditorDialogProps {
   draft: DraftMembershipType;
   availableAgeTiers: AgeTier[];
   saving: boolean;
+  canEdit: boolean;
   onDraftChange: (patch: Partial<DraftMembershipType>) => void;
   onSave: () => void;
   onCancel: () => void;
@@ -303,6 +310,7 @@ function MembershipTypeEditorDialog({
   draft,
   availableAgeTiers,
   saving,
+  canEdit,
   onDraftChange,
   onSave,
   onCancel,
@@ -415,6 +423,7 @@ function MembershipTypeEditorDialog({
                       onDraftChange({ name: event.target.value })
                     }
                     maxLength={120}
+                    disabled={!canEdit}
                   />
                 </div>
                 <div className="space-y-2">
@@ -426,6 +435,7 @@ function MembershipTypeEditorDialog({
                       onCheckedChange={(checked) =>
                         onDraftChange({ isActive: checked === true })
                       }
+                      disabled={!canEdit}
                     />
                     <Label htmlFor="membership-type-editor-active">
                       Active and assignable
@@ -445,6 +455,7 @@ function MembershipTypeEditorDialog({
                   }
                   maxLength={1000}
                   rows={4}
+                  disabled={!canEdit}
                 />
               </div>
               <div className="space-y-2 rounded-md border border-slate-200 p-4">
@@ -455,6 +466,7 @@ function MembershipTypeEditorDialog({
                     onCheckedChange={(checked) =>
                       onDraftChange({ publiclyListed: checked === true })
                     }
+                    disabled={!canEdit}
                   />
                   <Label htmlFor="membership-type-editor-publicly-listed">
                     List this membership type publicly
@@ -474,6 +486,7 @@ function MembershipTypeEditorDialog({
                   }
                   maxLength={4000}
                   rows={4}
+                  disabled={!canEdit}
                 />
               </div>
             </section>
@@ -495,6 +508,7 @@ function MembershipTypeEditorDialog({
                   <Label>Booking behavior</Label>
                   <Select
                     value={draft.bookingBehavior}
+                    disabled={!canEdit}
                     onValueChange={(value) =>
                       onDraftChange({
                         bookingBehavior: value as BookingBehavior,
@@ -519,6 +533,7 @@ function MembershipTypeEditorDialog({
                   <Label>Subscription behavior</Label>
                   <Select
                     value={draft.subscriptionBehavior}
+                    disabled={!canEdit}
                     onValueChange={(value) =>
                       onDraftChange({
                         subscriptionBehavior: value as SubscriptionBehavior,
@@ -568,6 +583,7 @@ function MembershipTypeEditorDialog({
                         onCheckedChange={(checked) =>
                           toggleAgeTier(ageTier, checked === true)
                         }
+                        disabled={!canEdit}
                       />
                       {formatAgeTierLabel(ageTier)}
                     </label>
@@ -582,7 +598,8 @@ function MembershipTypeEditorDialog({
           <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
             <div>
               {target?.mode === "edit" && membershipType ? (
-                <Button
+                <ViewOnlyActionButton
+                  canEdit={canEdit}
                   type="button"
                   variant="outline"
                   onClick={() => onSetActive(!membershipType.isActive)}
@@ -594,14 +611,15 @@ function MembershipTypeEditorDialog({
                     <RotateCcw className="mr-2 h-4 w-4" />
                   )}
                   {membershipType.isActive ? "Archive" : "Reactivate"}
-                </Button>
+                </ViewOnlyActionButton>
               ) : null}
             </div>
             <div className="flex flex-col-reverse gap-2 sm:flex-row">
               <Button type="button" variant="outline" onClick={onCancel}>
                 Cancel
               </Button>
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 type="button"
                 onClick={onSave}
                 disabled={saving || Boolean(validationError) || !dirty}
@@ -614,7 +632,7 @@ function MembershipTypeEditorDialog({
                   <Save className="mr-2 h-4 w-4" />
                 )}
                 {target?.mode === "new" ? "Create type" : "Save changes"}
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           </DialogFooter>
         </DialogContent>
@@ -629,6 +647,7 @@ interface MembershipTypeMergeDialogProps {
   membershipTypes: MembershipType[];
   targetId: string;
   merging: boolean;
+  canEdit: boolean;
   onTargetChange: (targetId: string) => void;
   onCancel: () => void;
   onConfirm: () => void;
@@ -639,6 +658,7 @@ function MembershipTypeMergeDialog({
   membershipTypes,
   targetId,
   merging,
+  canEdit,
   onTargetChange,
   onCancel,
   onConfirm,
@@ -678,7 +698,7 @@ function MembershipTypeMergeDialog({
             <Select
               value={targetId || ""}
               onValueChange={onTargetChange}
-              disabled={merging || targetOptions.length === 0}
+              disabled={merging || targetOptions.length === 0 || !canEdit}
             >
               <SelectTrigger id="membership-type-merge-target">
                 <SelectValue placeholder="Select a target type" />
@@ -720,7 +740,8 @@ function MembershipTypeMergeDialog({
           >
             Cancel
           </Button>
-          <Button
+          <ViewOnlyActionButton
+            canEdit={canEdit}
             type="button"
             variant="destructive"
             onClick={onConfirm}
@@ -732,7 +753,7 @@ function MembershipTypeMergeDialog({
               <Trash2 className="mr-2 h-4 w-4" />
             )}
             Merge and delete
-          </Button>
+          </ViewOnlyActionButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -746,6 +767,7 @@ interface MembershipTypeListProps {
   savingId: string | null;
   deletingId: string | null;
   reordering: boolean;
+  canEdit: boolean;
   onEdit: (type: MembershipType) => void;
   onMove: (index: number, direction: -1 | 1) => void;
   onSetActive: (type: MembershipType, isActive: boolean) => void;
@@ -759,6 +781,7 @@ function MembershipTypeList({
   savingId,
   deletingId,
   reordering,
+  canEdit,
   onEdit,
   onMove,
   onSetActive,
@@ -839,7 +862,7 @@ function MembershipTypeList({
                   variant="outline"
                   size="icon"
                   onClick={() => onMove(index, -1)}
-                  disabled={index === 0 || reordering}
+                  disabled={index === 0 || reordering || !canEdit}
                   aria-label={`Move ${type.name} up`}
                 >
                   <ArrowUp className="h-4 w-4" />
@@ -849,7 +872,11 @@ function MembershipTypeList({
                   variant="outline"
                   size="icon"
                   onClick={() => onMove(index, 1)}
-                  disabled={index === membershipTypes.length - 1 || reordering}
+                  disabled={
+                    index === membershipTypes.length - 1 ||
+                    reordering ||
+                    !canEdit
+                  }
                   aria-label={`Move ${type.name} down`}
                 >
                   <ArrowDown className="h-4 w-4" />
@@ -857,15 +884,17 @@ function MembershipTypeList({
               </div>
 
               <div className="flex flex-wrap gap-2 xl:justify-end">
-                <Button
+                <ViewOnlyActionButton
+                  canEdit={canEdit}
                   type="button"
                   variant="outline"
                   onClick={() => onEdit(type)}
                 >
                   <Pencil className="mr-2 h-4 w-4" />
                   Edit
-                </Button>
-                <Button
+                </ViewOnlyActionButton>
+                <ViewOnlyActionButton
+                  canEdit={canEdit}
                   type="button"
                   variant="outline"
                   onClick={() => onSetActive(type, !type.isActive)}
@@ -879,9 +908,10 @@ function MembershipTypeList({
                     <RotateCcw className="mr-2 h-4 w-4" />
                   )}
                   {type.isActive ? "Archive" : "Reactivate"}
-                </Button>
+                </ViewOnlyActionButton>
                 {!type.isBuiltIn && (
-                  <Button
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     type="button"
                     variant="outline"
                     onClick={() => onDelete(type)}
@@ -894,7 +924,7 @@ function MembershipTypeList({
                       <Trash2 className="mr-2 h-4 w-4" />
                     )}
                     Delete
-                  </Button>
+                  </ViewOnlyActionButton>
                 )}
               </div>
             </div>
@@ -937,6 +967,9 @@ export default function AdminMembershipTypesPage() {
   const feedbackRef = useRef<HTMLDivElement>(null);
   const { scrollToError, scrollToTop } = useScrollToFeedback();
   const { confirm, confirmDialog } = useConfirm();
+  // Membership types resolve to the membership area (their write routes enforce
+  // membership:edit), so gate all editors on that area (#1940).
+  const canEdit = useAdminAreaEditAccess("membership");
 
   const sortedTypes = useMemo(
     () =>
@@ -1081,6 +1114,12 @@ export default function AdminMembershipTypesPage() {
         | { membershipType: MembershipType }
         | { error?: string };
       if (!response.ok || !("membershipType" in body)) {
+        // Stale-tab / narrowed-permission save surfaces the persistent
+        // forbidden-save reason in the existing error banner (#1940).
+        if (response.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          return;
+        }
         throw new Error(
           responseErrorMessage(body, "Failed to create membership type"),
         );
@@ -1127,6 +1166,10 @@ export default function AdminMembershipTypesPage() {
         | { membershipType: MembershipType }
         | { error?: string };
       if (!response.ok || !("membershipType" in body)) {
+        if (response.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          return;
+        }
         throw new Error(
           responseErrorMessage(body, "Failed to save membership type"),
         );
@@ -1178,6 +1221,10 @@ export default function AdminMembershipTypesPage() {
         | MembershipTypesResponse
         | { error?: string };
       if (!response.ok || !("membershipTypes" in body)) {
+        if (response.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          return;
+        }
         throw new Error(
           responseErrorMessage(body, "Failed to reorder membership types"),
         );
@@ -1217,6 +1264,10 @@ export default function AdminMembershipTypesPage() {
         | { ok?: boolean; error?: string }
         | null;
       if (!response.ok || !body?.ok) {
+        if (response.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          return;
+        }
         throw new Error(
           responseErrorMessage(body, "Failed to delete membership type"),
         );
@@ -1291,6 +1342,10 @@ export default function AdminMembershipTypesPage() {
         | { ok?: boolean; reassignedCount?: number; error?: string }
         | null;
       if (!response.ok || !body?.ok) {
+        if (response.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          return;
+        }
         throw new Error(
           responseErrorMessage(body, "Failed to merge membership type"),
         );
@@ -1349,6 +1404,10 @@ export default function AdminMembershipTypesPage() {
         | RollForwardResponse
         | { error?: string };
       if (!response.ok || !("wouldCopyCount" in body)) {
+        if (response.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          return;
+        }
         throw new Error(
           responseErrorMessage(
             body,
@@ -1422,12 +1481,23 @@ export default function AdminMembershipTypesPage() {
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
-          <Button type="button" onClick={openNewEditor}>
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            type="button"
+            onClick={openNewEditor}
+          >
             <Plus className="mr-2 h-4 w-4" />
             New membership type
-          </Button>
+          </ViewOnlyActionButton>
         </div>
       </div>
+
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view membership types but cannot change them.
+          Membership edit access is required.
+        </AdminViewOnlyNotice>
+      ) : null}
 
       {(error || savedMessage) && (
         <div
@@ -1468,6 +1538,7 @@ export default function AdminMembershipTypesPage() {
           savingId={savingId}
           deletingId={deletingId}
           reordering={reordering}
+          canEdit={canEdit}
           onEdit={openEditEditor}
           onMove={moveType}
           onSetActive={(type, isActive) => void setActive(type, isActive)}
@@ -1501,6 +1572,7 @@ export default function AdminMembershipTypesPage() {
                     Number.parseInt(event.target.value, 10) || 2020,
                   )
                 }
+                disabled={!canEdit}
               />
             </div>
             <div className="space-y-2">
@@ -1516,9 +1588,11 @@ export default function AdminMembershipTypesPage() {
                     Number.parseInt(event.target.value, 10) || 2020,
                   )
                 }
+                disabled={!canEdit}
               />
             </div>
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               type="button"
               variant="outline"
               onClick={() => void rollForwardAssignments(true)}
@@ -1533,8 +1607,9 @@ export default function AdminMembershipTypesPage() {
                 <Eye className="mr-2 h-4 w-4" />
               )}
               Preview
-            </Button>
-            <Button
+            </ViewOnlyActionButton>
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               type="button"
               onClick={() => void rollForwardAssignments(false)}
               disabled={
@@ -1548,7 +1623,7 @@ export default function AdminMembershipTypesPage() {
                 <RotateCcw className="mr-2 h-4 w-4" />
               )}
               Run
-            </Button>
+            </ViewOnlyActionButton>
           </div>
         </div>
 
@@ -1633,6 +1708,7 @@ export default function AdminMembershipTypesPage() {
         draft={editorDraft}
         availableAgeTiers={availableAgeTiers}
         saving={editorSaving}
+        canEdit={canEdit}
         onDraftChange={updateEditorDraft}
         onSave={() => {
           if (editorTarget?.mode === "new") {
@@ -1652,6 +1728,7 @@ export default function AdminMembershipTypesPage() {
         membershipTypes={sortedTypes}
         targetId={mergeTargetId}
         merging={merging}
+        canEdit={canEdit}
         onTargetChange={setMergeTargetId}
         onCancel={() => {
           if (merging) return;

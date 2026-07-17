@@ -34,6 +34,12 @@ import {
   initialLodgeIdFromLocation,
   useLodgeOptions,
 } from "@/components/lodge-select";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 type MemberSummary = {
   id: string;
@@ -66,6 +72,9 @@ function handleAllocatedToSearchKeyDown(
 
 export default function LockersPage() {
   const { confirm, confirmDialog } = useConfirm();
+  // Lockers live under the membership area (their write routes enforce
+  // membership:edit), so gate the editor on that area (#1940).
+  const canEdit = useAdminAreaEditAccess("membership");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -155,6 +164,12 @@ export default function LockersPage() {
           });
       const body = await response.json();
       if (!response.ok) {
+        // Stale-tab / narrowed-permission save surfaces the persistent
+        // forbidden-save reason in the existing error line (#1940).
+        if (response.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          return;
+        }
         throw new Error(
           body.error ||
             (editingLockerId
@@ -226,6 +241,10 @@ export default function LockersPage() {
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
+        if (response.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          return;
+        }
         throw new Error(body?.error || "Failed to delete locker");
       }
 
@@ -262,6 +281,10 @@ export default function LockersPage() {
       });
       const body = await response.json();
       if (!response.ok) {
+        if (response.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          return;
+        }
         throw new Error(body.error || "Failed to create lockers");
       }
       setBulkCount("");
@@ -325,6 +348,13 @@ export default function LockersPage() {
         description="Create lockers and optionally allocate them to members."
       />
 
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view lockers but cannot change them. Membership
+          edit access is required.
+        </AdminViewOnlyNotice>
+      ) : null}
+
       <div className="max-w-xs">
         <LodgeSelect lodges={lodges} value={lodgeId} onChange={setLodgeId} loading={lodgesLoading} />
       </div>
@@ -351,12 +381,14 @@ export default function LockersPage() {
                 onChange={(event) => setName(event.target.value)}
                 placeholder="Locker A1"
                 required
+                disabled={!canEdit}
               />
             </div>
             <div className="space-y-1 sm:col-span-1">
               <Label htmlFor="locker-allocated">Allocated To</Label>
               <Select
                 value={allocatedToMemberId}
+                disabled={!canEdit}
                 onValueChange={(value) => {
                   setAllocatedToMemberId(value);
                   setAllocatedToSearch("");
@@ -392,7 +424,8 @@ export default function LockersPage() {
               </Select>
             </div>
             <div className="flex items-end gap-2 sm:col-span-1">
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 type="submit"
                 disabled={saving}
                 className="w-full sm:w-auto"
@@ -402,7 +435,7 @@ export default function LockersPage() {
                   : editingLockerId
                     ? "Update Locker"
                     : "Create Locker"}
-              </Button>
+              </ViewOnlyActionButton>
               {editingLockerId ? (
                 <Button
                   type="button"
@@ -442,6 +475,7 @@ export default function LockersPage() {
                 placeholder="12"
                 value={bulkCount}
                 onChange={(event) => setBulkCount(event.target.value)}
+                disabled={!canEdit}
               />
             </div>
             <div className="space-y-1">
@@ -451,17 +485,19 @@ export default function LockersPage() {
                 value={bulkNamePrefix}
                 onChange={(event) => setBulkNamePrefix(event.target.value)}
                 placeholder="Locker"
+                disabled={!canEdit}
               />
             </div>
             <div className="flex items-end">
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 type="button"
                 onClick={() => void bulkCreateLockers()}
                 disabled={bulkSaving || !bulkCount || Number(bulkCount) < 1}
                 className="w-full sm:w-auto"
               >
                 {bulkSaving ? "Creating..." : "Create Lockers"}
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           </div>
         </CardContent>
@@ -524,7 +560,8 @@ export default function LockersPage() {
                         <button
                           type="button"
                           onClick={() => beginEdit(locker)}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          disabled={!canEdit}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                           aria-label={`Edit locker ${locker.name}`}
                           title="Edit locker"
                         >
@@ -533,7 +570,7 @@ export default function LockersPage() {
                         <button
                           type="button"
                           onClick={() => void deleteLocker(locker)}
-                          disabled={deletingLockerId === locker.id}
+                          disabled={deletingLockerId === locker.id || !canEdit}
                           className="inline-flex h-8 w-8 items-center justify-center rounded border border-danger/30 text-danger transition-colors hover:bg-danger-muted disabled:cursor-not-allowed disabled:opacity-50"
                           aria-label={`Delete locker ${locker.name}`}
                           title="Delete locker"

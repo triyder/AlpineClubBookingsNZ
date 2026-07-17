@@ -20,6 +20,12 @@ import {
   type MemberFieldsSettingsValues,
 } from "@/config/member-fields";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 interface FieldsResponse {
   settings: MemberFieldsSettingsValues;
@@ -57,6 +63,9 @@ export default function AdminMemberFieldsPage() {
   const pageRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
   const { scrollToError, scrollToTop } = useScrollToFeedback();
+  // Member fields live under the membership area (the write route enforces
+  // membership:edit), so gate the editor on that area (#1940).
+  const canEdit = useAdminAreaEditAccess("membership");
 
   async function loadSettings() {
     setLoading(true);
@@ -128,6 +137,12 @@ export default function AdminMemberFieldsPage() {
         | FieldsResponse
         | { error?: string };
       if (!response.ok || !("settings" in body)) {
+        // Stale-tab / narrowed-permission save surfaces the persistent
+        // forbidden-save reason in the existing error banner (#1940).
+        if (response.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          return;
+        }
         throw new Error(responseErrorMessage(body, "Failed to save settings"));
       }
       setPayload(body);
@@ -182,7 +197,8 @@ export default function AdminMemberFieldsPage() {
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
-          <Button
+          <ViewOnlyActionButton
+            canEdit={canEdit}
             type="button"
             onClick={() => void saveSettings()}
             disabled={!dirty || saving || draft === null}
@@ -193,9 +209,16 @@ export default function AdminMemberFieldsPage() {
               <Save className="mr-2 h-4 w-4" />
             )}
             Save
-          </Button>
+          </ViewOnlyActionButton>
         </div>
       </div>
+
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view member fields but cannot change them.
+          Membership edit access is required.
+        </AdminViewOnlyNotice>
+      ) : null}
 
       {(error || savedMessage) && (
         <div
@@ -238,7 +261,7 @@ export default function AdminMemberFieldsPage() {
                     onCheckedChange={(checked) =>
                       setFieldEnabled(field.key, checked === true)
                     }
-                    disabled={saving}
+                    disabled={saving || !canEdit}
                     className="mt-1"
                   />
                   <div className="min-w-0 flex-1">

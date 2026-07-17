@@ -18,6 +18,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 interface CommitteeRole {
   id: string;
@@ -111,6 +117,9 @@ export default function CommitteePage() {
   const pageRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const { scrollToError, scrollToTop } = useScrollToFeedback();
+  // Committee roles/assignments resolve to the membership area (their write
+  // routes enforce membership:edit), so gate the editors on that area (#1940).
+  const canEdit = useAdminAreaEditAccess("membership");
 
   const [showRoleForm, setShowRoleForm] = useState(false);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
@@ -245,6 +254,12 @@ export default function CommitteePage() {
       });
       const body = await readJson(response);
       if (!response.ok) {
+        // Stale-tab / narrowed-permission save surfaces the persistent
+        // forbidden-save reason in the existing error banner (#1940).
+        if (response.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          return;
+        }
         throw new Error(responseErrorMessage(body, "Failed to save role"));
       }
       closeRoleForm();
@@ -284,6 +299,10 @@ export default function CommitteePage() {
       );
       const body = await readJson(response);
       if (!response.ok) {
+        if (response.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          return;
+        }
         throw new Error(
           responseErrorMessage(body, "Failed to save assignment"),
         );
@@ -315,6 +334,8 @@ export default function CommitteePage() {
     );
     if (response.ok) {
       await fetchCommitteeData();
+    } else if (response.status === 403) {
+      setError(ADMIN_FORBIDDEN_SAVE_REASON);
     }
   }
 
@@ -352,6 +373,13 @@ export default function CommitteePage() {
         </div>
       ) : null}
 
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view committee roles and assignments but cannot
+          change them. Membership edit access is required.
+        </AdminViewOnlyNotice>
+      ) : null}
+
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -362,10 +390,10 @@ export default function CommitteePage() {
               linked member emails are used only when a role email is blank.
             </p>
           </div>
-          <Button onClick={openAddRoleForm}>
+          <ViewOnlyActionButton canEdit={canEdit} onClick={openAddRoleForm}>
             <Plus className="mr-2 h-4 w-4" />
             Add Role
-          </Button>
+          </ViewOnlyActionButton>
         </CardHeader>
         <CardContent className="space-y-4">
           {showRoleForm ? (
@@ -396,6 +424,7 @@ export default function CommitteePage() {
                       setRoleForm({ ...roleForm, name: event.target.value })
                     }
                     required
+                    disabled={!canEdit}
                   />
                 </div>
                 <div>
@@ -411,6 +440,7 @@ export default function CommitteePage() {
                         sortOrder: parseInt(event.target.value, 10) || 0,
                       })
                     }
+                    disabled={!canEdit}
                   />
                 </div>
               </div>
@@ -427,6 +457,7 @@ export default function CommitteePage() {
                     })
                   }
                   placeholder="president@example.org"
+                  disabled={!canEdit}
                 />
               </div>
               <div className="mt-4">
@@ -442,6 +473,7 @@ export default function CommitteePage() {
                     })
                   }
                   maxLength={1000}
+                  disabled={!canEdit}
                 />
               </div>
               <label className="mt-4 flex items-center gap-2 text-sm">
@@ -454,15 +486,16 @@ export default function CommitteePage() {
                       isActive: event.target.checked,
                     })
                   }
+                  disabled={!canEdit}
                   className="h-4 w-4 rounded border-border"
                 />
                 Active
               </label>
               <div className="mt-4 flex gap-2">
-                <Button type="submit" disabled={saving}>
+                <ViewOnlyActionButton canEdit={canEdit} type="submit" disabled={saving}>
                   <Save className="mr-2 h-4 w-4" />
                   Save Role
-                </Button>
+                </ViewOnlyActionButton>
                 <Button type="button" variant="outline" onClick={closeRoleForm}>
                   Cancel
                 </Button>
@@ -512,13 +545,14 @@ export default function CommitteePage() {
                     )}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       variant="ghost"
                       size="sm"
                       onClick={() => openEditRoleForm(role)}
                     >
                       <Pencil className="h-4 w-4" />
-                    </Button>
+                    </ViewOnlyActionButton>
                   </TableCell>
                 </TableRow>
               ))}
@@ -607,21 +641,23 @@ export default function CommitteePage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button
+                        <ViewOnlyActionButton
+                          canEdit={canEdit}
                           variant="ghost"
                           size="sm"
                           onClick={() => openAssignmentForm(assignment)}
                         >
                           <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
+                        </ViewOnlyActionButton>
+                        <ViewOnlyActionButton
+                          canEdit={canEdit}
                           variant="ghost"
                           size="sm"
                           className="text-danger hover:bg-danger-muted hover:text-danger"
                           onClick={() => handleDeactivateAssignment(assignment)}
                         >
                           <Trash2 className="h-4 w-4" />
-                        </Button>
+                        </ViewOnlyActionButton>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -667,6 +703,7 @@ export default function CommitteePage() {
                         blurb: event.target.value,
                       })
                     }
+                    disabled={!canEdit}
                   />
                 </div>
                 <div>
@@ -682,6 +719,7 @@ export default function CommitteePage() {
                         sortOrder: parseInt(event.target.value, 10) || 0,
                       })
                     }
+                    disabled={!canEdit}
                   />
                 </div>
               </div>
@@ -704,6 +742,7 @@ export default function CommitteePage() {
                           [key]: event.target.checked,
                         })
                       }
+                      disabled={!canEdit}
                       className="h-4 w-4 rounded border-border"
                     />
                     {label}
@@ -711,10 +750,10 @@ export default function CommitteePage() {
                 ))}
               </div>
               <div className="mt-4 flex gap-2">
-                <Button type="submit" disabled={saving}>
+                <ViewOnlyActionButton canEdit={canEdit} type="submit" disabled={saving}>
                   <Save className="mr-2 h-4 w-4" />
                   Save Assignment
-                </Button>
+                </ViewOnlyActionButton>
                 <Button
                   type="button"
                   variant="outline"
