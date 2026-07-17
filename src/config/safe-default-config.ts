@@ -28,9 +28,10 @@ function deepFreeze<T>(value: T): T {
  * Invariants (asserted by `safe-default-config.test.ts`):
  * - It MUST satisfy `clubConfigSchema` (so it is a drop-in for a valid file).
  * - `publicUrl` MUST be a valid absolute http(s) URL, because
- *   `src/config/club-identity.ts` runs `new URL(clubConfig.publicUrl).host` at
- *   module import — a blank/invalid value would crash boot. Keep it a real
- *   absolute URL when editing this constant.
+ *   `src/config/club-identity.ts` runs `new URL(CLUB_PUBLIC_URL).host` at module
+ *   import, and `CLUB_PUBLIC_URL` falls back to `SAFE_DEFAULT_CONFIG.publicUrl`
+ *   when `NEXTAUTH_URL` is absent (C6 #1985) — a blank/invalid value would crash
+ *   boot. Keep it a real absolute URL when editing this constant.
  *
  * Defined here in its own side-effect-free module (rather than inline in
  * `club.ts`) so that importing the default never triggers `club.ts`'s eager

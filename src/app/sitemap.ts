@@ -1,8 +1,11 @@
 import type { MetadataRoute } from "next";
-import { CLUB_PUBLIC_URL } from "@/config/club-identity";
+import { SAFE_DEFAULT_CONFIG } from "@/config/club";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = process.env.NEXTAUTH_URL || CLUB_PUBLIC_URL;
+  // Bootstrap layer (C6 #1985): the sitemap runs synchronously at build/request
+  // time with no DB, so the app origin is the `NEXTAUTH_URL` bootstrap env var,
+  // falling back to `SAFE_DEFAULT_CONFIG.publicUrl` — never `config/club.json`.
+  const baseUrl = process.env.NEXTAUTH_URL || SAFE_DEFAULT_CONFIG.publicUrl;
 
   return [
     {

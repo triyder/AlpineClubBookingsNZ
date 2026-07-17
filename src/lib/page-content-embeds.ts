@@ -7,7 +7,6 @@ import {
   imagePublicUrl,
   resolveInImagesRoot,
 } from "@/lib/image-storage";
-import { CLUB_PUBLIC_URL } from "@/config/club-identity";
 import { getClubIdentity } from "@/lib/club-identity-settings";
 import { APP_CURRENCY } from "@/config/operational";
 import {
@@ -191,7 +190,13 @@ const warnedUnsafeTokenUrls = new Set<string>();
 // sanitisation the sanitiser's scheme allowlist never sees the resolved
 // value. HTML-escaping does not neutralise a dangerous URL scheme, so
 // enforce the same http/https/mailto allowlist here before injection.
-function safeTokenUrl(token: string, value: string): string {
+//
+// `fallbackUrl` (C6 #1985): when a token value carries a disallowed scheme we
+// substitute a safe URL. The caller passes the DB-first resolved public URL
+// (getClubIdentity().publicUrl, itself the NEXTAUTH_URL/safe-default bootstrap
+// origin) rather than a static config constant, so the fallback tracks the
+// resolved identity; "#" is the last resort if even that is unsafe.
+function safeTokenUrl(token: string, value: string, fallbackUrl: string): string {
   if (isSafeTokenUrl(value)) {
     return value;
   }
@@ -202,7 +207,7 @@ function safeTokenUrl(token: string, value: string): string {
       "Blocked text-token config value with a disallowed URL scheme; only http, https, and mailto URLs are rendered.",
     );
   }
-  return isSafeTokenUrl(CLUB_PUBLIC_URL) ? CLUB_PUBLIC_URL : "#";
+  return isSafeTokenUrl(fallbackUrl) ? fallbackUrl : "#";
 }
 
 // Exported for reuse by other sanitised HTML surfaces (lodge instructions).
@@ -294,9 +299,11 @@ export async function resolveTextTokens(contentHtml: string): Promise<string> {
               "facebook-url",
               // DB-first (C5 #1984): the admin-editable facebookUrl resolved via
               // getClubIdentity() wins over the static config constant, matching
-              // {{club-name}}/{{hut-leader}} above. Falls back to the public URL
+              // {{club-name}}/{{hut-leader}} above. Falls back to the resolved
+              // public URL (C6 #1985 — the bootstrap origin, never club.json)
               // when no link is configured.
-              clubIdentity.socialLinks?.facebook ?? CLUB_PUBLIC_URL,
+              clubIdentity.socialLinks?.facebook ?? clubIdentity.publicUrl,
+              clubIdentity.publicUrl,
             ),
           );
         default:

@@ -52,11 +52,23 @@ vi.mock("@/lib/rate-limit", () => ({
 }));
 vi.mock("@/lib/email-templates", () => ({ escapeHtml: vi.fn((s: string) => s) }));
 
+// The contact route resolves its default recipient DB-first from
+// EmailMessageSetting.contactEmail (C6 #1985), no longer the static
+// CLUB_CONTACT_EMAIL club-identity constant. A distinct sentinel proves the
+// route uses the resolved (DB) value, not a config/bootstrap default.
+const { DEFAULT_CONTACT_EMAIL } = vi.hoisted(() => ({
+  DEFAULT_CONTACT_EMAIL: "committee-inbox@club.test",
+}));
+vi.mock("@/lib/email-message-settings", () => ({
+  loadEmailMessageSettings: vi.fn(async () => ({
+    contactEmail: DEFAULT_CONTACT_EMAIL,
+  })),
+}));
+
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { sendEmail } from "@/lib/email";
 import logger from "@/lib/logger";
-import { CLUB_CONTACT_EMAIL } from "@/config/club-identity";
 import { GET as listRoles, POST as createRole } from "@/app/api/admin/committee/roles/route";
 import { PATCH as updateRole, DELETE as deleteRole } from "@/app/api/admin/committee/roles/[id]/route";
 import { GET as listAssignments, POST as createAssignment } from "@/app/api/admin/committee/assignments/route";
@@ -789,8 +801,8 @@ describe("Contact API - committee contact email mode routing", () => {
     const res = await POST(contactReq("assign1"));
     expect(res.status).toBe(200);
     const emailArgs = vi.mocked(sendEmail).mock.calls[0][0];
-    // Never an empty `to`: routing lands on the ultimate club default.
-    expect(emailArgs.to).toBe(CLUB_CONTACT_EMAIL);
+    // Never an empty `to`: routing lands on the DB-first club default recipient.
+    expect(emailArgs.to).toBe(DEFAULT_CONTACT_EMAIL);
     expect(emailArgs.to).toBeTruthy();
     expect(logger.warn).toHaveBeenCalled();
   });
@@ -949,7 +961,7 @@ describe("Contact API - recipient lookup from database", () => {
       })
     );
     expect(sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ to: CLUB_CONTACT_EMAIL })
+      expect.objectContaining({ to: DEFAULT_CONTACT_EMAIL })
     );
   });
 
@@ -1006,7 +1018,7 @@ describe("Contact API - recipient lookup from database", () => {
 
     expect(sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: CLUB_CONTACT_EMAIL,
+        to: DEFAULT_CONTACT_EMAIL,
         subject: "Website Contact (to President): Test User",
       })
     );
@@ -1063,7 +1075,7 @@ describe("Contact API - recipient lookup from database", () => {
     expect(prisma.committeeAssignment.findFirst).not.toHaveBeenCalled();
 
     expect(sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ to: CLUB_CONTACT_EMAIL })
+      expect.objectContaining({ to: DEFAULT_CONTACT_EMAIL })
     );
   });
 });

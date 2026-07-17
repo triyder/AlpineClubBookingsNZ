@@ -49,6 +49,40 @@ constant, and it always carries a valid absolute `publicUrl` so the identity
 bootstrap layer (`src/config/club-identity.ts`) cannot throw. It is a safe
 placeholder only — a real deployment must still configure the club.
 
+#### Bootstrap layer for the collapsing identity fields (C6)
+
+Five identity fields — **public URL**, **support email**, **contact email**,
+**email from-name**, and **social links** — are never read from
+`config/club.json` at runtime. Every consumer resolves them one of two ways:
+
+- **Async-context readers resolve DB-first.** Outbound email identity (sender
+  from-name, support/contact addresses) comes from `EmailMessageSetting`,
+  applied at send time via `applyEmailMessageSettings*` /
+  `formatEmailFromAddressWithSettings` (`src/lib/email-message-settings.ts`); the
+  public contact `mailto:` (contact route + the pre-setup website screen) reads
+  `EmailMessageSetting.contactEmail`; CMS `{{facebook-url}}` /
+  URL tokens resolve through the DB-first `getClubIdentity()` identity
+  (`src/lib/page-content-embeds.ts`).
+- **Genuinely synchronous, boot-critical sites use the bootstrap layer, not
+  `club.json`.** The app origin (sitemap, root metadata `metadataBase`, the
+  identity `publicHost` used for `clubDomainEmail`) comes from the `NEXTAUTH_URL`
+  bootstrap env var, falling back to `SAFE_DEFAULT_CONFIG.publicUrl`. The
+  outbound **envelope sender** (`EMAIL_FROM` in `src/lib/email-sender.ts`) is a
+  bootstrap concern — it must be a provider-verified (SES) address — so it comes
+  from the `EMAIL_FROM` env var, falling back to
+  `SAFE_DEFAULT_CONFIG.supportEmail`; the real From header still prefers the
+  DB-first `EmailMessageSetting.supportEmail` when `EMAIL_FROM` is unset. The
+  `SUPPORT_EMAIL` / `EMAIL_FROM_NAME` module constants and
+  `email-message-settings.ts`'s `EMAIL_DEFAULT_FROM_NAME` / default settings are
+  the **stable search keys** that the send-time replacement swaps for the live DB
+  values, so they stay config-derived (never the safe default) — mirroring the
+  `EMAIL_DEFAULT_LODGE_NAME` invariant.
+
+`NEXTAUTH_URL` and `EMAIL_FROM` are the only genuine bootstrap env inputs here;
+these fallbacks are intentional bootstrap defaults, never a `club.json` runtime
+read. On a real install the club's `config/club.json` values reach the DB via the
+seed / boot self-heal (see below), after which the DB is authoritative.
+
 ### DB-first identity (admin-editable)
 
 The club **name**, **short name**, **hut-leader label**, and **Facebook URL** are

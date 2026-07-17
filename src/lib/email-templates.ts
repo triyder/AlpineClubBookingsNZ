@@ -5,11 +5,15 @@
 
 import { getAppBaseUrl, sanitizeEmailHref } from "./app-url";
 import {
-  CLUB_EMAIL_FROM_NAME,
   CLUB_HUT_LEADER_LABEL,
   CLUB_LODGE_TRAVEL_NOTE,
   CLUB_NAME,
 } from "@/config/club-identity";
+// Search key (C6 #1985): the `<title>` bakes the config-derived default from-name,
+// which applyEmailMessageSettingsToHtml swaps for the DB-first
+// EmailMessageSetting.emailFromName at send time. Must NOT come from the severed
+// club-identity export (now safe-default-derived) or the replacement would no-op.
+import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
@@ -46,7 +50,7 @@ function layout(content: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(CLUB_EMAIL_FROM_NAME)}</title>
+  <title>${escapeHtml(EMAIL_DEFAULT_FROM_NAME)}</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: ${p.snow}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: ${p.snow};">

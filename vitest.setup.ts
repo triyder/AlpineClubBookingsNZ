@@ -7,13 +7,14 @@
 // exist only to satisfy that config gate, mirroring how CI supplies fake
 // STRIPE_SECRET_KEY / XERO_ENCRYPTION_KEY values.
 //
-// EMAIL_FROM is set to CLUB_SUPPORT_EMAIL — the exact value email-sender.ts
-// falls back to when EMAIL_FROM is unset — so the rendered "from" address is
-// byte-for-byte identical to the previous (unset) behaviour and no test that
-// asserts the sender address changes. Set with ??= so any test that deliberately
-// exercises a different/!ok config by assigning or deleting these keeps control.
-import { CLUB_SUPPORT_EMAIL } from "@/config/club-identity";
+// EMAIL_FROM is set to SAFE_DEFAULT_CONFIG.supportEmail — the exact value
+// email-sender.ts falls back to when EMAIL_FROM is unset (C6 #1985: the envelope
+// sender is bootstrap-derived, never club.json) — so the rendered "from" address
+// is byte-for-byte identical to the unset behaviour and no test that asserts the
+// sender address changes. Set with ??= so any test that deliberately exercises a
+// different/!ok config by assigning or deleting these keeps control.
+import { SAFE_DEFAULT_CONFIG } from "@/config/club";
 
-process.env.EMAIL_FROM ??= CLUB_SUPPORT_EMAIL;
+process.env.EMAIL_FROM ??= SAFE_DEFAULT_CONFIG.supportEmail;
 process.env.AWS_SES_ACCESS_KEY_ID ??= "test-ses-access-key-id";
 process.env.AWS_SES_SECRET_ACCESS_KEY ??= "test-ses-secret-access-key";

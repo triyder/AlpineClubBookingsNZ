@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { getAppBaseUrl } from "../app-url";
-import {
-  CLUB_EMAIL_FROM_NAME,
-  CLUB_SUPPORT_EMAIL,
-} from "@/config/club-identity";
+// New resolution (C6 #1985): the outbound "from" is built from the DB-first
+// email settings default from-name and the bootstrap envelope sender, not the
+// severed club-identity constants. In this config the settings default equals
+// EMAIL_DEFAULT_FROM_NAME and the envelope equals EMAIL_FROM.
+import { EMAIL_FROM } from "@/lib/email-sender";
+import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
 
 // Use vi.hoisted so the mock objects are available at hoist time
 const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
@@ -256,7 +258,7 @@ describe("N-10: EmailLog tracking", () => {
     });
     expect(mockTransporter.sendMail).toHaveBeenCalledWith(
       expect.objectContaining({
-        from: `"${CLUB_EMAIL_FROM_NAME}" <${CLUB_SUPPORT_EMAIL}>`,
+        from: `"${EMAIL_DEFAULT_FROM_NAME}" <${EMAIL_FROM}>`,
       })
     );
 

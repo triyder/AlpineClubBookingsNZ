@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  CLUB_EMAIL_FROM_NAME,
-  CLUB_SUPPORT_EMAIL,
-} from "@/config/club-identity";
+// New resolution (C6 #1985): the retried "from" is built from the DB-first email
+// settings default from-name (EMAIL_DEFAULT_FROM_NAME) and the bootstrap envelope
+// sender (EMAIL_FROM), not the severed club-identity constants.
+import { EMAIL_FROM } from "@/lib/email-sender";
+import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 // The cron resolves each lodge's own capacity; pin it to the club config
@@ -341,7 +342,7 @@ describe("N-11: retryFailedEmails", () => {
     });
     expect(mockTransporter.sendMail).toHaveBeenCalledWith(
       expect.objectContaining({
-        from: `"${CLUB_EMAIL_FROM_NAME}" <${CLUB_SUPPORT_EMAIL}>`,
+        from: `"${EMAIL_DEFAULT_FROM_NAME}" <${EMAIL_FROM}>`,
       })
     );
   });

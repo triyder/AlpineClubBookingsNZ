@@ -7,7 +7,9 @@ vi.mock("server-only", () => ({}));
 // `facebookUrl` here is the DB-set value surfaced through getClubIdentity() —
 // the {{facebook-url}} token now resolves DB-first (C5 #1984), NOT from the
 // static CLUB_FACEBOOK_URL config constant (kept below only to prove the token
-// no longer reads it).
+// no longer reads it). `publicUrl` is the fallback the token uses when no
+// facebook link is configured — as of C6 #1985 that too comes from the resolved
+// getClubIdentity().publicUrl (the bootstrap origin), NOT a static config const.
 const identityState = vi.hoisted(() => ({
   facebookUrl: undefined as string | undefined,
   publicUrl: "https://club.example.org",
@@ -17,16 +19,16 @@ vi.mock("@/config/club-identity", () => ({
   CLUB_NAME: "Club <Name>",
   // A distinct sentinel: the token must NOT read this static constant anymore.
   CLUB_FACEBOOK_URL: "https://config-only.example/should-not-appear",
-  get CLUB_PUBLIC_URL() {
-    return identityState.publicUrl;
-  },
 }));
 // {{club-name}}/{{hut-leader}}/{{facebook-url}} now resolve DB-first via
-// getClubIdentity (E3 #1929, C5 #1984). socialLinks.facebook mirrors the DB row.
+// getClubIdentity (E3 #1929, C5 #1984, C6 #1985). socialLinks.facebook mirrors
+// the DB row; publicUrl is the resolved bootstrap origin used as the token's
+// last-resort URL fallback.
 vi.mock("@/lib/club-identity-settings", () => ({
   getClubIdentity: vi.fn(async () => ({
     name: "Club <Name>",
     hutLeaderLabel: "Hut Leader",
+    publicUrl: identityState.publicUrl,
     socialLinks: identityState.facebookUrl
       ? { facebook: identityState.facebookUrl }
       : {},

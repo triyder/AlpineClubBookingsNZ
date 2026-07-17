@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
-import { CLUB_PUBLIC_URL } from "@/config/club-identity";
+import { SAFE_DEFAULT_CONFIG } from "@/config/club";
 import { getClubIdentity } from "@/lib/club-identity-settings";
 import "./globals.css";
 
-const baseUrl = process.env.NEXTAUTH_URL || CLUB_PUBLIC_URL;
+// Bootstrap layer (C6 #1985): the metadata base origin resolves synchronously at
+// module import, so it comes from the `NEXTAUTH_URL` bootstrap env var, falling
+// back to `SAFE_DEFAULT_CONFIG.publicUrl` — never `config/club.json`. The title/
+// description below are DB-first via getClubIdentity().
+const baseUrl = process.env.NEXTAUTH_URL || SAFE_DEFAULT_CONFIG.publicUrl;
 
 // DB-first, club-generic site metadata (E3 #1929): title/description build from
 // the admin-editable club name and the default lodge's name — no hardcoded
