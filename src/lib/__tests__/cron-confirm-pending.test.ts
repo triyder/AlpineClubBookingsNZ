@@ -48,6 +48,12 @@ const mockSendGuestsRemovedEmail = vi.fn();
 const mockSendGuestsCancelledEmail = vi.fn();
 const mockSendAdminPaymentFailureAlert = vi.fn().mockResolvedValue(undefined);
 const mockSendAdminHoldExpiredAlert = vi.fn().mockResolvedValue(undefined);
+const mockSendSplitGuestPaymentLinkEmail = vi.fn().mockResolvedValue({
+  status: "sent",
+});
+const mockSendAdminSplitSettlementUnpaidAlert = vi
+  .fn()
+  .mockResolvedValue(undefined);
 vi.mock("../email", () => ({
   sendBookingConfirmedEmail: (...args: unknown[]) => mockSendConfirmedEmail(...args),
   sendBookingBumpedEmail: (...args: unknown[]) => mockSendBumpedEmail(...args),
@@ -56,14 +62,25 @@ vi.mock("../email", () => ({
   sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
   sendAdminBookingRequestHoldExpiredEmail: (...args: unknown[]) =>
     mockSendAdminHoldExpiredAlert(...args),
+  sendSplitGuestPaymentLinkEmail: (...args: unknown[]) =>
+    mockSendSplitGuestPaymentLinkEmail(...args),
+  sendAdminSplitSettlementUnpaidAlert: (...args: unknown[]) =>
+    mockSendAdminSplitSettlementUnpaidAlert(...args),
 }));
 
 // The confirm-pending cron revokes payment links for bumped bookings
 // (issue #707); the behaviour itself is covered in payment-link.test.ts.
 const mockRevokePaymentLinksForBooking = vi.fn().mockResolvedValue(0);
+// #1967: the settlement cron mints a guest-portion payment link for a split
+// child with no card on file. Default: first transition (returns a raw token).
+const mockMintSplitGuestPaymentLinkIfAbsent = vi
+  .fn()
+  .mockResolvedValue("tok_split_1");
 vi.mock("@/lib/payment-link", () => ({
   revokePaymentLinksForBooking: (...args: unknown[]) =>
     mockRevokePaymentLinksForBooking(...args),
+  mintSplitGuestPaymentLinkIfAbsent: (...args: unknown[]) =>
+    mockMintSplitGuestPaymentLinkIfAbsent(...args),
 }));
 
 // Mock promo cleanup used by the whole-bump path.
@@ -246,6 +263,9 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockPromoRedemptionFindUnique.mockResolvedValue(null);
     mockDeletePromoRedemption.mockResolvedValue(undefined);
     mockRevokePaymentLinksForBooking.mockResolvedValue(0);
+    mockMintSplitGuestPaymentLinkIfAbsent.mockResolvedValue("tok_split_1");
+    mockSendSplitGuestPaymentLinkEmail.mockResolvedValue({ status: "sent" });
+    mockSendAdminSplitSettlementUnpaidAlert.mockResolvedValue(undefined);
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === "function") {
         return arg({
@@ -937,5 +957,94 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
     expect(mockChargePaymentMethod).not.toHaveBeenCalled();
     expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("emails a payment link and alerts admins for a split child whose parent paid by internet banking, never charging it (#1967)", async () => {
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      // No parentPayment => the IB-paid parent has no saved card to inherit.
+      parentPayment: null,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+
+    const result = await confirmPendingBookings();
+
+    // Never charged (no saved card), never marked failed, never confirmed.
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(result.failedBookingIds).toEqual([]);
+    expect(result.confirmedBookingIds).toEqual([]);
+
+    // A guest-portion payment link was minted (first transition) and the hold
+    // extended via the status-guarded claim.
+    expect(mockMintSplitGuestPaymentLinkIfAbsent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: "child_1", checkIn: booking.checkIn })
+    );
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "child_1", status: "PENDING" }),
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      })
+    );
+
+    // Member emailed the link; admins alerted once.
+    expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: "child_1@example.com",
+        token: "tok_split_1",
+        priceCents: 12000,
+        guestCount: 2,
+        bookingReference: "child_1",
+      })
+    );
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memberName: "Test User",
+        totalCents: 12000,
+        guestCount: 2,
+        holdUntil: expect.any(Date),
+      })
+    );
+  });
+
+  it("does not re-send the link or re-alert admins on a later cron run when a link is already active (#1967 idempotent)", async () => {
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentPayment: null,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+    // An active link already exists from a prior run: mint returns null.
+    mockMintSplitGuestPaymentLinkIfAbsent.mockResolvedValue(null);
+
+    const result = await confirmPendingBookings();
+
+    // Hold still re-extended (low-churn), but no duplicate notifications and
+    // the booking is never marked failed.
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "child_1", status: "PENDING" }),
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      })
+    );
+    expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+    expect(mockSendAdminSplitSettlementUnpaidAlert).not.toHaveBeenCalled();
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(result.failedBookingIds).toEqual([]);
   });
 });
