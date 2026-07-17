@@ -2705,7 +2705,7 @@ export function splitGuestPaymentLinkTemplate(data: {
 }): string {
   return layout(`
     ${heading("Pay for Your Guests to Confirm Their Place")}
-    ${paragraph("Hi " + escapeHtml(data.firstName) + ", your own place is confirmed, but your non-member guests still need to be paid for before we can hold beds for them. Because there is no card on file for this part of your booking, please use the secure link below to pay for your guests.")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", your own place is taken care of separately, but your non-member guests still need to be paid for before we can hold beds for them. Because there is no card on file for this part of your booking, please use the secure link below to pay for your guests.")}
     ${infoTable([
       { label: "Check-in", value: formatNZDate(data.checkIn) },
       { label: "Check-out", value: formatNZDate(data.checkOut) },
@@ -2847,10 +2847,15 @@ export function adminBookingRequestHoldExpiredTemplate(data: {
 
 /**
  * Split-booking guest portion unpaid at hold expiry, no card on file (#1967).
- * Admin alert fired ONCE (first transition) when a split non-member child hits
- * settlement with no saved card because the member paid their own place by
- * Internet Banking. A payment link has already been emailed to the member and
- * the hold extended; this tells the board so a human can follow up.
+ * Admin alert fired on EVERY hold-extension run while a split non-member child
+ * remains unsettled with no saved card (the extension claim is the dedupe, so
+ * this repeats roughly every two days, matching the request-origin
+ * hold-expired cadence). Two variants:
+ * - parent settled (member paid their own place by internet banking): a
+ *   payment link has been emailed to the member;
+ * - parent unpaid (e.g. an abandoned card payment): NO link was sent — the
+ *   guest portion must not settle ahead of the member's own place, so a human
+ *   needs to chase the whole booking.
  */
 export function adminSplitSettlementUnpaidTemplate(data: {
   memberName: string;
@@ -2860,10 +2865,15 @@ export function adminSplitSettlementUnpaidTemplate(data: {
   totalCents: number;
   holdUntil: Date;
   reviewUrl: string;
+  parentUnpaid: boolean;
 }): string {
   return layout(`
     ${heading("Split Booking Guest Portion Unpaid — No Card on File")}
-    ${paragraph("A split booking reached its hold deadline for the non-member guest portion, but there is no saved card to charge — the member paid their own place by internet banking. A secure payment link has been emailed to the member so they can pay for their guests, and the hold has been extended.")}
+    ${paragraph(
+      data.parentUnpaid
+        ? "A split booking reached its hold deadline for the non-member guest portion, but there is no saved card to charge and the member's own linked booking has not been paid either. No payment link has been sent — the guest portion should not be paid ahead of the member's own place. The hold has been extended; follow up with the member about paying for the whole booking."
+        : "A split booking reached its hold deadline for the non-member guest portion, but there is no saved card to charge — the member paid their own place by internet banking. A secure payment link has been emailed to the member so they can pay for their guests, and the hold has been extended."
+    )}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: formatNZDate(data.checkIn) },
@@ -2873,6 +2883,7 @@ export function adminSplitSettlementUnpaidTemplate(data: {
       { label: "Hold extended to", value: formatNZDateTime(data.holdUntil) },
     ])}
     ${paragraph("No beds are held for these guests until payment is received. Follow up with the member or cancel the guest portion if payment is not expected.")}
+    ${muted("This alert repeats each time the hold is extended while the guest portion remains unpaid.")}
     ${button("View Bookings", data.reviewUrl, { sameOrigin: true })}
   `);
 }
