@@ -24,17 +24,16 @@ import {
   plainTextTokenNames,
 } from "@/lib/token-catalogue";
 import {
+  loadPublicAnnualFees,
   loadPublicBookingPolicy,
   loadPublicCancellationPolicy,
-  loadPublicEntranceFees,
   loadPublicHutFees,
-  loadPublicMembershipTypes,
+  loadPublicJoiningFees,
   type PublicBookingPolicy,
   type PublicCancellationPolicy,
-  type PublicEntranceFee,
-  type PublicHutFeeLodge,
-  type PublicMembershipType,
+  type PublicFeeGroup,
 } from "@/lib/public-page-content-tokens";
+import { resolveFeeTokenParameters } from "@/lib/token-parameters";
 
 export type PhotoGalleryImage = {
   src: string;
@@ -52,9 +51,12 @@ export type EmbeddedBodyPart =
   | { type: "skifield-whakapapa" }
   | { type: "photo-gallery"; images: PhotoGalleryImage[] }
   | { type: "photo-slideshow"; images: PhotoGalleryImage[] }
-  | { type: "membership-types"; items: PublicMembershipType[] }
-  | { type: "entrance-fees"; items: PublicEntranceFee[] }
-  | { type: "hut-fees"; lodges: PublicHutFeeLodge[] }
+  // Three fee embeds, one grouped view model (#1933, E7). {{membership-types}}
+  // is a deprecated alias of {{annual-fees}} and {{entrance-fees}} of
+  // {{joining-fees}} — the aliases resolve to the same part/renderer.
+  | { type: "hut-fees"; groups: PublicFeeGroup[] }
+  | { type: "joining-fees"; groups: PublicFeeGroup[] }
+  | { type: "annual-fees"; groups: PublicFeeGroup[] }
   | { type: "booking-policy-summary"; policy: PublicBookingPolicy | null }
   | { type: "cancellation-policy"; policy: PublicCancellationPolicy | null };
 
@@ -481,12 +483,17 @@ export async function buildEmbeddedBody(contentHtml: string) {
           hasInlineGalleryToken,
         ),
       });
-    } else if (parsed.token === "membership-types") {
-      parts.push({ type: "membership-types", items: await loadPublicMembershipTypes() });
-    } else if (parsed.token === "entrance-fees") {
-      parts.push({ type: "entrance-fees", items: await loadPublicEntranceFees() });
+    } else if (parsed.token === "annual-fees" || parsed.token === "membership-types") {
+      // {{membership-types}} is a deprecated alias of {{annual-fees}}.
+      const feeParams = resolveFeeTokenParameters(parsed.parameter);
+      parts.push({ type: "annual-fees", groups: await loadPublicAnnualFees({ typeKey: feeParams.type, components: feeParams.components }) });
+    } else if (parsed.token === "joining-fees" || parsed.token === "entrance-fees") {
+      // {{entrance-fees}} is a deprecated alias of {{joining-fees}}.
+      const feeParams = resolveFeeTokenParameters(parsed.parameter);
+      parts.push({ type: "joining-fees", groups: await loadPublicJoiningFees({ typeKey: feeParams.type, byAge: feeParams.groupBy.has("age") }) });
     } else if (parsed.token === "hut-fees") {
-      parts.push({ type: "hut-fees", lodges: await loadPublicHutFees(parsed.parameter) });
+      const feeParams = resolveFeeTokenParameters(parsed.parameter);
+      parts.push({ type: "hut-fees", groups: await loadPublicHutFees(feeParams.lodge, { typeKey: feeParams.type, groupBy: feeParams.groupBy }) });
     } else if (parsed.token === "booking-policy-summary") {
       parts.push({ type: "booking-policy-summary", policy: await loadPublicBookingPolicy(parsed.parameter) });
     } else if (parsed.token === "cancellation-policy") {

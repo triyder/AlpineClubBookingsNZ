@@ -112,3 +112,20 @@ explicit test focus (Jordan's caveat).
    each auto-resolves to the single lodge with no picker shown.
 5. Tests + backward-compat verification (single-lodge install; frozen
    route-area snapshots; module-gate tests) + docs lockstep.
+
+> **Amendment (#1933, E7 — 2026-07-17):** Hut nightly rates were consolidated
+> into a single `/admin/fees` console (Hut Fees section), alongside Joining Fees
+> and Annual Membership Fees. Consequences for this ADR:
+> - The lodge hub's **"Seasons & Rates"** Configure card (item 4 above) now
+>   deep-links to `/admin/fees?lodgeId=<id>` (Fees → Hut Fees, lodge
+>   pre-selected) instead of `/admin/seasons`. The card and the lodge-scoped
+>   entry point are preserved; only its destination moved.
+> - `/admin/seasons` is reduced to **season windows** (name/type/dates/active per
+>   lodge) and still consumes `LodgeSelect`/`useLodgeOptions`, so item 4's
+>   single-lodge auto-resolution is unchanged. Creating a season (which requires
+>   at least one rate) and editing rates both happen in Fees → Hut Fees.
+> - The `/admin/fees` page admits a viewer on **bookings OR finance** and gates
+>   each section by its historical area (Hut Fees → bookings:edit; Joining/Annual
+>   → finance:edit), so the retirement of the standalone hut-fees entry (item 3)
+>   holds: hut rates remain reachable via the lodge hub card and the new console,
+>   not a scattered per-lodge editor.

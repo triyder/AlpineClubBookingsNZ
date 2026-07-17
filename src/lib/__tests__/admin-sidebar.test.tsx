@@ -143,6 +143,28 @@ describe("AdminSidebar", () => {
     expect(allLabels).not.toContain("Booking Messages");
   });
 
+  it("shows the consolidated Fees link on bookings OR finance view, hides it for neither (#1933, E7)", () => {
+    const matrix = (over: Partial<Record<string, "none" | "view" | "edit">>) => ({
+      overview: "none", bookings: "none", membership: "none", finance: "none",
+      lodge: "none", content: "none", support: "none", ...over,
+    }) as Parameters<typeof getVisibleAdminNavSections>[1];
+    const feesVisible = (m: Parameters<typeof getVisibleAdminNavSections>[1]) =>
+      getVisibleAdminNavSections(allOn, m)
+        .flatMap((section) => section.items.map((item) => item.href))
+        .includes("/admin/fees");
+
+    expect(feesVisible(matrix({ bookings: "view" }))).toBe(true);
+    expect(feesVisible(matrix({ finance: "view" }))).toBe(true);
+    expect(feesVisible(matrix({ bookings: "edit" }))).toBe(true);
+    expect(feesVisible(matrix({ finance: "edit" }))).toBe(true);
+    // Neither bookings nor finance → no Fees link, and the old fee-configuration
+    // link is gone entirely.
+    expect(feesVisible(matrix({ membership: "edit" }))).toBe(false);
+    const membershipOnly = getVisibleAdminNavSections(allOn, matrix({ membership: "edit" }))
+      .flatMap((section) => section.items.map((item) => item.href));
+    expect(membershipOnly).not.toContain("/admin/fee-configuration");
+  });
+
   it("keeps pending family group requests visible while Members is collapsed", async () => {
     window.localStorage.setItem(
       SIDEBAR_COLLAPSE_STORAGE_KEY,

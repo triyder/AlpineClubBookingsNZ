@@ -12,6 +12,7 @@ type Settings = {
   hutFees: boolean;
   bookingPolicySummary: boolean;
   cancellationPolicy: boolean;
+  annualFees: boolean;
   showBookNow: boolean;
   bookNowTarget: "BOOKING_FLOW" | "PAGE";
   bookNowPageId: string | null;
@@ -19,9 +20,14 @@ type Settings = {
 
 type PublishedPage = { id: string; title: string; path: string };
 
+// annualFees is a dedicated double-opt-in for the {{annual-fees}} embed (#1933,
+// E7); {{membership-types}} is now its deprecated alias and renders through the
+// same annualFees gate, so the legacy membershipTypes flag is orphaned and no
+// longer surfaced. Joining fees ({{joining-fees}}/{{entrance-fees}}) stay on
+// the existing entranceFees gate.
 const labels: Array<[keyof Settings, string]> = [
-  ["membershipTypes", "Membership types"],
   ["entranceFees", "Joining fees"],
+  ["annualFees", "Annual membership fees"],
   ["hutFees", "Hut fees"],
   ["bookingPolicySummary", "Booking policy summaries"],
   ["cancellationPolicy", "Cancellation policies"],

@@ -23,11 +23,13 @@ describe("PublicContentSettingsPanel", () => {
       hutFees: false,
       bookingPolicySummary: false,
       cancellationPolicy: false,
+      annualFees: false,
     } }))));
     render(<PublicContentSettingsPanel />);
 
     const notice = await screen.findByText(/Content view access can inspect public visibility/);
-    const checkbox = screen.getByRole("checkbox", { name: "Membership types" });
+    // "Annual membership fees" is the new dedicated {{annual-fees}} opt-in (#1933, E7).
+    const checkbox = screen.getByRole("checkbox", { name: "Annual membership fees" });
     expect((checkbox as HTMLInputElement).disabled).toBe(true);
     expect(checkbox.getAttribute("aria-describedby")).toBe(notice.parentElement?.id);
     expect((screen.getByRole("button", { name: "Save visibility" }) as HTMLButtonElement).disabled).toBe(true);

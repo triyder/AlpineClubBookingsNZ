@@ -50,9 +50,9 @@ const page = {
   sortOrder: 1, contentHtml: "{{membership-types}}", published: true,
 };
 const parts = [
-  { type: "membership-types" as const, items: [{ name: "Public membership", description: "Description", annualFee: null, billingLabel: "No invoice required" }] },
-  { type: "entrance-fees" as const, items: [{ category: "Adult", fee: { amountCents: 1000, label: "$10.00" } }] },
-  { type: "hut-fees" as const, lodges: [{ name: "River Lodge", slug: "river", seasons: [] }] },
+  { type: "annual-fees" as const, groups: [{ heading: "Annual membership fees", rows: [{ label: "Public membership", fee: { amountCents: 15000, label: "$150.00" } }] }] },
+  { type: "joining-fees" as const, groups: [{ heading: "Full", rows: [{ label: "Adult", fee: { amountCents: 1000, label: "$10.00" } }] }] },
+  { type: "hut-fees" as const, groups: [{ heading: "River Lodge — Winter nightly rates", rows: [{ label: "Adult", audience: "Member", fee: { amountCents: 4000, label: "$40.00" } }] }] },
   { type: "booking-policy-summary" as const, policy: { lodge: { name: "River Lodge", slug: "river" }, hold: "Non-member bookings are not held provisionally.", periods: [], minimumStays: [], groupDiscount: null } },
   { type: "cancellation-policy" as const, policy: { lodge: { name: "River Lodge", slug: "river" }, tiers: [{ description: "7 or more days before check-in: 100% refund" }, { description: "After check-in: no refund" }], periods: [] } },
 ];
@@ -68,7 +68,7 @@ describe("public PageContent data-token route parity", () => {
     render(node);
     expect(screen.getByText("Public membership")).toBeTruthy();
     expect(screen.getByText("$10.00")).toBeTruthy();
-    expect(screen.getAllByText("River Lodge").length).toBeGreaterThan(0);
+    expect(screen.getByText(/River Lodge — Winter/)).toBeTruthy();
     expect(screen.getByText("Non-member bookings are not held provisionally.")).toBeTruthy();
     expect(screen.getByText("After check-in: no refund")).toBeTruthy();
   }

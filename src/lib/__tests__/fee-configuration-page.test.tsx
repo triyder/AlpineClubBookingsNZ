@@ -9,7 +9,10 @@ vi.mock("@/hooks/use-scroll-to-feedback", () => ({
   useScrollToFeedback: () => ({ scrollToError: mocks.scrollToError, scrollToTop: vi.fn() }),
 }));
 
-let FeeConfigurationPage: typeof import("@/app/(admin)/admin/fee-configuration/page").default;
+// The finance fee sections moved to the consolidated /admin/fees console (#1933,
+// E7); /admin/fee-configuration now redirects there. Behaviour is unchanged, so
+// this suite exercises the moved component directly.
+let FeeConfigurationPage: typeof import("@/app/(admin)/admin/fees/_components/finance-fees-sections").FinanceFeesSections;
 
 const editableData = {
   canEdit: true,
@@ -99,7 +102,7 @@ beforeAll(async () => {
   Element.prototype.releasePointerCapture = vi.fn();
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-13T12:30:00.000Z")); // 14 July in Pacific/Auckland
-  FeeConfigurationPage = (await import("@/app/(admin)/admin/fee-configuration/page")).default;
+  FeeConfigurationPage = (await import("@/app/(admin)/admin/fees/_components/finance-fees-sections")).FinanceFeesSections;
   vi.useRealTimers();
 });
 
@@ -109,6 +112,17 @@ afterEach(() => {
 });
 
 describe("fee configuration page", () => {
+  it("shows a friendly read-only notice (not a fetch-failed error) when the finance read is cross-area 403 (E7 Lens-A F1)", async () => {
+    // A bookings-only operator on the shared /admin/fees console gets a 403 from
+    // the finance-gated /api/admin/fee-configuration read.
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ error: "Forbidden" }) } as Response)));
+    render(<FeeConfigurationPage />);
+    expect(await screen.findByText(/don't have permission to view this section/i)).toBeTruthy();
+    // The raw fetch-failed error must NOT surface.
+    expect(screen.queryByText(/failed to load fee configuration/i)).toBeNull();
+    expect(screen.queryByText(/^Forbidden$/)).toBeNull();
+  });
+
   it("renders finance viewers read-only with no edit affordances", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => response(true, { ...editableData, canEdit: false })));
     render(<FeeConfigurationPage />);

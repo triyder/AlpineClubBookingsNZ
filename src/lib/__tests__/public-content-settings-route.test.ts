@@ -23,7 +23,7 @@ import { GET, PUT } from "@/app/api/admin/public-content-settings/route";
 
 const existing = {
   id: "default", membershipTypes: true, entranceFees: false, hutFees: true,
-  bookingPolicySummary: false, cancellationPolicy: true,
+  bookingPolicySummary: false, cancellationPolicy: true, annualFees: true,
   showBookNow: true, bookNowTarget: "BOOKING_FLOW" as const, bookNowPageId: null,
   updatedByMemberId: "admin-0", createdAt: new Date(), updatedAt: new Date(),
 };
@@ -41,13 +41,13 @@ describe("public content settings route", () => {
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "content", level: "view" } });
     expect(await response.json()).toEqual({ settings: {
       membershipTypes: true, entranceFees: false, hutFees: true,
-      bookingPolicySummary: false, cancellationPolicy: true,
+      bookingPolicySummary: false, cancellationPolicy: true, annualFees: true,
       showBookNow: true, bookNowTarget: "BOOKING_FLOW", bookNowPageId: null,
     }, pages: [] });
   });
 
   it("audits writes and invalidates public routes", async () => {
-    const body = { membershipTypes: true, entranceFees: false, hutFees: true, bookingPolicySummary: false, cancellationPolicy: true, showBookNow: true, bookNowTarget: "BOOKING_FLOW", bookNowPageId: null };
+    const body = { membershipTypes: true, entranceFees: false, hutFees: true, bookingPolicySummary: false, cancellationPolicy: true, annualFees: true, showBookNow: true, bookNowTarget: "BOOKING_FLOW", bookNowPageId: null };
     const response = await PUT(new Request("http://localhost/api/admin/public-content-settings", { method: "PUT", body: JSON.stringify(body) }));
     expect(response.status).toBe(200);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "content", level: "edit" } });

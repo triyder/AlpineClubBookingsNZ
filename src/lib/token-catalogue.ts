@@ -132,28 +132,66 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     contexts: ["page-content-body"],
   },
   {
-    token: "membership-types",
+    token: "hut-fees",
     kind: "embed",
-    description: "Lists active membership types that are explicitly enabled for public listing, with their current annual fees.",
-    example: "{{membership-types}}",
+    description: "Lists active public hut-fee seasons and nightly rates for all lodges, or one named lodge.",
+    example: "{{hut-fees}}",
+    notes:
+      "Parameters are comma-separated key=value pairs after a colon; a bare " +
+      "value is the lodge slug (back-compat). Keys: lodge=, type=, group-by= " +
+      "(type and/or age, joined with +). by-age is shorthand for group-by=age. " +
+      "An unknown key or value shows the empty state, never another group.",
+    allowsParameter: true,
+    parameterExample: "{{hut-fees:lodge=whakapapa, group-by=age}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body"],
+  },
+  {
+    token: "joining-fees",
+    kind: "embed",
+    description: "Lists the currently effective public joining fees, grouped by membership type or by age tier.",
+    example: "{{joining-fees}}",
+    notes:
+      "Optional parameters (comma-separated key=value): type= limits to one " +
+      "publicly-listed membership type; group-by=age (or by-age) groups by age " +
+      "tier instead of by type. An unknown/unlisted type shows the empty state.",
+    allowsParameter: true,
+    parameterExample: "{{joining-fees:group-by=age}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body"],
+  },
+  {
+    token: "annual-fees",
+    kind: "embed",
+    description: "Lists current annual membership fee totals for publicly-listed types. Requires the dedicated Annual membership fees visibility opt-in.",
+    example: "{{annual-fees}}",
+    notes:
+      "Shows the fee total by default. Optional parameters (comma-separated " +
+      "key=value): type= limits to one publicly-listed membership type; " +
+      "components opts into the per-line breakdown. Gated by its own " +
+      "double-opt-in, separate from joining fees.",
+    allowsParameter: true,
+    parameterExample: "{{annual-fees:components}}",
     allowsLegacySingleBrace: false,
     contexts: ["page-content-body"],
   },
   {
     token: "entrance-fees",
     kind: "embed",
-    description: "Lists the currently effective public joining fees.",
+    description: "Deprecated alias of {{joining-fees}} — renders identically. Prefer {{joining-fees}} in new content.",
     example: "{{entrance-fees}}",
+    allowsParameter: true,
+    parameterExample: "{{entrance-fees:group-by=age}}",
     allowsLegacySingleBrace: false,
     contexts: ["page-content-body"],
   },
   {
-    token: "hut-fees",
+    token: "membership-types",
     kind: "embed",
-    description: "Lists active public hut-fee seasons and nightly rates for all lodges, or one named lodge.",
-    example: "{{hut-fees}}",
+    description: "Deprecated alias of {{annual-fees}} — renders identically. Prefer {{annual-fees}} in new content.",
+    example: "{{membership-types}}",
     allowsParameter: true,
-    parameterExample: "{{hut-fees:lodge-slug}}",
+    parameterExample: "{{membership-types:components}}",
     allowsLegacySingleBrace: false,
     contexts: ["page-content-body"],
   },

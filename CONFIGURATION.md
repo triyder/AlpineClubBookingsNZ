@@ -215,12 +215,22 @@ menu.
   `{{member-application-form}}`, `{{join-apply-form}}`, `{{contact-form}}`,
   `{{skifield-whakapapa}}`, `{{skifield-conditions:dataHash}}`,
   `{{photo-gallery}}`, `{{photo-gallery:path}}`, `{{photo-slideshow}}`, and
-  `{{photo-slideshow:path}}`. Authoritative embeds are `{{membership-types}}`,
-  `{{entrance-fees}}`, `{{hut-fees}}`, `{{booking-policy-summary}}`, and
-  `{{cancellation-policy}}`; the last three accept `:lodge-slug`. They default
-  hidden until enabled in Admin > Page Content, and membership types also need
-  their individual public-listing flag. Unknown/inactive lodge slugs render no
-  data rather than another lodge's fallback. Legal and help-copy pages can also use text
+  `{{photo-slideshow:path}}`. Authoritative fee embeds are `{{hut-fees}}`,
+  `{{joining-fees}}`, and `{{annual-fees}}` (with `{{entrance-fees}}` and
+  `{{membership-types}}` retained as deprecated aliases of `{{joining-fees}}`
+  and `{{annual-fees}}` respectively); the policy embeds are
+  `{{booking-policy-summary}}` and `{{cancellation-policy}}`. Each defaults
+  hidden until its family is enabled in Admin > Page Content — hut fees use the
+  **Hut fees** toggle, joining fees the **Joining fees** toggle, and annual fees
+  their own dedicated **Annual membership fees** double-opt-in (which also
+  governs the `{{membership-types}}` alias); annual fees additionally require
+  each type's public-listing flag. The fee embeds accept comma-separated
+  parameters after a colon (`lodge=`, `type=`, `group-by=`, plus a bare lodge
+  slug for `{{hut-fees}}` back-compat; `by-age` ≡ `group-by=age`;
+  `{{annual-fees:components}}` shows the per-line breakdown); the policy embeds
+  accept `:lodge-slug`. An unknown key, unlisted `type=`, or inactive lodge slug
+  renders no data rather than another group's or lodge's fallback. See
+  `docs/PUBLIC_PAGE_CONTENT_TOKENS.md` for the full grammar. Legal and help-copy pages can also use text
   tokens `{{club-name}}`, `{{currency}}`, `{{lodge-capacity}}`,
   `{{lodge-capacity:lodge-slug}}` (a named lodge's capacity; unknown slug falls
   back to the default lodge), `{{lodge-name}}` / `{{lodge-name:lodge-slug}}`,
@@ -870,7 +880,7 @@ row holds `familyBillingMode`, the club billing model, also editable from
   fee schedules are allowed, and a missing or inactive same-family billing
   recipient is a visible exception.
 - `BILL_MEMBERS_INDIVIDUALLY`: every member is invoiced directly. The
-  fee-configuration family-billing card is hidden, no billing-member exception
+  Fees page family-billing card is hidden, no billing-member exception
   is raised, and `PER_FAMILY` schedules are rejected server-side on
   create/update. A `PER_FAMILY` schedule left over from a mode switch is not
   reinterpreted as per-member; it surfaces as a
@@ -885,7 +895,7 @@ left in place becomes an uninvoiceable `PER_FAMILY_FEE_IN_INDIVIDUAL_MODE`
 exception under individual billing.
 
 Each annual fee is itemised into one or more **components** (E6, #1932), edited
-under its fee row on `/admin/fee-configuration`. Every invoiceable fee has at
+under its fee row in the Annual Membership Fees section of `/admin/fees`. Every invoiceable fee has at
 least one component and the components' integer-cent amounts must sum exactly to
 the fee total (an amount edit is rejected unless its components are reconciled in
 the same request); each component becomes its own GST-inclusive Xero invoice
@@ -1186,17 +1196,21 @@ invalid app, email, or recovery-code attempts lock the two-factor challenge for
 Annual membership and joining fee amounts are database configuration, not
 environment variables or provider metadata. Membership editors own public
 descriptions/listing under `/admin/membership-types`; Finance editors own
-effective-dated amounts and family billing members under
-`/admin/fee-configuration`. Joining fees (`JoiningFee`, #1931) key on membership
+effective-dated amounts and family billing members in the Joining Fees and
+Annual Membership Fees sections of `/admin/fees`. Joining fees (`JoiningFee`, #1931) key on membership
 type × optional age tier, resolved with no legacy mapping fallback; the Family
 fee is strictly type-driven (only members assigned the Family type get it — the
 composition heuristic is removed). Hut fees remain lodge season/rate
 configuration. See `docs/AUTHORITATIVE_FEES.md` for operator rules and the
 frozen Xero idempotency contract.
 
-The `/admin/fee-configuration` page shows annual membership fees, joining fees,
-and (only when `familyBillingMode` is `BILL_FAMILY_VIA_BILLING_MEMBER`) family
-billing members. Each section loads read-only. Use the section's Edit button to
+The consolidated `/admin/fees` page (#1933, E7) shows Hut Fees (per lodge →
+season → membership-type × age-tier nightly rates; edits need `bookings:edit`),
+Joining Fees, Annual Membership Fees, and (only when `familyBillingMode` is
+`BILL_FAMILY_VIA_BILLING_MEMBER`) family billing members; Joining/Annual/family
+edits need `finance:edit`, and the page admits any viewer with finance **or**
+bookings access. `/admin/fee-configuration` redirects here and `/admin/seasons`
+now holds only season windows. Each section loads read-only. Use the section's Edit button to
 expose its form and per-row controls; changes are staged locally and only
 written when you commit that section (Add/Update fee, or Save billing members).
 Leaving a section without committing (Close section on the fee sections, Cancel

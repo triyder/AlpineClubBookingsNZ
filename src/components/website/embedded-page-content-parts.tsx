@@ -9,9 +9,7 @@ import type { EmbeddedBodyPart } from "@/lib/page-content-embeds";
 import {
   BookingPolicyToken,
   CancellationPolicyToken,
-  EntranceFeesToken,
-  HutFeesToken,
-  MembershipTypesToken,
+  FeeGroupsToken,
 } from "@/components/website/public-page-content-token";
 
 type EmbeddedPageContentPartsProps = {
@@ -103,9 +101,9 @@ export function EmbeddedPageContentParts({
           );
         }
 
-        if (part.type === "membership-types") return <MembershipTypesToken key={`${keyPrefix}-membership-types-${index}`} items={part.items} />;
-        if (part.type === "entrance-fees") return <EntranceFeesToken key={`${keyPrefix}-entrance-fees-${index}`} items={part.items} />;
-        if (part.type === "hut-fees") return <HutFeesToken key={`${keyPrefix}-hut-fees-${index}`} lodges={part.lodges} />;
+        if (part.type === "hut-fees") return <FeeGroupsToken key={`${keyPrefix}-hut-fees-${index}`} groups={part.groups} />;
+        if (part.type === "joining-fees") return <FeeGroupsToken key={`${keyPrefix}-joining-fees-${index}`} groups={part.groups} />;
+        if (part.type === "annual-fees") return <FeeGroupsToken key={`${keyPrefix}-annual-fees-${index}`} groups={part.groups} />;
         if (part.type === "booking-policy-summary") return <BookingPolicyToken key={`${keyPrefix}-booking-policy-${index}`} policy={part.policy} />;
         if (part.type === "cancellation-policy") return <CancellationPolicyToken key={`${keyPrefix}-cancellation-policy-${index}`} policy={part.policy} />;
 

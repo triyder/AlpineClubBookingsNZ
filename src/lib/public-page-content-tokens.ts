@@ -9,27 +9,12 @@ import { prisma } from "@/lib/prisma";
 export type PublicMoney = { amountCents: number; label: string };
 export type PublicTokenLodge = { name: string; slug: string };
 
-export type PublicMembershipType = {
-  name: string;
-  description: string | null;
-  annualFee: PublicMoney | null;
-  billingLabel: string | null;
-};
-
-export type PublicEntranceFee = {
-  category: string;
-  fee: PublicMoney;
-};
-
-export type PublicHutFeeSeason = {
-  name: string;
-  dateRange: string;
-  rates: Array<{ ageTier: string; audience: string; fee: PublicMoney }>;
-};
-
-export type PublicHutFeeLodge = PublicTokenLodge & {
-  seasons: PublicHutFeeSeason[];
-};
+// Generic grouped-fee view model shared by all three fee embeds (#1933, E7).
+// A group is one titled block (a lodge season, a membership type, or a fee
+// family); each row is one labelled amount with an optional audience qualifier
+// (e.g. Member / Non-member). Public names only — never ids or provider codes.
+export type PublicFeeRow = { label: string; audience?: string; fee: PublicMoney };
+export type PublicFeeGroup = { heading: string; rows: PublicFeeRow[] };
 
 export type PublicBookingPolicy = {
   lodge: PublicTokenLodge | null;
@@ -57,7 +42,7 @@ function money(amountCents: number): PublicMoney {
   };
 }
 
-type PublicContentGate = "membershipTypes" | "entranceFees" | "hutFees" | "bookingPolicySummary" | "cancellationPolicy";
+type PublicContentGate = "membershipTypes" | "entranceFees" | "hutFees" | "annualFees" | "bookingPolicySummary" | "cancellationPolicy";
 
 async function isPublicContentEnabled(gate: PublicContentGate): Promise<boolean> {
   const settings = await prisma.publicContentSettings.findUnique({
@@ -151,123 +136,250 @@ async function publicLodges(slug?: string): Promise<Array<PublicTokenLodge & { i
   });
 }
 
-export async function loadPublicMembershipTypes(): Promise<PublicMembershipType[]> {
-  if (!(await isPublicContentEnabled("membershipTypes"))) return [];
-  const today = getTodayDateOnly();
-  const rows = await prisma.membershipType.findMany({
-    where: { isActive: true, publiclyListed: true },
-    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-    select: {
-      name: true,
-      publicDescription: true,
-      annualFees: {
-        where: {
-          effectiveFrom: { lte: today },
-          OR: [{ effectiveTo: null }, { effectiveTo: { gte: today } }],
-        },
-        orderBy: { effectiveFrom: "desc" },
-        take: 1,
-        select: { amountCents: true, billingBasis: true, prorationRule: true },
-      },
-    },
-  });
-  return rows.map((row) => {
-    const fee = row.annualFees[0];
-    return {
-      name: row.name,
-      description: row.publicDescription?.trim() || null,
-      annualFee: fee && fee.billingBasis !== "NO_INVOICE" ? money(fee.amountCents) : null,
-      billingLabel: fee
-        ? fee.billingBasis === "NO_INVOICE"
-          ? "No invoice required"
-          : `${sentenceCase(fee.billingBasis)}; ${fee.prorationRule === "NONE" ? "no proration" : "prorated for remaining months, including the joining month"}`
-        : null,
-    };
-  });
-}
-
-export async function loadPublicEntranceFees(): Promise<PublicEntranceFee[]> {
-  if (!(await isPublicContentEnabled("entranceFees"))) return [];
-  const today = getTodayDateOnly();
-  // Minimal re-key to the JoiningFee model (#1931, E5): the public headline
-  // joining fees come from the built-in FULL type's per-age-tier rows plus the
-  // Family type's flat fee — the same amounts the fan-out backfill carried over
-  // from the old category schedule, so the output is byte-identical. E7 adds
-  // per-type grouping/grammar and new tokens.
-  const activeWindow = {
+// Active effective-dated window helper (from <= today <= to-or-open).
+function activeWindow(today: Date) {
+  return {
     effectiveFrom: { lte: today },
     OR: [{ effectiveTo: null }, { effectiveTo: { gte: today } }],
   };
+}
+
+async function loadAgeTierLabels(): Promise<Map<string, { label: string; sortOrder: number }>> {
+  const ageTiers = await prisma.ageTierSetting.findMany({
+    orderBy: [{ sortOrder: "asc" }, { minAge: "asc" }],
+    select: { tier: true, label: true, sortOrder: true },
+  });
+  return new Map(ageTiers.map((tier) => [tier.tier, { label: tier.label.trim() || sentenceCase(tier.tier), sortOrder: tier.sortOrder }]));
+}
+
+const ageLabel = (
+  tiers: Map<string, { label: string; sortOrder: number }>,
+  tier: string | null,
+): string => (tier === null ? "All ages" : tiers.get(tier)?.label || sentenceCase(tier));
+const ageSort = (
+  tiers: Map<string, { label: string; sortOrder: number }>,
+  tier: string | null,
+): number => (tier === null ? Number.MAX_SAFE_INTEGER : tiers.get(tier)?.sortOrder ?? Number.MAX_SAFE_INTEGER);
+
+export type PublicJoiningFeeOptions = { typeKey?: string; byAge?: boolean };
+
+/**
+ * Public joining fees, grouped either by membership type (default) or by age
+ * tier (byAge). Reads only publicly-listed active membership types; an unknown
+ * or unlisted `typeKey` yields the empty state (never another type's data).
+ */
+export async function loadPublicJoiningFees(
+  options: PublicJoiningFeeOptions = {},
+): Promise<PublicFeeGroup[]> {
+  if (!(await isPublicContentEnabled("entranceFees"))) return [];
+  const today = getTodayDateOnly();
+  const [types, tiers] = await Promise.all([
+    prisma.membershipType.findMany({
+      where: { isActive: true, publiclyListed: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: {
+        key: true,
+        name: true,
+        ageGroupsApply: true,
+        joiningFees: {
+          where: activeWindow(today),
+          orderBy: [{ effectiveFrom: "desc" }],
+          select: { ageTier: true, amountCents: true },
+        },
+      },
+    }),
+    loadAgeTierLabels(),
+  ]);
+  const listed = options.typeKey
+    ? types.filter((type) => type.key.toLowerCase() === options.typeKey!.toLowerCase())
+    : types;
+  if (listed.length === 0) return [];
+
+  // Current amount per (type, tier): rows are effectiveFrom desc, so the first
+  // seen per tier is current. A flat (non-age) type keys on the null tier.
+  type Cell = { typeName: string; tier: string | null; amountCents: number };
+  const cells: Cell[] = [];
+  for (const type of listed) {
+    const seen = new Set<string>();
+    for (const row of type.joiningFees) {
+      const key = row.ageTier ?? "FLAT";
+      if (seen.has(key)) continue;
+      seen.add(key);
+      cells.push({ typeName: type.name, tier: type.ageGroupsApply ? row.ageTier : null, amountCents: row.amountCents });
+    }
+  }
+  if (cells.length === 0) return [];
+
+  if (options.byAge) {
+    // Group by age tier; rows are membership types.
+    const byTier = new Map<string, { tier: string | null; rows: PublicFeeRow[] }>();
+    for (const cell of cells) {
+      const key = cell.tier ?? "FLAT";
+      const group = byTier.get(key) ?? { tier: cell.tier, rows: [] };
+      group.rows.push({ label: cell.typeName, fee: money(cell.amountCents) });
+      byTier.set(key, group);
+    }
+    return [...byTier.values()]
+      .sort((a, b) => ageSort(tiers, a.tier) - ageSort(tiers, b.tier))
+      .map((group) => ({ heading: ageLabel(tiers, group.tier), rows: group.rows }));
+  }
+
+  // Default: group by membership type; rows are age tiers.
+  const byType = new Map<string, PublicFeeRow[]>();
+  const order: string[] = [];
+  for (const cell of cells) {
+    if (!byType.has(cell.typeName)) { byType.set(cell.typeName, []); order.push(cell.typeName); }
+    byType.get(cell.typeName)!.push({ label: ageLabel(tiers, cell.tier), fee: money(cell.amountCents) });
+  }
+  return order.map((typeName) => ({
+    heading: typeName,
+    rows: byType.get(typeName)!.slice().sort((a, b) =>
+      ageSort(tiers, tierForLabel(tiers, a.label)) - ageSort(tiers, tierForLabel(tiers, b.label))),
+  }));
+}
+
+// Reverse a rendered age label back to its tier key for row ordering. Only used
+// to keep the default (by-type) rows in the configured age order.
+function tierForLabel(
+  tiers: Map<string, { label: string; sortOrder: number }>,
+  label: string,
+): string | null {
+  if (label === "All ages") return null;
+  for (const [tier, meta] of tiers) if (meta.label === label) return tier;
+  return null;
+}
+
+export type PublicAnnualFeeOptions = { typeKey?: string; components?: boolean };
+
+/**
+ * Public annual membership fees. By default one "Annual membership fees" group
+ * lists the current total per publicly-listed type; `components` opts into the
+ * E6 per-component breakdown (one group per type). NO_INVOICE schedules and
+ * types with no current fee are omitted. Gated by the dedicated annualFees
+ * double-opt-in (D-R4). Unknown/unlisted `typeKey` → empty state.
+ */
+export async function loadPublicAnnualFees(
+  options: PublicAnnualFeeOptions = {},
+): Promise<PublicFeeGroup[]> {
+  if (!(await isPublicContentEnabled("annualFees"))) return [];
+  const today = getTodayDateOnly();
   const types = await prisma.membershipType.findMany({
-    where: { key: { in: ["FULL", "FAMILY"] } },
+    where: { isActive: true, publiclyListed: true },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     select: {
       key: true,
-      joiningFees: {
-        where: activeWindow,
-        orderBy: [{ effectiveFrom: "desc" }],
-        select: { ageTier: true, amountCents: true },
+      name: true,
+      annualFees: {
+        where: activeWindow(today),
+        orderBy: { effectiveFrom: "desc" },
+        take: 1,
+        select: {
+          amountCents: true,
+          billingBasis: true,
+          components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }], select: { label: true, amountCents: true } },
+        },
       },
     },
   });
-  const feesByKey = new Map(types.map((type) => [type.key, type.joiningFees]));
-  const fullFees = feesByKey.get("FULL") ?? [];
-  const familyFees = feesByKey.get("FAMILY") ?? [];
-  // Rows are ordered effectiveFrom desc, so the first match per tier is current.
-  const amountForTier = (
-    rows: Array<{ ageTier: string | null; amountCents: number }>,
-    tier: string | null,
-  ): number | null => rows.find((row) => row.ageTier === tier)?.amountCents ?? null;
+  const listed = (options.typeKey
+    ? types.filter((type) => type.key.toLowerCase() === options.typeKey!.toLowerCase())
+    : types
+  ).map((type) => ({ name: type.name, fee: type.annualFees[0] }))
+    .filter((type): type is { name: string; fee: NonNullable<typeof type.fee> } =>
+      type.fee != null && type.fee.billingBasis !== "NO_INVOICE");
+  if (listed.length === 0) return [];
 
-  const out: PublicEntranceFee[] = [];
-  const push = (category: string, amountCents: number | null) => {
-    if (amountCents != null) out.push({ category, fee: money(amountCents) });
-  };
-  push("Adult", amountForTier(fullFees, "ADULT"));
-  push("Child", amountForTier(fullFees, "CHILD"));
-  push("Family", amountForTier(familyFees, null));
-  push("Youth", amountForTier(fullFees, "YOUTH"));
-  return out;
+  if (options.components) {
+    // One group per type; rows are the fee's invoice-line components.
+    return listed
+      .map((type) => ({
+        heading: type.name,
+        rows: (type.fee.components.length > 0
+          ? type.fee.components.map((component) => ({ label: component.label, fee: money(component.amountCents) }))
+          : [{ label: "Annual membership fee", fee: money(type.fee.amountCents) }]),
+      }))
+      .filter((group) => group.rows.length > 0);
+  }
+
+  // Default: a single group of type → total rows.
+  return [{
+    heading: "Annual membership fees",
+    rows: listed.map((type) => ({ label: type.name, fee: money(type.fee.amountCents) })),
+  }];
 }
 
-export async function loadPublicHutFees(slug?: string): Promise<PublicHutFeeLodge[]> {
+export type PublicHutFeeOptions = { typeKey?: string; groupBy?: Set<"type" | "age"> };
+
+/**
+ * Public hut nightly fees. Each active season (per lodge) is a group; rows are
+ * the age-tier × audience (Member / Non-member) grid. `group-by=type` splits a
+ * season into a Member group and a Non-member group; otherwise both audiences
+ * sit in one season group. An unknown `typeKey` yields the empty state; a
+ * known one is accepted without further filtering (public hut rates carry the
+ * retained member/non-member split, not per-type rows — E4/E13 nuance).
+ */
+export async function loadPublicHutFees(
+  slug?: string,
+  options: PublicHutFeeOptions = {},
+): Promise<PublicFeeGroup[]> {
   if (!(await isPublicContentEnabled("hutFees"))) return [];
   const lodges = await publicLodges(slug);
   if (lodges.length === 0) return [];
-  const [seasons, ageTiers] = await Promise.all([prisma.season.findMany({
-    where: { active: true, lodgeId: { in: lodges.map((lodge) => lodge.id) } },
-    orderBy: [{ startDate: "asc" }, { name: "asc" }],
-    select: {
-      lodgeId: true,
-      name: true,
-      startDate: true,
-      endDate: true,
-      rates: {
-        orderBy: [{ isMember: "desc" }, { ageTier: "asc" }],
-        select: { ageTier: true, isMember: true, pricePerNightCents: true },
+  if (options.typeKey) {
+    const known = await prisma.membershipType.findFirst({
+      where: { isActive: true, publiclyListed: true, key: { equals: options.typeKey, mode: "insensitive" } },
+      select: { id: true },
+    });
+    if (!known) return [];
+  }
+  const [seasons, tiers] = await Promise.all([
+    prisma.season.findMany({
+      where: { active: true, lodgeId: { in: lodges.map((lodge) => lodge.id) } },
+      orderBy: [{ startDate: "asc" }, { name: "asc" }],
+      select: {
+        lodgeId: true,
+        name: true,
+        startDate: true,
+        endDate: true,
+        rates: {
+          orderBy: [{ isMember: "desc" }, { ageTier: "asc" }],
+          select: { ageTier: true, isMember: true, pricePerNightCents: true },
+        },
       },
-    },
-  }), prisma.ageTierSetting.findMany({
-    orderBy: [{ sortOrder: "asc" }, { minAge: "asc" }],
-    select: { tier: true, label: true, sortOrder: true },
-  })]);
-  const tierByKey = new Map(ageTiers.map((tier) => [tier.tier, tier]));
-  return lodges.map(({ id, name, slug: lodgeSlug }) => ({
-    name,
-    slug: lodgeSlug,
-    seasons: seasons.filter((season) => season.lodgeId === id).map((season) => ({
-      name: season.name,
-      dateRange: dateRange(season.startDate, season.endDate),
-      rates: [...season.rates].sort((a, b) =>
-        (tierByKey.get(a.ageTier)?.sortOrder ?? Number.MAX_SAFE_INTEGER) -
-          (tierByKey.get(b.ageTier)?.sortOrder ?? Number.MAX_SAFE_INTEGER) ||
-        a.ageTier.localeCompare(b.ageTier),
-      ).map((rate) => ({
-        ageTier: tierByKey.get(rate.ageTier)?.label.trim() || sentenceCase(rate.ageTier),
-        audience: rate.isMember ? "Member" : "Non-member",
-        fee: money(rate.pricePerNightCents),
-      })),
-    })),
-  }));
+    }),
+    loadAgeTierLabels(),
+  ]);
+  const splitByAudience = options.groupBy?.has("type") ?? false;
+  const groups: PublicFeeGroup[] = [];
+  for (const { id, name: lodgeName } of lodges) {
+    for (const season of seasons.filter((row) => row.lodgeId === id)) {
+      const seasonTitle = `${lodgeName} — ${season.name} (${dateRange(season.startDate, season.endDate)}) nightly rates`;
+      const cells = [...season.rates]
+        .map((rate) => ({
+          tier: rate.ageTier,
+          audience: rate.isMember ? "Member" : "Non-member",
+          fee: money(rate.pricePerNightCents),
+        }))
+        .sort((a, b) =>
+          ageSort(tiers, a.tier) - ageSort(tiers, b.tier) ||
+          a.audience.localeCompare(b.audience));
+      if (cells.length === 0) continue;
+      if (splitByAudience) {
+        for (const audience of ["Member", "Non-member"]) {
+          const rows = cells
+            .filter((cell) => cell.audience === audience)
+            .map((cell) => ({ label: ageLabel(tiers, cell.tier), fee: cell.fee }));
+          if (rows.length > 0) groups.push({ heading: `${seasonTitle} · ${audience}`, rows });
+        }
+      } else {
+        groups.push({
+          heading: seasonTitle,
+          rows: cells.map((cell) => ({ label: ageLabel(tiers, cell.tier), audience: cell.audience, fee: cell.fee })),
+        });
+      }
+    }
+  }
+  return groups;
 }
 
 export async function loadPublicBookingPolicy(slug?: string): Promise<PublicBookingPolicy | null> {
@@ -325,8 +437,10 @@ export async function loadPublicBookingPolicy(slug?: string): Promise<PublicBook
         ? "all check-in days"
         : policy.triggerDays.map((day) => ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day] ?? "").filter(Boolean).join(", "),
     })),
+    // Type-neutral copy (#1933, E7): the E4 re-key means "member rate" is no
+    // longer a single binary, so describe the outcome without naming a type.
     groupDiscount: discount?.enabled
-      ? `${discount.summerOnly ? "Summer groups" : "Groups"} of ${discount.minGroupSize} or more receive member nightly rates.`
+      ? `${discount.summerOnly ? "Summer groups" : "Groups"} of ${discount.minGroupSize} or more are charged the discounted group nightly rate.`
       : null,
   };
 }

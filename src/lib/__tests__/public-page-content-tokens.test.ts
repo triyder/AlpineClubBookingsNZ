@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   cancellation: vi.fn(),
   periods: vi.fn(),
   membershipTypes: vi.fn(),
+  membershipTypeFindFirst: vi.fn(),
   lodges: vi.fn(),
   seasons: vi.fn(),
   ageTiers: vi.fn(),
@@ -22,7 +23,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {
   publicContentSettings: { findUnique: mocks.settings },
   entranceFee: { findMany: mocks.entranceFees },
   lodge: { findFirst: mocks.lodge, findMany: mocks.lodges },
-  membershipType: { findMany: mocks.membershipTypes },
+  membershipType: { findMany: mocks.membershipTypes, findFirst: mocks.membershipTypeFindFirst },
   season: { findMany: mocks.seasons },
   ageTierSetting: { findMany: mocks.ageTiers },
   bookingDefaults: { findUnique: mocks.defaults },
@@ -33,10 +34,10 @@ vi.mock("@/lib/prisma", () => ({ prisma: {
 } }));
 
 import {
+  loadPublicAnnualFees,
   loadPublicCancellationPolicy,
-  loadPublicEntranceFees,
   loadPublicHutFees,
-  loadPublicMembershipTypes,
+  loadPublicJoiningFees,
   loadPublicBookingPolicy,
   describePublicCancellationRules,
 } from "@/lib/public-page-content-tokens";
@@ -55,32 +56,56 @@ describe("public PageContent token view models", () => {
 
   it("keeps every block hidden when its persisted opt-in row is absent", async () => {
     mocks.settings.mockResolvedValue(null);
-    await expect(loadPublicMembershipTypes()).resolves.toEqual([]);
-    await expect(loadPublicEntranceFees()).resolves.toEqual([]);
+    await expect(loadPublicAnnualFees()).resolves.toEqual([]);
+    await expect(loadPublicJoiningFees()).resolves.toEqual([]);
     await expect(loadPublicHutFees()).resolves.toEqual([]);
     await expect(loadPublicBookingPolicy()).resolves.toBeNull();
     await expect(loadPublicCancellationPolicy()).resolves.toBeNull();
-    expect(mocks.entranceFees).not.toHaveBeenCalled();
     expect(mocks.membershipTypes).not.toHaveBeenCalled();
     expect(mocks.lodges).not.toHaveBeenCalled();
     expect(mocks.cancellation).not.toHaveBeenCalled();
   });
 
-  it("derives the public joining fees from the FULL and Family types, omitting missing tiers (#1931)", async () => {
-    // FULL carries the per-age-tier joining fees; the Family type carries the
-    // flat family fee. Missing tiers (here CHILD/INFANT and the family flat) are
-    // omitted, preserving the old output shape.
+  it("groups public joining fees by membership type in configured age order (#1933)", async () => {
     mocks.membershipTypes.mockResolvedValue([
-      { key: "FULL", joiningFees: [{ ageTier: "ADULT", amountCents: 12500 }, { ageTier: "YOUTH", amountCents: 5000 }] },
-      { key: "FAMILY", joiningFees: [] },
+      { key: "FULL", name: "Full", ageGroupsApply: true, joiningFees: [
+        { ageTier: "ADULT", amountCents: 12500 },
+        { ageTier: "YOUTH", amountCents: 5000 },
+      ] },
     ]);
-    await expect(loadPublicEntranceFees()).resolves.toEqual([
-      { category: "Adult", fee: { amountCents: 12500, label: "$125.00" } },
-      { category: "Youth", fee: { amountCents: 5000, label: "$50.00" } },
+    mocks.ageTiers.mockResolvedValue([
+      { tier: "YOUTH", label: "Youth", sortOrder: 1 },
+      { tier: "ADULT", label: "Adult", sortOrder: 2 },
     ]);
-    expect(mocks.membershipTypes).toHaveBeenCalledWith(expect.objectContaining({
-      where: { key: { in: ["FULL", "FAMILY"] } },
-    }));
+    await expect(loadPublicJoiningFees()).resolves.toEqual([
+      { heading: "Full", rows: [
+        { label: "Youth", fee: { amountCents: 5000, label: "$50.00" } },
+        { label: "Adult", fee: { amountCents: 12500, label: "$125.00" } },
+      ] },
+    ]);
+    expect(mocks.membershipTypes).toHaveBeenCalledWith(expect.objectContaining({ where: { isActive: true, publiclyListed: true } }));
+  });
+
+  it("regroups public joining fees by age tier when byAge is set (#1933)", async () => {
+    mocks.membershipTypes.mockResolvedValue([
+      { key: "FULL", name: "Full", ageGroupsApply: true, joiningFees: [{ ageTier: "ADULT", amountCents: 12500 }] },
+      { key: "ASSOC", name: "Associate", ageGroupsApply: true, joiningFees: [{ ageTier: "ADULT", amountCents: 8000 }] },
+    ]);
+    mocks.ageTiers.mockResolvedValue([{ tier: "ADULT", label: "Adult", sortOrder: 2 }]);
+    await expect(loadPublicJoiningFees({ byAge: true })).resolves.toEqual([
+      { heading: "Adult", rows: [
+        { label: "Full", fee: { amountCents: 12500, label: "$125.00" } },
+        { label: "Associate", fee: { amountCents: 8000, label: "$80.00" } },
+      ] },
+    ]);
+  });
+
+  it("returns the empty state for an unknown/unlisted joining-fee type (#1933)", async () => {
+    mocks.membershipTypes.mockResolvedValue([
+      { key: "FULL", name: "Full", ageGroupsApply: true, joiningFees: [{ ageTier: "ADULT", amountCents: 12500 }] },
+    ]);
+    mocks.ageTiers.mockResolvedValue([{ tier: "ADULT", label: "Adult", sortOrder: 2 }]);
+    await expect(loadPublicJoiningFees({ typeKey: "NOT_LISTED" })).resolves.toEqual([]);
   });
 
   it("fails closed for an invalid lodge slug", async () => {
@@ -92,13 +117,33 @@ describe("public PageContent token view models", () => {
     expect(mocks.cancellation).not.toHaveBeenCalled();
   });
 
-  it("publishes only listed membership types and distinguishes no-invoice schedules", async () => {
-    mocks.membershipTypes.mockResolvedValue([{ name: "Life", publicDescription: "For life members", annualFees: [{ amountCents: 0, billingBasis: "NO_INVOICE", prorationRule: "NONE" }] }]);
-    await expect(loadPublicMembershipTypes()).resolves.toEqual([{ name: "Life", description: "For life members", annualFee: null, billingLabel: "No invoice required" }]);
+  it("lists annual fee totals per listed type and omits no-invoice schedules (#1933)", async () => {
+    mocks.membershipTypes.mockResolvedValue([
+      { key: "FULL", name: "Full", annualFees: [{ amountCents: 15000, billingBasis: "PER_MEMBER", components: [] }] },
+      { key: "LIFE", name: "Life", annualFees: [{ amountCents: 0, billingBasis: "NO_INVOICE", components: [] }] },
+    ]);
+    await expect(loadPublicAnnualFees()).resolves.toEqual([
+      { heading: "Annual membership fees", rows: [{ label: "Full", fee: { amountCents: 15000, label: "$150.00" } }] },
+    ]);
     expect(mocks.membershipTypes).toHaveBeenCalledWith(expect.objectContaining({ where: { isActive: true, publiclyListed: true } }));
   });
 
-  it("uses configured age labels and stable order for lodge rates", async () => {
+  it("expands annual fee components when components is set (#1933)", async () => {
+    mocks.membershipTypes.mockResolvedValue([
+      { key: "FULL", name: "Full", annualFees: [{ amountCents: 15000, billingBasis: "PER_MEMBER", components: [
+        { label: "Base membership", amountCents: 10000 },
+        { label: "Work party", amountCents: 5000 },
+      ] }] },
+    ]);
+    await expect(loadPublicAnnualFees({ components: true })).resolves.toEqual([
+      { heading: "Full", rows: [
+        { label: "Base membership", fee: { amountCents: 10000, label: "$100.00" } },
+        { label: "Work party", fee: { amountCents: 5000, label: "$50.00" } },
+      ] },
+    ]);
+  });
+
+  it("groups public hut fees per season with member/non-member rows in age order (#1933)", async () => {
     mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
     mocks.seasons.mockResolvedValue([{ lodgeId: "l1", name: "Winter", startDate: new Date("2026-06-01"), endDate: new Date("2026-10-01"), rates: [
       { ageTier: "ADULT", isMember: true, pricePerNightCents: 4000 },
@@ -108,8 +153,25 @@ describe("public PageContent token view models", () => {
       { tier: "CHILD", label: "Child (5–12)", sortOrder: 1 },
       { tier: "ADULT", label: "Adult (18+)", sortOrder: 2 },
     ]);
-    const result = await loadPublicHutFees();
-    expect(result[0]?.seasons[0]?.rates.map((rate) => rate.ageTier)).toEqual(["Child (5–12)", "Adult (18+)"]);
+    const groups = await loadPublicHutFees();
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.heading).toContain("River Lodge — Winter");
+    expect(groups[0]?.heading).toContain("nightly rates");
+    expect(groups[0]?.rows.map((row) => row.label)).toEqual(["Child (5–12)", "Adult (18+)"]);
+    expect(groups[0]?.rows.every((row) => row.audience === "Member")).toBe(true);
+  });
+
+  it("splits hut-fee seasons by audience when group-by=type (#1933)", async () => {
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockResolvedValue([{ lodgeId: "l1", name: "Winter", startDate: new Date("2026-06-01"), endDate: new Date("2026-10-01"), rates: [
+      { ageTier: "ADULT", isMember: true, pricePerNightCents: 4000 },
+      { ageTier: "ADULT", isMember: false, pricePerNightCents: 6000 },
+    ] }]);
+    mocks.ageTiers.mockResolvedValue([{ tier: "ADULT", label: "Adult", sortOrder: 2 }]);
+    const groups = await loadPublicHutFees(undefined, { groupBy: new Set(["type"]) });
+    expect(groups.map((group) => group.heading.endsWith("Member"))).toContain(true);
+    expect(groups.map((group) => group.heading.endsWith("Non-member"))).toContain(true);
+    expect(groups.every((group) => group.rows.every((row) => row.audience === undefined))).toBe(true);
   });
 
   it("summarizes only customer-facing booking policy fields", async () => {
