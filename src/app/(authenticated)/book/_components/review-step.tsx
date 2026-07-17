@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { type LodgeOption } from "@/components/lodge-select";
+import { sumDeferredGuestPortionCents } from "@/lib/deferred-guest-portion";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
 import { CheckCircle2, CreditCard, Landmark } from "lucide-react";
@@ -190,14 +191,18 @@ export function ReviewStep({
     .filter((guest) => !guest.isMember)
     .map((guest) => `${guest.firstName} ${guest.lastName}`.trim())
     .filter(Boolean);
-  // The provisional (guest-portion) sub-amount, derived from the same quote the
-  // member already sees — NOT recomputed. priceQuote.guests is index-parallel to
-  // reviewGuestPayload, so summing the non-member rows gives the portion that is
-  // charged later rather than today.
-  const provisionalGuestPortionCents = priceQuote.guests.reduce(
-    (sum, guest) => (guest.isMember ? sum : sum + (guest.priceCents || 0)),
-    0,
-  );
+  // The provisional (guest-portion) sub-amount that is charged later rather than
+  // today. The SERVER computes this (priceQuote.deferredGuestPortionCents) by
+  // pricing the non-member subset through the SAME helper booking-create charges
+  // the split child with (#2003) — so this banner's "about $X" equals the real
+  // deferred charge even under a group discount, where the non-member subset can
+  // fall under minGroupSize while the whole party meets it. We do NOT sum the
+  // whole-party non-member rows here: those rows are group-discounted on the
+  // whole party and would UNDER-QUOTE the subset that is actually charged. The
+  // client sum is only a fallback for an old cached quote predating the field.
+  const provisionalGuestPortionCents =
+    priceQuote.deferredGuestPortionCents ??
+    sumDeferredGuestPortionCents(priceQuote.guests);
   const holdDays = priceQuote.nonMemberHoldDecision?.holdDays ?? 0;
   // Approximate hold deadline: check-in minus the policy's hold-days. The exact
   // hold-until timestamp is set server-side; this is the member-facing "around

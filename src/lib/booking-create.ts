@@ -33,6 +33,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import {
   calculateBookingCreditApplication,
+  priceDeferredNonMemberPortion,
   toGuestPricingInputs,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
@@ -1017,14 +1018,24 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       // bumped at the hold window in R3). It carries no promo/credit; those stay
       // with the member booking that is charged up front.
       if (splitBooking) {
-        const childGuestInputs = toGuestPricingInputs(nonMemberGuests);
-        const childPrice = await priceBookingGuestsWithMembershipTypePolicy(tx, {
+        // The provisional child is charged the non-member SUBSET priced on its
+        // own (group discount qualifies only when the subset itself meets
+        // minGroupSize). This is the charge authority; the booking quote calls
+        // the SAME `priceDeferredNonMemberPortion` so the review banner's
+        // "about $X" equals what is charged here (#2003). splitBooking implies
+        // non-member guests, so the portion is always priced (never null).
+        const childPrice = await priceDeferredNonMemberPortion(tx, {
           checkIn,
           checkOut,
-          guests: childGuestInputs,
+          guests,
           seasons: seasonData,
           groupDiscount,
         });
+        if (!childPrice) {
+          throw new Error(
+            "Split booking child pricing requires non-member guests",
+          );
+        }
         const childHoldUntil = new Date(
           checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000
         );

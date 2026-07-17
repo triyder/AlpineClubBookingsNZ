@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import {
   calculateBookingHoldDecision,
   isGroupDiscountAppliedToBooking,
+  priceDeferredNonMemberPortion,
   toGroupDiscountConfig,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
@@ -231,6 +232,23 @@ export async function POST(request: NextRequest) {
       seasons: seasonData,
       groupDiscount,
     });
+    // Deferred non-member "guest portion" (#2003): when a split creates a
+    // provisional non-member child, its charge is the non-member SUBSET priced
+    // on its own — which the group discount may treat differently than the
+    // whole-party quote (the subset can fall under minGroupSize while the party
+    // meets it). Price it here through the SAME helper booking-create charges,
+    // so the review-step "about $X" banner shows the figure that is actually
+    // deferred rather than a whole-party non-member sum that under-quotes under
+    // group discounts. Null when the party has no non-member guests. This is a
+    // display-only read; the route performs no writes.
+    const deferredPortion = await priceDeferredNonMemberPortion(prisma, {
+      checkIn,
+      checkOut,
+      guests,
+      seasons: seasonData,
+      groupDiscount,
+    });
+    const deferredGuestPortionCents = deferredPortion?.totalPriceCents ?? null;
     const availableCreditCents = await getMemberCreditBalance(effectiveMemberId);
     const groupDiscountApplied = isGroupDiscountAppliedToBooking({
       checkIn,
@@ -254,6 +272,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ...price,
       availableCreditCents,
+      deferredGuestPortionCents,
       groupDiscountApplied,
       nonMemberHoldDecision: {
         enabled: holdPolicy.enabled,
