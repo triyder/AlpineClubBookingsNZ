@@ -35,31 +35,65 @@ function isConfirmationExemptAccount(member: BookingFamilyMember) {
   return member.confirmationMode === "not_allowed";
 }
 
-// Consequence appended to the block message when the member could instead add
-// this person as a non-member guest AND the non-member hold policy would apply
-// to the stay (#1942). It spells out what "add them as a non-member guest"
-// actually means so the choice is informed, not a surprise at check-in.
-const PROVISIONAL_HOLD_CONSEQUENCE =
-  " If you add them as a non-member guest, they'll be held provisionally — no bed is reserved for them until the booking is confirmed and paid closer to your stay, and members have priority if the lodge fills up.";
+// Whether the non-member provisional hold would apply if this person were added
+// as a non-member guest instead (#1942):
+//   "applies"     — a non-member is already in the party and the live quote says
+//                   the stay is outside the hold window: the hold WILL apply.
+//   "conditional" — the party has no non-member yet, so the quote can't yet say
+//                   whether the hold applies. The FIRST non-member added would
+//                   otherwise get no warning at all, so warn conditionally.
+//   "none"        — the quote says the hold does not apply to this stay (e.g.
+//                   check-in is inside the hold window): a bed is held
+//                   immediately, so no provisional warning.
+export type NonMemberHoldPolicyState = "applies" | "conditional" | "none";
+
+// Standalone consequence sentence spelling out what "add them as a non-member
+// guest" actually means, so the choice is informed rather than a surprise at
+// check-in. Used by messages that do NOT already mention adding as a non-member
+// guest (so the phrase appears exactly once).
+function provisionalHoldConsequence(state: NonMemberHoldPolicyState): string {
+  if (state === "applies") {
+    return " If you add them as a non-member guest, they'll be held provisionally — no bed is reserved for them until the booking is confirmed and paid closer to your stay, and members have priority if the lodge fills up.";
+  }
+  if (state === "conditional") {
+    return " If you add them as a non-member guest, they may be held provisionally depending on how far out your booking is — if held, no bed is reserved for them until the booking is confirmed and paid closer to your stay, and members have priority if the lodge fills up.";
+  }
+  return "";
+}
+
+// Continuation clause for a message that already ends with "...add them as a
+// non-member guest ...". Reads as one sentence with that lead-in so the phrase
+// is not repeated verbatim (#1942 doubled-phrase fix).
+function provisionalHoldContinuation(state: NonMemberHoldPolicyState): string {
+  if (state === "applies") {
+    return " — if you do, they'll be held provisionally: no bed is reserved for them until the booking is confirmed and paid closer to your stay, and members have priority if the lodge fills up.";
+  }
+  if (state === "conditional") {
+    return " — if you do, they may be held provisionally depending on how far out your booking is: no bed is reserved for them until the booking is confirmed and paid closer to your stay, and members have priority if the lodge fills up.";
+  }
+  return "";
+}
 
 export function getFamilyMemberBookingBlockMessage(
   member: BookingFamilyMember,
-  options?: { holdPolicyApplies?: boolean }
+  options?: { holdPolicy?: NonMemberHoldPolicyState }
 ): string | null {
   if (member.canBeBooked !== false) {
     return null;
   }
 
   const name = getMemberName(member);
-  // Only warn about the provisional consequence when the hold would actually
-  // apply to this stay; otherwise adding them as a non-member guest holds a bed
-  // immediately and the warning would be misleading.
-  const consequence = options?.holdPolicyApplies
-    ? PROVISIONAL_HOLD_CONSEQUENCE
-    : "";
+  const holdPolicy = options?.holdPolicy ?? "none";
+  const consequence = provisionalHoldConsequence(holdPolicy);
 
   if (member.pendingRequestStatus) {
-    return `This family change is awaiting admin approval. You can add them as a non-member guest until approved.${consequence}`;
+    // This branch already ends with "...add them as a non-member guest until
+    // approved", so use the continuation form (no repeated phrase).
+    const base =
+      "This family change is awaiting admin approval. You can add them as a non-member guest until approved";
+    return holdPolicy === "none"
+      ? `${base}.`
+      : `${base}${provisionalHoldContinuation(holdPolicy)}`;
   }
 
   if (isConfirmationExemptAccount(member)) {

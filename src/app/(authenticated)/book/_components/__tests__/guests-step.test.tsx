@@ -250,7 +250,7 @@ describe("GuestsStep", () => {
       ).toBeInTheDocument();
     });
 
-    it("omits the provisional consequence when the hold policy does not apply", () => {
+    it("warns conditionally for the FIRST non-member add (party has no non-member yet, decision unknown) — FIX 7", () => {
       const nonBookable: FamilyMember = {
         id: "member-child",
         firstName: "Casey",
@@ -261,6 +261,9 @@ describe("GuestsStep", () => {
         pendingRequestStatus: "PENDING",
       };
 
+      // Empty party (or any all-member party) → the quote can't yet say whether
+      // the hold applies, so the consequence is shown with conditional wording
+      // instead of being omitted entirely.
       renderGuestsStep({
         familyMembers: [nonBookable],
         guests: [],
@@ -271,8 +274,92 @@ describe("GuestsStep", () => {
         screen.getByText(/awaiting admin approval/i),
       ).toBeInTheDocument();
       expect(
+        screen.getByText(/may be held provisionally/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/depending on how far out your booking is/i),
+      ).toBeInTheDocument();
+    });
+
+    it("omits the provisional consequence when a non-member is present but the hold does not apply (decision known false) — FIX 7", () => {
+      const nonBookable: FamilyMember = {
+        id: "member-child",
+        firstName: "Casey",
+        lastName: "Skier",
+        ageTier: "CHILD",
+        relationship: "dependent",
+        canBeBooked: false,
+        pendingRequestStatus: "PENDING",
+      };
+      const presentNonMember: GuestData = {
+        firstName: "Alex",
+        lastName: "Stranger",
+        ageTier: "ADULT",
+        isMember: false,
+      };
+      const holdInsideWindow: PriceQuote["nonMemberHoldDecision"] = {
+        enabled: true,
+        holdDays: 7,
+        source: "default",
+        daysUntilCheckIn: 3,
+        shouldBePending: false,
+        status: "PAID",
+      };
+
+      renderGuestsStep({
+        familyMembers: [nonBookable],
+        guests: [presentNonMember],
+        priceQuote: {
+          guests: [
+            { ageTier: "ADULT", isMember: false, nights: 2, priceCents: 12000 },
+          ],
+          totalPriceCents: 12000,
+          nonMemberHoldDecision: holdInsideWindow,
+        },
+      });
+
+      expect(
+        screen.getByText(/awaiting admin approval/i),
+      ).toBeInTheDocument();
+      expect(
         screen.queryByText(/held provisionally/i),
       ).not.toBeInTheDocument();
+    });
+
+    it("preserves a guest's per-night selection when switching them to a member guest (#713 / FIX 5)", () => {
+      const typedMatch: GuestData = {
+        firstName: "casey",
+        lastName: "SKIER",
+        ageTier: "ADULT",
+        isMember: false,
+        stayStart: "2026-07-10",
+        stayEnd: "2026-07-12",
+        nights: ["2026-07-10", "2026-07-11"],
+      };
+      const handleGuestsChange = vi.fn();
+
+      renderGuestsStep({
+        familyMembers: [bookableChild],
+        guests: [typedMatch],
+        handleGuestsChange,
+        perGuestDatesEnabled: true,
+        multiDateRangesEnabled: true,
+      });
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Add as member guest" }),
+      );
+
+      const next = handleGuestsChange.mock.calls[0][0] as GuestData[];
+      expect(next[0]).toMatchObject({
+        firstName: "Casey",
+        lastName: "Skier",
+        isMember: true,
+        memberId: "member-child",
+        stayStart: "2026-07-10",
+        stayEnd: "2026-07-12",
+        nights: ["2026-07-10", "2026-07-11"],
+      });
     });
   });
 });

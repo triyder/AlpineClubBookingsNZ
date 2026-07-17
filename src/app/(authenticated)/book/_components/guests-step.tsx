@@ -65,12 +65,19 @@ export function GuestsStep({
   handleGuestsDone,
   priceLoading,
 }: GuestsStepProps) {
-  // The non-member hold policy applies to this stay only when the live quote
-  // says a provisional hold would be created (a non-member is already in the
-  // party and check-in is outside the hold window). Used to decide whether the
-  // "add as non-member guest" fallback should warn about the provisional hold.
-  const holdPolicyApplies =
-    priceQuote?.nonMemberHoldDecision?.shouldBePending === true;
+  // Tri-state for the "add as a non-member guest" fallback warning (#1942). The
+  // live quote only computes nonMemberHoldDecision once a non-member is already
+  // in the party, so the FIRST non-member add has no decision yet — warn
+  // conditionally in that case rather than omitting the consequence entirely:
+  //   - a non-member already in the party + quote says hold applies → "applies"
+  //   - a non-member already in the party + quote says it does not    → "none"
+  //   - no non-member in the party yet (decision unavailable)          → "conditional"
+  const partyHasNonMember = guests.some((g) => !g.isMember);
+  const holdPolicy: "applies" | "conditional" | "none" = !partyHasNonMember
+    ? "conditional"
+    : priceQuote?.nonMemberHoldDecision?.shouldBePending === true
+      ? "applies"
+      : "none";
 
   // Active steer (#1942): a typed-in non-member guest whose first+last name
   // matches one of THIS member's own family group members who can be booked as a
@@ -118,6 +125,10 @@ export function GuestsStep({
             ...(perGuestDatesEnabled && g.stayStart && g.stayEnd
               ? { stayStart: g.stayStart, stayEnd: g.stayEnd }
               : {}),
+            // Preserve the guest's per-night selection (multi-date-range mode,
+            // #713) — switching to a member guest must not silently drop the
+            // nights they picked.
+            ...(g.nights ? { nights: g.nights } : {}),
           }
         : g,
     );
@@ -148,7 +159,7 @@ export function GuestsStep({
                   ? `${fm.firstName} ${fm.lastName} (You)`
                   : `${fm.firstName} ${fm.lastName} (${fm.ageTier})`;
                 const blockMessage = getFamilyMemberBookingBlockMessage(fm, {
-                  holdPolicyApplies,
+                  holdPolicy,
                 });
                 const actionLabel = getFamilyMemberBookingActionLabel(fm);
                 return (
