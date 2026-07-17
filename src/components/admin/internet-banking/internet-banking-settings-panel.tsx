@@ -4,10 +4,15 @@ import { useEffect, useState } from "react";
 import { Save } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminForbiddenSaveNotice,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 interface InternetBankingSettings {
   holdBedSlots: boolean;
@@ -28,6 +33,10 @@ export function InternetBankingSettingsPanel() {
   const [xeroBehaviour, setXeroBehaviour] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [forbiddenSave, setForbiddenSave] = useState(false);
+  // Internet Banking settings gate on the finance area (its write route enforces
+  // finance:edit); a finance:view admin sees it read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("finance");
 
   async function load() {
     setLoading(true);
@@ -63,6 +72,7 @@ export function InternetBankingSettingsPanel() {
   async function save() {
     if (!settings) return;
     setSaving(true);
+    setForbiddenSave(false);
     try {
       const response = await fetch("/api/admin/internet-banking-settings", {
         method: "PUT",
@@ -72,6 +82,7 @@ export function InternetBankingSettingsPanel() {
       });
       const responseBody = await response.json().catch(() => null);
       if (!response.ok) {
+        if (response.status === 403) setForbiddenSave(true);
         throw new Error(responseBody?.error ?? "Failed to save Internet Banking settings");
       }
       setSettings(responseBody.settings);
@@ -92,6 +103,13 @@ export function InternetBankingSettingsPanel() {
 
   return (
     <div className="space-y-6">
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view Internet Banking settings but cannot change
+          them. Finance edit access is required.
+        </AdminViewOnlyNotice>
+      ) : null}
+      {forbiddenSave ? <AdminForbiddenSaveNotice /> : null}
       <div className="space-y-3">
         <div className="flex flex-wrap gap-2">
           <Badge variant={moduleState.ready ? "default" : "secondary"}>
@@ -112,6 +130,7 @@ export function InternetBankingSettingsPanel() {
         <Checkbox
           className="mt-0.5"
           checked={settings.holdBedSlots}
+          disabled={!canEdit}
           onCheckedChange={(checked) => update({ holdBedSlots: checked === true })}
         />
         <span className="text-sm">
@@ -134,6 +153,7 @@ export function InternetBankingSettingsPanel() {
             type="number"
             min={1}
             max={30}
+            disabled={!canEdit}
             value={settings.holdDays}
             onChange={(event) =>
               update({ holdDays: Number.parseInt(event.target.value || "0", 10) })
@@ -148,6 +168,7 @@ export function InternetBankingSettingsPanel() {
             type="number"
             min={0}
             max={365}
+            disabled={!canEdit}
             value={settings.minimumDaysBeforeCheckIn}
             onChange={(event) =>
               update({
@@ -158,10 +179,10 @@ export function InternetBankingSettingsPanel() {
         </div>
       </div>
 
-      <Button onClick={save} disabled={saving}>
+      <ViewOnlyActionButton canEdit={canEdit} onClick={save} disabled={saving}>
         <Save className="h-4 w-4" />
         {saving ? "Saving" : "Save Settings"}
-      </Button>
+      </ViewOnlyActionButton>
     </div>
   );
 }

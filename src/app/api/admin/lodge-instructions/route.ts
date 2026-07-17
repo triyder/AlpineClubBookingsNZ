@@ -69,7 +69,9 @@ async function validateActiveLodge(lodgeId: string): Promise<boolean> {
  * offer "create override" instead of silently showing club-wide content.
  */
 export async function GET(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "view" },
+  });
   if (!guard.ok) {
     return guard.response;
   }
@@ -108,7 +110,9 @@ export async function GET(request: NextRequest) {
  * render paths sanitise again on read.
  */
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "edit" },
+  });
   if (!guard.ok) {
     return guard.response;
   }

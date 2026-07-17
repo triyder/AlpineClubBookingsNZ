@@ -9,6 +9,27 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubIdentityProvider } from "@/components/club-identity-provider";
+
+// #1940: the Lodge Capacity card reads the session permission matrix for
+// view-only gating; provide an edit-level admin session so the prose renders.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
 import type { ClubIdentity } from "@/config/club-identity-types";
 
 // Server surface reads the static constant. Override it, and stub the client

@@ -13,7 +13,9 @@ const rollForwardSchema = z
   .strict();
 
 export async function POST(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: unknown;

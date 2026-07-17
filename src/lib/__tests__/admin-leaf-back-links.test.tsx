@@ -3,6 +3,27 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+// #1940: several leaf pages now read the session permission matrix for view-only
+// gating; provide an edit-level admin session so the back-link render succeeds.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
+
 // The leaf pages embed heavy client panels/sections that fetch on mount; the
 // back-link lives at the top of each page's render, so stub the panels out and
 // assert only that every drill-down leaf points at its current parent hub.

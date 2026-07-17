@@ -47,7 +47,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   const promoCode = await prisma.promoCode.findUnique({
     where: { id },
@@ -86,7 +88,9 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const existing = await prisma.promoCode.findUnique({ where: { id } });
@@ -348,7 +352,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const existing = await prisma.promoCode.findUnique({
@@ -393,7 +399,9 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const existing = await prisma.promoCode.findUnique({ where: { id } });

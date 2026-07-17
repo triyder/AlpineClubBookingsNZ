@@ -20,6 +20,11 @@ import {
   type InductionSectionPriority,
   INDUCTION_KIND_LABELS,
 } from "@/lib/induction-display";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 interface TemplateSummary {
   id: string;
@@ -104,6 +109,9 @@ export function InductionTemplateManager() {
   const [newKind, setNewKind] = useState<InductionKind>("NEW_MEMBER");
   const [activeTemplate, setActiveTemplate] = useState<ActiveTemplate | null>(null);
   const [showActiveTemplate, setShowActiveTemplate] = useState(false);
+  // Induction templates are membership-area config (the write routes enforce
+  // membership:edit), so gate every write control on that area (#1940).
+  const canEdit = useAdminAreaEditAccess("membership");
 
   const loadTemplates = useCallback(async () => {
     setLoading(true);
@@ -343,6 +351,12 @@ export function InductionTemplateManager() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        {!canEdit ? (
+          <AdminViewOnlyNotice>
+            Your admin role can view induction templates but cannot change them.
+            Membership edit access is required.
+          </AdminViewOnlyNotice>
+        ) : null}
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
@@ -379,31 +393,35 @@ export function InductionTemplateManager() {
                 </div>
                 <div className="flex gap-2">
                   {!template.isActive && (
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       size="sm"
                       variant="outline"
                       onClick={() => activate(template.id)}
                     >
                       Activate
-                    </Button>
+                    </ViewOnlyActionButton>
                   )}
                   {!template.used && (
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       size="sm"
                       variant="outline"
                       onClick={() => openEditor(template.id)}
                     >
                       Edit
-                    </Button>
+                    </ViewOnlyActionButton>
                   )}
                   {!template.used && !template.isActive && (
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       size="sm"
                       variant="ghost"
+                      aria-label="Delete template"
                       onClick={() => remove(template.id)}
                     >
                       <Trash2 className="h-4 w-4" />
-                    </Button>
+                    </ViewOnlyActionButton>
                   )}
                 </div>
               </li>
@@ -477,6 +495,7 @@ export function InductionTemplateManager() {
               <select
                 id="new-kind"
                 value={newKind}
+                disabled={!canEdit}
                 onChange={(e) => setNewKind(e.target.value as InductionKind)}
                 className="h-9 rounded-md border bg-background px-2 text-sm"
               >
@@ -494,6 +513,7 @@ export function InductionTemplateManager() {
               <Input
                 id="new-name"
                 value={newName}
+                disabled={!canEdit}
                 onChange={(e) => setNewName(e.target.value)}
                 className="w-56"
               />
@@ -505,12 +525,14 @@ export function InductionTemplateManager() {
               <Input
                 id="new-version"
                 value={newVersion}
+                disabled={!canEdit}
                 onChange={(e) => setNewVersion(e.target.value)}
                 placeholder="e.g. 2026.1"
                 className="w-32"
               />
             </div>
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               size="sm"
               variant="outline"
               onClick={() =>
@@ -520,10 +542,15 @@ export function InductionTemplateManager() {
               }
             >
               Duplicate active
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => duplicate()}>
+            </ViewOnlyActionButton>
+            <ViewOnlyActionButton
+              canEdit={canEdit}
+              size="sm"
+              variant="outline"
+              onClick={() => duplicate()}
+            >
               Create blank
-            </Button>
+            </ViewOnlyActionButton>
           </div>
         </div>
 

@@ -16,6 +16,12 @@ import {
   formatRedactedJson,
   redactSensitiveText,
 } from "@/lib/redact-sensitive-json";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { cn } from "@/lib/utils";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import type {
@@ -73,11 +79,13 @@ function OperationItem({
   compact,
   onRetry,
   retrying,
+  canEdit,
 }: {
   operation: XeroRecordActivityOperation
   compact: boolean
   onRetry: (operationId: string) => Promise<void>
   retrying: boolean
+  canEdit: boolean
 }) {
   return (
     <div className={cn("rounded-md border p-3", compact ? "space-y-2" : "space-y-3")}>
@@ -137,14 +145,15 @@ function OperationItem({
         <>
           <div className="flex flex-wrap items-center gap-2">
             {operation.supported ? (
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 variant="outline"
                 size="sm"
                 onClick={() => void onRetry(operation.id)}
                 disabled={retrying}
               >
                 {retrying ? "Queueing..." : "Retry in background"}
-              </Button>
+              </ViewOnlyActionButton>
             ) : operation.reason && (operation.status === "FAILED" || operation.status === "PARTIAL") ? (
               <p className="text-xs text-muted-foreground">{operation.reason}</p>
             ) : null}
@@ -182,6 +191,10 @@ export function XeroRecordActivityPanel({
   compact = false,
   className,
 }: XeroRecordActivityPanelProps) {
+  // Record-scoped Xero retry/replay are finance-area writes; a finance:view
+  // admin sees the activity read-only (#1940). The retry/replay routes enforce
+  // finance:edit.
+  const canEdit = useAdminAreaEditAccess("finance")
   const [data, setData] = useState<XeroRecordActivityData | null>(initialData)
   const [loading, setLoading] = useState(!initialData)
   const [refreshing, setRefreshing] = useState(false)
@@ -235,6 +248,9 @@ export function XeroRecordActivityPanel({
       const res = await fetch(`/api/admin/xero/operations/${operationId}/retry`, {
         method: "POST",
       })
+      if (res.status === 403) {
+        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON)
+      }
       const payload = await res.json()
       if (!res.ok) {
         throw new Error(payload.error || "Failed to retry Xero operation")
@@ -258,6 +274,9 @@ export function XeroRecordActivityPanel({
       const res = await fetch(`/api/admin/xero/inbound-events/${eventId}/replay`, {
         method: "POST",
       })
+      if (res.status === 403) {
+        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON)
+      }
       const payload = await res.json()
       if (!res.ok) {
         throw new Error(payload.error || "Failed to replay Xero inbound event")
@@ -302,6 +321,12 @@ export function XeroRecordActivityPanel({
             <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               {error}
             </div>
+          )}
+          {!canEdit && (
+            <AdminViewOnlyNotice>
+              Your admin role can view Xero activity but cannot retry or replay
+              operations. Finance edit access is required.
+            </AdminViewOnlyNotice>
           )}
           {loading ? (
             <p className="text-sm text-slate-500">Loading Xero activity...</p>
@@ -367,6 +392,7 @@ export function XeroRecordActivityPanel({
                         compact
                         onRetry={handleRetry}
                         retrying={retryingOperationId === operation.id}
+                        canEdit={canEdit}
                       />
                     ))}
                   </div>
@@ -404,6 +430,12 @@ export function XeroRecordActivityPanel({
             <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               {error}
             </div>
+          )}
+          {!canEdit && (
+            <AdminViewOnlyNotice>
+              Your admin role can view Xero activity but cannot retry or replay
+              operations. Finance edit access is required.
+            </AdminViewOnlyNotice>
           )}
           {loading ? (
             <p className="text-sm text-slate-500">Loading Xero activity...</p>
@@ -560,6 +592,7 @@ export function XeroRecordActivityPanel({
                     compact={false}
                     onRetry={handleRetry}
                     retrying={retryingOperationId === operation.id}
+                    canEdit={canEdit}
                   />
                 ))}
               </div>
@@ -625,7 +658,8 @@ export function XeroRecordActivityPanel({
                   )}
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       variant="outline"
                       size="sm"
                       onClick={() => void handleReplayInboundEvent(event.id)}
@@ -634,7 +668,7 @@ export function XeroRecordActivityPanel({
                       {replayingInboundEventId === event.id
                         ? "Replaying..."
                         : inboundEventActionLabel(event.status)}
-                    </Button>
+                    </ViewOnlyActionButton>
                     {!event.canReplay && (
                       <p className="text-xs text-muted-foreground">
                         This event is currently being processed.

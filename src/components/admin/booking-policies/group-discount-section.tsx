@@ -6,10 +6,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useClubIdentity } from "@/components/club-identity-provider"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
 import { PolicyFeedback } from "./policy-feedback"
 
 export function GroupDiscountSection() {
   const { lodgeCapacity } = useClubIdentity()
+  // Booking-policy config gates on the bookings area (its write route enforces
+  // bookings:edit); a bookings:view admin sees it read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("bookings")
   const [groupMinSize, setGroupMinSize] = useState(5)
   const [groupSummerOnly, setGroupSummerOnly] = useState(true)
   const [groupEnabled, setGroupEnabled] = useState(false)
@@ -62,6 +71,10 @@ export function GroupDiscountSection() {
         }),
       })
       if (!res.ok) {
+        if (res.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON)
+          return
+        }
         const data = await res.json()
         throw new Error(data.error || "Failed to save")
       }
@@ -101,12 +114,18 @@ export function GroupDiscountSection() {
             </CardDescription>
           </div>
           {!editingGroup && (
-            <Button variant="outline" size="sm" onClick={() => setEditingGroup(true)}>
+            <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => setEditingGroup(true)}>
               Edit
-            </Button>
+            </ViewOnlyActionButton>
           )}
         </CardHeader>
         <CardContent className="space-y-4">
+          {!canEdit && (
+            <AdminViewOnlyNotice>
+              Your admin role can view the group discount policy but cannot change
+              it. Bookings edit access is required.
+            </AdminViewOnlyNotice>
+          )}
           <div className="flex items-center space-x-2">
             <input
               type="checkbox"

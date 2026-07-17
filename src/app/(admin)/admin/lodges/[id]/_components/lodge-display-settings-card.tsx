@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Monitor } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -13,6 +12,12 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 // Per-lodge lobby display settings (LTV-035, #81). Relocated out of the retired
 // /admin/display/settings page into the lodge configuration hub so the controls
@@ -36,6 +41,10 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
   const [notice, setNotice] = useState<string>("");
   const [showGuestPhones, setShowGuestPhones] = useState<boolean>(false);
   const [message, setMessage] = useState<string | null>(null);
+  // The lobby display config writes to /api/admin/display/lodge-config (area
+  // "lodge"), so gate the editor on lodge:edit — a lodge:view admin reads but
+  // cannot change (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge");
 
   const loadSettings = useCallback(async () => {
     const response = await fetch(
@@ -80,7 +89,15 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
       }),
     });
     const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    setMessage(response.ok ? "Display settings saved." : body?.error ?? "Save failed");
+    // A stale tab whose permissions were narrowed after load surfaces the
+    // persistent forbidden-save reason rather than the generic failure (#1940).
+    setMessage(
+      response.ok
+        ? "Display settings saved."
+        : response.status === 403
+          ? ADMIN_FORBIDDEN_SAVE_REASON
+          : body?.error ?? "Save failed",
+    );
     if (response.ok) await loadSettings();
   }
 
@@ -98,12 +115,19 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {!canEdit ? (
+          <AdminViewOnlyNotice>
+            Your admin role can view the lobby display settings but cannot change
+            them. Lodge edit access is required.
+          </AdminViewOnlyNotice>
+        ) : null}
         <div className="space-y-1">
           <Label htmlFor="granularity">Guest name display</Label>
           <select
             id="granularity"
             className="border-input bg-background h-9 rounded-md border px-3 text-sm"
             value={granularity}
+            disabled={!canEdit}
             onChange={(event) => setGranularity(event.target.value)}
           >
             {GRANULARITY_OPTIONS.map((option) => (
@@ -127,6 +151,7 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
             maxLength={2000}
             placeholder="A free-text notice shown by the notice module. {{config:key}} placeholders work here."
             value={notice}
+            disabled={!canEdit}
             onChange={(event) => setNotice(event.target.value)}
           />
           <p className="text-muted-foreground text-xs">
@@ -141,6 +166,7 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
               id="show-guest-phones"
               className="mt-0.5"
               checked={showGuestPhones}
+              disabled={!canEdit}
               onCheckedChange={(checked) => setShowGuestPhones(checked)}
             />
             <Label htmlFor="show-guest-phones" className="font-normal">
@@ -163,6 +189,7 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
                 className="w-48"
                 placeholder="wifi-code"
                 value={entry.key}
+                disabled={!canEdit}
                 onChange={(event) =>
                   setConfig((current) =>
                     current.map((row, i) =>
@@ -175,6 +202,7 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
                 className="flex-1"
                 placeholder="value"
                 value={entry.value}
+                disabled={!canEdit}
                 onChange={(event) =>
                   setConfig((current) =>
                     current.map((row, i) =>
@@ -183,27 +211,31 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
                   )
                 }
               />
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 variant="outline"
                 onClick={() =>
                   setConfig((current) => current.filter((_, i) => i !== index))
                 }
               >
                 Remove
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           ))}
-          <Button
+          <ViewOnlyActionButton
+            canEdit={canEdit}
             variant="outline"
             onClick={() => setConfig((current) => [...current, { key: "", value: "" }])}
           >
             Add value
-          </Button>
+          </ViewOnlyActionButton>
         </div>
 
         {message && <p className="text-sm font-medium">{message}</p>}
 
-        <Button onClick={() => void saveSettings()}>Save display settings</Button>
+        <ViewOnlyActionButton canEdit={canEdit} onClick={() => void saveSettings()}>
+          Save display settings
+        </ViewOnlyActionButton>
       </CardContent>
     </Card>
   );

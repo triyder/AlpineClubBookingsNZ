@@ -44,7 +44,9 @@ const putSchema = z.object({
 });
 
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   const settings = await prisma.ageTierSetting.findMany({
     orderBy: { sortOrder: "asc" },
@@ -63,7 +65,9 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const body = await request.json();

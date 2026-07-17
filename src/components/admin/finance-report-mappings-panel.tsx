@@ -22,6 +22,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { XeroAccountMultiSelect } from "@/components/admin/xero-account-multi-select";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import type { XeroAccount } from "@/lib/xero-admin-cache";
 
 type CategoryKind = "REVENUE" | "EXPENSE";
@@ -148,6 +153,10 @@ export function FinanceReportMappingsPanel() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
+  // The save/backfill routes enforce finance manager (finance:edit) access, so
+  // gate the editor on the finance area (#1940). A finance:view admin sees the
+  // read-only mappings but every write control is disabled.
+  const canEdit = useAdminAreaEditAccess("finance");
 
   async function loadMappings() {
     setLoading(true);
@@ -426,7 +435,8 @@ export function FinanceReportMappingsPanel() {
               <RotateCcw className="h-4 w-4" />
               Refresh
             </Button>
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               type="button"
               variant="outline"
               onClick={runBackfill}
@@ -438,8 +448,9 @@ export function FinanceReportMappingsPanel() {
                 <Archive className="h-4 w-4" />
               )}
               Backfill History
-            </Button>
-            <Button
+            </ViewOnlyActionButton>
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               type="button"
               onClick={saveMappings}
               disabled={saving || loading || !state}
@@ -450,11 +461,17 @@ export function FinanceReportMappingsPanel() {
                 <Save className="h-4 w-4" />
               )}
               Save
-            </Button>
+            </ViewOnlyActionButton>
           </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
+        {!canEdit ? (
+          <AdminViewOnlyNotice>
+            Your admin role can view the finance report mappings but cannot change
+            them. Finance edit access is required.
+          </AdminViewOnlyNotice>
+        ) : null}
         {error ? (
           <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
             {error}
@@ -502,7 +519,8 @@ export function FinanceReportMappingsPanel() {
                         same way they appear on the finance dashboard.
                       </p>
                     </div>
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       type="button"
                       variant="outline"
                       size="sm"
@@ -510,7 +528,7 @@ export function FinanceReportMappingsPanel() {
                     >
                       <Plus className="h-4 w-4" />
                       Add group
-                    </Button>
+                    </ViewOnlyActionButton>
                   </div>
 
                   {buildSections(grouped[kind]).map((section) => (
@@ -522,7 +540,8 @@ export function FinanceReportMappingsPanel() {
                         <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
                           {section.subtype ?? "Ungrouped"}
                         </h4>
-                        <Button
+                        <ViewOnlyActionButton
+                          canEdit={canEdit}
                           type="button"
                           variant="ghost"
                           size="sm"
@@ -530,7 +549,7 @@ export function FinanceReportMappingsPanel() {
                         >
                           <Plus className="h-4 w-4" />
                           Add group here
-                        </Button>
+                        </ViewOnlyActionButton>
                       </div>
 
                       {section.items.map((category) => (
@@ -543,6 +562,7 @@ export function FinanceReportMappingsPanel() {
                               <Label>Name</Label>
                               <Input
                                 value={category.name}
+                                disabled={!canEdit}
                                 onChange={(event) =>
                                   updateCategory(category.key, {
                                     name: event.target.value,
@@ -556,6 +576,7 @@ export function FinanceReportMappingsPanel() {
                                 list={`finance-subtypes-${kind}`}
                                 value={category.subtype ?? ""}
                                 placeholder="e.g. Operating"
+                                disabled={!canEdit}
                                 onChange={(event) =>
                                   updateCategory(category.key, {
                                     subtype: event.target.value
@@ -571,6 +592,7 @@ export function FinanceReportMappingsPanel() {
                                 type="number"
                                 min={0}
                                 value={category.sortOrder}
+                                disabled={!canEdit}
                                 onChange={(event) =>
                                   updateCategory(category.key, {
                                     sortOrder: Number(event.target.value),
@@ -583,6 +605,7 @@ export function FinanceReportMappingsPanel() {
                                 <input
                                   type="checkbox"
                                   checked={category.archived}
+                                  disabled={!canEdit}
                                   onChange={(event) =>
                                     updateCategory(category.key, {
                                       archived: event.target.checked,
@@ -591,7 +614,8 @@ export function FinanceReportMappingsPanel() {
                                 />
                                 Archived
                               </label>
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
                                 type="button"
                                 variant="ghost"
                                 size="icon"
@@ -599,7 +623,7 @@ export function FinanceReportMappingsPanel() {
                                 aria-label="Delete group"
                               >
                                 <Trash2 className="h-4 w-4 text-red-600" />
-                              </Button>
+                              </ViewOnlyActionButton>
                             </div>
                           </div>
 
@@ -607,6 +631,7 @@ export function FinanceReportMappingsPanel() {
                             <Label>Xero accounts</Label>
                             <XeroAccountMultiSelect
                               accounts={accounts}
+                              disabled={!canEdit}
                               selectedCodes={category.mappings.map(
                                 (mapping) => mapping.accountCode,
                               )}

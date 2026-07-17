@@ -30,7 +30,9 @@ const createSchema = z.object({
  * List all hut leader assignments.
  */
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   const assignments = await prisma.hutLeaderAssignment.findMany({
     include: {
@@ -64,7 +66,9 @@ export async function GET() {
  * Create a new hut leader assignment.
  */
 export async function POST(req: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   let body: unknown;
   try {

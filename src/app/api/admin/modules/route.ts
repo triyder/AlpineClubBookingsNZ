@@ -50,7 +50,9 @@ function getChanges(
 }
 
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "support", level: "view" },
+  });
   if (!guard.ok) {
     return guard.response;
   }
@@ -59,7 +61,9 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "support", level: "edit" },
+  });
   if (!guard.ok) {
     return guard.response;
   }

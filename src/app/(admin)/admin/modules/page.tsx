@@ -21,6 +21,12 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { MODULE_KEYS, type ModuleKey, type ModuleSettingsValues } from "@/config/modules";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 type ModuleReadinessStatus =
   | "ready"
@@ -103,6 +109,9 @@ function cloneSettings(settings: ModuleSettingsValues): ModuleSettingsValues {
 }
 
 export default function AdminModulesPage() {
+  // Module activation is a support-area setting; a support:view admin sees it
+  // read-only (#1940). The PUT route enforces support:edit.
+  const canEdit = useAdminAreaEditAccess("support");
   const [payload, setPayload] = useState<ModulesResponse | null>(null);
   const [draft, setDraft] = useState<ModuleSettingsValues | null>(null);
   const [loading, setLoading] = useState(true);
@@ -190,6 +199,9 @@ export default function AdminModulesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ settings: draft }),
       });
+      if (response.status === 403) {
+        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON);
+      }
       const body = (await response.json()) as ModulesResponse | { error?: string };
       if (!response.ok || !("settings" in body) || !("modules" in body)) {
         throw new Error(responseErrorMessage(body, "Failed to save modules"));
@@ -235,7 +247,8 @@ export default function AdminModulesPage() {
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
-          <Button
+          <ViewOnlyActionButton
+            canEdit={canEdit}
             type="button"
             onClick={() => void saveModules()}
             disabled={!dirty || saving || draft === null}
@@ -246,9 +259,16 @@ export default function AdminModulesPage() {
               <Save className="mr-2 h-4 w-4" />
             )}
             Save
-          </Button>
+          </ViewOnlyActionButton>
         </div>
       </div>
+
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view the module settings but cannot change them.
+          Support edit access is required.
+        </AdminViewOnlyNotice>
+      )}
 
       {(error || savedMessage) && (
         <div
@@ -301,7 +321,7 @@ export default function AdminModulesPage() {
                     onCheckedChange={(checked) =>
                       setModuleEnabled(module.key, checked === true)
                     }
-                    disabled={saving}
+                    disabled={saving || !canEdit}
                     className="mt-1"
                   />
                   <div className="min-w-0 flex-1">

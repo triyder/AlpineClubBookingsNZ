@@ -7,6 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 
 // Multi-lodge kiosks: one shared login per lodge device. Each account can
@@ -37,12 +43,14 @@ function AccountCard({
   lodges,
   showLodgeControls,
   defaultLodgeName,
+  canEdit,
   onSaved,
 }: {
   account: KioskAccount;
   lodges: Array<{ id: string; name: string }>;
   showLodgeControls: boolean;
   defaultLodgeName: string | null;
+  canEdit: boolean;
   onSaved: () => void;
 }) {
   const [email, setEmail] = useState(account.email);
@@ -89,6 +97,10 @@ function AccountCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (res.status === 403) {
+        setSaveMessage({ type: "error", text: ADMIN_FORBIDDEN_SAVE_REASON });
+        return;
+      }
       const data = await res.json();
       if (!res.ok) {
         setSaveMessage({ type: "error", text: data.error || "Failed to save" });
@@ -130,7 +142,8 @@ function AccountCard({
             Preview kiosk
           </a>
           {!editing && (
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               variant="outline"
               size="sm"
               onClick={() => {
@@ -139,7 +152,7 @@ function AccountCard({
               }}
             >
               Edit
-            </Button>
+            </ViewOnlyActionButton>
           )}
         </div>
       </CardHeader>
@@ -269,9 +282,9 @@ function AccountCard({
 
         {editing && (
           <div className="flex gap-3">
-            <Button onClick={handleSave} disabled={saving}>
+            <ViewOnlyActionButton canEdit={canEdit} onClick={handleSave} disabled={saving}>
               {saving ? "Saving..." : "Save Changes"}
-            </Button>
+            </ViewOnlyActionButton>
             <Button variant="outline" onClick={handleCancel} disabled={saving}>
               Cancel
             </Button>
@@ -284,6 +297,9 @@ function AccountCard({
 
 export default function AdminLodgePage() {
   const { hutLeaderLabel } = useClubIdentity();
+  // Kiosk accounts are lodge config; the write routes enforce lodge:edit, so a
+  // lodge:view admin sees this screen read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge");
   const [accounts, setAccounts] = useState<KioskAccount[]>([]);
   const [defaultLodgeName, setDefaultLodgeName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -330,6 +346,10 @@ export default function AdminLodgePage() {
           lodgeId: newLodgeId || undefined,
         }),
       });
+      if (res.status === 403) {
+        setCreateMessage({ type: "error", text: ADMIN_FORBIDDEN_SAVE_REASON });
+        return;
+      }
       const data = await res.json();
       if (!res.ok) {
         setCreateMessage({ type: "error", text: data.error || "Failed to create account" });
@@ -384,6 +404,13 @@ export default function AdminLodgePage() {
           " With more than one lodge, create one kiosk account per lodge and bind each to the lodge its device lives at."}
       </p>
 
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view the lodge kiosk accounts but cannot change
+          them. Lodge edit access is required.
+        </AdminViewOnlyNotice>
+      )}
+
       {accounts.map((account) => (
         <AccountCard
           key={`${account.id}-${account.updatedAt}`}
@@ -391,6 +418,7 @@ export default function AdminLodgePage() {
           lodges={lodges}
           showLodgeControls={showLodgeControls}
           defaultLodgeName={defaultLodgeName}
+          canEdit={canEdit}
           onSaved={() => void load()}
         />
       ))}
@@ -400,9 +428,9 @@ export default function AdminLodgePage() {
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Add a kiosk account</CardTitle>
             {!adding && (
-              <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+              <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => setAdding(true)}>
                 Add account
-              </Button>
+              </ViewOnlyActionButton>
             )}
           </CardHeader>
           {adding && (
@@ -456,12 +484,13 @@ export default function AdminLodgePage() {
                 </div>
               )}
               <div className="flex gap-3">
-                <Button
+                <ViewOnlyActionButton
+                  canEdit={canEdit}
                   onClick={handleCreate}
                   disabled={creating || !newEmail || newPassword.length < 6}
                 >
                   {creating ? "Creating..." : "Create account"}
-                </Button>
+                </ViewOnlyActionButton>
                 <Button
                   variant="outline"
                   onClick={() => {

@@ -2,6 +2,28 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// #1940: the page now reads the session permission matrix for view-only gating;
+// provide an edit-level admin session so the pre-existing edit-interaction cases
+// keep working.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
+
 import AdminMembershipTypesPage from "@/app/(admin)/admin/membership-types/page";
 
 const fetchMock = vi.fn();

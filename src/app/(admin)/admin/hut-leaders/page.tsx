@@ -23,6 +23,12 @@ import {
 import { calculateOverlapDays } from "@/lib/hut-leader-overlap";
 import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import type {
   CalendarOverlayValue,
   CalendarTone,
@@ -83,6 +89,9 @@ function shortLeaderLabel(memberName: string) {
 
 export default function HutLeadersPage() {
   const { hutLeaderLabel } = useClubIdentity();
+  // Hut-leader assignments are lodge config; the write routes enforce
+  // lodge:edit, so a lodge:view admin sees this screen read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge");
   const [assignments, setAssignments] = useState<HutLeaderAssignment[]>([]);
   const [eligibleMembers, setEligibleMembers] = useState<EligibleMember[]>([]);
   const [unassignedDates, setUnassignedDates] = useState<UnassignedDate[]>([]);
@@ -265,6 +274,13 @@ export default function HutLeadersPage() {
         }),
       });
       if (!res.ok) {
+        if (res.status === 403) {
+          setError({
+            message: ADMIN_FORBIDDEN_SAVE_REASON,
+            memberId: target.memberId,
+          });
+          return;
+        }
         const data = await res.json();
         setError({
           message: data.error || "Failed to create",
@@ -289,6 +305,8 @@ export default function HutLeadersPage() {
       fetchAssignments();
       fetchUnassignedDates();
       refreshOverlay(visibleMonthKey);
+    } else if (res.status === 403) {
+      setError({ message: ADMIN_FORBIDDEN_SAVE_REASON, memberId: null });
     }
   }
 
@@ -308,6 +326,10 @@ export default function HutLeadersPage() {
       const res = await fetch(`/api/admin/hut-leaders/${assignment.id}/pin`, {
         method: "POST",
       });
+      if (!res.ok && res.status === 403) {
+        setError({ message: ADMIN_FORBIDDEN_SAVE_REASON, memberId: null });
+        return;
+      }
       const data = await res.json();
       if (!res.ok) {
         setError({ message: data.error || "Failed to reset PIN", memberId: null });
@@ -452,6 +474,13 @@ export default function HutLeadersPage() {
         </div>
       )}
 
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view {hutLeaderLabel.toLowerCase()} assignments but
+          cannot change them. Lodge edit access is required.
+        </AdminViewOnlyNotice>
+      )}
+
       {unassignedDates.length > 0 && (
         <Card className="border-warning/20 bg-warning-muted">
           <CardHeader className="pb-2">
@@ -507,6 +536,7 @@ export default function HutLeadersPage() {
         creating={creating}
         error={error}
         onConfirm={handleConfirm}
+        canEdit={canEdit}
         lodgeSelector={
           <LodgeSelect
             lodges={lodges}
@@ -590,7 +620,8 @@ export default function HutLeadersPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
-                      <Button
+                      <ViewOnlyActionButton
+                        canEdit={canEdit}
                         variant="ghost"
                         size="sm"
                         onClick={() => handleResetPin(a)}
@@ -600,8 +631,9 @@ export default function HutLeadersPage() {
                       >
                         <KeyRound className="h-4 w-4" />
                         <span className="sr-only">Reset kiosk PIN</span>
-                      </Button>
-                      <Button
+                      </ViewOnlyActionButton>
+                      <ViewOnlyActionButton
+                        canEdit={canEdit}
                         variant="ghost"
                         size="sm"
                         onClick={() => handleDelete(a.id)}
@@ -610,7 +642,7 @@ export default function HutLeadersPage() {
                       >
                         <Trash2 className="h-4 w-4" />
                         <span className="sr-only">Delete assignment</span>
-                      </Button>
+                      </ViewOnlyActionButton>
                     </div>
                   </TableCell>
                 </TableRow>

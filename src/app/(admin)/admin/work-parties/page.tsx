@@ -26,6 +26,12 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useLodgeOptions } from "@/components/lodge-select";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { formatCents } from "@/lib/pricing";
@@ -94,6 +100,9 @@ function formatStoredDate(value: string) {
 }
 
 export default function AdminWorkPartiesPage() {
+  // Work-party events are lodge config; the write routes enforce lodge:edit, so
+  // a lodge:view admin sees this screen read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge");
   const [events, setEvents] = useState<WorkPartyEventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -184,6 +193,10 @@ export default function AdminWorkPartiesPage() {
           body: JSON.stringify(payload),
         }
       );
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
+      }
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "Failed to save work party event");
@@ -215,6 +228,10 @@ export default function AdminWorkPartiesPage() {
         lodgeId: event.lodgeId,
       }),
     });
+    if (res.status === 403) {
+      setError(ADMIN_FORBIDDEN_SAVE_REASON);
+      return;
+    }
     const data = await res.json();
     if (!res.ok) {
       setError(data.error || "Failed to update work party event");
@@ -229,6 +246,10 @@ export default function AdminWorkPartiesPage() {
     const res = await fetch(`/api/admin/work-parties/${event.id}`, {
       method: "DELETE",
     });
+    if (res.status === 403) {
+      setError(ADMIN_FORBIDDEN_SAVE_REASON);
+      return;
+    }
     const data = await res.json();
     if (!res.ok) {
       setError(data.error || "Failed to delete work party event");
@@ -263,8 +284,19 @@ export default function AdminWorkPartiesPage() {
       <AdminPageHeader
         title="Work Parties"
         description="Working bee events with an automatic discount for attending bookings"
-        actions={<Button onClick={startCreate}>New Event</Button>}
+        actions={
+          <ViewOnlyActionButton canEdit={canEdit} onClick={startCreate}>
+            New Event
+          </ViewOnlyActionButton>
+        }
       />
+
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view work parties but cannot change them. Lodge
+          edit access is required.
+        </AdminViewOnlyNotice>
+      )}
 
       {error && (
         <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">{error}</div>
@@ -359,9 +391,9 @@ export default function AdminWorkPartiesPage() {
               Active (members can select this event when booking)
             </label>
             <div className="flex gap-2">
-              <Button onClick={handleSave} disabled={saving}>
+              <ViewOnlyActionButton canEdit={canEdit} onClick={handleSave} disabled={saving}>
                 {saving ? "Saving..." : editingId ? "Save Changes" : "Create Event"}
-              </Button>
+              </ViewOnlyActionButton>
               <Button
                 variant="outline"
                 onClick={() => {
@@ -414,16 +446,16 @@ export default function AdminWorkPartiesPage() {
                     </CardDescription>
                   </div>
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => startEdit(event)}>
+                    <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => startEdit(event)}>
                       Edit
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => toggleActive(event)}>
+                    </ViewOnlyActionButton>
+                    <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => toggleActive(event)}>
                       {event.active ? "Deactivate" : "Activate"}
-                    </Button>
+                    </ViewOnlyActionButton>
                     {event.bookingCount === 0 && (
-                      <Button variant="outline" size="sm" onClick={() => handleDelete(event)}>
+                      <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => handleDelete(event)}>
                         Delete
-                      </Button>
+                      </ViewOnlyActionButton>
                     )}
                   </div>
                 </div>

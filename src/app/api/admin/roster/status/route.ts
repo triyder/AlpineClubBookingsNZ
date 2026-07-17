@@ -27,7 +27,10 @@ const adminGuardOptions = {
  * single-active-lodge overlay stays byte-identical to before multi-lodge.
  */
 export async function GET(req: NextRequest) {
-  const guard = await requireAdmin(adminGuardOptions)
+  const guard = await requireAdmin({
+    ...adminGuardOptions,
+    permission: { area: "lodge", level: "view" },
+  })
   if (!guard.ok) return guard.response
 
   const parsedMonth = parseOccupancyMonth(req.nextUrl.searchParams.get("month"))

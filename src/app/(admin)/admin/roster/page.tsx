@@ -22,6 +22,12 @@ import {
 } from "@/components/lodge-select"
 import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only"
 import { OccupancyCalendar, type CalendarTone } from "@/components/admin/occupancy-calendar"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
 import type { RosterDayStatus, RosterDayStatusResult } from "@/lib/roster-status"
 
 interface Guest {
@@ -98,6 +104,9 @@ function formatDateForInput(d: Date): string {
 }
 
 export default function RosterPage() {
+  // Roster assignments are lodge operations; the roster PUT route enforces
+  // lodge:edit, so a lodge:view admin sees this screen read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge")
   const [selectedDate, setSelectedDate] = useState(formatDateForInput(getTodayDateOnly()))
   const [roster, setRoster] = useState<RosterData | null>(null)
   const [loading, setLoading] = useState(false)
@@ -232,6 +241,10 @@ export default function RosterPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "reassign", assignmentId, bookingGuestId }),
       })
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON)
+        return
+      }
       if (!res.ok) throw new Error("Failed to reassign")
       fetchRoster(selectedDate)
     } catch (err) {
@@ -250,6 +263,10 @@ export default function RosterPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "remove", assignmentId }),
       })
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON)
+        return
+      }
       if (!res.ok) throw new Error("Failed to remove")
       fetchRoster(selectedDate)
     } catch (err) {
@@ -287,6 +304,10 @@ export default function RosterPage() {
           overwriteConfirmed: hasConfirmedAssignments || undefined,
         }),
       })
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON)
+        return
+      }
       const data = await res.json()
       if (!res.ok) {
         throw new Error(data.error || "Failed to regenerate roster")
@@ -314,6 +335,10 @@ export default function RosterPage() {
           bookingId: guest.bookingId,
         }),
       })
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON)
+        return
+      }
       if (!res.ok) throw new Error("Failed to add")
       fetchRoster(selectedDate)
     } catch (err) {
@@ -332,6 +357,10 @@ export default function RosterPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "confirm" }),
       })
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON)
+        return
+      }
       if (!res.ok) throw new Error("Failed to confirm")
       fetchRoster(selectedDate)
     } catch (err) {
@@ -359,6 +388,10 @@ export default function RosterPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "email", notifyMember }),
       })
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON)
+        return
+      }
       if (!res.ok) throw new Error("Failed to send emails")
       const data = await res.json()
       // Suppress branch: nothing was sent and existing chore links stay valid.
@@ -466,6 +499,13 @@ export default function RosterPage() {
         </div>
       </div>
 
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view the chore roster but cannot change it. Lodge
+          edit access is required.
+        </AdminViewOnlyNotice>
+      )}
+
       {error && (
         <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
           {error}
@@ -499,13 +539,14 @@ export default function RosterPage() {
               />
               <Label htmlFor="includeNonEssential">Include non-essential chores</Label>
             </div>
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               variant="outline"
               onClick={handleRegenerate}
               disabled={loading || saving}
             >
               Regenerate Roster
-            </Button>
+            </ViewOnlyActionButton>
           </div>
           <div className="mt-4">
             <OccupancyCalendar
@@ -552,14 +593,14 @@ export default function RosterPage() {
                 </div>
                 <div className="flex items-center space-x-2">
                   {hasAnySuggested && (
-                    <Button onClick={handleConfirm} disabled={saving}>
+                    <ViewOnlyActionButton canEdit={canEdit} onClick={handleConfirm} disabled={saving}>
                       Confirm Roster
-                    </Button>
+                    </ViewOnlyActionButton>
                   )}
                   {isConfirmed && roster.assignments.length > 0 && (
-                    <Button variant="outline" onClick={handleSendEmail} disabled={sendingEmail}>
+                    <ViewOnlyActionButton canEdit={canEdit} variant="outline" onClick={handleSendEmail} disabled={sendingEmail}>
                       {sendingEmail ? "Sending..." : "Email Roster to Guests"}
-                    </Button>
+                    </ViewOnlyActionButton>
                   )}
                 </div>
               </div>
@@ -608,14 +649,15 @@ export default function RosterPage() {
                             </span>
                           )}
                         </div>
-                        <Button
+                        <ViewOnlyActionButton
+                          canEdit={canEdit}
                           variant="ghost"
                           size="sm"
                           onClick={() => handleAddAssignment(template.id)}
                           disabled={saving}
                         >
                           + Add Person
-                        </Button>
+                        </ViewOnlyActionButton>
                       </div>
                       {template.description && (
                         <CardDescription className="ml-10">
@@ -643,7 +685,7 @@ export default function RosterPage() {
                                   onChange={(e) => {
                                     if (e.target.value) handleReassign(a.id, e.target.value)
                                   }}
-                                  disabled={saving}
+                                  disabled={saving || !canEdit}
                                   className="flex h-8 w-full max-w-[200px] rounded-md border border-input bg-transparent px-2 py-1 text-sm"
                                 >
                                   <option value="">Unassigned</option>
@@ -682,14 +724,15 @@ export default function RosterPage() {
                                 </Badge>
                               </TableCell>
                               <TableCell className="text-right">
-                                <Button
+                                <ViewOnlyActionButton
+                                  canEdit={canEdit}
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => handleRemove(a.id)}
                                   disabled={saving}
                                 >
                                   Remove
-                                </Button>
+                                </ViewOnlyActionButton>
                               </TableCell>
                             </TableRow>
                           ))}
@@ -712,8 +755,9 @@ export default function RosterPage() {
                   <CardContent>
                     <div className="flex flex-wrap gap-2">
                       {unassignedChores.map((t) => (
-                        <Button
+                        <ViewOnlyActionButton
                           key={t.id}
+                          canEdit={canEdit}
                           variant="outline"
                           size="sm"
                           onClick={() => handleAddAssignment(t.id)}
@@ -723,7 +767,7 @@ export default function RosterPage() {
                           {!t.isEssential && (
                             <span className="text-xs ml-1 opacity-60">(optional)</span>
                           )}
-                        </Button>
+                        </ViewOnlyActionButton>
                       ))}
                     </div>
                   </CardContent>

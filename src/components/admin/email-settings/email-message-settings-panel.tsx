@@ -16,6 +16,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminForbiddenSaveNotice,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 // Lodge identity (lodge name, travel note, door code) is no longer edited here;
 // it comes from each lodge's own settings (Admin → Lodges).
@@ -73,6 +79,10 @@ export function EmailMessageSettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
+  const [forbiddenSave, setForbiddenSave] = useState(false);
+  // Email settings and templates are edited under the Support & System area (the
+  // write routes enforce support:edit), so gate the editors on that area (#1940).
+  const canEdit = useAdminAreaEditAccess("support");
 
   const currentTemplate = useMemo(
     () => templates.find((template) => template.key === selectedTemplate) ?? null,
@@ -129,6 +139,7 @@ export function EmailMessageSettingsPanel() {
   async function saveSettings() {
     if (!settings) return;
     setSavingSettings(true);
+    setForbiddenSave(false);
     try {
       // Only the editable club-level fields are persisted; the strict API schema
       // rejects the lodge-identity keys the response may still carry.
@@ -143,6 +154,7 @@ export function EmailMessageSettingsPanel() {
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
+        if (response.status === 403) setForbiddenSave(true);
         throw new Error(body?.error ?? "Failed to save email settings");
       }
       setSettings(body.settings);
@@ -157,6 +169,7 @@ export function EmailMessageSettingsPanel() {
   async function saveTemplate() {
     if (!currentTemplate) return;
     setSavingTemplate(true);
+    setForbiddenSave(false);
     try {
       const response = await fetch("/api/admin/email-templates", {
         method: "PUT",
@@ -170,6 +183,7 @@ export function EmailMessageSettingsPanel() {
       });
       const responseBody = await response.json().catch(() => null);
       if (!response.ok) {
+        if (response.status === 403) setForbiddenSave(true);
         throw new Error(responseBody?.error ?? "Failed to save email template");
       }
       toast.success("Email template saved");
@@ -184,6 +198,7 @@ export function EmailMessageSettingsPanel() {
   async function resetTemplate() {
     if (!currentTemplate) return;
     setSavingTemplate(true);
+    setForbiddenSave(false);
     try {
       const response = await fetch("/api/admin/email-templates/reset", {
         method: "POST",
@@ -193,6 +208,7 @@ export function EmailMessageSettingsPanel() {
       });
       const responseBody = await response.json().catch(() => null);
       if (!response.ok) {
+        if (response.status === 403) setForbiddenSave(true);
         throw new Error(responseBody?.error ?? "Failed to reset email template");
       }
       setSubject(currentTemplate.defaultSubject);
@@ -236,6 +252,13 @@ export function EmailMessageSettingsPanel() {
 
   return (
     <div className="space-y-8">
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view email settings and templates but cannot change
+          them. Support &amp; System edit access is required.
+        </AdminViewOnlyNotice>
+      ) : null}
+      {forbiddenSave ? <AdminForbiddenSaveNotice /> : null}
       {staleOverrideCount > 0 ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           {staleOverrideCount} stale template override
@@ -251,6 +274,7 @@ export function EmailMessageSettingsPanel() {
                 <Textarea
                   id={`email-setting-${field.key}`}
                   className="mt-1 min-h-24"
+                  disabled={!canEdit}
                   value={settings[field.key] ?? ""}
                   onChange={(event) =>
                     setSettings((current) =>
@@ -264,6 +288,7 @@ export function EmailMessageSettingsPanel() {
                 <Input
                   id={`email-setting-${field.key}`}
                   className="mt-1"
+                  disabled={!canEdit}
                   value={settings[field.key] ?? ""}
                   onChange={(event) =>
                     setSettings((current) =>
@@ -281,10 +306,14 @@ export function EmailMessageSettingsPanel() {
           Lodge name, travel note, and door code now come from each lodge&apos;s
           own settings (Admin → Lodges).
         </p>
-        <Button onClick={saveSettings} disabled={savingSettings}>
+        <ViewOnlyActionButton
+          canEdit={canEdit}
+          onClick={saveSettings}
+          disabled={savingSettings}
+        >
           <Save className="h-4 w-4" />
           {savingSettings ? "Saving" : "Save Email Settings"}
-        </Button>
+        </ViewOnlyActionButton>
       </section>
 
       <section className="space-y-4">
@@ -335,6 +364,7 @@ export function EmailMessageSettingsPanel() {
           <Input
             id="email-template-subject"
             className="mt-1"
+            disabled={!canEdit}
             value={subject}
             onChange={(event) => setSubject(event.target.value)}
           />
@@ -344,16 +374,21 @@ export function EmailMessageSettingsPanel() {
           <Textarea
             id="email-template-body"
             className="mt-1 min-h-72 font-mono text-sm"
+            disabled={!canEdit}
             value={bodyText}
             onChange={(event) => setBodyText(event.target.value)}
           />
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button onClick={saveTemplate} disabled={savingTemplate || !currentTemplate}>
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            onClick={saveTemplate}
+            disabled={savingTemplate || !currentTemplate}
+          >
             <Save className="h-4 w-4" />
             {savingTemplate ? "Saving" : "Save Template"}
-          </Button>
+          </ViewOnlyActionButton>
           <Button
             variant="outline"
             onClick={previewTemplate}
@@ -362,14 +397,15 @@ export function EmailMessageSettingsPanel() {
             <Eye className="h-4 w-4" />
             Preview
           </Button>
-          <Button
+          <ViewOnlyActionButton
+            canEdit={canEdit}
             variant="outline"
             onClick={resetTemplate}
             disabled={savingTemplate || !currentTemplate}
           >
             <RotateCcw className="h-4 w-4" />
             Restore Default
-          </Button>
+          </ViewOnlyActionButton>
         </div>
 
         {previewHtml ? (

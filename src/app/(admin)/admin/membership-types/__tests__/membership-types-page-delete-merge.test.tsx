@@ -4,6 +4,27 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
+// #1940: the page reads the session permission matrix for view-only gating;
+// provide an edit-level admin session so the delete/merge cases keep working.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
+
 // The membership-types editor and merge dialogs use the Radix Select, which
 // jsdom cannot drive through its pointer-capture flow. Following the repo
 // pattern (e.g. access-role-ui.test.tsx), swap it for a native <select> so the

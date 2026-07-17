@@ -45,7 +45,9 @@ const promoCodeSchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   const { searchParams } = new URL(req.url);
   const showArchived = searchParams.get("archived") === "true";
@@ -86,7 +88,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const json = await parseJsonRequestBody(req);

@@ -35,6 +35,7 @@ import {
   BedTypeIndicator,
   type BedTypeValue,
 } from "@/components/admin/bed-type-indicator";
+import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import type { LodgeCapacityStatus } from "@/lib/lodge-capacity";
 
@@ -259,6 +260,11 @@ export function RoomsBedsManager({
   // rather than toasting a raw 403; seeded roles with lodge access all hold
   // bookings, so they are unaffected.
   const canManageBeds = permissionMatrix.bookings !== "none";
+  // A bookings:view admin may open this manager (read the inventory) but must
+  // not see enabled write controls; every mutating bed-allocation route enforces
+  // bookings:edit (#1940). Write controls gate on canEdit; the read-only viewer
+  // sees a notice plus disabled inputs/buttons instead of writes that would 403.
+  const canEdit = permissionMatrix.bookings === "edit";
   const [forbidden, setForbidden] = useState(false);
   const [payload, setPayload] = useState<RoomsBedsPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -707,6 +713,12 @@ export function RoomsBedsManager({
   return (
     <div className="space-y-6">
       {confirmDialog}
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view rooms and beds but cannot change them. Bookings
+          edit access is required to add, edit, or delete rooms and beds.
+        </AdminViewOnlyNotice>
+      ) : null}
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Rooms & Beds</h1>
@@ -796,7 +808,7 @@ export function RoomsBedsManager({
             </div>
             <Button
               onClick={() => void importFromConfig()}
-              disabled={saving === "import-config"}
+              disabled={!canEdit || saving === "import-config"}
               className="gap-2 md:w-auto"
             >
               <Upload className="h-4 w-4" />
@@ -828,6 +840,7 @@ export function RoomsBedsManager({
                   max="50"
                   placeholder="8"
                   value={bulkRoomCount}
+                  disabled={!canEdit}
                   onChange={(event) => setBulkRoomCount(event.target.value)}
                 />
               </div>
@@ -838,6 +851,7 @@ export function RoomsBedsManager({
                   min="0"
                   max="20"
                   value={bulkBedsPerRoom}
+                  disabled={!canEdit}
                   onChange={(event) => setBulkBedsPerRoom(event.target.value)}
                 />
               </div>
@@ -845,6 +859,7 @@ export function RoomsBedsManager({
                 <span className="text-xs font-medium text-muted-foreground">Name prefix</span>
                 <Input
                   value={bulkNamePrefix}
+                  disabled={!canEdit}
                   onChange={(event) => setBulkNamePrefix(event.target.value)}
                   placeholder="Room"
                 />
@@ -853,6 +868,7 @@ export function RoomsBedsManager({
                 <Button
                   onClick={() => void bulkCreateRooms()}
                   disabled={
+                    !canEdit ||
                     saving === "rooms-bulk" ||
                     !bulkRoomCount ||
                     Number(bulkRoomCount) < 1
@@ -881,6 +897,7 @@ export function RoomsBedsManager({
               <Input
                 placeholder="Room name"
                 value={roomDraft.name}
+                disabled={!canEdit}
                 onChange={(event) =>
                   setRoomDraft((current) => ({
                     ...current,
@@ -892,6 +909,7 @@ export function RoomsBedsManager({
                 type="number"
                 min="0"
                 value={roomDraft.sortOrder}
+                disabled={!canEdit}
                 onChange={(event) =>
                   setRoomDraft((current) => ({
                     ...current,
@@ -902,6 +920,7 @@ export function RoomsBedsManager({
               <Textarea
                 placeholder="Notes"
                 value={roomDraft.notes}
+                disabled={!canEdit}
                 onChange={(event) =>
                   setRoomDraft((current) => ({
                     ...current,
@@ -913,6 +932,7 @@ export function RoomsBedsManager({
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox
                   checked={roomDraft.active}
+                  disabled={!canEdit}
                   onCheckedChange={(checked) =>
                     setRoomDraft((current) => ({
                       ...current,
@@ -924,7 +944,7 @@ export function RoomsBedsManager({
               </label>
               <Button
                 onClick={() => void createRoom()}
-                disabled={saving === "room-new"}
+                disabled={!canEdit || saving === "room-new"}
                 className="gap-2"
               >
                 <Plus className="h-4 w-4" />
@@ -969,6 +989,7 @@ export function RoomsBedsManager({
                       <div className="grid gap-3 md:grid-cols-[2fr_90px_1fr_auto_auto]">
                         <Input
                           value={edit.name}
+                          disabled={!canEdit}
                           onChange={(event) =>
                             updateRoomEdit(room.id, { name: event.target.value })
                           }
@@ -977,6 +998,7 @@ export function RoomsBedsManager({
                           type="number"
                           min="0"
                           value={edit.sortOrder}
+                          disabled={!canEdit}
                           onChange={(event) =>
                             updateRoomEdit(room.id, {
                               sortOrder: event.target.value,
@@ -985,6 +1007,7 @@ export function RoomsBedsManager({
                         />
                         <Textarea
                           value={edit.notes}
+                          disabled={!canEdit}
                           onChange={(event) =>
                             updateRoomEdit(room.id, { notes: event.target.value })
                           }
@@ -993,6 +1016,7 @@ export function RoomsBedsManager({
                         <label className="flex items-center gap-2 text-sm">
                           <Checkbox
                             checked={edit.active}
+                            disabled={!canEdit}
                             onCheckedChange={(checked) =>
                               updateRoomEdit(room.id, {
                                 active: checked === true,
@@ -1019,7 +1043,7 @@ export function RoomsBedsManager({
                           <Button
                             variant="outline"
                             onClick={() => void saveRoom(room.id)}
-                            disabled={saving === `room-${room.id}`}
+                            disabled={!canEdit || saving === `room-${room.id}`}
                             className="gap-2"
                           >
                             <Save className="h-4 w-4" />
@@ -1030,7 +1054,9 @@ export function RoomsBedsManager({
                             variant="ghost"
                             aria-label="Delete room"
                             onClick={() => void deleteRoom(room.id)}
-                            disabled={saving === `room-delete-${room.id}`}
+                            disabled={
+                              !canEdit || saving === `room-delete-${room.id}`
+                            }
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -1058,6 +1084,7 @@ export function RoomsBedsManager({
                           <Input
                             placeholder="Bed name"
                             value={bedDraft.name}
+                            disabled={!canEdit}
                             onChange={(event) =>
                               updateBedDraft(room.id, {
                                 name: event.target.value,
@@ -1068,6 +1095,7 @@ export function RoomsBedsManager({
                             type="number"
                             min="0"
                             value={bedDraft.sortOrder}
+                            disabled={!canEdit}
                             onChange={(event) =>
                               updateBedDraft(room.id, {
                                 sortOrder: event.target.value,
@@ -1077,6 +1105,7 @@ export function RoomsBedsManager({
                           <select
                             aria-label="Bed type"
                             value={bedDraft.bedType}
+                            disabled={!canEdit}
                             onChange={(event) =>
                               updateBedDraft(room.id, {
                                 bedType: event.target.value as BedTypeValue,
@@ -1093,6 +1122,7 @@ export function RoomsBedsManager({
                           <label className="flex items-center gap-2 text-sm">
                             <Checkbox
                               checked={bedDraft.active}
+                              disabled={!canEdit}
                               onCheckedChange={(checked) =>
                                 updateBedDraft(room.id, {
                                   active: checked === true,
@@ -1104,7 +1134,7 @@ export function RoomsBedsManager({
                           <Button
                             variant="outline"
                             onClick={() => void createBed(room.id)}
-                            disabled={saving === `bed-new-${room.id}`}
+                            disabled={!canEdit || saving === `bed-new-${room.id}`}
                             className="gap-2"
                           >
                             <Plus className="h-4 w-4" />
@@ -1119,6 +1149,7 @@ export function RoomsBedsManager({
                               aria-label="Bunk group"
                               list={bunkGroupListId}
                               value={bedDraft.bunkGroup}
+                              disabled={!canEdit}
                               onChange={(event) =>
                                 updateBedDraft(room.id, {
                                   bunkGroup: event.target.value,
@@ -1184,6 +1215,7 @@ export function RoomsBedsManager({
                                       <div className="space-y-2">
                                         <Input
                                           value={bedEdit.name}
+                                          disabled={!canEdit}
                                           onChange={(event) =>
                                             updateBedEdit(bed.id, {
                                               name: event.target.value,
@@ -1194,6 +1226,7 @@ export function RoomsBedsManager({
                                           <select
                                             aria-label="Bed type"
                                             value={bedEdit.bedType}
+                                            disabled={!canEdit}
                                             onChange={(event) =>
                                               updateBedEdit(bed.id, {
                                                 bedType: event.target
@@ -1217,6 +1250,7 @@ export function RoomsBedsManager({
                                               aria-label="Bunk group"
                                               list={bunkGroupListId}
                                               value={bedEdit.bunkGroup}
+                                              disabled={!canEdit}
                                               onChange={(event) =>
                                                 updateBedEdit(bed.id, {
                                                   bunkGroup: event.target.value,
@@ -1259,6 +1293,7 @@ export function RoomsBedsManager({
                                         type="number"
                                         min="0"
                                         value={bedEdit.sortOrder}
+                                        disabled={!canEdit}
                                         onChange={(event) =>
                                           updateBedEdit(bed.id, {
                                             sortOrder: event.target.value,
@@ -1269,6 +1304,7 @@ export function RoomsBedsManager({
                                     <TableCell>
                                       <Checkbox
                                         checked={bedEdit.active}
+                                        disabled={!canEdit}
                                         onCheckedChange={(checked) =>
                                           updateBedEdit(bed.id, {
                                             active: checked === true,
@@ -1296,7 +1332,10 @@ export function RoomsBedsManager({
                                           size="sm"
                                           variant="outline"
                                           onClick={() => void saveBed(bed.id)}
-                                          disabled={saving === `bed-${bed.id}`}
+                                          disabled={
+                                            !canEdit ||
+                                            saving === `bed-${bed.id}`
+                                          }
                                         >
                                           Save
                                         </Button>
@@ -1306,6 +1345,7 @@ export function RoomsBedsManager({
                                           aria-label="Delete bed"
                                           onClick={() => void deleteBed(bed.id)}
                                           disabled={
+                                            !canEdit ||
                                             saving === `bed-delete-${bed.id}`
                                           }
                                         >

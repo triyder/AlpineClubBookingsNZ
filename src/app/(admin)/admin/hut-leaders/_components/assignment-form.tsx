@@ -13,6 +13,7 @@ import {
   type CalendarTone,
 } from "@/components/admin/occupancy-calendar";
 import { MemberPicker, type PickedMember } from "@/components/admin/member-picker";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 
 export interface EligibleMember {
   id: string;
@@ -74,6 +75,9 @@ interface AssignmentFormProps {
   creating: boolean;
   error: { message: string; memberId: string | null } | null;
   onConfirm: () => void;
+  // Lodge edit gating (#1940): a lodge:view admin can view the picker but the
+  // Confirm-assignment write is disabled.
+  canEdit: boolean;
   // Optional lodge picker (multi-lodge, ADR-002): renders in step 1 above the
   // date inputs. It renders nothing while fewer than two lodges exist.
   lodgeSelector?: ReactNode;
@@ -97,6 +101,7 @@ export function AssignmentForm({
   creating,
   error,
   onConfirm,
+  canEdit,
   lodgeSelector,
 }: AssignmentFormProps) {
   const label = hutLeaderLabel.toLowerCase();
@@ -327,14 +332,15 @@ export function AssignmentForm({
                 {error.message}
               </div>
             )}
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               type="button"
               onClick={onConfirm}
               disabled={creating || hasConflict}
               className="w-full sm:w-auto"
             >
               {creating ? "Assigning..." : `Confirm assignment`}
-            </Button>
+            </ViewOnlyActionButton>
           </div>
         )}
       </CardContent>

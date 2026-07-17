@@ -13,6 +13,12 @@ import {
   initialLodgeIdFromLocation,
   useLodgeOptions,
 } from "@/components/lodge-select"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
 
 interface ChoreTemplate {
   id: string
@@ -54,6 +60,9 @@ const FREQUENCY_MODE_LABELS: Record<string, string> = {
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 export default function ChoresPage() {
+  // Chore templates are lodge config; the write routes enforce lodge:edit, so a
+  // lodge:view admin sees this screen read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge")
   const [chores, setChores] = useState<ChoreTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -183,6 +192,10 @@ export default function ChoresPage() {
         body: JSON.stringify(payload),
       })
       if (!res.ok) {
+        if (res.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON)
+          return
+        }
         const data = await res.json()
         throw new Error(data.error || "Failed to save")
       }
@@ -200,6 +213,10 @@ export default function ChoresPage() {
     try {
       const res = await fetch(`/api/admin/chores/${id}`, { method: "DELETE" })
       if (!res.ok) {
+        if (res.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON)
+          return
+        }
         const data = await res.json()
         throw new Error(data.error || "Failed to delete")
       }
@@ -217,6 +234,10 @@ export default function ChoresPage() {
         body: JSON.stringify({ active: !chore.active }),
       })
       if (!res.ok) {
+        if (res.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON)
+          return
+        }
         const data = await res.json()
         throw new Error(data.error || "Failed to update")
       }
@@ -240,15 +261,22 @@ export default function ChoresPage() {
           </p>
         </div>
         {!showForm && (
-          <Button onClick={() => { setSortOrder(chores.length + 1); setShowForm(true) }}>
+          <ViewOnlyActionButton canEdit={canEdit} onClick={() => { setSortOrder(chores.length + 1); setShowForm(true) }}>
             Add Chore
-          </Button>
+          </ViewOnlyActionButton>
         )}
       </div>
 
       <div className="max-w-xs">
         <LodgeSelect lodges={lodges} value={lodgeId} onChange={setLodgeId} loading={lodgesLoading} />
       </div>
+
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view chore templates but cannot change them. Lodge
+          edit access is required.
+        </AdminViewOnlyNotice>
+      )}
 
       {error && (
         <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
@@ -450,9 +478,9 @@ export default function ChoresPage() {
               </div>
 
               <div className="flex space-x-3">
-                <Button type="submit" disabled={saving}>
+                <ViewOnlyActionButton canEdit={canEdit} type="submit" disabled={saving}>
                   {saving ? "Saving..." : editingId ? "Update Chore" : "Create Chore"}
-                </Button>
+                </ViewOnlyActionButton>
                 <Button type="button" variant="outline" onClick={resetForm}>
                   Cancel
                 </Button>
@@ -538,15 +566,15 @@ export default function ChoresPage() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end space-x-2">
-                            <Button variant="outline" size="sm" onClick={() => handleToggleActive(chore)}>
+                            <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => handleToggleActive(chore)}>
                               {chore.active ? "Deactivate" : "Activate"}
-                            </Button>
-                            <Button variant="outline" size="sm" onClick={() => startEdit(chore)}>
+                            </ViewOnlyActionButton>
+                            <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => startEdit(chore)}>
                               Edit
-                            </Button>
-                            <Button variant="destructive" size="sm" onClick={() => handleDelete(chore.id)}>
+                            </ViewOnlyActionButton>
+                            <ViewOnlyActionButton canEdit={canEdit} variant="destructive" size="sm" onClick={() => handleDelete(chore.id)}>
                               Delete
-                            </Button>
+                            </ViewOnlyActionButton>
                           </div>
                         </TableCell>
                       </TableRow>

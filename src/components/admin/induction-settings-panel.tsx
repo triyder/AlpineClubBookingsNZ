@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -13,6 +12,12 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminForbiddenSaveNotice,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 interface Settings {
   gateEnabled: boolean;
@@ -25,6 +30,10 @@ interface Settings {
 export function InductionSettingsPanel() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [saving, setSaving] = useState(false);
+  const [forbiddenSave, setForbiddenSave] = useState(false);
+  // Nomination settings live under the membership area (the write route enforces
+  // membership:edit), so gate the editor on the same area (#1940).
+  const canEdit = useAdminAreaEditAccess("membership");
 
   useEffect(() => {
     fetch("/api/admin/membership-nomination-settings", {
@@ -44,6 +53,7 @@ export function InductionSettingsPanel() {
   async function save() {
     if (!settings) return;
     setSaving(true);
+    setForbiddenSave(false);
     try {
       const res = await fetch("/api/admin/membership-nomination-settings", {
         method: "PUT",
@@ -61,6 +71,9 @@ export function InductionSettingsPanel() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
+        // A stale tab whose permissions were narrowed after load surfaces a
+        // persistent inline error rather than only a transient toast (#1940).
+        if (res.status === 403) setForbiddenSave(true);
         toast.error(body.error ?? "Failed to save settings");
         return;
       }
@@ -90,10 +103,17 @@ export function InductionSettingsPanel() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
+        {!canEdit ? (
+          <AdminViewOnlyNotice>
+            Your admin role can view the nomination gate settings but cannot
+            change them. Membership edit access is required.
+          </AdminViewOnlyNotice>
+        ) : null}
         <label className="flex items-start gap-3">
           <Checkbox
             className="mt-0.5"
             checked={settings.gateEnabled}
+            disabled={!canEdit}
             onCheckedChange={(checked) =>
               update({ gateEnabled: checked === true })
             }
@@ -114,6 +134,7 @@ export function InductionSettingsPanel() {
               id="months"
               type="number"
               min={0}
+              disabled={!canEdit}
               value={settings.minimumMembershipMonths}
               onChange={(e) =>
                 update({ minimumMembershipMonths: Number(e.target.value) })
@@ -126,6 +147,7 @@ export function InductionSettingsPanel() {
               id="nights"
               type="number"
               min={0}
+              disabled={!canEdit}
               value={settings.minimumNights}
               onChange={(e) => update({ minimumNights: Number(e.target.value) })}
             />
@@ -136,6 +158,7 @@ export function InductionSettingsPanel() {
               id="signoffs"
               type="number"
               min={1}
+              disabled={!canEdit}
               value={settings.requiredSignOffs}
               onChange={(e) =>
                 update({ requiredSignOffs: Number(e.target.value) })
@@ -149,6 +172,7 @@ export function InductionSettingsPanel() {
           <Input
             id="effective-from"
             type="date"
+            disabled={!canEdit}
             value={effectiveFromDate}
             onChange={(e) =>
               update({ gateEffectiveFrom: e.target.value || null })
@@ -161,9 +185,10 @@ export function InductionSettingsPanel() {
           </p>
         </div>
 
-        <Button onClick={save} disabled={saving}>
+        {forbiddenSave ? <AdminForbiddenSaveNotice /> : null}
+        <ViewOnlyActionButton canEdit={canEdit} onClick={save} disabled={saving}>
           {saving ? "Saving…" : "Save settings"}
-        </Button>
+        </ViewOnlyActionButton>
       </CardContent>
     </Card>
   );

@@ -63,7 +63,9 @@ function toClientDevice(device: DeviceRow) {
 }
 
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   const devices = await prisma.lodgeDisplayDevice.findMany({
@@ -81,7 +83,9 @@ const createSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: z.infer<typeof createSchema>;

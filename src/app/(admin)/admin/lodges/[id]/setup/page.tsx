@@ -15,6 +15,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 // New-lodge setup wizard (ADR-003 follow-up, implementation-plan "Future
 // Enhancements"): a guided flow over the existing hub building blocks —
@@ -96,6 +102,11 @@ export default function LodgeSetupWizardPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const lodgeId = params.id;
+  // The wizard writes lodge identity plus rooms/lockers/seasons/chores; it is
+  // reached under the lodge area, so a lodge:view admin sees it read-only.
+  // (The seed/copy steps also hit bookings-area routes, which independently
+  // enforce their own edit level — surfaced as a forbidden-save on 403.) #1940
+  const canEdit = useAdminAreaEditAccess("lodge");
 
   const [lodge, setLodge] = useState<LodgeRecord | null>(null);
   const [otherLodges, setOtherLodges] = useState<LodgeRecord[]>([]);
@@ -222,6 +233,10 @@ export default function LodgeSetupWizardPage() {
           travelNote: travelNote.trim() || null,
         }),
       });
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
+      }
       if (!res.ok) throw new Error(await readError(res, "Failed to save lodge"));
       const data = await res.json();
       setLodge(data.lodge);
@@ -247,6 +262,10 @@ export default function LodgeSetupWizardPage() {
           lodgeId,
         }),
       });
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
+      }
       if (!res.ok) throw new Error(await readError(res, "Failed to create rooms"));
       const data = await res.json();
       setRoomsSeeded(
@@ -274,6 +293,10 @@ export default function LodgeSetupWizardPage() {
           lodgeId,
         }),
       });
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
+      }
       if (!res.ok) throw new Error(await readError(res, "Failed to create lockers"));
       const data = await res.json();
       setLockersSeeded(`Created ${data.createdCount} lockers.`);
@@ -320,6 +343,11 @@ export default function LodgeSetupWizardPage() {
             })),
           }),
         });
+        if (createRes.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          setSeasonCopy({ status: "idle" });
+          return;
+        }
         if (createRes.ok) {
           copied += 1;
         } else {
@@ -377,6 +405,11 @@ export default function LodgeSetupWizardPage() {
             lodgeId,
           }),
         });
+        if (createRes.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          setChoreCopy({ status: "idle" });
+          return;
+        }
         if (createRes.ok) {
           copied += 1;
         } else {
@@ -468,6 +501,13 @@ export default function LodgeSetupWizardPage() {
         ))}
       </ol>
 
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view the lodge setup wizard but cannot change
+          anything. Lodge edit access is required.
+        </AdminViewOnlyNotice>
+      )}
+
       {error && (
         <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
           {error}
@@ -492,6 +532,7 @@ export default function LodgeSetupWizardPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 maxLength={120}
+                disabled={!canEdit}
               />
             </div>
             <div className="space-y-2">
@@ -501,6 +542,7 @@ export default function LodgeSetupWizardPage() {
                 value={doorCode}
                 onChange={(e) => setDoorCode(e.target.value)}
                 maxLength={80}
+                disabled={!canEdit}
               />
             </div>
             <div className="space-y-2">
@@ -511,12 +553,13 @@ export default function LodgeSetupWizardPage() {
                 onChange={(e) => setTravelNote(e.target.value)}
                 maxLength={2000}
                 rows={3}
+                disabled={!canEdit}
               />
             </div>
             <div className="flex gap-3">
-              <Button onClick={saveIdentity} disabled={saving}>
+              <ViewOnlyActionButton canEdit={canEdit} onClick={saveIdentity} disabled={saving}>
                 {saving ? "Saving..." : "Save and continue"}
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           </CardContent>
         </Card>
@@ -543,6 +586,7 @@ export default function LodgeSetupWizardPage() {
                   max="20"
                   value={roomCount}
                   onChange={(e) => setRoomCount(e.target.value)}
+                  disabled={!canEdit}
                 />
               </div>
               <div className="space-y-2">
@@ -554,6 +598,7 @@ export default function LodgeSetupWizardPage() {
                   max="20"
                   value={bedsPerRoom}
                   onChange={(e) => setBedsPerRoom(e.target.value)}
+                  disabled={!canEdit}
                 />
               </div>
               <div className="space-y-2">
@@ -564,6 +609,7 @@ export default function LodgeSetupWizardPage() {
                   value={roomPrefix}
                   onChange={(e) => setRoomPrefix(e.target.value)}
                   maxLength={80}
+                  disabled={!canEdit}
                 />
               </div>
             </div>
@@ -579,9 +625,9 @@ export default function LodgeSetupWizardPage() {
               <Button variant="outline" onClick={goBack} disabled={saving}>
                 Back
               </Button>
-              <Button onClick={seedRooms} disabled={saving || roomsSeeded !== null}>
+              <ViewOnlyActionButton canEdit={canEdit} onClick={seedRooms} disabled={saving || roomsSeeded !== null}>
                 {saving ? "Creating..." : "Create rooms"}
-              </Button>
+              </ViewOnlyActionButton>
               <Button variant="ghost" onClick={goNext} disabled={saving}>
                 {roomsSeeded ? "Continue" : "Skip for now"}
               </Button>
@@ -610,6 +656,7 @@ export default function LodgeSetupWizardPage() {
                   max="100"
                   value={lockerCount}
                   onChange={(e) => setLockerCount(e.target.value)}
+                  disabled={!canEdit}
                 />
               </div>
               <div className="space-y-2">
@@ -620,6 +667,7 @@ export default function LodgeSetupWizardPage() {
                   value={lockerPrefix}
                   onChange={(e) => setLockerPrefix(e.target.value)}
                   maxLength={80}
+                  disabled={!canEdit}
                 />
               </div>
             </div>
@@ -630,12 +678,13 @@ export default function LodgeSetupWizardPage() {
               <Button variant="outline" onClick={goBack} disabled={saving}>
                 Back
               </Button>
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 onClick={seedLockers}
                 disabled={saving || lockersSeeded !== null}
               >
                 {saving ? "Creating..." : "Create lockers"}
-              </Button>
+              </ViewOnlyActionButton>
               <Button variant="ghost" onClick={goNext} disabled={saving}>
                 {lockersSeeded ? "Continue" : "Skip for now"}
               </Button>
@@ -664,7 +713,7 @@ export default function LodgeSetupWizardPage() {
                     className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
                     value={seasonSourceLodgeId}
                     onChange={(e) => setSeasonSourceLodgeId(e.target.value)}
-                    disabled={saving}
+                    disabled={saving || !canEdit}
                   >
                     <option value="">Select a lodge…</option>
                     {otherLodges.map((candidate) => (
@@ -673,7 +722,8 @@ export default function LodgeSetupWizardPage() {
                       </option>
                     ))}
                   </select>
-                  <Button
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     onClick={copySeasons}
                     disabled={
                       saving ||
@@ -682,7 +732,7 @@ export default function LodgeSetupWizardPage() {
                     }
                   >
                     {seasonCopy.status === "copying" ? "Copying..." : "Copy"}
-                  </Button>
+                  </ViewOnlyActionButton>
                 </div>
               </div>
             ) : (
@@ -729,7 +779,7 @@ export default function LodgeSetupWizardPage() {
                     className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
                     value={choreSourceLodgeId}
                     onChange={(e) => setChoreSourceLodgeId(e.target.value)}
-                    disabled={saving}
+                    disabled={saving || !canEdit}
                   >
                     <option value="">Select a lodge…</option>
                     {otherLodges.map((candidate) => (
@@ -738,7 +788,8 @@ export default function LodgeSetupWizardPage() {
                       </option>
                     ))}
                   </select>
-                  <Button
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     onClick={copyChores}
                     disabled={
                       saving ||
@@ -747,7 +798,7 @@ export default function LodgeSetupWizardPage() {
                     }
                   >
                     {choreCopy.status === "copying" ? "Copying..." : "Copy"}
-                  </Button>
+                  </ViewOnlyActionButton>
                 </div>
               </div>
             ) : (

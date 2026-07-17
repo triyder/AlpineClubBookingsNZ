@@ -761,6 +761,16 @@ Xero contact-group rules, and committee assignment are separate axes:
   **Lodge** area. The matching route handlers require `content` (or `lodge`)
   `view` on reads and `edit` on writes, so a stale-tab save is rejected with a
   visible error even if the editors were still on screen.
+  The same read-only pattern extends to the settings/config editors in the other
+  areas (#1940), each gating on its own area: **Membership** — Nomination gate
+  (Induction Settings), Induction checklist templates, and Membership
+  Cancellation settings; **Support & System** — Email Settings/Templates and
+  Booking Messages; **Finance** — Finance Report Mappings; **Bookings** — the
+  Rooms & Beds manager (its writes hit the bed-allocation APIs, which enforce
+  `bookings:edit`, even though the page lives under Lodge Operations). A viewer
+  sees disabled inputs, a "view only" notice, and, on a stale-tab 403 save, a
+  persistent forbidden-save error. Message/template **Preview** actions are pure
+  renders and stay available to viewers.
 - `MembershipType` stores admin-configurable seasonal categories and policy:
   Full, Associate (renameable, including Reserve naming), Life, School,
   Non-Member, Family, or club-created types. The `/admin/membership-types`

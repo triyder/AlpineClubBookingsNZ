@@ -5,6 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { listDisplayCssTokens } from "@/lib/lodge-display/css-tokens";
 import { listDisplayModules } from "@/lib/lodge-display/module-registry";
 import { isBuiltInDisplayTemplateKey } from "@/lib/lodge-display/built-in-seeds";
@@ -100,6 +106,11 @@ export default function AdminDisplayTemplatesPage() {
   const [errors, setErrors] = useState<ValidationIssue[]>([]);
   const [warnings, setWarnings] = useState<ValidationIssue[]>([]);
   const [saving, setSaving] = useState(false);
+  // Display templates resolve to the "lodge" area, so gate authoring on
+  // lodge:edit — a lodge:view admin can open a template and preview it (a
+  // view-level action) but every input, and the Save/Delete/Add/Duplicate write
+  // controls, stay disabled (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge");
 
   // Closed registries surfaced read-only into the editor (client-safe pure data).
   const modules = useMemo(() => listDisplayModules(), []);
@@ -271,6 +282,10 @@ export default function AdminDisplayTemplatesPage() {
     const response = await fetch(`/api/admin/display/templates/${item.id}`, {
       method: "DELETE",
     });
+    if (response.status === 403) {
+      setMessage(ADMIN_FORBIDDEN_SAVE_REASON);
+      return;
+    }
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as
         | { error?: string }
@@ -338,7 +353,9 @@ export default function AdminDisplayTemplatesPage() {
     setSaving(false);
 
     if (!response.ok) {
-      if (body?.errors && body.errors.length > 0) {
+      if (response.status === 403) {
+        setMessage(ADMIN_FORBIDDEN_SAVE_REASON);
+      } else if (body?.errors && body.errors.length > 0) {
         setErrors(body.errors);
         setWarnings(body.warnings ?? []);
       } else {
@@ -421,6 +438,14 @@ export default function AdminDisplayTemplatesPage() {
         </p>
       </div>
 
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view the lobby display templates but cannot change
+          them. Lodge edit access is required to author, edit, or delete a
+          template. Preview stays available.
+        </AdminViewOnlyNotice>
+      ) : null}
+
       {message && <p className="text-sm font-medium">{message}</p>}
 
       <Card>
@@ -480,12 +505,13 @@ export default function AdminDisplayTemplatesPage() {
                   <Button variant="outline" onClick={() => void editTemplate(item.id)}>
                     Edit
                   </Button>
-                  <Button
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     variant="destructive"
                     onClick={() => void deleteTemplate(item)}
                   >
                     Delete
-                  </Button>
+                  </ViewOnlyActionButton>
                 </div>
               </div>
             ))}
@@ -517,13 +543,14 @@ export default function AdminDisplayTemplatesPage() {
                 are re-seeded or the app is upgraded. To keep your changes,
                 duplicate this template and customise the copy instead.
               </p>
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 variant="outline"
                 className="h-9"
                 onClick={duplicateTemplate}
               >
                 Duplicate to customise
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           )}
           <div className="flex flex-wrap gap-4">
@@ -534,7 +561,7 @@ export default function AdminDisplayTemplatesPage() {
                 className="w-56 font-mono"
                 placeholder="foyer-board"
                 value={draft.key}
-                disabled={draft.id !== null}
+                disabled={draft.id !== null || !canEdit}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, key: event.target.value }))
                 }
@@ -551,6 +578,7 @@ export default function AdminDisplayTemplatesPage() {
                 id="template-name"
                 placeholder="Foyer board"
                 value={draft.name}
+                disabled={!canEdit}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, name: event.target.value }))
                 }
@@ -576,6 +604,7 @@ export default function AdminDisplayTemplatesPage() {
                   id="template-layout"
                   className={selectClass}
                   value={draft.layoutId}
+                  disabled={!canEdit}
                   onChange={(event) => void chooseLayout(event.target.value)}
                 >
                   <option value="">— select a layout —</option>
@@ -622,6 +651,7 @@ export default function AdminDisplayTemplatesPage() {
                           variant="outline"
                           className="h-9"
                           title="Re-seed this slot from the layout's default content"
+                          disabled={!canEdit}
                           onClick={() => resetSlotToDefault(index)}
                         >
                           Reset to default
@@ -634,6 +664,7 @@ export default function AdminDisplayTemplatesPage() {
                         id={`slot-mode-${index}`}
                         className={selectClass}
                         value={slot.mode}
+                        disabled={!canEdit}
                         onChange={(event) =>
                           updateSlot(index, {
                             mode: event.target.value as "html" | "module",
@@ -652,6 +683,7 @@ export default function AdminDisplayTemplatesPage() {
                         id={`slot-html-${index}`}
                         className={`${textareaClass} min-h-24`}
                         spellCheck={false}
+                        disabled={!canEdit}
                         placeholder={"Empty — HTML goes here, e.g. <p>{{lodge-name}}</p>"}
                         value={slot.html}
                         onChange={(event) =>
@@ -688,6 +720,7 @@ export default function AdminDisplayTemplatesPage() {
                           id={`slot-module-${index}`}
                           className={selectClass}
                           value={slot.moduleName}
+                          disabled={!canEdit}
                           onChange={(event) =>
                             updateSlot(index, { moduleName: event.target.value })
                           }
@@ -723,6 +756,7 @@ export default function AdminDisplayTemplatesPage() {
                               className="w-44 font-mono"
                               placeholder="option-key"
                               value={option.key}
+                              disabled={!canEdit}
                               onChange={(event) =>
                                 updateOption(index, optionIndex, {
                                   key: event.target.value,
@@ -733,6 +767,7 @@ export default function AdminDisplayTemplatesPage() {
                               className="min-w-40 flex-1"
                               placeholder="value"
                               value={option.value}
+                              disabled={!canEdit}
                               onChange={(event) =>
                                 updateOption(index, optionIndex, {
                                   value: event.target.value,
@@ -741,6 +776,7 @@ export default function AdminDisplayTemplatesPage() {
                             />
                             <Button
                               variant="outline"
+                              disabled={!canEdit}
                               onClick={() =>
                                 updateSlot(index, {
                                   options: slot.options.filter(
@@ -755,6 +791,7 @@ export default function AdminDisplayTemplatesPage() {
                         ))}
                         <Button
                           variant="outline"
+                          disabled={!canEdit}
                           onClick={() =>
                             updateSlot(index, {
                               options: [...slot.options, { key: "", value: "" }],
@@ -777,6 +814,7 @@ export default function AdminDisplayTemplatesPage() {
               id="template-css"
               className={`${textareaClass} min-h-24`}
               spellCheck={false}
+              disabled={!canEdit}
               placeholder={".board { color: var(--brand-gold); }"}
               value={draft.cssOverrides}
               onChange={(event) =>
@@ -807,6 +845,7 @@ export default function AdminDisplayTemplatesPage() {
               id="template-footer"
               className={`${textareaClass} min-h-20`}
               spellCheck={false}
+              disabled={!canEdit}
               placeholder={"Wi-Fi: {{config:wifi-code}} · {{lodge-name}}"}
               value={draft.footerHtml}
               onChange={(event) =>
@@ -854,12 +893,13 @@ export default function AdminDisplayTemplatesPage() {
           )}
 
           <div className="flex items-center gap-3">
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               onClick={() => void save()}
               disabled={saving || !draft.name || !draft.key || draft.layoutId === ""}
             >
               {draft.id ? "Save changes" : "Create template"}
-            </Button>
+            </ViewOnlyActionButton>
             {draft.id && (
               <Button variant="outline" onClick={startNew} disabled={saving}>
                 Cancel

@@ -12,6 +12,12 @@ import { PolicyPreview } from "./policy-preview"
 import { PolicyFeedback } from "./policy-feedback"
 import { PolicyScopeSelect, usePolicyScopeLodgeName } from "./policy-scope-select"
 import { useLodgeOptions } from "@/components/lodge-select"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
 import type { PolicyRule } from "./types"
 
 type WaitlistCrossLodgeOrder = "OWN_LODGE_FIRST" | "MERGED"
@@ -65,6 +71,9 @@ export function DefaultCancellationPolicySection() {
     useState<WaitlistCrossLodgeOrder>("OWN_LODGE_FIRST")
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  // Booking-policy config gates on the bookings area (its write route enforces
+  // bookings:edit); a bookings:view admin sees it read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("bookings")
 
   const fetchDefaults = useCallback(async (signal?: AbortSignal) => {
     setLoadingDefaults(true)
@@ -148,6 +157,10 @@ export function DefaultCancellationPolicySection() {
         }),
       })
       if (!res.ok) {
+        if (res.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON)
+          return
+        }
         const data = await res.json()
         throw new Error(data.error || "Failed to save")
       }
@@ -211,6 +224,13 @@ export function DefaultCancellationPolicySection() {
 
       <PolicyScopeSelect value={scopeLodgeId} onChange={setScopeLodgeId} />
 
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view the cancellation policy but cannot change it.
+          Bookings edit access is required.
+        </AdminViewOnlyNotice>
+      ) : null}
+
       {scopeIsLodge && !hasOverride ? (
         <Card>
           <CardHeader>
@@ -222,9 +242,9 @@ export function DefaultCancellationPolicySection() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Button onClick={() => void handleCreateOverride()}>
+            <ViewOnlyActionButton canEdit={canEdit} onClick={() => void handleCreateOverride()}>
               Create override for this lodge
-            </Button>
+            </ViewOnlyActionButton>
           </CardContent>
         </Card>
       ) : null}
@@ -245,9 +265,9 @@ export function DefaultCancellationPolicySection() {
               </CardDescription>
             </div>
             {!editingDefaults && (
-              <Button variant="outline" size="sm" onClick={() => setEditingDefaults(true)}>
+              <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => setEditingDefaults(true)}>
                 Edit
-              </Button>
+              </ViewOnlyActionButton>
             )}
           </CardHeader>
           <CardContent className="space-y-6">
@@ -347,13 +367,14 @@ export function DefaultCancellationPolicySection() {
               </div>
             )}
             {scopeIsLodge && hasOverride && !editingDefaults ? (
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 variant="outline"
                 onClick={() => void handleRemoveOverride()}
                 disabled={savingDefaults}
               >
                 Remove override (use club-wide rules)
-              </Button>
+              </ViewOnlyActionButton>
             ) : null}
           </CardContent>
         </Card>

@@ -8,6 +8,27 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+// #1940: the card reads the session permission matrix for view-only gating;
+// provide an edit-level admin session so the pre-existing cases keep working.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
+
 import { LodgeDisplaySettingsCard } from "./lodge-display-settings-card";
 
 // LTV-035 (#81): the per-lodge display settings card edits THE LODGE BEING
