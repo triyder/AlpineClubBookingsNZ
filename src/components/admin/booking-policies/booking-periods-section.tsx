@@ -12,9 +12,18 @@ import { CancellationRulesEditor } from "./cancellation-rules-editor"
 import { PolicyPreview } from "./policy-preview"
 import { PolicyFeedback } from "./policy-feedback"
 import { PolicyScopeSelect, usePolicyScopeLodgeName } from "./policy-scope-select"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
 import type { BookingPeriod, PolicyRule } from "./types"
 
 export function BookingPeriodsSection() {
+  // Booking-policy config gates on the bookings area (its write route enforces
+  // bookings:edit); a bookings:view admin sees it read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("bookings")
   // Per-lodge override scope (ADR-001 resolved question 3): null lists the
   // club-wide periods; a lodge lists its override set, which replaces the
   // club-wide set entirely at runtime. Hidden with fewer than two lodges.
@@ -119,6 +128,10 @@ export function BookingPeriodsSection() {
         }),
       })
       if (!res.ok) {
+        if (res.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON)
+          return
+        }
         const data = await res.json()
         throw new Error(data.error || "Failed to save period")
       }
@@ -200,11 +213,17 @@ export function BookingPeriodsSection() {
               </CardDescription>
             </div>
             {!showPeriodForm && (
-              <Button onClick={() => setShowPeriodForm(true)}>Add Period</Button>
+              <ViewOnlyActionButton canEdit={canEdit} onClick={() => setShowPeriodForm(true)}>Add Period</ViewOnlyActionButton>
             )}
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!canEdit && (
+            <AdminViewOnlyNotice>
+              Your admin role can view booking periods but cannot change them.
+              Bookings edit access is required.
+            </AdminViewOnlyNotice>
+          )}
           {/* Period Form */}
           {showPeriodForm && (
             <Card className="border-blue-200 bg-blue-50/30">
@@ -325,15 +344,15 @@ export function BookingPeriodsSection() {
                         </p>
                       </div>
                       <div className="flex space-x-2">
-                        <Button variant="outline" size="sm" onClick={() => handleTogglePeriod(period)}>
+                        <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => handleTogglePeriod(period)}>
                           {period.active ? "Deactivate" : "Activate"}
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => startEditPeriod(period)}>
+                        </ViewOnlyActionButton>
+                        <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => startEditPeriod(period)}>
                           Edit
-                        </Button>
-                        <Button variant="destructive" size="sm" onClick={() => handleDeletePeriod(period.id)}>
+                        </ViewOnlyActionButton>
+                        <ViewOnlyActionButton canEdit={canEdit} variant="destructive" size="sm" onClick={() => handleDeletePeriod(period.id)}>
                           Delete
-                        </Button>
+                        </ViewOnlyActionButton>
                       </div>
                     </div>
                     <PolicyPreview rules={period.cancellationRules} />

@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import { ADMIN_FORBIDDEN_SAVE_REASON, AdminViewOnlyNotice } from "@/components/admin/view-only-action"
 import { PolicyFeedback } from "./policy-feedback"
 
 interface BookingRequestSettings {
@@ -29,6 +31,10 @@ export function PublicBookingRequestsSection() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  // Booking-request settings gate on the bookings area (its write route enforces
+  // bookings:edit). NOTE: the "Show indicative pricing" toggle autosaves on
+  // change, so it must be disabled for a viewer or it would silently 403 (#1940).
+  const canEdit = useAdminAreaEditAccess("bookings")
 
   const applySettings = useCallback((data: BookingRequestSettings) => {
     setSettings(data)
@@ -64,10 +70,15 @@ export function PublicBookingRequestsSection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(next),
       })
-      const data = await res.json()
       if (!res.ok) {
+        if (res.status === 403) {
+          setError(ADMIN_FORBIDDEN_SAVE_REASON)
+          return
+        }
+        const data = await res.json()
         throw new Error(data.error || "Failed to save")
       }
+      const data = await res.json()
       applySettings(data)
       setSuccess("Booking request settings saved")
     } catch (err) {
@@ -141,6 +152,13 @@ export function PublicBookingRequestsSection() {
         onClearSuccess={() => setSuccess("")}
       />
 
+      {!canEdit ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view the public booking request settings but cannot
+          change them. Bookings edit access is required.
+        </AdminViewOnlyNotice>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Indicative Pricing</CardTitle>
@@ -156,7 +174,7 @@ export function PublicBookingRequestsSection() {
               checked={settings.showPricingToNonMembers}
               onChange={(e) => handleToggleShowPricing(e.target.checked)}
               className="rounded border-input"
-              disabled={saving}
+              disabled={saving || !canEdit}
             />
             <Label htmlFor="showPricingToNonMembers">Show indicative pricing on the request form</Label>
           </div>
@@ -191,7 +209,7 @@ export function PublicBookingRequestsSection() {
               value={ttlDraft}
               onChange={(e) => setTtlDraft(e.target.value)}
               className="block w-28 rounded border border-input px-2 py-1 text-sm"
-              disabled={saving}
+              disabled={saving || !canEdit}
             />
             <p className="text-xs text-muted-foreground">
               How many days the requester has to accept, cancel, or reply before the secure quote link
@@ -209,7 +227,7 @@ export function PublicBookingRequestsSection() {
               value={reminderDraft}
               onChange={(e) => setReminderDraft(e.target.value)}
               className="block w-28 rounded border border-input px-2 py-1 text-sm"
-              disabled={saving}
+              disabled={saving || !canEdit}
             />
             <p className="text-xs text-muted-foreground">
               Send the requester one reminder this many days before the quote expires. The reminder
@@ -221,7 +239,7 @@ export function PublicBookingRequestsSection() {
           <button
             type="button"
             onClick={handleSaveQuoteTiming}
-            disabled={saving || !timingDirty}
+            disabled={saving || !timingDirty || !canEdit}
             className="rounded bg-brand-charcoal px-3 py-1.5 text-sm font-medium text-brand-snow disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save quote timing"}
@@ -249,7 +267,7 @@ export function PublicBookingRequestsSection() {
               value={attendeeLeadDraft}
               onChange={(e) => setAttendeeLeadDraft(e.target.value)}
               className="block w-28 rounded border border-input px-2 py-1 text-sm"
-              disabled={saving}
+              disabled={saving || !canEdit}
             />
             <p className="text-xs text-muted-foreground">
               Start prompting the school this many days before check-in. Set to 0 to turn the prompts
@@ -267,7 +285,7 @@ export function PublicBookingRequestsSection() {
               value={attendeeReminderDraft}
               onChange={(e) => setAttendeeReminderDraft(e.target.value)}
               className="block w-28 rounded border border-input px-2 py-1 text-sm"
-              disabled={saving}
+              disabled={saving || !canEdit}
             />
             <p className="text-xs text-muted-foreground">
               Keep re-sending the confirmation link this often until the school confirms the list or
@@ -278,7 +296,7 @@ export function PublicBookingRequestsSection() {
           <button
             type="button"
             onClick={handleSaveAttendeeTiming}
-            disabled={saving || !attendeeTimingDirty}
+            disabled={saving || !attendeeTimingDirty || !canEdit}
             className="rounded bg-brand-charcoal px-3 py-1.5 text-sm font-medium text-brand-snow disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save attendee prompts"}
