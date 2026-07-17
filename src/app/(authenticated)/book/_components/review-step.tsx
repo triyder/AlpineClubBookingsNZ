@@ -168,8 +168,21 @@ export function ReviewStep({
   // member places are charged and held up front (the parent), the non-member
   // places become a provisional linked booking (the child). An all-non-member
   // provisional party is a single hold, not a split.
+  //
+  // The server split predicate (booking-create.ts) ALSO requires that the
+  // member did NOT tick "Only book if my guests can come" (cancelIfGuestsBumped
+  // — that flag keeps the whole party as one provisional PENDING booking,
+  // nothing charged up front) and that the booking is NOT held for admin review
+  // (the whole party waits in AWAITING_REVIEW, nothing split or charged). If we
+  // showed the split banner in either case the "today you only pay for the
+  // member places / we'll take the guest portion later" claims would be false —
+  // so gate on both here to keep the banner honest.
   const hasMemberGuest = guests.some((guest) => guest.isMember);
-  const willSplit = provisionalHoldWillBeCreated && hasMemberGuest;
+  const willSplit =
+    provisionalHoldWillBeCreated &&
+    hasMemberGuest &&
+    !cancelIfGuestsBumped &&
+    !requiresAdminReviewLocal;
 
   // Names of the guests that become provisional (the non-members). Sourced from
   // the review payload so the copy can name exactly who is held provisionally.
@@ -630,18 +643,18 @@ export function ReviewStep({
                 <strong>
                   Today you only pay for the member places on this booking.
                 </strong>{" "}
-                About{" "}
-                <strong>{formatCents(provisionalGuestPortionCents)}</strong> of
-                the total above is for your non-member guests. That portion is
-                not charged now.
+                Your non-member guests&apos; places (about{" "}
+                <strong>{formatCents(provisionalGuestPortionCents)}</strong> at
+                non-member rates) are not charged today.
               </p>
               <p>
                 If beds are still available
-                {holdDeadlineLabel ? ` around ${holdDeadlineLabel}` : ""}, the
-                non-member portion is charged automatically to the same card and
-                your guests are confirmed. If the lodge has filled with member
-                bookings by then, that portion is not charged and those guests
-                are bumped.
+                {holdDeadlineLabel ? ` around ${holdDeadlineLabel}` : ""}, we&apos;ll
+                automatically take the non-member portion from your saved payment
+                method and your guests are confirmed. If we can&apos;t take
+                payment, we&apos;ll contact you to arrange it. If the lodge has
+                filled with member bookings by then, that portion is not charged
+                and those guests are bumped.
               </p>
             </div>
           ) : (

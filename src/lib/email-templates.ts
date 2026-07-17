@@ -330,7 +330,7 @@ export function bookingConfirmedTemplate(
             provisional.guestCount === 1 ? "is" : "are"
           } held provisionally as a linked booking — no bed is reserved for them yet, and the payment above covers only your member places. If beds remain around ${formatNZDateTime(
             provisional.holdUntil,
-          )}, that guest portion is charged automatically to the same card and your guests are confirmed. If the lodge fills with member bookings first, that portion is not charged and those guests are bumped.`,
+          )}, we'll automatically take that guest portion from your saved payment method and your guests are confirmed. If we can't take payment, we'll contact you to arrange it. If the lodge fills with member bookings first, that portion is not charged and those guests are bumped.`,
           "warning",
         )
       : "";

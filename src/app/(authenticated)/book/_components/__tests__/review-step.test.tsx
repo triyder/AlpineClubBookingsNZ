@@ -147,11 +147,23 @@ describe("ReviewStep split provisional copy (#1942)", () => {
       screen.getByText(/Today you only pay for the member places/i),
     ).toBeInTheDocument();
     // Shows the guest-portion sub-amount derived from the quote ($120.00) and
-    // frames it as the portion not charged today.
+    // frames it as the non-member-rate portion not charged today — without
+    // anchoring on "the total above" (which is the net remainingToPay). FIX 3.
     expect(
-      screen.getByText(/of the total above is for your non-member guests/i),
+      screen.getByText(/at non-member rates\) are not charged today/i),
     ).toBeInTheDocument();
     expect(screen.getAllByText(/\$120\.00/).length).toBeGreaterThanOrEqual(1);
+    // Honest later-charge wording: saved payment method, not "the same card",
+    // with a fallback promise if we cannot take payment. FIX 2.
+    expect(
+      screen.getByText(/take the non-member portion from your saved payment method/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/contact you to arrange it/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/the same card/i),
+    ).not.toBeInTheDocument();
     // Explains the "why" using the hold-days from the quote.
     expect(screen.getByText(/more than 7 days away/i)).toBeInTheDocument();
   });
@@ -189,5 +201,72 @@ describe("ReviewStep split provisional copy (#1942)", () => {
     expect(
       screen.queryByText(/Today you only pay for the member places/i),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows no split banner when 'Only book if my guests can come' is ticked (server keeps the whole party as one provisional booking) — FIX 1", () => {
+    renderReview([memberGuest, nonMemberGuest], splitHold, {
+      cancelIfGuestsBumped: true,
+    });
+
+    // The split banner's up-front-charge claims would be false on the flagged
+    // path (one PENDING booking, nothing charged now), so it must not show.
+    expect(
+      screen.queryByText(/Today you only pay for the member places/i),
+    ).not.toBeInTheDocument();
+    // The adjacent checkbox copy (nothing charged up front) stays coherent: the
+    // whole-party single-hold notice is shown instead.
+    expect(
+      screen.getByText(/held provisionally until closer to check-in/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Only book if my guests can come/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/nothing is charged up front/i),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the guest-portion copy coherent when a promo drops the net total below the gross guest portion — FIX 3", () => {
+    // Net remainingToPay ($60) is now BELOW the gross non-member portion
+    // ($120), so the old "$X of the total above" phrasing would have implied
+    // more than the whole total. The rephrased copy anchors on non-member
+    // rates instead of "the total above", staying self-consistent.
+    renderReview([memberGuest, nonMemberGuest], splitHold, {
+      appliedPromo: {
+        code: "SAVE",
+        description: null,
+        type: "PERCENT",
+        discountCents: 14000,
+        promoAdjustmentCents: -14000,
+        totalPriceCents: 20000,
+        finalPriceCents: 6000,
+      },
+      remainingToPay: 6000,
+    });
+
+    expect(
+      screen.getByText(/at non-member rates\) are not charged today/i),
+    ).toBeInTheDocument();
+    // The gross guest portion is still shown ($120.00) but no longer framed as
+    // a slice of "the total above".
+    expect(
+      screen.queryByText(/of the total above is for your non-member guests/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows no split banner when the booking is held for admin review — FIX 1", () => {
+    renderReview([memberGuest, nonMemberGuest], splitHold, {
+      requiresAdminReviewLocal: true,
+      memberReviewJustification: "No adult can attend.",
+    });
+
+    // Admin-review bookings are never split — the whole party waits in review.
+    expect(
+      screen.queryByText(/Today you only pay for the member places/i),
+    ).not.toBeInTheDocument();
+    // The whole-party-hold fallback copy is shown instead of the split banner.
+    expect(
+      screen.getByText(/held provisionally until closer to check-in/i),
+    ).toBeInTheDocument();
   });
 });
