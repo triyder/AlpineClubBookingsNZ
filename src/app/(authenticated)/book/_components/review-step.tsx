@@ -164,6 +164,43 @@ export function ReviewStep({
   const provisionalHoldWillBeCreated =
     guests.some((guest) => !guest.isMember) &&
     priceQuote.nonMemberHoldDecision?.shouldBePending === true;
+  // A split happens only when the party mixes member and non-member guests: the
+  // member places are charged and held up front (the parent), the non-member
+  // places become a provisional linked booking (the child). An all-non-member
+  // provisional party is a single hold, not a split.
+  const hasMemberGuest = guests.some((guest) => guest.isMember);
+  const willSplit = provisionalHoldWillBeCreated && hasMemberGuest;
+
+  // Names of the guests that become provisional (the non-members). Sourced from
+  // the review payload so the copy can name exactly who is held provisionally.
+  const provisionalGuestNames = reviewGuestPayload
+    .filter((guest) => !guest.isMember)
+    .map((guest) => `${guest.firstName} ${guest.lastName}`.trim())
+    .filter(Boolean);
+  // The provisional (guest-portion) sub-amount, derived from the same quote the
+  // member already sees — NOT recomputed. priceQuote.guests is index-parallel to
+  // reviewGuestPayload, so summing the non-member rows gives the portion that is
+  // charged later rather than today.
+  const provisionalGuestPortionCents = priceQuote.guests.reduce(
+    (sum, guest) => (guest.isMember ? sum : sum + (guest.priceCents || 0)),
+    0,
+  );
+  const holdDays = priceQuote.nonMemberHoldDecision?.holdDays ?? 0;
+  // Approximate hold deadline: check-in minus the policy's hold-days. The exact
+  // hold-until timestamp is set server-side; this is the member-facing "around
+  // when" so the copy can say when the second charge is attempted.
+  const holdDeadline =
+    checkIn && holdDays > 0
+      ? new Date(checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000)
+      : null;
+  const holdDeadlineLabel = holdDeadline
+    ? holdDeadline.toLocaleDateString("en-NZ", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
+    : null;
 
   useEffect(() => {
     if (!provisionalHoldWillBeCreated && cancelIfGuestsBumped) {
@@ -573,13 +610,49 @@ export function ReviewStep({
 
       {provisionalHoldWillBeCreated && (
         <div className="space-y-3">
-          <div className="rounded-md border border-warning/20 bg-warning-muted p-4 text-sm text-warning">
-            <strong>Note:</strong> This booking includes non-member guests.
-            {guests.some((g) => g.isMember)
-              ? " By default your own place is booked and paid for now to hold it, while your non-member guests are held provisionally as a linked booking \u2014 no beds are reserved for them until they are confirmed and paid for closer to check-in. Members have priority if the lodge fills up."
-              : " Your booking is held provisionally until closer to check-in. Members have priority \u2014 no beds are reserved until your booking is confirmed and paid."}
-          </div>
-          {guests.some((g) => g.isMember) && (
+          {willSplit ? (
+            <div className="space-y-2 rounded-md border border-warning/20 bg-warning-muted p-4 text-sm text-warning">
+              <p>
+                <strong>Your non-member guests are held provisionally.</strong>{" "}
+                Because your stay is more than {holdDays} day
+                {holdDays === 1 ? "" : "s"} away, member and non-member places
+                are booked separately.
+              </p>
+              {provisionalGuestNames.length > 0 && (
+                <p>
+                  Held provisionally:{" "}
+                  <strong>{provisionalGuestNames.join(", ")}</strong>. No bed is
+                  reserved for them yet &mdash; members have priority if the
+                  lodge fills up.
+                </p>
+              )}
+              <p>
+                <strong>
+                  Today you only pay for the member places on this booking.
+                </strong>{" "}
+                About{" "}
+                <strong>{formatCents(provisionalGuestPortionCents)}</strong> of
+                the total above is for your non-member guests. That portion is
+                not charged now.
+              </p>
+              <p>
+                If beds are still available
+                {holdDeadlineLabel ? ` around ${holdDeadlineLabel}` : ""}, the
+                non-member portion is charged automatically to the same card and
+                your guests are confirmed. If the lodge has filled with member
+                bookings by then, that portion is not charged and those guests
+                are bumped.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-md border border-warning/20 bg-warning-muted p-4 text-sm text-warning">
+              <strong>Note:</strong> This booking includes non-member guests.
+              Your booking is held provisionally until closer to check-in.
+              Members have priority &mdash; no beds are reserved until your
+              booking is confirmed and paid.
+            </div>
+          )}
+          {hasMemberGuest && (
             <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
               <input
                 type="checkbox"
