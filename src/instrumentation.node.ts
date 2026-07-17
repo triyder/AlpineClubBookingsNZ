@@ -46,6 +46,27 @@ export async function register() {
     } catch {
       // Ignore — the email palette self-warms in the background on first use.
     }
+
+    // #1943 (C2): boot-time config self-heal. Copies each registered setting's
+    // current EFFECTIVE config value into its DB row IFF that row is absent, so
+    // later epic-#1943 collapse children can drop their file/env fallback
+    // without stranding a live deploy (`prisma migrate deploy` runs, but the
+    // seed never does and a SQL migration cannot read config/club.json).
+    // Create-if-absent, idempotent, and blue/green-safe. Best-effort: it runs
+    // on every Node boot regardless of cron config and can never block or fail
+    // startup. `runConfigSelfHeal` already swallows per-step errors; the outer
+    // try/catch guards the dynamic imports themselves.
+    try {
+      const { prisma } = await import("./lib/prisma");
+      const { runConfigSelfHeal } = await import("./lib/config-self-heal");
+      await runConfigSelfHeal({ db: prisma });
+    } catch (err) {
+      const { default: logger } = await import("./lib/logger");
+      logger.warn(
+        { err, scope: "config-self-heal" },
+        "Boot-time config self-heal did not run (non-fatal)",
+      );
+    }
   }
 
   if (process.env.NEXT_RUNTIME === "edge") {
