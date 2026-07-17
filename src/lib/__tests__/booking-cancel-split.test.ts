@@ -190,6 +190,14 @@ describe("cancelBooking split cascade (#738)", () => {
     expect(mocks.reconcileBedAllocationsForBooking).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "child_1" })
     );
+    // #1967: any outstanding guest-portion payment link is revoked inside the
+    // same claim transaction, so a link minted between the parent's cancel
+    // and the member clicking /pay is dead — a cancelled child can never be
+    // paid through a stale token.
+    expect(mocks.revokePaymentLinksForBooking).toHaveBeenCalledWith(
+      "child_1",
+      expect.anything()
+    );
   });
 
   it("does not overwrite or emit cancellation side effects when cron already confirmed the child", async () => {
