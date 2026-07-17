@@ -96,7 +96,7 @@ Minimum production categories:
 
 - Database: `DATABASE_URL`, `DB_PASSWORD`
 - Auth: `AUTH_SECRET`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `AUTH_TRUST_HOST`
-- Public app: `DOMAIN`, `NEXT_PUBLIC_CONTACT_EMAIL`
+- Public app: `DOMAIN`.
   `DOMAIN` is the root public host consumed by `Caddyfile` through the
   `{$DOMAIN}` placeholder. Caddy derives `www`, `bookings`, and `dashboard`
   subdomains from that value.
@@ -117,7 +117,17 @@ Minimum production categories:
   stale generic all-reports scope; reconnect Xero from `/admin/xero` after
   changing allowed scopes so new tokens carry the granular report scopes.
 - Email: `SMTP_HOST`, `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`,
-  `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_FROM`, `SES_SNS_TOPIC_ARN`
+  `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_FROM`, `SES_SNS_TOPIC_ARN`. `EMAIL_FROM` is
+  the only email-identity env var (besides these transport secrets): it is the
+  envelope / Return-Path sender and must be a provider-verified (SES) address.
+  Email identity — from display name, support address, and contact-form
+  recipient — is admin-managed DB-first from **Admin > Email Messages**
+  (`EmailMessageSetting`); the former `EMAIL_FROM_NAME`, `SUPPORT_EMAIL`,
+  `CONTACT_EMAIL`, and the dead `NEXT_PUBLIC_CONTACT_EMAIL` env vars were removed
+  (#1986). **Upgrade note:** a deployment that previously relied on the
+  `CONTACT_EMAIL` env var to route the contact form must set the DB
+  `contactEmail` (Admin > Email Messages); if unset it falls back to the support
+  address per the existing precedence, so there is no hard break.
 - Cron and backups: `CRON_SECRET`, `BACKUP_*`, optional
   `AUDIT_ARCHIVE_DATABASE_URL`
 - Admin health: optional `CRON_LEADER_RUNTIME_STATUS_URL` when the cron leader

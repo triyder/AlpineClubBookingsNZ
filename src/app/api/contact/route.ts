@@ -69,12 +69,13 @@ export async function POST(request: Request) {
 
     const { name, email, message, recipient } = result.data;
 
-    // DB-first default recipient (C6 #1985): resolve the club contact address
-    // from EmailMessageSetting.contactEmail (async route handler — it can await),
-    // keeping the `CONTACT_EMAIL` env var as an optional bootstrap override. C7
-    // owns removing the env term. A named committee recipient below still wins.
-    const contactEmail =
-      process.env.CONTACT_EMAIL || (await loadEmailMessageSettings()).contactEmail;
+    // DB-first default recipient (C6 #1985 / C7 #1986): resolve the club contact
+    // address solely from EmailMessageSetting.contactEmail (async route handler —
+    // it can await), which itself falls back to the support address per
+    // getDefaultEmailMessageSettings precedence. The `CONTACT_EMAIL` env override
+    // was removed (#1986) — EmailMessageSetting is the single source for email
+    // identity. A named committee recipient below still wins.
+    const contactEmail = (await loadEmailMessageSettings()).contactEmail;
     let toEmail = contactEmail;
     let recipientLabel = "";
     let logRecipient = contactEmail;

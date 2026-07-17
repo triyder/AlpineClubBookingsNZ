@@ -806,6 +806,30 @@ describe("Contact API - committee contact email mode routing", () => {
     expect(emailArgs.to).toBeTruthy();
     expect(logger.warn).toHaveBeenCalled();
   });
+
+  it("ignores a set CONTACT_EMAIL env var — the DB contactEmail is the sole source (#1986)", async () => {
+    // C7 #1986 removed the process.env.CONTACT_EMAIL bootstrap override. Setting
+    // it must have NO effect: the default recipient comes solely from the DB-first
+    // EmailMessageSetting.contactEmail (mocked to DEFAULT_CONTACT_EMAIL).
+    vi.stubEnv("CONTACT_EMAIL", "env-override@example.com");
+    const { POST } = await import("@/app/api/contact/route");
+    const req = new Request("http://localhost/api/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Test User",
+        email: "test@example.com",
+        message: "Hello",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const emailArgs = vi.mocked(sendEmail).mock.calls[0][0];
+    expect(emailArgs.to).toBe(DEFAULT_CONTACT_EMAIL);
+    expect(emailArgs.to).not.toBe("env-override@example.com");
+    vi.unstubAllEnvs();
+  });
 });
 
 describe("Committee Public API - GET /api/committee", () => {

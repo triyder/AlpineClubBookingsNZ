@@ -436,16 +436,25 @@ describe("email-templates", () => {
   });
 
   describe("support contact config", () => {
-    it("uses the shared support email instead of hard-coded copy", async () => {
+    it("renders the config-derived support email as a stable search key, and the removed SUPPORT_EMAIL env has no effect (#1986)", async () => {
       vi.resetModules();
       vi.stubEnv("EMAIL_FROM", "sender@example.com");
+      // C7 #1986 removed the SUPPORT_EMAIL env override — email identity is now
+      // DB-first / config-derived only. Setting the env var must NOT change what
+      // the template bakes in (the config-derived search key that send-time
+      // replacement later swaps for the live EmailMessageSetting.supportEmail).
       vi.stubEnv("SUPPORT_EMAIL", "help@example.com");
 
-      const { accountDeletionApprovedTemplate } = await import("../email-templates");
+      const [{ accountDeletionApprovedTemplate }, { clubConfig }] =
+        await Promise.all([
+          import("../email-templates"),
+          import("@/config/club"),
+        ]);
       const html = accountDeletionApprovedTemplate("Alice");
 
-      expect(html).toContain("help@example.com");
-      expect(html).not.toContain("support@example.org");
+      // The config-derived support address renders; the env value is ignored.
+      expect(html).toContain(clubConfig.supportEmail);
+      expect(html).not.toContain("help@example.com");
 
       vi.unstubAllEnvs();
     });

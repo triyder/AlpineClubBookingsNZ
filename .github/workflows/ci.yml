@@ -148,7 +148,6 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tacbookings
       STRIPE_SECRET_KEY: sk_test_fake
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
-      NEXT_PUBLIC_CONTACT_EMAIL: bookings@example.com
       XERO_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false"
       XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: "false"
@@ -335,7 +334,6 @@ jobs:
       contents: read
     env:
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
-      NEXT_PUBLIC_CONTACT_EMAIL: bookings@example.com
       NEXT_PUBLIC_SENTRY_DSN: ""
       IMAGE_REF: tacbookings-ci:${{ github.sha }}
     steps:
@@ -347,7 +345,6 @@ jobs:
           docker build \
             --build-arg NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY="${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}" \
             --build-arg NEXT_PUBLIC_SENTRY_DSN="${NEXT_PUBLIC_SENTRY_DSN}" \
-            --build-arg NEXT_PUBLIC_CONTACT_EMAIL="${NEXT_PUBLIC_CONTACT_EMAIL}" \
             --tag "${IMAGE_REF}" \
             .
 
@@ -387,7 +384,6 @@ jobs:
       APP_IMAGE: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-app', github.repository_owner) }}:${{ github.sha }}
       MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
-      NEXT_PUBLIC_CONTACT_EMAIL: ${{ vars.NEXT_PUBLIC_CONTACT_EMAIL }}
       NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
     steps:
       - name: Check out repository
@@ -396,7 +392,6 @@ jobs:
       - name: Validate production build variables
         run: |
           test -n "$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"
-          test -n "$NEXT_PUBLIC_CONTACT_EMAIL"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -417,7 +412,6 @@ jobs:
           tags: ${{ env.APP_IMAGE }}
           build-args: |
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
-            NEXT_PUBLIC_CONTACT_EMAIL=${{ env.NEXT_PUBLIC_CONTACT_EMAIL }}
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
           cache-from: type=gha,scope=alpineclubbookingsnz-app
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-app
@@ -432,7 +426,6 @@ jobs:
           tags: ${{ env.MIGRATE_IMAGE }}
           build-args: |
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
-            NEXT_PUBLIC_CONTACT_EMAIL=${{ env.NEXT_PUBLIC_CONTACT_EMAIL }}
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
           cache-from: type=gha,scope=alpineclubbookingsnz-migrate
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-migrate

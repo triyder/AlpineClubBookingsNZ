@@ -135,6 +135,23 @@ Messages) → `ClubIdentitySettings.name` → `config/club.json`. Email template
 default subjects keep the config-derived lodge name as their stable search key;
 the live lodge name is substituted at send time.
 
+**Email identity is admin-managed, DB-first (Admin > Email Messages).** The
+sender **display name** (`emailFromName`), the **support address**
+(`supportEmail`, used for body/footer support links), and the **contact-form
+recipient** (`contactEmail`, which falls back to `supportEmail`) all resolve from
+`EmailMessageSetting` → `config/club.json`. There are **no** `EMAIL_FROM_NAME`,
+`SUPPORT_EMAIL`, or `CONTACT_EMAIL` env vars — they were removed (#1986) so
+`EmailMessageSetting` is the single source for email identity. `EMAIL_FROM`
+remains the sole email env var (besides transport secrets): it is the
+envelope / Return-Path sender **address** and must be a provider-verified (SES)
+address in production; the DB `supportEmail` is never used as the sender address.
+The now-dead `NEXT_PUBLIC_CONTACT_EMAIL` build arg was deleted at the same time.
+**Upgrade note:** a deployment that previously routed the contact form via the
+`CONTACT_EMAIL` env var must set the DB `contactEmail` under Admin > Email
+Messages; if left unset it falls back to `club.json`'s `contactEmail`, then to
+the support address, per the precedence above (via the boot self-heal chain),
+so removing the env var causes no hard break.
+
 Split-booking confirmations depend on the `{{provisionalGuestsNote}}` token in
 the **booking-confirmed** body (Admin > Email Messages): it renders the
 provisional non-member portion story on a split parent and nothing otherwise
@@ -1376,11 +1393,7 @@ read `MemberAccessRole` rows.
 | `EMAIL_SERVER_PORT`                      | SMTP relay port (required when `USE_SMTP_RELAY=true`).                                                                                                       |
 | `EMAIL_SERVER_USER`                      | SMTP relay username (required when `USE_SMTP_RELAY=true`).                                                                                                   |
 | `EMAIL_SERVER_PASSWORD`                  | SMTP relay password (required when `USE_SMTP_RELAY=true`).                                                                                                   |
-| `EMAIL_FROM`                             | Sender email address.                                                                                                                                        |
-| `EMAIL_FROM_NAME`                        | Optional sender display name override.                                                                                                                       |
-| `SUPPORT_EMAIL`                          | Optional support email override.                                                                                                                             |
-| `CONTACT_EMAIL`                          | Server-side contact-form recipient override.                                                                                                                 |
-| `NEXT_PUBLIC_CONTACT_EMAIL`              | Public contact email displayed in client-rendered UI.                                                                                                        |
+| `EMAIL_FROM`                             | Envelope / Return-Path sender address (bootstrap; must be a provider-verified SES address in production). The ONLY email-identity env var besides transport secrets — from display name, support address, and contact-form recipient are admin-managed DB-first (Admin > Email Messages). |
 | `SES_SNS_TOPIC_ARN`                      | SNS topic ARN for SES bounce/complaint webhooks (required for full SES feedback handling when `USE_AWS_SES=true`).                                           |
 | `SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN` | Local/dev escape hatch only; never enable for deployed SES feedback ingestion.                                                                               |
 | `SES_SNS_ALLOW_SIGNATURE_V1`             | Temporarily permit legacy SNS SignatureVersion 1 (SHA1). Default rejects v1; enable SignatureVersion 2 on the SNS topic and leave this unset in production.   |

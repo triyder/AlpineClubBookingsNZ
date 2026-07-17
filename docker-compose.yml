@@ -42,12 +42,11 @@ x-app-environment: &app-environment
   AWS_SES_SECRET_ACCESS_KEY: ${AWS_SES_SECRET_ACCESS_KEY}
   SES_SNS_TOPIC_ARN: ${SES_SNS_TOPIC_ARN}
   SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN: ${SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN:-false}
+  # EMAIL_FROM is the only email-identity env var (besides transport secrets):
+  # the envelope / Return-Path sender, which must be a provider-verified (SES)
+  # address. From display name, support address, and contact-form recipient are
+  # admin-managed DB-first (Admin > Email Messages / EmailMessageSetting).
   EMAIL_FROM: ${EMAIL_FROM}
-  EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-}
-  SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
-  # Server-side contact-form recipient; the NEXT_PUBLIC_ variant below is a
-  # build arg baked into the client bundle and cannot be set at runtime.
-  CONTACT_EMAIL: ${CONTACT_EMAIL:-}
   CRON_SECRET: ${CRON_SECRET}
   SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
   SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
@@ -77,7 +76,6 @@ x-app-service: &app-service
     args:
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
       NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
-      NEXT_PUBLIC_CONTACT_EMAIL: ${NEXT_PUBLIC_CONTACT_EMAIL:-}
   restart: unless-stopped
   logging:
     driver: json-file
@@ -204,7 +202,6 @@ services:
       args:
         NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}
         NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
-        NEXT_PUBLIC_CONTACT_EMAIL: ${NEXT_PUBLIC_CONTACT_EMAIL:-}
     profiles: ["migrate"]
     depends_on:
       postgres:

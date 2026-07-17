@@ -92,8 +92,6 @@ jobs:
           EMAIL_SERVER_PASSWORD=e2e
           MAILPIT_HTTP_PORT=8025
           EMAIL_FROM=e2e@example.org
-          CONTACT_EMAIL=e2e@example.org
-          NEXT_PUBLIC_CONTACT_EMAIL=e2e@example.org
           CRON_SECRET=e2e-ci-cron-secret
           CRON_ENABLED=false
           BACKUP_ENABLED=false
@@ -115,7 +113,6 @@ jobs:
           tags: tacbookings-e2e-app:ci
           build-args: |
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.STRIPE_TEST_PUBLISHABLE_KEY || 'pk_test_e2e_placeholder' }}
-            NEXT_PUBLIC_CONTACT_EMAIL=e2e@example.org
             NEXT_PUBLIC_SENTRY_DSN=
           cache-from: |
             type=gha,scope=alpineclubbookingsnz-app
@@ -238,8 +235,6 @@ jobs:
           EMAIL_SERVER_PASSWORD=e2e
           MAILPIT_HTTP_PORT=8025
           EMAIL_FROM=e2e@example.org
-          CONTACT_EMAIL=e2e@example.org
-          NEXT_PUBLIC_CONTACT_EMAIL=e2e@example.org
           CRON_SECRET=e2e-ci-cron-secret
           CRON_ENABLED=false
           BACKUP_ENABLED=false
@@ -259,7 +254,6 @@ jobs:
           tags: tacbookings-e2e-app:ci
           build-args: |
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.STRIPE_TEST_PUBLISHABLE_KEY || 'pk_test_e2e_placeholder' }}
-            NEXT_PUBLIC_CONTACT_EMAIL=e2e@example.org
             NEXT_PUBLIC_SENTRY_DSN=
           cache-from: |
             type=gha,scope=alpineclubbookingsnz-app
