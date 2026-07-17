@@ -253,6 +253,16 @@ async function resolveDefaultLodgeIdSafe(db: SelfHealDb): Promise<string | null>
  * Lodge row yet) degrades to "resolves to 0" → heal, matching the pre-gate
  * behaviour for an unconfigured install.
  *
+ * KNOWN RESIDUAL (deliberate trade-off, see PR #1982): because module-flag read
+ * errors are swallowed to defaults (`bedAllocation: false`), a transient flags
+ * read failure on a genuinely Bed-Allocation-ON lodge with a deliberate null
+ * capacity makes the lodge resolve 0 on that boot, so the heal fires and writes
+ * a capping override that later boots will not undo (capacity is then non-null).
+ * The failure direction is capacity-REDUCING (never overbooks) and
+ * admin-recoverable; degrading a read error to "skip" instead would reopen the
+ * cold-boot capacity-0 outage this step exists to prevent, so error→heal was
+ * chosen. Revisit only with an explicit flags-read-health signal.
+ *
  * ## The write — create-if-absent, null-scoped fill, linked to the default lodge
  * The write create-if-absents the legacy row and then atomically fills capacity
  * ONLY `WHERE capacity IS NULL`, so it tolerates every state safely:

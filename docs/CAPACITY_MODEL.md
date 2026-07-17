@@ -186,6 +186,14 @@ to an additional lodge that lacks its own row. `prisma/seed.ts` seeds the same
 default-lodge capacity (create-only, null-scoped fill) so a freshly seeded DB is
 immediately bookable, matching a booted DB.
 
+Known residual (deliberate trade-off): a transient module-flags read error at
+boot resolves as "Bed Allocation off", so a module-ON lodge with a deliberate
+null capacity could be healed with a capping override on that one boot. The
+failure direction only ever *reduces* capacity (never overbooks) and an admin
+can clear it by setting the capacity explicitly; degrading read errors to
+"skip healing" instead would reopen the cold-boot capacity-0 outage this
+mechanism exists to prevent.
+
 Only an **explicit** per-lodge capacity acts as a ceiling. The unconfigured
 fallback (0) is never a ceiling, so enabling Bed Allocation on a lodge keeps
 using the bed count unless a capacity is set.
