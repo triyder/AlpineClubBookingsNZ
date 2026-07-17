@@ -25,6 +25,7 @@ export const CONFIG_TRANSFER_CATEGORIES = [
   "lodge-config",
   "committee",
   "induction",
+  "membership-fees",
   "xero-config",
 ] as const;
 

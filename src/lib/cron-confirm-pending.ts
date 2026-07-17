@@ -1,6 +1,7 @@
 import {
   BookingEventType,
   BookingStatus,
+  PaymentSource,
   PaymentStatus,
   PaymentTransactionKind,
   Prisma,
@@ -10,7 +11,13 @@ import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycl
 import { recordBookingEvent } from "@/lib/booking-events";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import logger from "@/lib/logger";
-import { revokePaymentLinksForBooking } from "@/lib/payment-link";
+import {
+  mintSplitGuestPaymentLinkIfAbsent,
+  revokePaymentLinkById,
+  revokePaymentLinksForBooking,
+  type MintedSplitGuestPaymentLink,
+} from "@/lib/payment-link";
+import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
@@ -25,9 +32,11 @@ import {
 import {
   sendAdminBookingRequestHoldExpiredEmail,
   sendAdminPaymentFailureAlert,
+  sendAdminSplitSettlementUnpaidAlert,
   sendBookingBumpedEmail,
   sendBookingConfirmedEmail,
   sendBookingGuestsCancelledEmail,
+  sendSplitGuestPaymentLinkEmail,
 } from "./email";
 import { processWaitlistForDates } from "./waitlist";
 
@@ -44,6 +53,11 @@ const pendingBookingInclude = {
       payment: true,
     },
   },
+  // #1967: a #796 group joiner also carries parentBookingId (the organiser's
+  // booking) but always has a GroupBookingJoin row written atomically with its
+  // creation — this is the discriminator that keeps joiners out of the
+  // split-guest settlement branch.
+  groupBookingJoin: { select: { id: true } },
   originBookingRequest: { select: { id: true } },
   promoRedemption: {
     include: {
@@ -74,6 +88,27 @@ type HoldResolution =
       extendedHoldUntil: Date;
     }
   | { type: "missing_payment_method"; booking: PendingBooking }
+  | {
+      type: "split_child_payment_link";
+      booking: PendingBooking;
+      extendedHoldUntil: Date;
+      // The freshly minted link (raw token + row id) when THIS run minted one
+      // (the caller emails the member, and revokes the link by id if that
+      // email fails so the next run re-mints). Null when an active link
+      // already existed — the member was emailed on a prior run, so the
+      // caller sends no member email; the admin alert fires either way.
+      mintedLink: MintedSplitGuestPaymentLink | null;
+    }
+  | {
+      // A genuine split child with no saved card whose PARENT is not settled
+      // (e.g. an abandoned card PAYMENT_PENDING parent): the member's own
+      // place is unpaid, so no guest payment link is minted or emailed — the
+      // guest portion must not become settleable ahead of the member's own
+      // place. The hold extension is the alert-cadence claim.
+      type: "split_child_parent_unpaid";
+      booking: PendingBooking;
+      extendedHoldUntil: Date;
+    }
   | {
       type: "claimed_for_charge";
       booking: PendingBooking;
@@ -385,6 +420,83 @@ async function resolveHoldWindowUnderLock(
           : { type: "already_processed" };
       }
 
+      // #1967: a split non-member child whose parent paid via Internet Banking
+      // (switch-at-pay) has no saved card and is not request-origin, so it
+      // cannot be auto-charged. Rather than stranding the guests unsettled (the
+      // old missing_payment_method → log-only path), reuse the #707 tokenised
+      // PaymentLink so the member can settle their guests' portion. Mirror the
+      // request-origin path: extend the hold to stop 15-minute churn, mint the
+      // link (idempotently), email the member once per mint, and alert admins
+      // on every extension run while unsettled. The child stays PENDING and
+      // holds no capacity, exactly as before.
+      //
+      // Genuine #738 split children only: a #796 group joiner also carries
+      // parentBookingId (the organiser's booking) but always has a
+      // GroupBookingJoin row written atomically at creation. Joiners keep the
+      // pre-existing missing_payment_method behaviour below — their guest
+      // wording, payment link (minted at join for EACH_PAYS_OWN) and
+      // organiser-settlement flows are a different machine.
+      if (booking.parentBookingId && !booking.groupBookingJoin) {
+        // #1967 FIX-1: only treat the guest portion as settleable-by-link when
+        // the parent (the member's own place) is genuinely settled without a
+        // saved card — an Internet Banking payment on a live parent (the
+        // switch-at-pay flips the parent to CONFIRMED with an IB-source
+        // payment), or a parent already in a settled/settling status. An
+        // abandoned-card PAYMENT_PENDING parent also reaches here with no
+        // saved card, but then the member's own place is unpaid: emailing
+        // "pay for your guests" would assert false facts and let the guest
+        // portion settle ahead of the member's own place.
+        const parent = booking.parentBooking;
+        const parentIsLive =
+          parent != null &&
+          parent.deletedAt == null &&
+          parent.status !== BookingStatus.CANCELLED &&
+          parent.status !== BookingStatus.BUMPED;
+        const parentSettledWithoutCard =
+          parentIsLive &&
+          (parent.payment?.source === PaymentSource.INTERNET_BANKING ||
+            parent.status === BookingStatus.CONFIRMED ||
+            parent.status === BookingStatus.PAID ||
+            parent.status === BookingStatus.COMPLETED);
+
+        const extendedHoldUntil = new Date(
+          now.getTime() + REQUEST_HOLD_EXTENSION_MS
+        );
+        const claimed = await tx.booking.updateMany({
+          where: {
+            id: booking.id,
+            status: BookingStatus.PENDING,
+            nonMemberHoldUntil: booking.nonMemberHoldUntil,
+          },
+          data: { nonMemberHoldUntil: extendedHoldUntil },
+        });
+        if (claimed.count === 0) {
+          return { type: "already_processed" };
+        }
+
+        if (!parentSettledWithoutCard) {
+          return {
+            type: "split_child_parent_unpaid",
+            booking,
+            extendedHoldUntil,
+          };
+        }
+
+        // Mint only when no active (unexpired) link exists; a pre-existing
+        // active link means a prior run already emailed the member.
+        const mintedLink = await mintSplitGuestPaymentLinkIfAbsent(tx, {
+          id: booking.id,
+          checkIn: booking.checkIn,
+        });
+
+        return {
+          type: "split_child_payment_link",
+          booking,
+          extendedHoldUntil,
+          mintedLink,
+        };
+      }
+
       return { type: "missing_payment_method", booking };
     }
 
@@ -405,6 +517,14 @@ async function resolveHoldWindowUnderLock(
       );
       return { type: "already_processed" };
     }
+
+    // #1967 FIX-6: the auto-charge claim supersedes any outstanding /pay link
+    // (e.g. one minted while no card was on file, before a card appeared on
+    // the parent). Revoke inside the claim transaction — under the same lodge
+    // lock the /pay intent path re-reads the link beneath — so the tokenised
+    // link and the saved-card charge can never both be live settlement paths.
+    // Mirrors the bump path's revocation above.
+    await revokePaymentLinksForBooking(booking.id, tx);
 
     await reconcileBedAllocationsForBooking({
       bookingId: booking.id,
@@ -572,6 +692,130 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               job: "confirmPendingBookings",
             },
             "Failed to send admin hold-expired alert"
+          );
+        }
+        continue;
+      }
+
+      if (resolution.type === "split_child_payment_link") {
+        // Member email: only the run that minted a fresh link sends one (a
+        // null mintedLink means an active link exists and the member was
+        // emailed on a prior run — idempotent across cron re-runs). If the
+        // send throws or is suppressed, the raw token dies with this run, so
+        // revoke the just-minted link (by id, so a concurrent on-demand
+        // re-mint's newer link survives) — the next extension run then
+        // re-mints and re-sends instead of stalling forever behind a stale
+        // active-link sentinel.
+        if (resolution.mintedLink) {
+          const { token, paymentLinkId } = resolution.mintedLink;
+          const expiresAt = endOfDateOnlyForTimeZone(
+            formatDateOnly(resolution.booking.checkIn)
+          );
+          let delivered = false;
+          try {
+            const emailOutcome = await sendSplitGuestPaymentLinkEmail({
+              email: resolution.booking.member.email,
+              firstName: resolution.booking.member.firstName,
+              token,
+              checkIn: resolution.booking.checkIn,
+              checkOut: resolution.booking.checkOut,
+              guestCount: resolution.booking.guests.length,
+              priceCents: resolution.booking.finalPriceCents,
+              bookingReference: resolution.booking.id,
+              expiresAt,
+              lodgeId: resolution.booking.lodgeId ?? null,
+            });
+            delivered = emailOutcome.status === "sent";
+            if (!delivered) {
+              logger.warn(
+                {
+                  bookingId: resolution.booking.id,
+                  emailStatus: emailOutcome.status,
+                  job: "confirmPendingBookings",
+                },
+                "Split-booking guest payment link email not delivered (suppressed recipient); revoking the link so the next settlement run re-mints"
+              );
+            }
+          } catch (emailErr) {
+            logger.error(
+              {
+                err: emailErr,
+                bookingId: resolution.booking.id,
+                job: "confirmPendingBookings",
+              },
+              "Failed to send split-booking guest payment link email; revoking the link so the next settlement run re-mints"
+            );
+          }
+          if (!delivered) {
+            await revokePaymentLinkById(paymentLinkId).catch((revokeErr) =>
+              logger.error(
+                {
+                  err: revokeErr,
+                  bookingId: resolution.booking.id,
+                  paymentLinkId,
+                  job: "confirmPendingBookings",
+                },
+                "Failed to revoke undelivered split guest payment link; a stale active link may block re-minting until it expires"
+              )
+            );
+          }
+        }
+
+        // Admin alert: every extension run while the guest portion remains
+        // unsettled (matching the request-origin extended_request_hold
+        // cadence two branches up), not just the minting run.
+        try {
+          await sendAdminSplitSettlementUnpaidAlert({
+            memberName: `${resolution.booking.member.firstName} ${resolution.booking.member.lastName}`,
+            checkIn: resolution.booking.checkIn,
+            checkOut: resolution.booking.checkOut,
+            guestCount: resolution.booking.guests.length,
+            totalCents: resolution.booking.finalPriceCents,
+            holdUntil: resolution.extendedHoldUntil,
+            parentUnpaid: false,
+          });
+        } catch (alertErr) {
+          logger.error(
+            {
+              err: alertErr,
+              bookingId: resolution.booking.id,
+              job: "confirmPendingBookings",
+            },
+            "Failed to send admin split-settlement unpaid alert"
+          );
+        }
+        continue;
+      }
+
+      if (resolution.type === "split_child_parent_unpaid") {
+        // The member's own (parent) booking is unpaid, so no guest payment
+        // link was minted or emailed. Keep the legacy missing-payment-method
+        // observability (error log + failed id) and alert admins once per
+        // hold extension — the extension claim is the dedupe across the
+        // 15-minute cron cadence.
+        logger.error(
+          { bookingId: resolution.booking.id, job: "confirmPendingBookings" },
+          "Split child booking has no saved payment method and its parent booking is unsettled - cannot auto-confirm or issue a guest payment link"
+        );
+        result.failedBookingIds.push(resolution.booking.id);
+        try {
+          await sendAdminSplitSettlementUnpaidAlert({
+            memberName: `${resolution.booking.member.firstName} ${resolution.booking.member.lastName}`,
+            checkIn: resolution.booking.checkIn,
+            checkOut: resolution.booking.checkOut,
+            guestCount: resolution.booking.guests.length,
+            totalCents: resolution.booking.finalPriceCents,
+            holdUntil: resolution.extendedHoldUntil,
+            parentUnpaid: true,
+          });
+        } catch (alertErr) {
+          logger.error(
+            {
+              err: alertErr,
+              bookingId: resolution.booking.id,
+              job: "confirmPendingBookings",
+            },
+            "Failed to send admin split-settlement unpaid alert"
           );
         }
         continue;

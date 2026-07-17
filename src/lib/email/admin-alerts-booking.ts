@@ -11,6 +11,7 @@ import {
   adminBookingRequestPendingTemplate,
   adminSchoolManualInvoiceTemplate,
   adminBookingRequestHoldExpiredTemplate,
+  adminSplitSettlementUnpaidTemplate,
 } from "../email-templates";
 import {
   formatNZDate,
@@ -361,6 +362,55 @@ export async function sendAdminBookingRequestHoldExpiredEmail(data: {
       reviewUrl,
     },
     preferenceKey: "adminBookingRequest",
+  });
+}
+
+// #1967: Admin alert — a split booking's non-member guest portion reached its
+// hold deadline with no saved card to charge. Fired on EVERY hold-extension
+// run while the child remains unsettled (the extension claim is the dedupe
+// across the 15-minute cron cadence, so this repeats roughly every two days —
+// same cadence as the request-origin hold-expired alert). `parentUnpaid`
+// selects the wording: false = the member paid their own place by Internet
+// Banking and a payment link has been emailed to them; true = the member's own
+// parent booking is unpaid too, so NO link was sent and a human must chase the
+// whole booking. Routed to the existing payment-failure audience so a rare
+// event needs no new NotificationPreference column (#1422 precedent).
+export async function sendAdminSplitSettlementUnpaidAlert(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+  holdUntil: Date;
+  parentUnpaid: boolean;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/bookings`;
+
+  await sendToAdmins({
+    subject: `Split booking guest portion unpaid — no card on file: ${data.memberName}`,
+    html: adminSplitSettlementUnpaidTemplate({
+      memberName: data.memberName,
+      checkIn: data.checkIn,
+      checkOut: data.checkOut,
+      guestCount: data.guestCount,
+      totalCents: data.totalCents,
+      holdUntil: data.holdUntil,
+      reviewUrl,
+      parentUnpaid: data.parentUnpaid,
+    }),
+    templateName: "admin-split-settlement-unpaid",
+    templateData: {
+      memberName: data.memberName,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+      guestCount: data.guestCount,
+      total: formatMoneyCents(data.totalCents),
+      holdUntil: formatNZDateTime(data.holdUntil),
+      reviewUrl,
+      parentUnpaid: data.parentUnpaid,
+    },
+    preferenceKey: "adminPaymentFailure",
   });
 }
 

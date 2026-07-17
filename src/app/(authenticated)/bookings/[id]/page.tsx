@@ -13,6 +13,7 @@ import { formatCents } from "@/lib/utils";
 import { CancelBookingButton } from "@/components/cancel-booking-button";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
 import { SwitchToInternetBankingButton } from "@/components/switch-to-internet-banking-button";
+import { SendGuestPaymentLinkButton } from "@/components/send-guest-payment-link-button";
 import { BookingNotesEditor } from "@/components/booking-notes-editor";
 import { BookingEditor, type BookingEditorData } from "@/components/booking-editor";
 import { AdditionalPaymentCard } from "@/components/additional-payment-card";
@@ -216,6 +217,9 @@ export default async function BookingDetailPage({
           finalPriceCents: true,
           hasNonMembers: true,
           guests: { select: { id: true } },
+          // Discriminates a genuine #738 split child from a #796 group joiner
+          // (joiners also carry parentBookingId but always have a join row).
+          groupBookingJoin: { select: { id: true } },
         },
       },
       // Group booking the owner organises on this booking (#796+). Drives the
@@ -559,9 +563,17 @@ export default async function BookingDetailPage({
     ? await loadEmailMessageSettingsForLodge(booking.lodgeId)
     : null;
 
-  // Split-booking group presentation (#738).
+  // Split-booking group presentation (#738). Genuine split children only:
+  // #796 group joiners also link via parentBookingId but are presented by the
+  // organiser group card, not as "your provisional non-member guests" — and
+  // the guest-payment-link affordance below must match the send route's
+  // filter (PENDING + hasNonMembers + no join row) so the button never
+  // renders for children the route would refuse.
   const linkedProvisionalChildren = booking.linkedBookings.filter(
-    (linked) => linked.status === "PENDING"
+    (linked) =>
+      linked.status === "PENDING" &&
+      linked.hasNonMembers &&
+      !linked.groupBookingJoin
   );
   const provisionalChildGuestCount = linkedProvisionalChildren.reduce(
     (total, linked) => total + linked.guests.length,
@@ -569,6 +581,17 @@ export default async function BookingDetailPage({
   );
   const hasProvisionalChildren = provisionalChildGuestCount > 0;
   const isProvisionalChild = Boolean(booking.parentBooking);
+  // #1967: once the member's own place is settled by Internet Banking there is
+  // no card on file for the later guest charge, so keep the guest-payment-link
+  // affordance visible AFTER the switch too (the pre-switch warning below only
+  // renders while the switch button is still available). Owner-only: the copy
+  // is second-person and the emailed link goes to the member.
+  const showGuestPaymentLinkStandalone =
+    !isDeleted &&
+    isBookingOwner &&
+    hasProvisionalChildren &&
+    Boolean(internetBankingPayment) &&
+    booking.status !== "CANCELLED";
   const isFlaggedProvisional =
     !booking.parentBookingId &&
     booking.status === "PENDING" &&
@@ -1249,6 +1272,32 @@ export default async function BookingDetailPage({
           </Card>
         )}
 
+      {/* #1967: parent settled by Internet Banking with a genuine split child
+          still provisional — no card on file for the guest charge, so offer
+          the payment-link affordance here too (the pre-switch warning inside
+          the payment card is gone once the switch has happened). */}
+      {showGuestPaymentLinkStandalone && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardHeader>
+            <CardTitle className="text-amber-900">
+              Your guests still need paying for
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-amber-900">
+            <p>
+              You&apos;re paying for your own place by internet banking, so we
+              don&apos;t have a card on file to charge for your{" "}
+              {provisionalChildGuestCount} non-member guest
+              {provisionalChildGuestCount === 1 ? "" : "s"} closer to your
+              stay. Email yourself a secure link to pay for your guests — if a
+              link was already sent, this sends a fresh one and the old link
+              stops working.
+            </p>
+            <SendGuestPaymentLinkButton bookingId={booking.id} />
+          </CardContent>
+        </Card>
+      )}
+
       {/* Provisional/on-hold booking: explain why no payment is collected yet
           (issue #777). */}
       {showPaymentOnHoldNotice && (
@@ -1303,10 +1352,37 @@ export default async function BookingDetailPage({
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
             {canSwitchToInternetBanking && (
-              <SwitchToInternetBankingButton
-                bookingId={booking.id}
-                description={switchToInternetBankingDescription}
-              />
+              <>
+                {hasProvisionalChildren ? (
+                  // #1967: paying your own place by internet banking leaves no
+                  // card on file for the later guest charge. Warn (do not block)
+                  // and offer to email a payment link for the guest portion now,
+                  // making the hedged "we'll contact you to arrange it" promise
+                  // (#1942) real.
+                  <div className="mt-4 space-y-2 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <p className="font-medium">
+                      Paying by internet banking? Your guests still need paying
+                      for
+                    </p>
+                    <p>
+                      If you switch to internet banking we won&apos;t have a card
+                      on file to charge for your{" "}
+                      {provisionalChildGuestCount} non-member guest
+                      {provisionalChildGuestCount === 1 ? "" : "s"} closer to
+                      your stay. To keep it automatic, pay for this booking by
+                      card instead so we have a card on file. Otherwise, email
+                      yourself a secure link now to pay for your guests
+                      separately — if we can&apos;t take payment, we&apos;ll
+                      contact you to arrange it.
+                    </p>
+                    <SendGuestPaymentLinkButton bookingId={booking.id} />
+                  </div>
+                ) : null}
+                <SwitchToInternetBankingButton
+                  bookingId={booking.id}
+                  description={switchToInternetBankingDescription}
+                />
+              </>
             )}
           </CardContent>
         </Card>

@@ -178,6 +178,7 @@ export async function applyConfigImport(
         actorMemberId,
         imageRemap,
         notes,
+        selectedCategories,
       };
       for (const importer of CATEGORY_IMPORTERS) {
         if (!selectedCategories.includes(importer.category)) continue;

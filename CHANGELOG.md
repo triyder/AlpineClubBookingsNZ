@@ -4,6 +4,17 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Member CSV import can create already-cancelled members (#1946).** The member
+  import gains an optional **Cancelled Date** column. A row with a cancelled date
+  is created in the cancelled end-state — inactive, non-login, with `cancelledAt`
+  set to the given NZ date-only value — matching what the normal admin
+  cancellation flow produces, minus notifications: the import sends no
+  cancellation email and performs no Xero/Stripe work (a freshly imported member
+  has no Xero contact). A cancelled row never claims the login for a shared
+  email, and the cancelled date may not be in the future. The import still only
+  creates members, so a row matching an existing member is skipped unchanged —
+  cancelling an existing member remains an admin cancellation-flow action.
+
 ## 0.11.0 - 2026-07-13
 
 - Release classification: minor public reference release. This is a large

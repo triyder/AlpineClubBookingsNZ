@@ -127,6 +127,7 @@ export interface ImportResult {
   created: number;
   createdLoginEnabled?: number;
   createdNonLogin?: number;
+  createdCancelled?: number;
   skipped: number;
   skippedRows?: Array<{ row: number; email: string; reason: string }>;
   rowNotes?: Array<{ row: number; email: string; note: string }>;

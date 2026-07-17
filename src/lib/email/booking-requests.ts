@@ -4,6 +4,7 @@ import {
   bookingRequestQuoteTemplate,
   bookingRequestDeclinedTemplate,
   schoolAttendeeConfirmationTemplate,
+  splitGuestPaymentLinkTemplate,
 } from "../email-templates";
 import { CLUB_NAME } from "@/config/club-identity";
 import {
@@ -88,6 +89,57 @@ export async function sendBookingRequestApprovedEmail(params: {
       expiresAt: params.expiresAt,
     }),
     templateName: "booking-request-approved",
+    templateData: {
+      firstName: params.firstName,
+      token: params.token,
+      payUrl,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      guestCount: params.guestCount,
+      priceCents: params.priceCents,
+      price: formatMoneyCents(params.priceCents),
+      bookingReference: params.bookingReference,
+      expiresAt: formatNZDateTime(params.expiresAt),
+    },
+  });
+}
+
+/**
+ * Split-booking guest-portion payment link (#1967). Emails the member a secure
+ * `/pay/<token>` link so they can settle their non-member guests' portion when
+ * the split child reached its hold deadline with no card on file. Returns the
+ * send outcome so callers can distinguish a delivered email from a suppressed
+ * one (F25, #1885).
+ */
+export async function sendSplitGuestPaymentLinkEmail(params: {
+  email: string;
+  firstName: string;
+  token: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  priceCents: number;
+  bookingReference: string;
+  expiresAt: Date;
+  lodgeId?: string | null;
+}): Promise<EmailSendOutcome> {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const payUrl = `${baseUrl}/pay/${params.token}`;
+
+  return sendEmail({
+    to: params.email,
+    lodgeId: params.lodgeId,
+    subject: `Pay for your guests to confirm their place — ${CLUB_NAME}`,
+    html: splitGuestPaymentLinkTemplate({
+      firstName: params.firstName,
+      payUrl,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+      guestCount: params.guestCount,
+      priceCents: params.priceCents,
+      expiresAt: params.expiresAt,
+    }),
+    templateName: "split-guest-payment-link",
     templateData: {
       firstName: params.firstName,
       token: params.token,

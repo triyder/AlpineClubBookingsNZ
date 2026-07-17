@@ -30,6 +30,7 @@ const CATEGORY_LABELS: Record<ConfigTransferCategory, string> = {
   "lodge-config": "Lodge configuration",
   committee: "Committee (roles)",
   induction: "Induction checklists",
+  "membership-fees": "Membership fees (joining & annual)",
   "xero-config": "Xero configuration",
 };
 

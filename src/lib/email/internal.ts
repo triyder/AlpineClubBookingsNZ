@@ -46,6 +46,7 @@ const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
   "pre-arrival-reminder",
   "booking-request-verification",
   "booking-request-approved",
+  "split-guest-payment-link",
   "booking-request-quote",
   "school-attendee-confirmation",
   "group-booking-join-verification",

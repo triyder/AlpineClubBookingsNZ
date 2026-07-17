@@ -22,13 +22,16 @@ import {
   MEMBER_IMPORT_ADDRESS_MAX_LENGTHS,
   MEMBER_IMPORT_COMMENTS_MAX_LENGTH,
   MEMBER_IMPORT_DATE_FIELD_KEYS,
+  MEMBER_IMPORT_CANCELLED_DATE_FLAG_HINT,
   MEMBER_IMPORT_DATE_FORMAT_VALUES,
   MEMBER_IMPORT_FIELD_DEFINITIONS,
   MEMBER_IMPORT_OCCUPATION_MAX_LENGTH,
+  isMemberImportCancelledDateInFuture,
   normalizeMemberImportDateValue,
   type MemberImportDateFieldKey,
   type MemberImportDateFormatMapping,
 } from "@/lib/member-csv-import";
+import { formatDateOnly, todayDateOnlyForTimeZone } from "@/lib/date-only";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import {
   GENDER_OPTIONS,
@@ -58,6 +61,7 @@ const importRowSchema = z
     phoneNumber: z.string().max(15).optional().nullable(),
     dateOfBirth: z.string().max(32).optional().nullable(),
     joinedDate: z.string().max(32).optional().nullable(),
+    cancelledDate: z.string().max(32).optional().nullable(),
     streetAddressLine1: nullableImportString(
       MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetAddressLine1,
     ),
@@ -124,6 +128,7 @@ const importBodySchema = z.object({
       dateOfBirth: dateFormatSchema.optional(),
       joinedDate: dateFormatSchema.optional(),
       lifeMemberDate: dateFormatSchema.optional(),
+      cancelledDate: dateFormatSchema.optional(),
     })
     .optional(),
   sendInvites: z.boolean().default(false),
@@ -187,9 +192,13 @@ function normalizeImportDateField(
     dateFormats[fieldKey],
   );
   if (!normalized.ok) {
+    const cancelledFlagHint =
+      fieldKey === "cancelledDate"
+        ? ` — ${MEMBER_IMPORT_CANCELLED_DATE_FLAG_HINT}`
+        : "";
     return {
       date: null,
-      error: `${getImportFieldLabel(fieldKey)}${getImportColumnContext(row, fieldKey)} ${normalized.error}`,
+      error: `${getImportFieldLabel(fieldKey)}${getImportColumnContext(row, fieldKey)} ${normalized.error}${cancelledFlagHint}`,
     };
   }
 
@@ -259,11 +268,15 @@ export async function POST(req: NextRequest) {
     lifeMemberDate:
       parsed.data.dateFormats?.lifeMemberDate ??
       DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
+    cancelledDate:
+      parsed.data.dateFormats?.cancelledDate ??
+      DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
   };
   const results = {
     created: 0,
     createdLoginEnabled: 0,
     createdNonLogin: 0,
+    createdCancelled: 0,
     skipped: 0,
     skippedRows: [] as Array<{ row: number; email: string; reason: string }>,
     rowNotes: [] as Array<{ row: number; email: string; note: string }>,
@@ -306,6 +319,17 @@ export async function POST(req: NextRequest) {
     }),
   );
   const acceptedIdentityKeys = new Set<string>();
+  // Tracks whether the *kept* (first accepted) row for an identity carried a
+  // cancelled date, so a later duplicate that is skipped can tell the admin when
+  // it would have imported a different lifecycle state (issue #1946 review).
+  const acceptedCancelledStateByKey = new Map<string, boolean>();
+
+  // A row "carries" a cancelled date when its Cancelled Date column is populated;
+  // that alone decides the imported lifecycle (an unparseable value would have
+  // already failed validation), so presence is the right signal for the skip
+  // note even though the skip happens before dates are parsed.
+  const rowCarriesCancelledDate = (row: ImportRow) =>
+    Boolean(row.cancelledDate?.trim());
 
   // Pre-validate all rows before committing (all-or-nothing)
   interface ValidatedRow {
@@ -321,6 +345,7 @@ export async function POST(req: NextRequest) {
     phoneNumber: string | null;
     dateOfBirth: Date | null;
     joinedDate: Date | null;
+    cancelledAt: Date | null;
     streetAddressLine1: string | null;
     streetAddressLine2: string | null;
     streetCity: string | null;
@@ -361,10 +386,21 @@ export async function POST(req: NextRequest) {
 
     if (acceptedIdentityKeys.has(identityKey)) {
       results.skipped++;
+      const keptCancelled =
+        acceptedCancelledStateByKey.get(identityKey) ?? false;
+      const skippedCancelled = rowCarriesCancelledDate(row);
+      // A silent first-wins skip hides a lifecycle mismatch: e.g. an active row
+      // is kept and a later cancelled duplicate is dropped, or vice versa. Call
+      // it out so the admin knows the dropped row's cancelled state was not
+      // applied. Still a skip, never an error (the import stays all-or-nothing).
+      const lifecycleNote =
+        keptCancelled !== skippedCancelled
+          ? `; the kept row is ${keptCancelled ? "cancelled" : "active"} but this skipped row is ${skippedCancelled ? "cancelled" : "active"}, so its cancelled state was not applied`
+          : "";
       results.skippedRows.push({
         row: rowNum,
         email,
-        reason: "Duplicate member identity already appears earlier in this import",
+        reason: `Duplicate member identity already appears earlier in this import${lifecycleNote}`,
       });
       continue;
     }
@@ -387,6 +423,22 @@ export async function POST(req: NextRequest) {
       if (error) {
         rowErrors.push(error);
       }
+    }
+
+    // A membership cancellation is always dated to when it happens, so a future
+    // cancelled date is never legitimate (mirrors the admin cancellation flow's
+    // `cancelledAt = now`). Re-checked server-side in the club time zone.
+    const cancelledDateForFutureCheck = parsedDates.cancelledDate.date;
+    if (
+      cancelledDateForFutureCheck &&
+      isMemberImportCancelledDateInFuture(
+        formatDateOnly(cancelledDateForFutureCheck),
+        todayDateOnlyForTimeZone(),
+      )
+    ) {
+      rowErrors.push(
+        `Cancelled Date${getImportColumnContext(row, "cancelledDate")} cannot be in the future`,
+      );
     }
 
     // Title/Gender are only parsed and validated when the field is enabled
@@ -419,6 +471,12 @@ export async function POST(req: NextRequest) {
     const dateOfBirth = parsedDates.dateOfBirth.date;
     const joinedDate = parsedDates.joinedDate.date;
     const lifeMemberDate = parsedDates.lifeMemberDate.date;
+    // A populated cancelled date imports the member in the cancelled end-state
+    // (issue #1946): inactive and non-login, matching what the normal admin
+    // cancellation flow produces (minus notifications / Xero — a freshly
+    // imported member has no Xero contact to cancel and gets no invite email).
+    const cancelledAt = parsedDates.cancelledDate.date;
+    const isCancelled = cancelledAt !== null;
 
     if (dateOfBirth) {
       ageTier = (await computeAgeTier(
@@ -433,14 +491,20 @@ export async function POST(req: NextRequest) {
         ? row.occupation?.trim() || null
         : null;
 
-    const canLogin = !loginEmailClaimed.has(email);
-    const rowNote = canLogin
-      ? null
-      : existingMembersByEmail.get(email)?.some((member) => member.canLogin)
-        ? "Imported as Can't Login because this email already has a login-enabled member"
-        : "Imported as Can't Login because an earlier row in this import uses this email for login";
+    // A cancelled member can never log in, so it is forced non-login and — key
+    // interaction — it does NOT claim the login email, leaving that email free
+    // for an active member (existing or another row) to own the login.
+    const canLogin = isCancelled ? false : !loginEmailClaimed.has(email);
+    const rowNote = isCancelled
+      ? "Imported as a cancelled member (inactive, Can't Login)"
+      : canLogin
+        ? null
+        : existingMembersByEmail.get(email)?.some((member) => member.canLogin)
+          ? "Imported as Can't Login because this email already has a login-enabled member"
+          : "Imported as Can't Login because an earlier row in this import uses this email for login";
 
     acceptedIdentityKeys.add(identityKey);
+    acceptedCancelledStateByKey.set(identityKey, isCancelled);
     if (canLogin) {
       loginEmailClaimed.add(email);
     }
@@ -458,6 +522,7 @@ export async function POST(req: NextRequest) {
       phoneNumber: row.phoneNumber?.trim() || row.phone?.trim() || null,
       dateOfBirth,
       joinedDate,
+      cancelledAt,
       streetAddressLine1: row.streetAddressLine1?.trim() || null,
       streetAddressLine2: row.streetAddressLine2?.trim() || null,
       streetCity: row.streetCity?.trim() || null,
@@ -503,6 +568,7 @@ export async function POST(req: NextRequest) {
           firstName: string;
           lastName: string;
           canLogin: boolean;
+          cancelled: boolean;
           rowNum: number;
           rowNote: string | null;
         }> = [];
@@ -530,7 +596,12 @@ export async function POST(req: NextRequest) {
               comments: row.comments,
               role: row.role,
               ageTier: row.ageTier,
-              active: true,
+              // A cancelled date imports the member in the cancelled end-state
+              // (issue #1946). No cancellation request exists for a legacy
+              // import, so cancelledViaRequestId stays null; cancelledReason has
+              // no CSV column and stays null.
+              active: row.cancelledAt ? false : true,
+              cancelledAt: row.cancelledAt,
               canLogin: row.canLogin,
               emailVerified: true, // Admin-imported members don't need email verification
               passwordHash: row.passwordHash,
@@ -546,6 +617,7 @@ export async function POST(req: NextRequest) {
           created.push({
             ...member,
             canLogin: row.canLogin,
+            cancelled: row.cancelledAt !== null,
             rowNum: row.rowNum,
             rowNote: row.rowNote,
           });
@@ -573,6 +645,10 @@ export async function POST(req: NextRequest) {
                 email: member.email,
                 sendInvites,
                 canLogin: row.canLogin,
+                cancelled: row.cancelledAt !== null,
+                cancelledAt: row.cancelledAt
+                  ? formatDateOnly(row.cancelledAt)
+                  : null,
               },
             },
             tx,
@@ -588,6 +664,9 @@ export async function POST(req: NextRequest) {
       (member) => member.canLogin,
     ).length;
     results.createdNonLogin = createdMembers.length - results.createdLoginEnabled;
+    results.createdCancelled = createdMembers.filter(
+      (member) => member.cancelled,
+    ).length;
     results.rowNotes = createdMembers.flatMap((member) =>
       member.rowNote
         ? [

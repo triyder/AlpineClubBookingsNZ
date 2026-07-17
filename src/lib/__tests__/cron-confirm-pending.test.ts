@@ -48,6 +48,12 @@ const mockSendGuestsRemovedEmail = vi.fn();
 const mockSendGuestsCancelledEmail = vi.fn();
 const mockSendAdminPaymentFailureAlert = vi.fn().mockResolvedValue(undefined);
 const mockSendAdminHoldExpiredAlert = vi.fn().mockResolvedValue(undefined);
+const mockSendSplitGuestPaymentLinkEmail = vi.fn().mockResolvedValue({
+  status: "sent",
+});
+const mockSendAdminSplitSettlementUnpaidAlert = vi
+  .fn()
+  .mockResolvedValue(undefined);
 vi.mock("../email", () => ({
   sendBookingConfirmedEmail: (...args: unknown[]) => mockSendConfirmedEmail(...args),
   sendBookingBumpedEmail: (...args: unknown[]) => mockSendBumpedEmail(...args),
@@ -56,14 +62,30 @@ vi.mock("../email", () => ({
   sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
   sendAdminBookingRequestHoldExpiredEmail: (...args: unknown[]) =>
     mockSendAdminHoldExpiredAlert(...args),
+  sendSplitGuestPaymentLinkEmail: (...args: unknown[]) =>
+    mockSendSplitGuestPaymentLinkEmail(...args),
+  sendAdminSplitSettlementUnpaidAlert: (...args: unknown[]) =>
+    mockSendAdminSplitSettlementUnpaidAlert(...args),
 }));
 
 // The confirm-pending cron revokes payment links for bumped bookings
 // (issue #707); the behaviour itself is covered in payment-link.test.ts.
 const mockRevokePaymentLinksForBooking = vi.fn().mockResolvedValue(0);
+// #1967: the settlement cron mints a guest-portion payment link for a split
+// child with no card on file (default: first transition — returns a fresh
+// link), and revokes a just-minted link by id when the member email fails.
+const mockMintSplitGuestPaymentLinkIfAbsent = vi.fn().mockResolvedValue({
+  token: "tok_split_1",
+  paymentLinkId: "pl_split_1",
+});
+const mockRevokePaymentLinkById = vi.fn().mockResolvedValue(1);
 vi.mock("@/lib/payment-link", () => ({
   revokePaymentLinksForBooking: (...args: unknown[]) =>
     mockRevokePaymentLinksForBooking(...args),
+  mintSplitGuestPaymentLinkIfAbsent: (...args: unknown[]) =>
+    mockMintSplitGuestPaymentLinkIfAbsent(...args),
+  revokePaymentLinkById: (...args: unknown[]) =>
+    mockRevokePaymentLinkById(...args),
 }));
 
 // Mock promo cleanup used by the whole-bump path.
@@ -136,6 +158,22 @@ function makePendingBooking(
       stripePaymentMethodId: string;
       stripeCustomerId: string;
     } | null;
+    // Full parent snapshot (#1967): lets tests model the parent's lifecycle
+    // status and payment source (IB-settled vs abandoned card). Takes
+    // precedence over the parentPayment shorthand when provided.
+    parentBooking?: {
+      id?: string;
+      status?: string;
+      deletedAt?: Date | null;
+      payment?: {
+        id: string;
+        source?: string;
+        stripeCustomerId?: string | null;
+        stripePaymentMethodId?: string | null;
+      } | null;
+    } | null;
+    // #1967: a #796 group joiner's booking always carries a join row.
+    groupBookingJoin?: { id: string } | null;
     originBookingRequest?: { id: string } | null;
   } = {}
 ) {
@@ -148,10 +186,31 @@ function makePendingBooking(
     finalPriceCents = 10000,
     parentBookingId = null,
     parentPayment = null,
+    parentBooking,
+    groupBookingJoin = null,
     originBookingRequest = null,
   } = opts;
   const stayStart = new Date(checkIn);
   const stayEnd = new Date(checkOut);
+
+  const resolvedParentBooking =
+    parentBooking !== undefined
+      ? parentBooking === null
+        ? null
+        : {
+            id: parentBooking.id ?? parentBookingId ?? `parent_${id}`,
+            status: parentBooking.status ?? "CONFIRMED",
+            deletedAt: parentBooking.deletedAt ?? null,
+            payment: parentBooking.payment ?? null,
+          }
+      : parentPayment
+        ? {
+            id: parentBookingId ?? `parent_${id}`,
+            status: "PAYMENT_PENDING",
+            deletedAt: null,
+            payment: { source: "STRIPE", ...parentPayment },
+          }
+        : null;
 
   return {
     id,
@@ -166,12 +225,8 @@ function makePendingBooking(
     hasNonMembers: true,
     cancelIfGuestsBumped: false,
     parentBookingId,
-    parentBooking: parentPayment
-      ? {
-          id: parentBookingId ?? `parent_${id}`,
-          payment: parentPayment,
-        }
-      : null,
+    parentBooking: resolvedParentBooking,
+    groupBookingJoin,
     originBookingRequest,
     promoRedemption: null,
     createdAt: new Date("2026-03-01"),
@@ -246,6 +301,13 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockPromoRedemptionFindUnique.mockResolvedValue(null);
     mockDeletePromoRedemption.mockResolvedValue(undefined);
     mockRevokePaymentLinksForBooking.mockResolvedValue(0);
+    mockMintSplitGuestPaymentLinkIfAbsent.mockResolvedValue({
+      token: "tok_split_1",
+      paymentLinkId: "pl_split_1",
+    });
+    mockRevokePaymentLinkById.mockResolvedValue(1);
+    mockSendSplitGuestPaymentLinkEmail.mockResolvedValue({ status: "sent" });
+    mockSendAdminSplitSettlementUnpaidAlert.mockResolvedValue(undefined);
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === "function") {
         return arg({
@@ -437,6 +499,13 @@ describe("Cron: Confirm Pending Bookings", () => {
       })
     );
     expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("child_1");
+    // #1967 FIX-6: the auto-charge claim revokes any outstanding /pay link
+    // inside the claim transaction, so a link minted while no card was on
+    // file can never race the saved-card charge into a double payment.
+    expect(mockRevokePaymentLinksForBooking).toHaveBeenCalledWith(
+      "child_1",
+      expect.anything()
+    );
   });
 
   it("cancels a split non-member child without charge or invoice when capacity is gone", async () => {
@@ -937,5 +1006,299 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
     expect(mockChargePaymentMethod).not.toHaveBeenCalled();
     expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  // A genuinely Internet-Banking-settled parent: switch-at-pay flips the
+  // parent to CONFIRMED with an IB-source payment carrying no card ids.
+  const IB_SETTLED_PARENT = {
+    status: "CONFIRMED",
+    payment: {
+      id: "pay_parent_1",
+      source: "INTERNET_BANKING",
+      stripeCustomerId: null,
+      stripePaymentMethodId: null,
+    },
+  };
+
+  it("emails a payment link and alerts admins for a split child whose parent paid by internet banking, never charging it (#1967)", async () => {
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: IB_SETTLED_PARENT,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+
+    const result = await confirmPendingBookings();
+
+    // Never charged (no saved card), never marked failed, never confirmed.
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(result.failedBookingIds).toEqual([]);
+    expect(result.confirmedBookingIds).toEqual([]);
+
+    // A guest-portion payment link was minted (first transition) and the hold
+    // extended via the status-guarded claim.
+    expect(mockMintSplitGuestPaymentLinkIfAbsent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: "child_1", checkIn: booking.checkIn })
+    );
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "child_1", status: "PENDING" }),
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      })
+    );
+
+    // Member emailed the link; admins alerted with parent-settled wording.
+    expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: "child_1@example.com",
+        token: "tok_split_1",
+        priceCents: 12000,
+        guestCount: 2,
+        bookingReference: "child_1",
+      })
+    );
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memberName: "Test User",
+        totalCents: 12000,
+        guestCount: 2,
+        holdUntil: expect.any(Date),
+        parentUnpaid: false,
+      })
+    );
+    // Nothing failed, so the just-minted link is never revoked.
+    expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
+  });
+
+  it("does not re-send the member link on a later run when a link is already active, but still re-alerts admins each extension run (#1967 FIX-4)", async () => {
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: IB_SETTLED_PARENT,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+    // An active link already exists from a prior run: mint returns null.
+    mockMintSplitGuestPaymentLinkIfAbsent.mockResolvedValue(null);
+
+    const result = await confirmPendingBookings();
+
+    // Hold still re-extended (low-churn) and no duplicate member email, but
+    // the admin alert repeats every extension run while unsettled.
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "child_1", status: "PENDING" }),
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      })
+    );
+    expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ parentUnpaid: false })
+    );
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(result.failedBookingIds).toEqual([]);
+  });
+
+  it("never mints or emails a link for a split child whose parent abandoned a card payment; alerts admins with parent-unpaid wording (#1967 FIX-1)", async () => {
+    // Realistic abandoned-card parent: PAYMENT_PENDING with a Stripe-source
+    // payment that never captured a card. savedPaymentMethodForBooking is
+    // null for it — exactly like an IB parent — so only the settled-parent
+    // gate keeps this child out of the payment-link branch.
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: {
+        status: "PAYMENT_PENDING",
+        payment: {
+          id: "pay_parent_1",
+          source: "STRIPE",
+          stripeCustomerId: null,
+          stripePaymentMethodId: null,
+        },
+      },
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+
+    const result = await confirmPendingBookings();
+
+    // The guest portion must not become settleable while the member's own
+    // place is unpaid: no link minted, no member email asserting false facts.
+    expect(mockMintSplitGuestPaymentLinkIfAbsent).not.toHaveBeenCalled();
+    expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+
+    // Hold extended (the alert-cadence claim) and the dedicated admin alert
+    // fired with parent-unpaid wording; still surfaced as failed.
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "child_1", status: "PENDING" }),
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      })
+    );
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ parentUnpaid: true, totalCents: 12000 })
+    );
+    expect(result.failedBookingIds).toEqual(["child_1"]);
+  });
+
+  it("keeps a card-less #796 group joiner on the legacy missing_payment_method path, never the split-guest branch (#1967 FIX-2)", async () => {
+    const booking = makePendingBooking("joiner_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "organiser_1",
+      // The organiser's booking is fully settled — without the join-row
+      // discriminator this joiner would sail into the split-guest branch.
+      parentBooking: { status: "PAID", payment: null },
+      groupBookingJoin: { id: "join_1" },
+      finalPriceCents: 8000,
+      guestCount: 1,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+
+    const result = await confirmPendingBookings();
+
+    // Pre-existing behaviour, exactly: error-logged failure, no mint, no
+    // emails, no alert, no hold extension.
+    expect(mockMintSplitGuestPaymentLinkIfAbsent).not.toHaveBeenCalled();
+    expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+    expect(mockSendAdminSplitSettlementUnpaidAlert).not.toHaveBeenCalled();
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockBookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      })
+    );
+    expect(result.failedBookingIds).toEqual(["joiner_1"]);
+  });
+
+  it("revokes the just-minted link when the member email throws, so the next run re-mints and re-sends (#1967 FIX-3a)", async () => {
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: IB_SETTLED_PARENT,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+    mockSendSplitGuestPaymentLinkEmail.mockRejectedValue(
+      new Error("SES unavailable")
+    );
+
+    const result = await confirmPendingBookings();
+
+    // The unreachable token's link is revoked BY ID (a newer concurrent link
+    // must survive), clearing the sentinel for the next extension run.
+    expect(mockRevokePaymentLinkById).toHaveBeenCalledWith("pl_split_1");
+    // The admin alert is independent of the member email outcome.
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ parentUnpaid: false })
+    );
+    expect(result.failedBookingIds).toEqual([]);
+  });
+
+  it("revokes the just-minted link when the member email is suppressed (#1967 FIX-3a)", async () => {
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: IB_SETTLED_PARENT,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+    mockSendSplitGuestPaymentLinkEmail.mockResolvedValue({
+      status: "suppressed",
+      emailLogId: null,
+      emailSuppressionId: "sup_1",
+      reason: "bounce",
+    });
+
+    await confirmPendingBookings();
+
+    expect(mockRevokePaymentLinkById).toHaveBeenCalledWith("pl_split_1");
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalled();
+  });
+
+  it("is idempotent across consecutive cron runs: one member email, one link, an admin alert per run (#1967 cross-run)", async () => {
+    // Stateful sentinel mirroring the real mint helper's contract (the real
+    // helper's own cross-run behaviour is pinned against a stateful store in
+    // payment-link.test.ts): the first run mints, every later run sees the
+    // active link and returns null. Exercises two REAL consecutive
+    // confirmPendingBookings() invocations rather than asserting on a single
+    // mocked return value.
+    const activeLinks = new Set<string>();
+    let mintCounter = 0;
+    mockMintSplitGuestPaymentLinkIfAbsent.mockImplementation(
+      async (_tx: unknown, target: { id: string }) => {
+        if (activeLinks.has(target.id)) return null;
+        activeLinks.add(target.id);
+        mintCounter += 1;
+        return {
+          token: `tok_${mintCounter}`,
+          paymentLinkId: `pl_${mintCounter}`,
+        };
+      }
+    );
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: IB_SETTLED_PARENT,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+
+    await confirmPendingBookings();
+    // Second run: in production the extended hold keeps this child out of the
+    // candidate query for ~2 days; even if it is re-processed (extension
+    // elapsed, or the claim raced), the active link suppresses a second email.
+    await confirmPendingBookings();
+
+    expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ token: "tok_1" })
+    );
+    // The admin alert repeats per extension run (FIX-4).
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledTimes(2);
+    expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
   });
 });
