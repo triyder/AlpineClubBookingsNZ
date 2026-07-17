@@ -114,6 +114,47 @@ admins at **Admin → Setup & Configuration → Export & Import**
   they reference real members.
 - **induction** — induction checklist templates with their nested sections and
   items (as JSON documents; member-specific results excluded).
+- **membership-fees** — the membership **fee schedules** (#1941): joining fees
+  (`JoiningFee`, #1931/E5) and annual membership fees with their invoice-line
+  components (`MembershipAnnualFee` + `MembershipAnnualFeeComponent`, #1932/E6).
+  Three CSVs, each keyed by an explicit natural key (never a database id) and
+  exported in a deterministic, install-independent order so
+  export→import→export is byte-stable; money stays in integer cents throughout:
+  - `membership-fees/joining-fees.csv` —
+    `membershipTypeKey, ageTier, effectiveFrom, effectiveTo, amountCents`;
+    natural key `membershipTypeKey × ageTier × effectiveFrom` (a blank `ageTier`
+    is a flat-fee type's single NULL-tier window, e.g. the built-in Family type).
+  - `membership-fees/annual-fees.csv` —
+    `membershipTypeKey, effectiveFrom, effectiveTo, amountCents, billingBasis,
+    prorationRule`; natural key `membershipTypeKey × effectiveFrom` (a blank
+    `prorationRule` defaults to `NONE`).
+  - `membership-fees/annual-fee-components.csv` —
+    `membershipTypeKey, effectiveFrom, label, amountCents, prorate,
+    xeroAccountCode, xeroItemCode, sortOrder`; natural key
+    `(parent fee = membershipTypeKey × effectiveFrom) × label`. Each row is one
+    Xero invoice line.
+
+  Referenced membership types must already exist on the target (matched by
+  `key`) — membership types themselves are not transferred (they are managed on
+  the Membership Types page); an unknown key is a blocking row error, exactly
+  like the season-rates and item-code categories. The **#1932 component
+  invariant** is enforced at plan time against the bundle's own amounts: a
+  `NO_INVOICE` fee is a zero total with **no** components; every invoiceable fee
+  carries ≥1 component whose amounts sum **exactly** to the fee total. An
+  annual-fee row must therefore always travel with its full component set (as
+  the export always emits), and components whose parent fee is absent from the
+  bundle are a clean error. Apply is **upsert-only** (like every category):
+  joining fees and annual fees upsert by their natural key; components upsert by
+  `(parent fee, label)`. A component the bundle drops on an existing install is
+  **not** deleted (config transfer never deletes) — remove a component from a
+  fee on the Fees page, not by re-import.
+
+  **Precedence over the #1931 legacy path:** when a bundle carries
+  `membership-fees/joining-fees.csv`, its joining-fee schedule is authoritative,
+  so the **xero-config legacy joining-fee materialisation is suppressed** (it
+  would otherwise invent/duplicate `JoiningFee` windows from a pre-#1931
+  bundle's dead item-code `amountCents`). Old-format bundles (no
+  `joining-fees.csv`) keep the legacy fan-out per the E13 compat window.
 - **xero-config** — Xero account mappings and item-code mappings. HUT_FEE item
   codes are keyed by membership type (#1930, E4): `item-code-mappings.csv` is
   `category, membershipTypeKey, ageTier, seasonType, entranceFeeCategory,
@@ -127,8 +168,11 @@ admins at **Admin → Setup & Configuration → Export & Import**
   is **materialised into open JoiningFee windows** using the migration's D-R1
   fan-out (per-tier to every liable membership type; FAMILY as the Family
   type's flat fee), bounded to the day before any future window. Categories
-  with a covering window are left alone; first-class fee-schedule transfer is
-  follow-up #1941. The source Xero org id is recorded in a
+  with a covering window are left alone. This legacy materialisation runs
+  **only for old-format bundles**: a bundle carrying the first-class
+  **membership-fees** category's `joining-fees.csv` (#1941) supersedes it — the
+  schedule there is authoritative, so the legacy fan-out is skipped to avoid
+  duplicating/skewing it. The source Xero org id is recorded in a
   category-local `xero-config/source.json` (sealed with the rest of the category,
   not the manifest); the plan warns on an org mismatch so codes are verified
   before applying.
