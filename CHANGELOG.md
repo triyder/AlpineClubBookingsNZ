@@ -4,16 +4,208 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
-- **Member CSV import can create already-cancelled members (#1946).** The member
-  import gains an optional **Cancelled Date** column. A row with a cancelled date
-  is created in the cancelled end-state — inactive, non-login, with `cancelledAt`
-  set to the given NZ date-only value — matching what the normal admin
-  cancellation flow produces, minus notifications: the import sends no
-  cancellation email and performs no Xero/Stripe work (a freshly imported member
-  has no Xero contact). A cancelled row never claims the login for a shared
-  email, and the cancelled date may not be in the future. The import still only
-  creates members, so a row matching an existing member is skipped unchanged —
-  cancelling an existing member remains an admin cancellation-flow action.
+## 0.12.0 - 2026-07-18
+
+- Release classification: minor public reference release. This is a large
+  feature, configuration, and correctness release over `0.11.0`, with 25
+  migrations (24 expand/additive, one contract). It adds the flagged-off Lobby
+  Display module, exclusive whole-lodge holds, un-flagged core multi-lodge
+  operation, database-first club identity and configuration with boot-time
+  self-heal, authoritative fee schedules with subscription and joining-fee
+  billing, and rule-based Xero member grouping, alongside broad
+  booking-settlement, payment, and Xero/finance hardening. Read
+  `docs/releases/v0.12.0.md` and the `v0.11.0 -> v0.12.0` section of
+  `docs/UPGRADING.md` before deployment.
+
+- **Lobby Display module (#1911, upstreaming fork PRs #109–#187).** A new
+  flagged-off module renders per-lodge lobby screens: admin-authored layouts
+  and templates (room cards, night columns, status board), a per-lodge notice,
+  a name-granularity control over how guests appear, and registered display
+  devices, managed from a single Lobby Display admin hub. The module flag
+  (`ClubModuleSettings.lobbyDisplay`) defaults off, so nothing changes until a
+  club enables it; the schema lands as the single consolidated
+  `add_lobby_display` migration. Guest phone numbers appear on screens only
+  under a two-sided opt-in (#133–#136, #151): the member must opt in **and**
+  the lodge must enable it, enforced in the serialisers, with both flags
+  defaulting off — and only ever for adult members; youth and child phone
+  numbers are never shown. Documentation lives under `docs/lobby-display/`.
+
+- **Exclusive whole-lodge holds (#144–#148, #166, #180, #181, #183, #185,
+  #187; ADR-001 in `docs/exclusive-booking/`).** A school/group booking
+  request can now ask for sole occupancy of the lodge
+  (`exclusivityRequested`), and an admin approving it — or acting directly —
+  can place a whole-lodge hold on the resulting booking. While the hold
+  stands, capacity enforcement blocks every other booking for those nights,
+  the hold is visible on availability and admin surfaces, and bed allocation
+  respects it. Hold placement, lifecycle, and
+  confirm-pending conversion are guarded by status checks and advisory locks
+  so concurrent bookings cannot slip past a hold. All new fields default off
+  in `add_exclusive_hold_fields`.
+
+- **Multi-lodge is now core, not a module (#138, #140–#143).** The `multiLodge`
+  module flag is removed and lodge routes are un-gated: every installation is
+  a multi-lodge installation with at least one (default) lodge. The vestigial
+  `ClubModuleSettings.multiLodge` column is retired but not yet dropped — the
+  drop is deferred to a future contract migration (fork #129), reads are
+  already drop-safe (fork #150), and ADR-005 records the decision (#140) —
+  navigation is lodge-aware (#141), the admin home becomes a lodge hub
+  (#142), and backwards compatibility for existing single-lodge installs is
+  preserved (#143) — a single-lodge club sees no operational change.
+
+- **Authoritative fee schedules and membership billing (#1855/#1858,
+  #1857/#1861, #1870/#1879, #1930/#1958, #1931/#1968, #1932/#1973,
+  #1933/#1974, #1936/#1954, #1941/#1989, #1944/#1959, #1896).** Booking,
+  joining, and annual membership fees now live in database fee schedules that
+  admins edit and save (`docs/AUTHORITATIVE_FEES.md`): season rates are keyed
+  by membership type rather than a member/non-member boolean, joining fees are
+  modelled per membership type and age tier, and annual fees break into
+  invoice-line components. Durable subscription-billing workflow tables drive
+  membership invoicing, families can choose a billing mode and billing member,
+  manual mark-paid actions record provenance and paid-up semantics are
+  clarified, membership application approval maps applicants onto the new
+  model, fee presentation reaches the public pages behind a double-opt-in
+  `{{annual-fees}}` embed, and configuration transfer carries fee
+  configuration. Day-one amounts are backfilled from the existing
+  configuration; the legacy tables are retained (not dropped) so the old
+  colour prices season and annual fees identically during cutover
+  (entrance/joining fees carry a window-bounded old-colour caveat — see the
+  Migration/deployment notes).
+
+- **Database-first club identity and configuration, with boot-time self-heal
+  and DR auto-import (#1929/#1957, #1980/#1991, #1981/#1999, #1982/#2013,
+  #1983/#2005, #1984/#2004, #1985/#2014, #1986/#2015, #1987/#2019,
+  #1988/#2028).** Club name/short name/hut-leader label/Facebook URL, lodge
+  address, capacity, age tiers, and email settings now resolve database-first
+  with config-file fallback; sync consumers and the setup wizard read and
+  write the database, legacy email environment variables are retired, and a
+  boot-time config self-heal backfills missing DB values from the effective
+  configuration without ever overwriting an admin edit. A bootstrap-safe
+  loader keeps boot resilient when the database is unreachable. For disaster
+  recovery and cloning, `CONFIG_BUNDLE_IMPORT_PATH` auto-imports a
+  configuration bundle at boot — only when the database holds no non-seed
+  configuration, so it can never clobber a live install. Applying an
+  interactive configuration import now refuses to proceed when backups are
+  enabled but the pre-apply backup was not durably uploaded to S3 (#1910),
+  retired email environment variables log a boot warning when still set
+  (#2021/#2022), and age tiers are now editable as a contiguous subset,
+  letting clubs run fewer than four tiers (#2009/#2027).
+
+- **Xero and finance hardening, plus rule-based Xero member grouping
+  (#1893, #1897, #1900/#1916, #1902, #1908, #1909, #1917, #1922,
+  #1934/#1953, #1961/#1972).** Group-settlement application retries safely,
+  Xero write durability and credit deallocation are hardened, season billing
+  runs transactionally, entrance-fee enqueueing is deduplicated (with a
+  partial unique index guaranteeing at most one active entrance-fee invoice
+  link per member), a membership lifecycle review race is closed, phantom
+  Xero payments on supplementary-invoice retries are prevented, and
+  capacity-refund recovery is durable. Xero contact-group membership is now
+  driven by admin-editable grouping rules with a server-persisted dry-run
+  that must be fresh before a bulk re-sync (`docs/XERO_MEMBER_GROUPING_RUNBOOK.md`).
+  Webhook dedup gains a processing lease so redelivered events reprocess
+  safely instead of being dropped.
+
+- **Booking settlement, lifecycle, and date correctness (#1878/#1892,
+  #1881/#1919/#1921, #1883/#1899, the #1888 cluster
+  (#1894/#1895/#1898/#1906/#1914/#1918), #1992/#2006, #1993/#2010,
+  #2003/#2018, #2012/#2024, #2029/#2032).** NZ date-only handling is enforced
+  end to end, lock topology is corrected and the split-child cancel race is
+  closed, group-settlement readmission works, cron isolation and date-only
+  guards are tightened and an error-message leak is fixed, a double-charge
+  window is closed, terminal booking-request and hold states are made truly
+  terminal, deferred-payment state has a single source of truth, and bookings
+  now complete at the end of the checkout day (NZ) — enabling priced,
+  capacity-checked, cancel-guarded checkout-day extensions. Payment-link email
+  reliability is improved (#1885/#1904).
+
+- **Split-booking settlement and payment UX (#1967/#1995, #1942/#1977,
+  #1976/#1996, #1975/#2001, #1994/#2000, #2002/#2017).** Internet Banking
+  settlement of split bookings is correct, the split flow's UX is clearer,
+  the pay step shows the right amount, admin bookings render split children
+  as nested subrows, the register-split notifications become admin-editable
+  email templates, and joiners are labelled accurately.
+
+- **View-only admin access is enforced across admin surfaces (#1927/#1949,
+  #1940/#1998, #1997/#2031).** Admin content editors, route permissions, and
+  action buttons across bookings, membership queues, member detail
+  (lifecycle, deletion, credit, family), finance, support, and communications
+  are gated for view-only access roles: a role without write permission sees
+  the data but cannot mutate it, at both the UI and the route level.
+
+- **Member deletion requests, merge, and duplicate-capture recovery
+  (#1938/#1948/#1960, #1937/#1963, #2007/#2023, #2008/#2025, #1935/#1956).**
+  Admin-initiated member deletion requests are surfaced with a dedicated,
+  separately-mutable notification preference; duplicate members can be merged;
+  duplicate-capture auto-refunds get a dedicated admin-editable email template
+  and a narrative-safe booking-history event; and admins can book on behalf
+  of a non-member.
+
+- **Member CSV import can create already-cancelled members (#1946/#1990).**
+  The member import gains an optional **Cancelled Date** column. A row with a
+  cancelled date is created in the cancelled end-state — inactive, non-login,
+  with `cancelledAt` set to the given NZ date-only value — matching what the
+  normal admin cancellation flow produces, minus notifications: the import
+  sends no cancellation email and performs no Xero/Stripe work (a freshly
+  imported member has no Xero contact). A cancelled row never claims the
+  login for a shared email, and the cancelled date may not be in the future.
+  The import still only creates members, so a row matching an existing member
+  is skipped unchanged — cancelling an existing member remains an admin
+  cancellation-flow action.
+
+- **Public content, generic starter copy, and committee CRUD retirement
+  (#1856/#1862, #1864/#1866, #1928/#1950, #1945/#1964, #1947/#1969).** Public
+  page content gains token embeds behind explicit visibility gates
+  (`docs/PUBLIC_PAGE_CONTENT_TOKENS.md`), starter privacy/terms/FAQ copy is
+  genericised (admin-edited pages are left untouched), copy quick-wins and a
+  content scrub remove club-specific wording, and logo alt text is fixed. The
+  legacy standalone committee directory and its admin CRUD are removed — the
+  member-linked committee roles/assignments system from v0.11.0 is now the
+  only committee source, and the `drop_committee_member` **contract
+  migration** drops the retired table (see Migration/deployment notes).
+  Saved theme colours now also apply to outbound emails (#1912/#1915).
+
+- **Performance, load, and accessibility (#1884/#1903/#1905/#1907/#1920,
+  #1889/#1891/#1901, #1869/#1890).** Admin bookings are paginated, the
+  database pool is sized for the deployment, a k6 load harness and
+  load-stability fixes land, form errors and UI states meet accessibility
+  expectations, and admin UI polish rounds out the sweep.
+
+- **CI, security, dependencies, and docs (#1865, #1867/#1868, #1871/#1872,
+  #1873, #1874, #1876/#1877, #1926/#1955, #1962/#1971, #1966/#1970, #1979,
+  fork #169/#170, #15/#1863/#1913).** Semgrep static analysis joins CI
+  (#1865) and its findings are remediated (#1867/#1868), GitHub Actions
+  dependencies are updated, Xero error
+  shapes are corrected, a production-hardening review lands, ops docs are
+  corrected, the agent orchestration workflow is documented, non-member and
+  identity-smoke E2E suites are added, a migration timestamp collision is
+  repaired, the attack surface is documented
+  (`docs/SECURITY-ATTACK-SURFACE.md`), and the design fork is synced.
+
+- **Migration/deployment notes:** deploy in a quiet, low-write window after a
+  tested backup. One **contract migration**,
+  `20260714140000_drop_committee_member`, removes the legacy standalone
+  committee directory table: its member-linked replacement shipped and was
+  backfilled in v0.11.0, so the drop loses no data beyond the retired
+  directory itself — no assignment or contact data lives only in the dropped
+  table — but the old colour's admin committee CRUD routes error between
+  migrate and cutover. Idle or drain old-colour admin traffic, cut over
+  promptly, and supply the documented
+  `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` override together with a
+  non-empty `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` acknowledgement. The
+  `joining_fee_model` and `xero_member_grouping` expand migrations carry
+  window-bounded old-colour caveats described in
+  `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`: once `joining_fee_model` re-keys
+  the entrance-fee Xero item-code mappings, the old colour resolves both the
+  item code and the amount of a new entrance-fee invoice from the legacy
+  flat mappings — it can mint a wrong per-category amount, or silently skip
+  the invoice as SUCCEEDED when the flat amount is unset — so membership
+  approvals and entrance-fee minting must be fully idle on the old colour
+  from migrate until cutover (operations queued before the window carry
+  frozen amount/item payloads and replay safely); and `xero_member_grouping`
+  converges grouping rules, so avoid grouping-rule saves on the draining old
+  colour. No migration makes a Xero call, and no member is re-grouped until
+  the admin-run dry-run and bulk re-sync in
+  `docs/XERO_MEMBER_GROUPING_RUNBOOK.md`. See `docs/UPGRADING.md` for the
+  complete operator checklist.
 
 ## 0.11.0 - 2026-07-13
 
