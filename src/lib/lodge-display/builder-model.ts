@@ -1,4 +1,3 @@
-import { isDisplayConditionName } from "./conditions";
 import {
   validateDisplayLayoutDefinition,
   validateDisplaySlotContent,
@@ -98,10 +97,6 @@ export interface BuilderModel {
 // ---------------------------------------------------------------------------
 // Signature + slug helpers
 // ---------------------------------------------------------------------------
-
-export const DLB_ROOT_CLASS = "dlb-root";
-
-const SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 // The reserved root-class signature. Matches the first element's class list
 // carrying `dlb-root` (class is allowlisted by the sanitiser, so it survives
@@ -477,10 +472,4 @@ export function emptyBuilderModel(
   const zones: BuilderZone[] = [];
   for (let i = 0; i < count; i++) zones.push(freshZone(skeleton, i));
   return { skeleton, zones };
-}
-
-/** True when a condition string is a valid closed-registry name (for the drawer's
- * "show only when…" picker). Empty string / null means "always". */
-export function isBuilderCondition(value: string): boolean {
-  return isDisplayConditionName(value);
 }

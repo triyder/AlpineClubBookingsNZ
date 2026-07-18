@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -440,9 +441,9 @@ export default function AdminDisplayLayoutsPage() {
         <p className="text-muted-foreground">
           This is the <strong>Advanced mode</strong> hand-editor. Most boards are
           easier to build in the{" "}
-          <a className="underline" href="/admin/display/builder">
+          <Link className="underline" href="/admin/display/builder">
             visual builder
-          </a>
+          </Link>
           , which writes the layout and template for you; drop to Advanced mode
           for full control over the HTML body, CSS, and areas.
         </p>
