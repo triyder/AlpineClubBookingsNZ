@@ -728,7 +728,7 @@ async function main() {
 
   await seedInductionChecklistTemplate();
 
-  // Seed the three built-in lobby-display designs as v2 Layout + Template rows
+  // Seed the built-in lobby-display designs as v2 Layout + Template rows
   // (LTV-038). DELIBERATE EXCEPTION to this file's "never overwrite" contract
   // (see the header): the built-ins are code-managed scaffolding, so
   // `ensureBuiltInDisplays` upserts each by `key` and REFRESHES its definition

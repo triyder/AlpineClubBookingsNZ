@@ -7,6 +7,7 @@ import {
   isBuiltInDisplayTemplateKey,
   type EnsureBuiltInDisplaysClient,
 } from "@/lib/lodge-display/built-in-seeds";
+import { DISPLAY_MODULE_NAMES } from "@/lib/lodge-display/template-registry";
 
 // LTV-038: the three built-ins seeded as v2 Layout + Template rows. These tests
 // cover the SEED CONTRACT (create-if-missing, admin-safe, idempotent), without a
@@ -49,23 +50,57 @@ function makeClient() {
   return { client, layoutUpserts, templateUpserts };
 }
 
+// The full built-in roster after the issue #2047 template pack: the three
+// legacy built-ins (LTV-038) plus the four broadly-useful pack boards. New keys
+// are permanent (re-seed matches on key), so this list is the guard against an
+// accidental key rename/reorder.
+const EXPECTED_BUILT_IN_KEYS = [
+  "everyday-board",
+  "whole-lodge",
+  "singles-house",
+  "room-by-room",
+  "nights-ahead",
+  "operations-board",
+  "welcome-kiosk",
+];
+
 describe("built-in display seeds — definitions", () => {
-  it("defines exactly the three built-ins keyed to the legacy code built-ins", () => {
-    expect(BUILT_IN_DISPLAY_LAYOUTS.map((l) => l.key)).toEqual([
-      "everyday-board",
-      "whole-lodge",
-      "singles-house",
-    ]);
-    expect(BUILT_IN_DISPLAY_TEMPLATES.map((t) => t.key)).toEqual([
-      "everyday-board",
-      "whole-lodge",
-      "singles-house",
-    ]);
+  it("defines the legacy built-ins plus the issue #2047 template pack, keyed stably", () => {
+    expect(BUILT_IN_DISPLAY_LAYOUTS.map((l) => l.key)).toEqual(
+      EXPECTED_BUILT_IN_KEYS
+    );
+    expect(BUILT_IN_DISPLAY_TEMPLATES.map((t) => t.key)).toEqual(
+      EXPECTED_BUILT_IN_KEYS
+    );
+    // One template per layout, bound one-to-one by key.
+    expect(BUILT_IN_DISPLAY_LAYOUTS).toHaveLength(BUILT_IN_DISPLAY_TEMPLATES.length);
     // Every template binds a layout that exists in the seed set.
     for (const template of BUILT_IN_DISPLAY_TEMPLATES) {
       expect(
         BUILT_IN_DISPLAY_LAYOUTS.some((l) => l.key === template.layoutKey)
       ).toBe(true);
+    }
+    // Keys are unique across the whole roster (a duplicate would make the upsert
+    // clobber a sibling on re-seed).
+    expect(new Set(EXPECTED_BUILT_IN_KEYS).size).toBe(EXPECTED_BUILT_IN_KEYS.length);
+  });
+
+  it("every content module is exercised by at least one built-in template (issue #2047)", () => {
+    // Furniture (lodge-header / info-footer) is always on the page chrome, so the
+    // coverage goal is the CONTENT modules: each must be embedded by a built-in.
+    const FURNITURE = new Set(["lodge-header", "info-footer"]);
+    const contentModules = DISPLAY_MODULE_NAMES.filter((n) => !FURNITURE.has(n));
+
+    const embedded = new Set<string>();
+    for (const template of BUILT_IN_DISPLAY_TEMPLATES) {
+      for (const content of Object.values(template.slotContent)) {
+        if ("module" in content) embedded.add(content.module);
+      }
+    }
+    for (const name of contentModules) {
+      expect(embedded, `module "${name}" is not exercised by any built-in`).toContain(
+        name
+      );
     }
   });
 
@@ -130,8 +165,8 @@ describe("ensureBuiltInDisplays — seed contract", () => {
     const { client, layoutUpserts, templateUpserts } = makeClient();
     await ensureBuiltInDisplays(client);
 
-    expect(layoutUpserts).toHaveLength(3);
-    expect(templateUpserts).toHaveLength(3);
+    expect(layoutUpserts).toHaveLength(BUILT_IN_DISPLAY_LAYOUTS.length);
+    expect(templateUpserts).toHaveLength(BUILT_IN_DISPLAY_TEMPLATES.length);
     // Code-managed scaffolding: the update REWRITES the definition (not empty),
     // so a re-seed propagates design improvements to already-seeded rows, and it
     // matches the create body so an existing row converges on the shipped design.
@@ -164,8 +199,8 @@ describe("ensureBuiltInDisplays — seed contract", () => {
     await ensureBuiltInDisplays(client);
     await ensureBuiltInDisplays(client);
 
-    expect(layoutUpserts).toHaveLength(6);
-    expect(templateUpserts).toHaveLength(6);
+    expect(layoutUpserts).toHaveLength(2 * BUILT_IN_DISPLAY_LAYOUTS.length);
+    expect(templateUpserts).toHaveLength(2 * BUILT_IN_DISPLAY_TEMPLATES.length);
     for (const call of [...layoutUpserts, ...templateUpserts]) {
       expect(call.update).not.toEqual({});
     }
