@@ -3,7 +3,7 @@ import "server-only";
 import type { PrismaClient } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
-import { runDatabaseBackup } from "@/lib/backup";
+import { runDatabaseBackup, type BackupResult } from "@/lib/backup";
 import { readBundle, sha256Hex } from "./bundle";
 import { buildImportPlanFromParsed, CATEGORY_IMPORTERS } from "./import";
 import { mediaApplies, recreateBundleMedia } from "./media";
@@ -66,6 +66,23 @@ export type ApplyConfigImportParams = {
   selectedCategories?: ConfigTransferCategory[];
   /** Key-weak match resolutions chosen in the dry-run picker. */
   resolutions?: MatchResolution[];
+  /**
+   * Pre-apply backup policy (ADR-002 §backup). Default `"required"` runs the
+   * pre-apply `pg_dump` and its durability gate — the mandatory path for every
+   * interactive/admin import.
+   *
+   * `"skip-empty-bootstrap"` skips the pre-apply backup ENTIRELY. It is
+   * permitted for ONE caller only: the boot-time, empty-target config-bundle
+   * bootstrap (ADR-003, `bootstrap-import.ts`), which applies a bundle on a
+   * database that is empty of non-seed configuration. An empty database has no
+   * prior configuration to protect, so the ADR-002 pre-apply backup is waived
+   * there and there alone. Every other ADR-002 safeguard (parse/validate,
+   * sanitise, single-flight lock, in-lock re-plan + fingerprint drift refusal,
+   * atomic upsert-only transaction, audit) still applies unchanged. NEVER pass
+   * this from the interactive route — the bootstrap caller only reaches it after
+   * a positive empty-target probe.
+   */
+  preApplyBackup?: "required" | "skip-empty-bootstrap";
 };
 
 export type ApplyConfigImportResult = {
@@ -87,25 +104,39 @@ export async function applyConfigImport(
   const parsed = readBundle(bundleBytes);
   const bundleSha256 = sha256Hex(bundleBytes);
 
+  const preApplyBackup = params.preApplyBackup ?? "required";
+
   // Pre-apply backup FIRST (ADR-002: backup, then verify, then execute). A
   // hard failure aborts; an operator-disabled backup (BACKUP_ENABLED unset)
-  // proceeds but is recorded.
-  const backup = await runDatabaseBackup();
-  if (backup.error) {
-    throw new ConfigImportBackupError(backup.error);
-  }
-  // Durability gate (ADR-002): with backups ENABLED but no S3 destination the
-  // backup lands only on this web slot's local disk — wiped by the next
-  // deploy, so it is no restore path for the pre-import state. Both write
-  // modes mutate config (merge creates rows and overwrites non-blank fields),
-  // so refuse the import outright rather than clobber unrecoverable state.
-  if (backup.success && !backup.uploadedToS3) {
-    throw new ConfigImportBackupError(
-      "the backup was written only to this server's local disk, which does " +
-        "not survive a redeploy; configure BACKUP_S3_BUCKET so a durable " +
-        "pre-import backup exists, or set BACKUP_ENABLED=false to explicitly " +
-        "opt out of the safety backup",
-    );
+  // proceeds but is recorded. The empty-target bootstrap (ADR-003) is the sole
+  // exception: an empty database has no prior configuration to protect, so the
+  // backup is waived and recorded as skipped-for-bootstrap rather than run.
+  let backup: BackupResult;
+  if (preApplyBackup === "skip-empty-bootstrap") {
+    backup = {
+      success: false,
+      skipped: true,
+      reason:
+        "empty-bootstrap: pre-apply backup waived on an empty target (ADR-003)",
+    };
+  } else {
+    backup = await runDatabaseBackup();
+    if (backup.error) {
+      throw new ConfigImportBackupError(backup.error);
+    }
+    // Durability gate (ADR-002): with backups ENABLED but no S3 destination the
+    // backup lands only on this web slot's local disk — wiped by the next
+    // deploy, so it is no restore path for the pre-import state. Both write
+    // modes mutate config (merge creates rows and overwrites non-blank fields),
+    // so refuse the import outright rather than clobber unrecoverable state.
+    if (backup.success && !backup.uploadedToS3) {
+      throw new ConfigImportBackupError(
+        "the backup was written only to this server's local disk, which does " +
+          "not survive a redeploy; configure BACKUP_S3_BUCKET so a durable " +
+          "pre-import backup exists, or set BACKUP_ENABLED=false to explicitly " +
+          "opt out of the safety backup",
+      );
+    }
   }
 
   const totals: CategoryApplyResult = {
@@ -226,7 +257,10 @@ export async function applyConfigImport(
   return {
     perCategory,
     totals,
-    backup: { attempted: true, skipped: backup.skipped === true },
+    backup: {
+      attempted: preApplyBackup === "required",
+      skipped: backup.skipped === true,
+    },
     doorCodesWritten: notes.doorCodesWritten,
   };
 }

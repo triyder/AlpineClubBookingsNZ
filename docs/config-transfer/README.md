@@ -207,7 +207,7 @@ Intentionally excluded / deferred:
 
 - [ADR-001 — Interchange format and identity strategy](decisions/ADR-001-interchange-format-and-identity-strategy.md)
 - [ADR-002 — Import semantics and safety model](decisions/ADR-002-import-semantics-and-safety.md)
-- [ADR-003 — Install-time bootstrap integration](decisions/ADR-003-install-seed-integration.md) (deferred)
+- [ADR-003 — Install-time bootstrap integration](decisions/ADR-003-install-seed-integration.md) (implemented, #1988)
 
 ## Implementation notes
 
@@ -219,6 +219,34 @@ Intentionally excluded / deferred:
 - Single-flight import lock: `pg_advisory_xact_lock(hashtext('config-transfer-import'))`
   (see `docs/CONCURRENCY_AND_LOCKING.md`).
 
-## Deferred
+## Boot-time bootstrap auto-import (DR / clone, ADR-003, #1988)
 
-- Install-time bootstrap hook per ADR-003.
+For disaster recovery or seeding a replacement instance, a bundle can be applied
+**non-interactively at boot** instead of through the admin UI. Set
+`CONFIG_BUNDLE_IMPORT_PATH` to a readable bundle file: on the next Node boot —
+after migrations, base seed, and the C2 self-heal — the app applies that bundle
+**iff the database is empty of non-seed configuration**, through this same
+validated pipeline (`src/lib/config-transfer/bootstrap-import.ts`).
+
+- **Empty-target only, fail closed.** "Empty of non-seed configuration" means the
+  pristine post-seed state with no operator/admin footprint: no prior config
+  import (interactive or bootstrap), no bookings, no non-system members, and the
+  setup wizard never finished. Any of those present → the import is **refused**
+  and nothing is written. A malformed/tampered/oversized bundle, an unreadable
+  path, or any apply failure also refuses; boot always continues. (A plain
+  "the plan has no updates" check is deliberately NOT used — the base seed
+  pre-creates the config rows the bundle touches, so a legitimate bootstrap
+  always shows updates; see ADR-003 "Empty-target definition".)
+- **Not gated on config provenance.** The bundle is the config source in a DR
+  restore where `config/club.json` may be absent, so — unlike the self-heal —
+  this import runs regardless of `clubConfigSource`.
+- **Pre-apply backup waived (only here).** An empty database has nothing to
+  protect; every other ADR-002 safeguard (validation, allowlist, DMMF
+  type-checks, single-flight lock, fingerprint drift refusal, atomic upsert-only
+  transaction, audit) still applies.
+- **Audited + idempotent.** A success writes a `configuration.bootstrap_imported`
+  audit row (system/deploy actor, bundle sha256, outcome); a second boot with the
+  same variable set sees that marker and refuses calmly.
+
+Operator runbook and expected logs: `DEPLOYMENT.md` → "Config Bundle Auto-Import
+On Boot (DR / clone)".

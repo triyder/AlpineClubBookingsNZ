@@ -130,6 +130,10 @@ Minimum production categories:
   address per the existing precedence, so there is no hard break.
 - Cron and backups: `CRON_SECRET`, `BACKUP_*`, optional
   `AUDIT_ARCHIVE_DATABASE_URL`
+- Bootstrap provisioning (optional): `CONFIG_BUNDLE_IMPORT_PATH` — path to a
+  config-transfer bundle applied non-interactively on boot **only** when the
+  database is empty of non-seed configuration. See "Config Bundle Auto-Import On
+  Boot (DR / clone)".
 - Admin health: optional `CRON_LEADER_RUNTIME_STATUS_URL` when the cron leader
   is not reachable from web containers at
   `http://app:3000/api/deploy/runtime-status`
@@ -351,6 +355,81 @@ effective config is a fallback (no valid primary `config/club.json`), it writes
 nothing, prints the provenance and the remediation ("fix `config/club.json`,
 then rerun"), and **exits non-zero** — an out-of-band run that silently no-oped
 would hide the misconfiguration.
+
+## Config Bundle Auto-Import On Boot (DR / clone)
+
+To seed a fresh instance — disaster recovery, or standing up a replacement /
+clone — from a known-good configuration instead of hand-configuring it, drop the
+club's exported **config-transfer bundle** on disk and point
+`CONFIG_BUNDLE_IMPORT_PATH` at it. On the next Node boot — **after** migrations,
+the base seed, and the C2 self-heal — the app applies that bundle
+**non-interactively**, through the same validated import pipeline the admin
+Export & Import page uses (`src/lib/config-transfer/bootstrap-import.ts`,
+implementing ADR-003).
+
+The whole provisioning flow becomes:
+
+```text
+deploy env + bundle file  →  prisma migrate deploy  →  base seed  →  boot auto-import  →  operational site
+```
+
+### Placement and enabling
+
+- Export the source club's bundle from **Admin → Setup & Configuration →
+  Export & Import** (tick the categories to carry; door codes are opt-in).
+- Copy the `.zip` to a path the app container can read (e.g. a mounted
+  `config/` volume) and set `CONFIG_BUNDLE_IMPORT_PATH=/abs/path/to/bundle.zip`
+  in the environment. The variable is unset by default; leaving it unset is a
+  silent no-op.
+- The file is **operator-controlled deployment configuration** but its bytes are
+  treated as **untrusted** — full structural validation, resource caps, the
+  secret/auth/member-coupling allowlist, and per-field Prisma-DMMF type checks
+  all apply (a bundle can never carry secrets, auth material, members, or
+  transactional data).
+
+### The empty-target guarantee (fail closed)
+
+The import applies **only when the database is empty of non-seed configuration**
+— the pristine post-seed state with no operator/admin footprint:
+
+- no config bundle has ever been imported (interactive or bootstrap),
+- no bookings exist,
+- no members exist beyond the seeded system accounts (admin + lodge kiosk), and
+- the setup wizard was never marked finished.
+
+If **any** of those is present, the import is **refused and nothing is written**
+— a file dropped on disk can never overwrite a live or already-configured club.
+A malformed / tampered / oversized bundle, an unreadable `CONFIG_BUNDLE_IMPORT_PATH`,
+or any apply failure also refuses and leaves the database untouched. The apply
+runs in a single atomic transaction, so a mid-apply failure rolls back
+completely — there is no partial import. **Boot always continues**; a bootstrap
+bundle can never block or crash startup.
+
+Unlike the self-heal, this import is **not** gated on config provenance: the
+bundle is the config source in a DR restore where `config/club.json` may be
+absent, so it runs regardless of `clubConfigSource`. The pre-apply `pg_dump`
+backup is the **one** ADR-002 safeguard waived here (an empty database has
+nothing to protect); every other safeguard applies.
+
+### Expected logs (`scope: "config-bootstrap-import"`)
+
+- **Applied** (fresh empty target):
+  `Config bundle auto-imported on boot: created N, updated M, unchanged K.`
+  A `configuration.bootstrap_imported` audit row is written (system/deploy
+  actor, bundle sha256, outcome).
+- **Steady state** (second boot with the variable still set, INFO — expected,
+  not an error): `Config bundle auto-import refused: a config bundle was already
+  auto-imported on a prior boot; the target is configured (steady state).`
+- **Non-empty target** (WARN):
+  `Config bundle auto-import refused: target already has … ; …`
+- **Bad bundle / path** (ERROR or WARN): a validation-error, human-resolution,
+  unreadable-path, or apply-failure message — always ending "Nothing was
+  written; boot continues."
+
+Because a successful import writes the `configuration.bootstrap_imported` marker,
+the step is **idempotent**: leaving `CONFIG_BUNDLE_IMPORT_PATH` set across
+restarts simply logs the calm steady-state refusal on every subsequent boot. You
+may unset it once the site is up.
 
 ## Staging
 

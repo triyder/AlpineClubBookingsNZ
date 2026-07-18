@@ -1,11 +1,15 @@
-# ADR-003: Install-Time Bootstrap Integration (deferred)
+# ADR-003: Install-Time Bootstrap Integration (implemented)
 
 ## Status
 
-Proposed — deliberately deferred until the import engine (ADR-002) has
-shipped and stabilised. Recorded now so the earlier "restore a `pg_dump` at
-install" idea stays retired and the intended shape is not re-litigated.
-Feature issue: hoppers99/AlpineClubBookingsNZ#22 (Phase 3).
+**Implemented** (#1988, C9). Delivered after the import engine (ADR-002)
+shipped and stabilised. The original "restore a `pg_dump` at install" idea
+stays retired. Feature issue: hoppers99/AlpineClubBookingsNZ#22 (Phase 3).
+
+Implementation: `src/lib/config-transfer/bootstrap-import.ts`
+(`runConfigBootstrapImport`), wired into the boot hook
+`src/instrumentation.node.ts` **after** the C2 config self-heal. Operator
+runbook: `DEPLOYMENT.md` → "Config Bundle Auto-Import On Boot (DR / clone)".
 
 ## Context
 
@@ -51,3 +55,101 @@ by importing a bundle.
   silently overwrite a live site from a file dropped on disk.
 - Audit-log the bootstrap import like any other apply (who = system/deploy,
   bundle checksum, outcome).
+
+## Trust model (as implemented)
+
+Whoever writes `CONFIG_BUNDLE_IMPORT_PATH` and drops the bundle on a fresh
+install **owns the club's identity and email routing** — this is equivalent to
+writing `config/club.json` or setting install-time env, a first-install operator
+capability, not a new privilege escalation. `publicUrl` and email sender are
+**allowlisted non-secret** config; `FORBIDDEN_FIELD_PATTERNS`
+(`src/lib/config-transfer/registry.ts`) bars secrets, auth material, and member
+coupling from any bundle. The residual risk is a bundle applied to a NON-empty
+DB, which the empty-target guard prevents.
+
+### Refuted attacks
+
+- **"An attacker hits `/admin/setup` to reconfigure a live club."** Refuted:
+  `/admin` is auth-gated — `src/app/(admin)/layout.tsx` redirects unauthenticated
+  visits and redirects members without the required admin-area access;
+  `SEED_ADMIN_*` is always seeded so an admin exists. The bootstrap import adds no
+  new HTTP surface: it runs only in the boot process, only from the
+  operator-controlled env path.
+- **"A crafted bundle leaks or injects secrets."** Refuted:
+  `FORBIDDEN_FIELD_PATTERNS` makes every descriptor's allowlist disjoint from
+  password/secret/token/apikey/totp/memberid patterns, and `parseSingleton`
+  (`categories/club-settings.ts`) type-checks every field against the real Prisma
+  DMMF before any write. The bootstrap path reuses this pipeline unchanged.
+- **"A file dropped on disk silently overwrites a live club."** Refuted: the
+  empty-target guard refuses any target that is not empty of non-seed
+  configuration, and fails closed on any doubt (see below).
+
+## Implementation notes (#1988)
+
+- **Where it runs.** `runConfigBootstrapImport({ db })` is invoked from
+  `src/instrumentation.node.ts` in the Node runtime, immediately AFTER the C2
+  self-heal, inside the same best-effort guard. It is a no-op unless
+  `CONFIG_BUNDLE_IMPORT_PATH` is set.
+- **Untrusted file, shared pipeline.** The bundle bytes flow through the exact
+  interactive import pipeline: `buildImportPlan` (which runs `readBundle`
+  structural validation + resource caps + safe-path checks, then every category
+  planner's allowlist + DMMF type-checks) → `applyConfigImport` (single-flight
+  advisory lock, in-lock re-plan, fingerprint-drift refusal, atomic upsert-only
+  transaction, audit). The only deviation is the pre-apply backup (below).
+- **Empty-target definition — precise.** The base seed (`prisma/seed.ts`) is
+  create-if-missing and pre-populates the config singletons/keyed rows this
+  importer touches, so a faithful club bundle applied to a freshly-seeded DB
+  necessarily produces UPDATEs against seed placeholders. "Zero updates in the
+  plan" is therefore NOT a usable empty-target signal on this codebase — it would
+  refuse every legitimate bootstrap. Emptiness is instead defined as the absence
+  of any operator/admin footprint beyond the pristine post-seed state, probed
+  positively (`assessBootstrapReadiness`) over signals the seed leaves untouched:
+  (1) no config bundle ever imported — no `configuration.imported` (interactive)
+  or `configuration.bootstrap_imported` (this feature) audit row; (2) no
+  bookings; (3) no non-system members (any `Member` whose role is not the seeded
+  ADMIN/LODGE); (4) the setup wizard was never marked finished
+  (`SetupProgress.completedAt` null). ALL four must hold to apply. This is
+  strictly safer than an update-count check because it also refuses a
+  manually-configured club whose bundle keys collide with seed keys.
+- **Fail closed.** A non-empty target, a plan with validation errors, a plan
+  step needing an interactive rename decision (impossible on a truly empty
+  target, but guarded anyway), an unreadable path, and any I/O or apply failure
+  all REFUSE and leave the DB untouched (the apply transaction is atomic). Boot
+  always continues — the function never throws.
+- **Provenance guard deliberately NOT applied.** Unlike the self-heal, the
+  bootstrap import is not gated on `clubConfigSource === "primary"`: the BUNDLE
+  is the config source in the DR scenario, and `config/club.json` is often absent
+  there, so provenance is typically `"safe-default"`. Gating on `"primary"` would
+  disable the feature exactly when it is needed. The self-heal's hazard (freezing
+  fallback values into create-if-absent rows) does not transfer, because this
+  importer writes the BUNDLE's values, never the effective fallback config. On a
+  SAFE_DEFAULT boot the self-heal skips (writing nothing) and this importer then
+  populates the DB from the bundle — no conflict.
+- **Self-heal interaction, pinned.** The self-heal runs first. The emptiness
+  probe looks at operational footprint, NOT config-singleton presence, so
+  self-healed rows never make a target look configured. If the self-heal created
+  identity/age-tier rows (primary-config clone), this importer upserts the
+  bundle's authoritative values over them; if it skipped (safe-default DR), this
+  importer creates them. On the next boot the self-heal sees the rows present
+  (skips) and this importer sees the `configuration.bootstrap_imported` marker
+  (refuses): exactly one write.
+- **Write mode.** `overwrite`, so the bundle fully defines each record and a
+  fresh install faithfully reproduces the source club (merge would leave seed
+  placeholders showing through blanked source fields).
+- **Pre-apply backup waived — only here.** `applyConfigImport` accepts
+  `preApplyBackup: "skip-empty-bootstrap"`, used exclusively by this path: an
+  empty database has no prior configuration to protect. Every other ADR-002
+  safeguard applies. The bypass is unreachable from the interactive route.
+- **Audit shape.** On success the pipeline writes its standard
+  `configuration.imported` row (actor = the synthetic system id
+  `system:config-bootstrap`, backup recorded as skipped-for-bootstrap), and the
+  bootstrap wrapper writes a dedicated `configuration.bootstrap_imported` row
+  (system actor, `severity: critical`, `outcome: success`, metadata: bundle
+  sha256, provenance, mode, categories, totals, door-code slugs written). That
+  marker is what the emptiness probe keys on for idempotence. Refusals (non-empty
+  target) and failures are logged, not audited, to avoid an audit row on every
+  boot while the env var stays set.
+- **Idempotence.** A second boot with the same env var against the now-populated
+  DB finds the `configuration.bootstrap_imported` marker → refuses calmly (INFO,
+  "steady state"). A genuinely unexpected non-empty target (a manually-configured
+  or in-use club) refuses at WARN.

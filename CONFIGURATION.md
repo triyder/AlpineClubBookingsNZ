@@ -1482,6 +1482,7 @@ rate-limited, or temporarily unavailable.
 | `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS` | Explicit migration safety override.                                   |
 | `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` | Required explanation when allowing a breaking migration.              |
 | `MIGRATION_SAFETY_LEDGER`              | Path to the migration safety ledger.                                  |
+| `CONFIG_BUNDLE_IMPORT_PATH`            | Optional. Path to a config-transfer bundle applied non-interactively on boot **only** when the database is empty of non-seed configuration (DR / clone provisioning, ADR-003). Fails closed on a non-empty target, a bad bundle, or an unreadable path, and never blocks startup. See "Config Bundle Auto-Import On Boot (DR / clone)" in `DEPLOYMENT.md`. |
 
 ## Staging And Accessibility
 

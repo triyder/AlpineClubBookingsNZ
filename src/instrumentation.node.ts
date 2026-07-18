@@ -67,6 +67,44 @@ export async function register() {
         "Boot-time config self-heal did not run (non-fatal)",
       );
     }
+
+    // #1988 (C9): boot-time config-bundle auto-import (ADR-003, DR / clone).
+    // Runs AFTER the self-heal. When CONFIG_BUNDLE_IMPORT_PATH names a readable
+    // bundle AND the database is empty of non-seed configuration, it applies the
+    // bundle non-interactively through the same validated import pipeline the
+    // admin route uses (untrusted-input validation, allowlist, DMMF type-checks,
+    // atomic upsert-only transaction, audit). It fails CLOSED — a non-empty
+    // target, a malformed bundle, or any I/O/apply failure refuses and writes
+    // nothing. Best-effort: `runConfigBootstrapImport` never throws, and this
+    // outer try/catch additionally guards the dynamic imports so a bootstrap
+    // bundle can never block or fail startup. A successful apply re-warms the
+    // identity/email caches primed earlier this boot so the imported values take
+    // effect immediately.
+    try {
+      const { prisma } = await import("./lib/prisma");
+      const { runConfigBootstrapImport } = await import(
+        "./lib/config-transfer/bootstrap-import"
+      );
+      const bootstrap = await runConfigBootstrapImport({ db: prisma });
+      if (bootstrap.outcome === "applied") {
+        try {
+          const { primeEmailPalette } = await import("./lib/email-theme");
+          const { primeClubIdentitySync } = await import(
+            "./lib/club-identity-settings"
+          );
+          await primeEmailPalette();
+          await primeClubIdentitySync();
+        } catch {
+          // Non-fatal: both caches self-warm on first use.
+        }
+      }
+    } catch (err) {
+      const { default: logger } = await import("./lib/logger");
+      logger.warn(
+        { err, scope: "config-bootstrap-import" },
+        "Boot-time config bundle auto-import did not run (non-fatal)",
+      );
+    }
   }
 
   if (process.env.NEXT_RUNTIME === "edge") {
