@@ -121,6 +121,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     currentAndFutureSeasons,
     existingTypeSeasonRates,
     configuredAgeTiers,
+    basedOnAgeTierTypes,
   ] = await Promise.all([
     prisma.membershipType.findMany({
       where: { isActive: true, bookingBehavior: "MEMBER_RATE" },
@@ -138,9 +139,30 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     // so the rate-gap check must demand rate rows for THOSE tiers, not the full
     // built-in four, or a valid subset club is falsely told it is missing
     // INFANT/YOUTH rates. Empty (unconfigured) → let the check use its default.
-    prisma.ageTierSetting.findMany({ select: { tier: true } }),
+    // Also carries subscriptionRequiredForBooking for the #2041
+    // BASED_ON_AGE_TIER soft-check.
+    prisma.ageTierSetting.findMany({
+      select: { tier: true, subscriptionRequiredForBooking: true },
+    }),
+    // #2041 misconfig soft-check: active types deferring their subscription
+    // answer to the age tier.
+    prisma.membershipType.findMany({
+      where: { isActive: true, subscriptionBehavior: "BASED_ON_AGE_TIER" },
+      select: { name: true },
+    }),
   ]);
   const bookableAgeTiers = configuredAgeTiers.map((row) => row.tier);
+  // Flag a BASED_ON_AGE_TIER type only when age tiers ARE configured (≥1 row)
+  // yet none require a subscription — then the type can never invoice or lock
+  // anyone. When the table is empty the runtime falls back to defaults (Youth/
+  // Adult require), so it is not a misconfig and we leave the list empty.
+  const anyTierRequiresSubscription = configuredAgeTiers.some(
+    (row) => row.subscriptionRequiredForBooking,
+  );
+  const basedOnAgeTierTypesWithoutSubscribingTier =
+    configuredAgeTiers.length > 0 && !anyTierRequiresSubscription
+      ? basedOnAgeTierTypes.map((type) => type.name)
+      : [];
   const membershipTypeRateGaps = computeMembershipTypeRateGaps({
     types: memberRateTypes,
     seasons: currentAndFutureSeasons,
@@ -188,6 +210,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     membershipTypeRateGaps,
+    basedOnAgeTierTypesWithoutSubscribingTier,
     defaultLodgeCapacity,
     clubIdentityName,
     configuredCapacity: lodgeSettings?.capacity ?? null,

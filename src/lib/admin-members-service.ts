@@ -769,10 +769,22 @@ export async function listAdminMembers(
     const currentMembershipType = currentSeasonAssignment?.membershipType ?? null;
     const membershipTypeNotRequired =
       currentMembershipType?.subscriptionBehavior === "NOT_REQUIRED";
+    // #2041: a BASED_ON_AGE_TIER type defers its subscription answer to the
+    // per-age-tier flag, but a NOT_REQUIRED current-season row is authoritative
+    // and dominates the stored ageTier (mirrors the booking resolver / sweep).
+    // Without this, a manual mid-season tier promotion (Child -> Youth) would
+    // leave the row NOT_REQUIRED yet flip this list flag to required, disagreeing
+    // with the booking gate. The current-season row is already selected per
+    // member above (m.subscriptions[0]), so this adds no query. Scoped to
+    // BASED_ON_AGE_TIER so REQUIRED/NOT_REQUIRED types are byte-unchanged.
+    const ageTierNotRequiredRow =
+      currentMembershipType?.subscriptionBehavior === "BASED_ON_AGE_TIER" &&
+      m.subscriptions?.[0]?.status === "NOT_REQUIRED";
     const subscriptionNotRequired =
       roleNeverRequiresSubscription(m.role) ||
       notRequiredAgeTiers.has(m.ageTier) ||
-      membershipTypeNotRequired;
+      membershipTypeNotRequired ||
+      ageTierNotRequiredRow;
 
     return {
       ...m,

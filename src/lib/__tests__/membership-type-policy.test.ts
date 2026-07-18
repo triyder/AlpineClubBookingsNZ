@@ -33,7 +33,7 @@ type PolicyType = {
   isActive: boolean;
   isBuiltIn: boolean;
   bookingBehavior: "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
-  subscriptionBehavior: "REQUIRED" | "NOT_REQUIRED";
+  subscriptionBehavior: "REQUIRED" | "NOT_REQUIRED" | "BASED_ON_AGE_TIER";
 };
 
 const fullType: PolicyType = {
@@ -326,6 +326,78 @@ describe("membership type booking and subscription policy", () => {
         ageTier: "ADULT",
       }),
     ).resolves.toBe(false);
+  });
+
+  describe("BASED_ON_AGE_TIER booking gate (#2041)", () => {
+    const ageTierType: PolicyType = {
+      id: "type-full",
+      key: "FULL",
+      name: "Full",
+      isActive: true,
+      isBuiltIn: true,
+      bookingBehavior: "MEMBER_RATE",
+      subscriptionBehavior: "BASED_ON_AGE_TIER",
+    };
+
+    // requiresPaidSubscriptionForBooking is mocked to always return true, so a
+    // BASED_ON_AGE_TIER member with no NOT_REQUIRED row defers to it (required).
+    function makeDbWithSubscription(notRequiredRow: { id: string } | null) {
+      const findFirst = vi.fn(async () => notRequiredRow);
+      const db = {
+        ...makePolicyDb({
+          members: [makeMember()],
+          assignments: [
+            { memberId: "member-1", seasonYear: 2026, membershipType: ageTierType },
+          ],
+        }),
+        memberSubscription: { findFirst },
+      };
+      return { db, findFirst };
+    }
+
+    it("defers to the per-age-tier flag when no NOT_REQUIRED row exists", async () => {
+      const { db, findFirst } = makeDbWithSubscription(null);
+      await expect(
+        requiresPaidSubscriptionForMemberForBooking(db, {
+          memberId: "member-1",
+          seasonYear: 2026,
+          ageTier: "YOUTH",
+        }),
+      ).resolves.toBe(true);
+      expect(findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it("a NOT_REQUIRED season row dominates even when the stored tier would require one (mid-season age-up)", async () => {
+      const { db } = makeDbWithSubscription({ id: "sub-1" });
+      await expect(
+        requiresPaidSubscriptionForMemberForBooking(db, {
+          memberId: "member-1",
+          seasonYear: 2026,
+          ageTier: "YOUTH",
+        }),
+      ).resolves.toBe(false);
+    });
+
+    it("REQUIRED types never query the subscription row (byte-unchanged path)", async () => {
+      const findFirst = vi.fn(async () => null);
+      const db = {
+        ...makePolicyDb({
+          members: [makeMember()],
+          assignments: [
+            { memberId: "member-1", seasonYear: 2026, membershipType: fullType },
+          ],
+        }),
+        memberSubscription: { findFirst },
+      };
+      await expect(
+        requiresPaidSubscriptionForMemberForBooking(db, {
+          memberId: "member-1",
+          seasonYear: 2026,
+          ageTier: "ADULT",
+        }),
+      ).resolves.toBe(true);
+      expect(findFirst).not.toHaveBeenCalled();
+    });
   });
 });
 

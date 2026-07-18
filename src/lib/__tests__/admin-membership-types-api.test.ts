@@ -308,6 +308,26 @@ describe("Admin membership types API", () => {
     });
   });
 
+  it("accepts BASED_ON_AGE_TIER end-to-end through zod into the create (#2041)", async () => {
+    const response = await createMembershipType(
+      request("http://localhost/api/admin/membership-types", {
+        name: "Age banded",
+        bookingBehavior: "MEMBER_RATE",
+        subscriptionBehavior: "BASED_ON_AGE_TIER",
+        allowedAgeTiers: ["INFANT", "CHILD", "YOUTH", "ADULT"],
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocks.membershipTypeCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          subscriptionBehavior: "BASED_ON_AGE_TIER",
+        }),
+      }),
+    );
+  });
+
   it("rejects creating a case-insensitive duplicate membership type name", async () => {
     mocks.membershipTypeFindFirst.mockResolvedValueOnce({
       id: "type-social",

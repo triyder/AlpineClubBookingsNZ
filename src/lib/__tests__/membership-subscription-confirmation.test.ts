@@ -135,6 +135,64 @@ describe("membership subscription confirmation", () => {
     }));
   });
 
+  describe("BASED_ON_AGE_TIER tier-exempt members (#2041)", () => {
+    it("creates a NOT_REQUIRED season row and no charge / no Xero op for an exempt tier", async () => {
+      mocks.memberFindMany.mockResolvedValue([{
+        id: "child-1", firstName: "Kid", lastName: "One", email: "kid@example.test",
+        role: "USER", dateOfBirth: null, ageTier: "CHILD", billingFamilyGroupId: null,
+        seasonalMembershipAssignments: [{ membershipType: {
+          id: "type-1", key: "FULL", name: "Full", subscriptionBehavior: "BASED_ON_AGE_TIER",
+        } }], familyGroupMemberships: [],
+      }]);
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+      });
+      expect(preview.exemptMemberIds).toEqual(["child-1"]);
+      expect(preview.entries).toEqual([]);
+
+      const result = await confirmSubscriptionBillingPreview({
+        preview,
+        expectedConfirmationToken: preview.confirmationToken,
+        source: "ANNUAL_BATCH",
+      });
+      expect(result.chargeIds).toEqual([]);
+      expect(mocks.chargeUpsert).not.toHaveBeenCalled();
+      expect(mocks.operationCreate).not.toHaveBeenCalled();
+      expect(mocks.subscriptionUpsert).toHaveBeenCalledWith({
+        where: { memberId_seasonYear: { memberId: "child-1", seasonYear: 2026 } },
+        update: {},
+        create: { memberId: "child-1", seasonYear: 2026, status: "NOT_REQUIRED" },
+      });
+    });
+
+    it("never rewrites an already-PAID member (no upsert, no charge) — history intact", async () => {
+      mocks.memberFindMany.mockResolvedValue([{
+        id: "paid-child", firstName: "Paid", lastName: "Kid", email: "paidkid@example.test",
+        role: "USER", dateOfBirth: null, ageTier: "CHILD", billingFamilyGroupId: null,
+        seasonalMembershipAssignments: [{ membershipType: {
+          id: "type-1", key: "FULL", name: "Full", subscriptionBehavior: "BASED_ON_AGE_TIER",
+        } }], familyGroupMemberships: [],
+      }]);
+      // Already PAID for the season (manual mark-paid): excluded from the sweep
+      // entirely, so they are never listed exempt and never re-upserted.
+      mocks.subscriptionFindMany.mockResolvedValue([{ memberId: "paid-child" }]);
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+      });
+      expect(preview.exemptMemberIds).toEqual([]);
+
+      await confirmSubscriptionBillingPreview({
+        preview,
+        expectedConfirmationToken: preview.confirmationToken,
+        source: "ANNUAL_BATCH",
+      });
+      expect(mocks.subscriptionUpsert).not.toHaveBeenCalled();
+      expect(mocks.chargeUpsert).not.toHaveBeenCalled();
+    });
+  });
+
   it("raises the interactive transaction timeout above Prisma's 5s default for whole-club batch runs (#1886)", async () => {
     const preview = await buildSubscriptionBillingPreview({
       seasonYear: 2026,

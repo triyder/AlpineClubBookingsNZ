@@ -5,10 +5,17 @@ import type {
   MembershipSubscriptionChargeSource,
   Prisma,
 } from "@prisma/client";
+import {
+  computeAgeTierWithSettings,
+  getAgeTierSettings,
+  getSeasonStartDate,
+  type AgeTierSettingData,
+} from "@/lib/age-tier";
 import { createAuditLog } from "@/lib/audit";
 import { getEffectiveMembershipAnnualFee, getFamilyBillingMode } from "@/lib/authoritative-fees";
 import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
 import { getSeasonStartMonth } from "@/lib/financial-year";
+import { requiresPaidSubscriptionForAgeTier } from "@/lib/member-subscription-eligibility";
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole } from "@/lib/membership-types";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
@@ -91,6 +98,15 @@ export type SubscriptionBillingPreview = {
   entries: SubscriptionBillingPlanEntry[];
   exceptions: SubscriptionBillingPlanException[];
   alreadyCoveredMemberIds: string[];
+  // Members skipped by a BASED_ON_AGE_TIER type because their season-start age
+  // tier does not require a subscription (issue #2041). They mint no charge and
+  // no Xero op; confirm upserts a NOT_REQUIRED MemberSubscription row for them
+  // so their booking status stays consistent with billing (decision Q4). Not
+  // part of the confirmation token — the set is derived deterministically from
+  // members, age-tier settings, and per-type fees, so the in-transaction
+  // re-preview reproduces it, and clubs with no BASED_ON_AGE_TIER type keep a
+  // byte-identical token (always []).
+  exemptMemberIds: string[];
   totalCents: number;
   confirmationToken: string;
 };
@@ -250,6 +266,10 @@ export async function buildSubscriptionBillingPreview(input: {
         lastName: true,
         email: true,
         role: true,
+        // #2041: DOB drives the season-start age tier for BASED_ON_AGE_TIER
+        // liability; ageTier is the fail-closed fallback when DOB is unknown.
+        dateOfBirth: true,
+        ageTier: true,
         billingFamilyGroupId: true,
         seasonalMembershipAssignments: {
           where: { seasonYear: input.seasonYear },
@@ -326,6 +346,18 @@ export async function buildSubscriptionBillingPreview(input: {
   const exceptions: SubscriptionBillingPlanException[] = [];
   const familyGroups = new Map<string, SubscriptionBillingPlanEntry>();
   const decisionDateOnly = formatDateOnly(decisionDate);
+  // #2041: members skipped because a BASED_ON_AGE_TIER type + their season-start
+  // tier is not subscription-liable. Age-tier settings are lazy-loaded once (and
+  // only when a BASED_ON_AGE_TIER type is actually encountered) so clubs without
+  // the feature pay no extra read.
+  const exemptMemberIds = new Set<string>();
+  let ageTierSettingsCache: AgeTierSettingData[] | null = null;
+  const getAgeTierSettingsMemoized = async () => {
+    if (!ageTierSettingsCache) {
+      ageTierSettingsCache = await getAgeTierSettings();
+    }
+    return ageTierSettingsCache;
+  };
 
   for (const member of members) {
     if (coveredSet.has(member.id) || paidSet.has(member.id)) continue;
@@ -353,6 +385,36 @@ export async function buildSubscriptionBillingPreview(input: {
         context: { memberName, decisionDate: decisionDateOnly },
       }));
       continue;
+    }
+    // #2041: BASED_ON_AGE_TIER defers per-member liability to the season-start
+    // age tier. Only PER_MEMBER fees vary by tier — a PER_FAMILY fee bills the
+    // family once regardless of any exempt child (decision Q5), so it is left on
+    // the unchanged family path below. NO_INVOICE fees already mint a zero
+    // charge + NOT_REQUIRED row, so they need no special handling here either.
+    if (
+      membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER" &&
+      fee.billingBasis === "PER_MEMBER"
+    ) {
+      const ageTierSettings = await getAgeTierSettingsMemoized();
+      // Liability tier = age at the START of the club financial year (season
+      // start = 1st of the FY start month), derived from DOB so mid-season
+      // birthdays never change that season's liability (decision Q3; e.g.
+      // youth-from-10 with an Apr-start year: a 31 Mar 10th birthday stays a
+      // Child all season, a 1 Apr 10th birthday is a Youth that season).
+      // Members without a DOB fall back to their stored tier (ADULT default) —
+      // fail-closed / required.
+      const seasonStartTier = member.dateOfBirth
+        ? computeAgeTierWithSettings(
+            member.dateOfBirth,
+            getSeasonStartDate(input.seasonYear),
+            ageTierSettings,
+          )
+        : member.ageTier;
+      if (!requiresPaidSubscriptionForAgeTier(seasonStartTier, ageTierSettings)) {
+        // Skip the charge; confirm upserts a NOT_REQUIRED season row (Q4).
+        exemptMemberIds.add(member.id);
+        continue;
+      }
     }
     const calculated = calculateMembershipCharge({
       annualAmountCents: fee.amountCents,
@@ -576,6 +638,7 @@ export async function buildSubscriptionBillingPreview(input: {
     entries,
     exceptions,
     alreadyCoveredMemberIds: [...coveredSet].sort(),
+    exemptMemberIds: [...exemptMemberIds].sort(),
     totalCents: entries.reduce((sum, entry) => sum + entry.chargedAmountCents, 0),
     confirmationToken: digest(tokenPayload),
   };
@@ -770,6 +833,29 @@ export async function confirmSubscriptionBillingPreview(input: {
           store: tx,
         });
       }
+    }
+    // #2041: give each BASED_ON_AGE_TIER tier-exempt member a NOT_REQUIRED
+    // season row (decision Q4) so their booking status stays consistent with
+    // billing even if the stored tier is promoted mid-season. Uses the fresh
+    // in-transaction preview, so members that became PAID/covered since the
+    // admin previewed are already excluded. upsert with an empty update NEVER
+    // overwrites an existing row (PAID/history stays intact — history-intact
+    // invariant), so re-runs are no-ops. No charge and no Xero op are created.
+    for (const exemptMemberId of preview.exemptMemberIds) {
+      await tx.memberSubscription.upsert({
+        where: {
+          memberId_seasonYear: {
+            memberId: exemptMemberId,
+            seasonYear: preview.seasonYear,
+          },
+        },
+        update: {},
+        create: {
+          memberId: exemptMemberId,
+          seasonYear: preview.seasonYear,
+          status: "NOT_REQUIRED",
+        },
+      });
     }
     if (input.confirmedByMemberId) {
       await createAuditLog({

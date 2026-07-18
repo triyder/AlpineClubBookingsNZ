@@ -73,6 +73,12 @@ export interface SetupDatabaseSnapshot {
   // for that type on some (or all) of those dates hard-throws at pricing, so
   // the Seasons And Rates step drops to a warning.
   membershipTypeRateGaps?: string[];
+  // Misconfig soft-check (#2041): names of ACTIVE membership types set to
+  // "subscription required based on age tier" while NO configured age tier
+  // actually requires a subscription — such a type can never invoice or lock
+  // anyone, so the Age And Membership Rules step drops to a warning. Empty (or
+  // undefined for older callers / no DB) means no misconfig.
+  basedOnAgeTierTypesWithoutSubscribingTier?: string[];
   // DB-first club-config gate (#1987, C8): the club's persisted identity name
   // (ClubIdentitySettings.name, else EmailMessageSetting.clubName), and the
   // admin-set default-lodge capacity (LodgeSettings.capacity). A truthy
@@ -816,7 +822,7 @@ function buildAgeTierCheck(
         id: "age-tiers",
         title: "Age And Membership Rules",
         description:
-          "Age boundaries and whether each age tier needs a subscription to book.",
+          "Age boundaries and whether each age tier needs a subscription (which gates both booking and annual-fee invoicing for membership types set to require a subscription based on age tier).",
         status: "warning",
         required: true,
         message: "Database age-tier settings were not checked.",
@@ -845,21 +851,34 @@ function buildAgeTierCheck(
   const configExpected =
     club.config?.ageTiers.length ?? bookableAgeTierEnum.options.length;
   const expected = configured ? actual : configExpected;
-  const complete = configured;
+  // #2041 misconfig: a membership type set to "required based on age tier"
+  // while no configured tier requires a subscription can never invoice or lock
+  // anyone. Soft warning (does not block setup) naming the offending types so an
+  // operator can fix either a tier flag or the type behavior.
+  const misconfiguredTypes = db?.basedOnAgeTierTypesWithoutSubscribingTier ?? [];
+  const hasMisconfig = misconfiguredTypes.length > 0;
+  const complete = configured && !hasMisconfig;
   return applyProgress(
     {
       id: "age-tiers",
       title: "Age And Membership Rules",
       description:
-        "Age boundaries and whether each age tier needs a subscription to book.",
+        "Age boundaries and whether each age tier needs a subscription (which gates both booking and annual-fee invoicing for membership types set to require a subscription based on age tier).",
       status: complete ? "complete" : "warning",
       required: true,
-      message: complete
-        ? "Database age-tier settings are populated."
-        : "Seed or review age-tier settings before member imports.",
+      message: !configured
+        ? "Seed or review age-tier settings before member imports."
+        : hasMisconfig
+          ? `${misconfiguredTypes.join(", ")} require a subscription based on age tier, but no age tier requires one — no member of ${misconfiguredTypes.length === 1 ? "this type" : "these types"} would be invoiced or locked out.`
+          : "Database age-tier settings are populated.",
       details: [
         `Expected age tiers: ${expected || "unknown"}`,
         `Database age-tier settings: ${actual}`,
+        ...(hasMisconfig
+          ? [
+              `Age-tier subscription types with no subscribing tier: ${misconfiguredTypes.join(", ")}`,
+            ]
+          : []),
       ],
       href: "/admin/age-tier-settings",
     },

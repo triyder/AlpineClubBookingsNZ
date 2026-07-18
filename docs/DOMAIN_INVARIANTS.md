@@ -78,16 +78,38 @@ Future reviews and issues should cite this file when proposing changes.
 - Membership approval remains authoritative when billing setup is incomplete:
   billing records a visible post-approval exception/warning and never rolls the
   member transaction back.
-- **Paid-up semantics (three sources, one meaning).** A member counts as
-  paid-up when EITHER their membership-type policy `subscriptionBehavior` is
-  `NOT_REQUIRED` (Life/honorary/operational — no subscription row needed) OR
-  their current-season `MemberSubscription.status` is `PAID`. Booking
-  (`findUnpaidMemberGuests`), nomination eligibility (`verifyNominator`), and the
-  member-facing `/api/member/subscription-status` all resolve paid-up from these
-  same two facts. Nomination deliberately honours ONLY the membership-type
+- **Paid-up semantics (one meaning, three facts).** A member counts as paid-up
+  (not owing a subscription) when ANY of: their membership-type policy
+  `subscriptionBehavior` is `NOT_REQUIRED` (Life/honorary/operational — no
+  subscription row needed); their current-season `MemberSubscription.status` is
+  `PAID`; OR their type is `BASED_ON_AGE_TIER` and their age tier does not
+  require a subscription — which, once the annual-fee sweep has run, is recorded
+  as a NOT_REQUIRED current-season `MemberSubscription` row that is thereafter
+  authoritative (the third fact, #2041). Booking (`findUnpaidMemberGuests`),
+  nomination eligibility (`verifyNominator`), the member-facing
+  `/api/member/subscription-status`, the admin members-list flag
+  (`admin-members-service`), and the Xero sync (`checkMembershipStatus`) all
+  resolve paid-up from these same facts. Before the sweep writes the row there is
+  a pre-sweep window in which a `BASED_ON_AGE_TIER` exempt member has no row yet;
+  every surface still reads exempt because the tier-flag check is the same fallback
+  the sweep uses, and once the row exists the members-list and Xero-sync surfaces
+  consult it so a manual mid-season tier promotion can never make them disagree
+  with the booking gate. Nomination deliberately honours ONLY the membership-type
   `NOT_REQUIRED` rule, NOT the booking side's junior age-tier subscription
   exemption (`requiresPaidSubscriptionForAgeTier`): nominating is an adult-member
   act and widening it to un-subscribed junior tiers is an owner policy decision.
+  A third `subscriptionBehavior`, `BASED_ON_AGE_TIER` (#2041), defers the
+  subscription-required answer to the per-age-tier
+  `AgeTierSetting.subscriptionRequiredForBooking` flag — the SAME flag that gates
+  booking-lockout — so it is the single source of truth for both booking-lockout
+  and annual-fee invoice minting. Under it, the billing sweep skips a member
+  whose age tier AT THE START OF THE SEASON (the club financial year, derived
+  from DOB; stored tier as the fail-closed fallback when DOB is unknown) does not
+  require a subscription, and writes that member a NOT_REQUIRED
+  `MemberSubscription` row for the season. That NOT_REQUIRED status row is then
+  authoritative and dominates in the booking resolvers: it keeps booking status
+  consistent with billing even if the member's stored age tier is later promoted
+  mid-season. `REQUIRED` and `NOT_REQUIRED` type behavior is byte-unchanged.
 - **Manual mark-paid provenance (non-Xero clubs / cash).** `status = "PAID"` can
   be set outside the Xero pipeline by an audited finance:edit action, recorded by
   `manuallyMarkedPaidAt` / `manuallyMarkedPaidByMemberId` / `manualPaymentNote`.

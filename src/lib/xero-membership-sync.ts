@@ -28,6 +28,7 @@ import { getSeasonStartMonth } from "@/lib/financial-year";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
 import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
+import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";
 import {
   getXeroSyncCursor,
   getXeroSyncCursorMetadata,
@@ -476,8 +477,27 @@ export async function checkMembershipStatus(
     };
   }
 
+  // #2041: BASED_ON_AGE_TIER dominance. If the sweep already wrote a
+  // NOT_REQUIRED row for this season (the member was tier-exempt at season
+  // start) AND their current-season type defers to the age tier, that row is
+  // authoritative: a later manual mid-season tier promotion must not let a Xero
+  // sync re-mark them required and re-mint an invoice. The type is only resolved
+  // when a NOT_REQUIRED row actually exists (short-circuit), so the common path
+  // adds no query, and REQUIRED/NOT_REQUIRED types never reach this branch. The
+  // not-required outcome flows through the SAME writeXeroDerivedSubscriptionState
+  // NOT_REQUIRED path below, so Xero op shapes are byte-unchanged.
+  const ageTierNotRequiredRow =
+    manualPaidGuard?.status === "NOT_REQUIRED" &&
+    (
+      await resolveMembershipTypePolicyForMember(prisma, {
+        memberId,
+        seasonYear: year,
+      })
+    )?.subscriptionBehavior === "BASED_ON_AGE_TIER";
+
   const subscriptionRequired =
     !roleNeverRequiresSubscription(member.role) &&
+    !ageTierNotRequiredRow &&
     (await requiresPaidSubscriptionForAgeTierFromSettings(member.ageTier));
 
   if (!subscriptionRequired) {

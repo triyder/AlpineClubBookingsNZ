@@ -47,6 +47,7 @@ const preview = {
   entries: [],
   exceptions: [],
   alreadyCoveredMemberIds: [],
+  exemptMemberIds: [],
   totalCents: 0,
   confirmationToken: "a".repeat(64),
 };

@@ -739,6 +739,65 @@ describe("Phase 3: Admin Member Management", () => {
       expect(body.members[0].subscriptionXeroInvoiceId).toBe("inv-1");
     });
 
+    describe("BASED_ON_AGE_TIER subscription flag (#2041)", () => {
+      function ageTierMember(opts: {
+        subscriptionBehavior: string;
+        ageTier: string;
+        subscriptionStatus: string;
+      }) {
+        return {
+          id: "at-1", firstName: "Age", lastName: "Tier", email: "at@test.com",
+          phoneCountryCode: null, phoneAreaCode: null, phoneNumber: null,
+          dateOfBirth: null, role: "USER", financeAccessLevel: "NONE",
+          ageTier: opts.ageTier, active: true, canLogin: true, xeroContactId: null,
+          joinedDate: null, createdAt: new Date("2025-01-01"), forcePasswordChange: false,
+          passwordChangedAt: null, lastLoginAt: null,
+          streetAddressLine1: null, streetAddressLine2: null, streetCity: null,
+          streetRegion: null, streetPostalCode: null, streetCountry: null,
+          postalAddressLine1: null, postalAddressLine2: null, postalCity: null,
+          postalRegion: null, postalPostalCode: null, postalCountry: null,
+          familyGroupMemberships: [],
+          subscriptions: [{ status: opts.subscriptionStatus, seasonYear: 2026, xeroInvoiceId: null }],
+          seasonalMembershipAssignments: [{
+            membershipType: {
+              id: "type-1", key: "FULL", name: "Full", isActive: true,
+              subscriptionBehavior: opts.subscriptionBehavior,
+            },
+          }],
+          passwordResetTokens: [],
+        };
+      }
+
+      async function statusFor(member: unknown) {
+        mockedAuth.mockResolvedValue(adminSession);
+        vi.mocked(prisma.member.findMany).mockResolvedValue([member] as any);
+        mockSessionAndMemberListCounts(1);
+        const res = await getMembers(new NextRequest("http://localhost/api/admin/members"));
+        const body = await res.json();
+        return body.members[0].subscriptionStatus;
+      }
+
+      it("a NOT_REQUIRED row dominates a subscription-requiring stored tier (mid-season promotion)", async () => {
+        // Youth requires a subscription, but the exempt-at-season-start member
+        // carries a NOT_REQUIRED row — the list must agree with the booking gate.
+        expect(await statusFor(ageTierMember({
+          subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "YOUTH", subscriptionStatus: "NOT_REQUIRED",
+        }))).toBe("NOT_REQUIRED");
+      });
+
+      it("defers to the age-tier flag when there is no NOT_REQUIRED row", async () => {
+        expect(await statusFor(ageTierMember({
+          subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "YOUTH", subscriptionStatus: "NOT_INVOICED",
+        }))).toBe("NOT_INVOICED");
+      });
+
+      it("REQUIRED types are byte-unchanged (dominance branch never fires)", async () => {
+        expect(await statusFor(ageTierMember({
+          subscriptionBehavior: "REQUIRED", ageTier: "YOUTH", subscriptionStatus: "NOT_INVOICED",
+        }))).toBe("NOT_INVOICED");
+      });
+    });
+
   });
 
   // ── A3: CSV Export ──

@@ -303,4 +303,46 @@ describe("AdminMembershipTypesPage", () => {
     },
     10000,
   );
+
+  it("labels a BASED_ON_AGE_TIER type and shows the age-tier helper text in the editor (#2041)", async () => {
+    // Custom list with a type that defers its subscription answer to the age
+    // tier. Overrides only the list endpoint; other endpoints keep the default.
+    const ageTierType = {
+      id: "type-ageband",
+      key: "FULL",
+      name: "Full Member",
+      description: "Age-banded full membership.",
+      isActive: true,
+      isBuiltIn: false,
+      bookingBehavior: "MEMBER_RATE",
+      subscriptionBehavior: "BASED_ON_AGE_TIER",
+      sortOrder: 0,
+      assignmentCount: 5,
+      allowedAgeTiers: ["INFANT", "CHILD", "YOUTH", "ADULT"],
+      xeroContactGroupRules: [],
+    };
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/admin/xero/contact-groups")) {
+        return jsonResponse({ groups: [] });
+      }
+      if (url === "/api/admin/membership-types") {
+        return jsonResponse({ membershipTypes: [ageTierType] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    render(<AdminMembershipTypesPage />);
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Subscription required based on age tier"),
+      ).not.toBeNull(),
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    const helperLink = await screen.findByRole("link", {
+      name: "age tier settings",
+    });
+    expect(helperLink.getAttribute("href")).toBe("/admin/age-tier-settings");
+  });
 });

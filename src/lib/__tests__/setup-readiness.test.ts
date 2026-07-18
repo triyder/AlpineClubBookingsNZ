@@ -246,6 +246,40 @@ describe("setup-readiness", () => {
     expect(ageCheck?.details).toContain("Database age-tier settings: 2");
   });
 
+  it("warns when a BASED_ON_AGE_TIER type exists but no tier requires a subscription (#2041 misconfig)", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        basedOnAgeTierTypesWithoutSubscribingTier: ["Full", "Family"],
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+    const bookingCategory = readiness.categories.find((c) => c.id === "booking");
+    const ageCheck = bookingCategory?.checks.find((c) => c.id === "age-tiers");
+    expect(ageCheck?.status).toBe("warning");
+    expect(ageCheck?.message).toContain("Full, Family");
+    expect(ageCheck?.details).toContain(
+      "Age-tier subscription types with no subscribing tier: Full, Family",
+    );
+  });
+
+  it("stays complete when the age-tier configuration is fine (no #2041 misconfig)", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        basedOnAgeTierTypesWithoutSubscribingTier: [],
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+    const bookingCategory = readiness.categories.find((c) => c.id === "booking");
+    const ageCheck = bookingCategory?.checks.find((c) => c.id === "age-tiers");
+    expect(ageCheck?.status).toBe("complete");
+  });
+
   it("still warns when the age-tier table is empty (pre-config) (#2009)", () => {
     const readiness = buildSetupReadiness({
       env: baseEnv,

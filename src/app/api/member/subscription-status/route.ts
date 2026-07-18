@@ -63,7 +63,14 @@ export async function GET() {
       ? "ROLE_NOT_REQUIRED"
       : membershipTypePolicy?.subscriptionBehavior === "NOT_REQUIRED"
         ? "MEMBERSHIP_TYPE_NOT_REQUIRED"
-        : "LOCKOUT_DISABLED_OR_AGE_TIER_NOT_REQUIRED";
+        // BASED_ON_AGE_TIER (issue #2041): the type defers to the per-age-tier
+        // flag; when the member's tier does not require a subscription (or a
+        // NOT_REQUIRED season row dominates), report the age-tier reason so the
+        // member sees "not required for your age tier" rather than the generic
+        // lockout-disabled bucket.
+        : membershipTypePolicy?.subscriptionBehavior === "BASED_ON_AGE_TIER"
+          ? "MEMBERSHIP_TYPE_AGE_TIER_NOT_REQUIRED"
+          : "LOCKOUT_DISABLED_OR_AGE_TIER_NOT_REQUIRED";
 
   return NextResponse.json({
     status: effectiveStatus,

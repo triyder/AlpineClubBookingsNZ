@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
@@ -48,7 +49,7 @@ import {
 } from "@/components/admin/view-only-action";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
-type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED";
+type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED" | "BASED_ON_AGE_TIER";
 type AgeTier = string;
 
 interface MembershipType {
@@ -115,6 +116,7 @@ const bookingBehaviorLabels: Record<BookingBehavior, string> = {
 const subscriptionBehaviorLabels: Record<SubscriptionBehavior, string> = {
   REQUIRED: "Subscription required",
   NOT_REQUIRED: "Subscription not required",
+  BASED_ON_AGE_TIER: "Subscription required based on age tier",
 };
 
 const knownAgeTierOrder = ["INFANT", "CHILD", "YOUTH", "ADULT"];
@@ -553,6 +555,22 @@ function MembershipTypeEditorDialog({
                       )}
                     </SelectContent>
                   </Select>
+                  {draft.subscriptionBehavior === "BASED_ON_AGE_TIER" ? (
+                    <p className="text-sm text-slate-500">
+                      Each member&apos;s subscription requirement is taken from
+                      their age tier. Set which tiers need a subscription on the{" "}
+                      <Link
+                        href="/admin/age-tier-settings"
+                        className="font-medium text-slate-700 underline"
+                      >
+                        age tier settings
+                      </Link>{" "}
+                      page (typically Youth and Adult require one; Child and
+                      Infant do not). A member&apos;s age tier for the whole
+                      season is fixed by their age at the start of the club
+                      financial year.
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </section>

@@ -18,6 +18,7 @@ export const MEMBERSHIP_TYPE_BOOKING_BEHAVIORS = [
 export const MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS = [
   "REQUIRED",
   "NOT_REQUIRED",
+  "BASED_ON_AGE_TIER",
 ] as const satisfies readonly MembershipTypeSubscriptionBehavior[];
 
 export const MEMBERSHIP_TYPE_AGE_TIERS = [

@@ -114,7 +114,21 @@ export async function findUnpaidMemberGuests(
       if (policy?.subscriptionBehavior === "NOT_REQUIRED") {
         return false;
       }
-      return subscriptionById.get(id)?.status !== "PAID"
+      const subscription = subscriptionById.get(id);
+      // BASED_ON_AGE_TIER (issue #2041): a NOT_REQUIRED season row is
+      // authoritative for a tier-exempt member and dominates their stored
+      // ageTier, so a member who was exempt at season start stays not-billable
+      // even if their stored tier is promoted mid-season (decision Q4). Scoped
+      // to BASED_ON_AGE_TIER so REQUIRED types are byte-unchanged.
+      if (
+        policy?.subscriptionBehavior === "BASED_ON_AGE_TIER" &&
+        subscription?.status === "NOT_REQUIRED"
+      ) {
+        return false;
+      }
+      // BASED_ON_AGE_TIER otherwise defers to the same per-age-tier flag as
+      // REQUIRED (decision Q2), so both fall through to this age-tier check.
+      return subscription?.status !== "PAID"
         && (!memberById.has(id)
           || requiresPaidSubscriptionForAgeTier(
             memberById.get(id)!.ageTier,

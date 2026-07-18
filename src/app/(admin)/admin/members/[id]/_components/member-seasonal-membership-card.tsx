@@ -29,7 +29,7 @@ import type {
 } from "../_types";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
-type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED";
+type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED" | "BASED_ON_AGE_TIER";
 
 interface MembershipTypesResponse {
   membershipTypes: MembershipTypeSummary[];
@@ -103,6 +103,7 @@ const bookingBehaviorLabels: Record<BookingBehavior, string> = {
 const subscriptionBehaviorLabels: Record<SubscriptionBehavior, string> = {
   REQUIRED: "Required",
   NOT_REQUIRED: "Not required",
+  BASED_ON_AGE_TIER: "Based on age tier",
 };
 
 const EMPTY_SEASONAL_ASSIGNMENTS: SeasonalMembershipAssignmentSummary[] = [];

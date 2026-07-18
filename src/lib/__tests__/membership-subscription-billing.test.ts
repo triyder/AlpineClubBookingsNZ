@@ -564,4 +564,155 @@ describe("membership subscription billing", () => {
       expect(preview.exceptions[0]).toMatchObject({ code: "FAMILY_ALREADY_BILLED", familyGroupId: "family-B" });
     });
   });
+
+  describe("BASED_ON_AGE_TIER per-tier liability (#2041)", () => {
+    // Local-Date DOBs so computeAge compares calendar components against the
+    // season-start reference (also a local Date) TZ-independently. Season 2026
+    // FY starts 1 Apr 2026 with the default (Mar) year end; age-tier settings
+    // fall back to the built-in defaults (INFANT/CHILD exempt, YOUTH/ADULT
+    // require) because the prisma mock has no ageTierSetting delegate.
+    function ageTierMember(
+      id: string,
+      overrides: { dateOfBirth?: Date | null; ageTier?: string } = {},
+      typeOverrides: Record<string, unknown> = {},
+    ) {
+      return member(id, {
+        dateOfBirth: overrides.dateOfBirth ?? null,
+        ageTier: overrides.ageTier ?? "ADULT",
+        seasonalMembershipAssignments: [{
+          membershipType: {
+            id: "type-full",
+            key: "FULL",
+            name: "Full",
+            subscriptionBehavior: "BASED_ON_AGE_TIER",
+            annualFees: [fee()],
+            ...typeOverrides,
+          },
+        }],
+      });
+    }
+
+    it("charges a Youth-at-season-start and skips a Child-at-season-start (owner boundary: 01 Apr vs 31 Mar 10th birthday)", async () => {
+      mocks.members.findMany.mockResolvedValue([
+        // Turns 10 on 01 Apr -> Youth for the whole 2026 season -> required.
+        ageTierMember("youth-01apr", { dateOfBirth: new Date(2016, 3, 1) }),
+        // Turns 10 on 31 Mar (2027, mid-season) -> still a Child at 1 Apr 2026
+        // season start -> exempt all season.
+        ageTierMember("child-31mar", { dateOfBirth: new Date(2017, 2, 31) }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+      });
+      expect(preview.entries).toHaveLength(1);
+      expect(preview.entries[0].coveredMembers).toEqual([
+        { id: "youth-01apr", name: "First-youth-01apr Member" },
+      ]);
+      expect(preview.exemptMemberIds).toEqual(["child-31mar"]);
+    });
+
+    it("derives the tier from DOB at season start, never current-date age (a Child who turns 10 mid-season stays exempt)", async () => {
+      // Freeze 'now' well after their 10th birthday; billing must ignore it and
+      // use the 1 Apr 2026 season-start age (9 -> Child -> exempt).
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-12-01T00:00:00.000Z"));
+      try {
+        mocks.members.findMany.mockResolvedValue([
+          ageTierMember("late-birthday", { dateOfBirth: new Date(2016, 4, 1) }), // 01 May 2016 -> 9 at 1 Apr 2026
+        ]);
+        const preview = await buildSubscriptionBillingPreview({
+          seasonYear: 2026,
+          decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+        });
+        expect(preview.entries).toHaveLength(0);
+        expect(preview.exemptMemberIds).toEqual(["late-birthday"]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("falls back to the stored tier when DOB is unknown — ADULT default is fail-closed/required", async () => {
+      mocks.members.findMany.mockResolvedValue([
+        ageTierMember("no-dob-adult", { dateOfBirth: null, ageTier: "ADULT" }),
+        ageTierMember("no-dob-child", { dateOfBirth: null, ageTier: "CHILD" }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+      });
+      expect(preview.entries.flatMap((entry) => entry.coveredMembers.map((m) => m.id)))
+        .toEqual(["no-dob-adult"]);
+      expect(preview.exemptMemberIds).toEqual(["no-dob-child"]);
+    });
+
+    it("a liable Youth mints the SAME charge a REQUIRED type would — key and amount byte-unchanged", async () => {
+      mocks.members.findMany.mockResolvedValue([
+        ageTierMember("youth", { dateOfBirth: new Date(2016, 3, 1) }),
+      ]);
+      const ageTierPreview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+      });
+      mocks.members.findMany.mockResolvedValue([
+        member("youth", {
+          dateOfBirth: new Date(2016, 3, 1),
+          ageTier: "YOUTH",
+          seasonalMembershipAssignments: [{
+            membershipType: { id: "type-full", key: "FULL", name: "Full", subscriptionBehavior: "REQUIRED", annualFees: [fee()] },
+          }],
+        }),
+      ]);
+      const requiredPreview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+      });
+      expect(ageTierPreview.entries[0].key).toBe(requiredPreview.entries[0].key);
+      expect(ageTierPreview.entries[0].chargedAmountCents).toBe(requiredPreview.entries[0].chargedAmountCents);
+      expect(ageTierPreview.entries[0].membershipTypeId).toBe("type-full");
+    });
+
+    it("does not resolve a Xero mapping when the only members are tier-exempt (no invoice entries)", async () => {
+      mocks.members.findMany.mockResolvedValue([
+        ageTierMember("child", { dateOfBirth: new Date(2017, 2, 31) }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+      });
+      expect(preview.entries).toHaveLength(0);
+      expect(preview.exemptMemberIds).toEqual(["child"]);
+      expect(mocks.mapping).not.toHaveBeenCalled();
+    });
+
+    it("PER_FAMILY is unchanged — an exempt Child under BASED_ON_AGE_TIER is still covered by the single family charge (Q5)", async () => {
+      mocks.effectiveFee.mockResolvedValue(fee({ billingBasis: "PER_FAMILY", prorationRule: "NONE" }));
+      mocks.members.findMany.mockResolvedValue([
+        member("child-in-family", {
+          dateOfBirth: new Date(2017, 2, 31),
+          ageTier: "CHILD",
+          familyGroupMemberships: [familyMembership()],
+          seasonalMembershipAssignments: [{
+            membershipType: { id: "type-1", key: "FAMILY", name: "Family", subscriptionBehavior: "BASED_ON_AGE_TIER", annualFees: [fee({ billingBasis: "PER_FAMILY", prorationRule: "NONE" })] },
+          }],
+        }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-04-01T00:00:00.000Z"),
+      });
+      expect(preview.exemptMemberIds).toEqual([]);
+      expect(preview.entries).toHaveLength(1);
+      expect(preview.entries[0]).toMatchObject({ billingBasis: "PER_FAMILY", familyGroupId: "family-1" });
+    });
+
+    it("REQUIRED-only clubs are byte-unchanged: exemptMemberIds is always empty", async () => {
+      mocks.members.findMany.mockResolvedValue([member("m1"), member("m2")]);
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+      });
+      expect(preview.exemptMemberIds).toEqual([]);
+      expect(preview.entries).toHaveLength(2);
+    });
+  });
 });

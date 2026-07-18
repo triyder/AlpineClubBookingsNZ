@@ -143,6 +143,7 @@ enum MembershipTypeBookingBehavior {
 enum MembershipTypeSubscriptionBehavior {
   REQUIRED
   NOT_REQUIRED
+  BASED_ON_AGE_TIER
 }
 
 enum MembershipFeeBillingBasis {
