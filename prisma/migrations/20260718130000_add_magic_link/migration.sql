@@ -6,10 +6,11 @@
 -- Prisma model field for `magicLink` or MagicLinkToken and never reads or writes
 -- either.
 --
--- Timestamp note: slotted at 20260718110000 so it sorts AFTER every migration
--- committed on main at planning time (latest was 20260717220000) AND after any
--- 20260718_10xxxx slot the sibling security-page child (#2033) may take, since
--- #2034 merges SECOND in the epic lane order.
+-- Timestamp note: slotted at 20260718130000 so it sorts AFTER every migration
+-- committed on main at planning time (latest was 20260717220000) AND after the
+-- sibling security-page child's 20260718120000_add_login_security_setting
+-- (#2033 / PR #2037), which merges FIRST in the epic lane order — #2034 merges
+-- SECOND, so its migration must stay strictly later.
 
 -- AlterTable
 ALTER TABLE "ClubModuleSettings" ADD COLUMN     "magicLink" BOOLEAN NOT NULL DEFAULT false;

@@ -207,6 +207,18 @@ export const authConfig = {
           return null;
         }
 
+        // Verify-side kill-switch: a fresh (never cached) module read, matching
+        // the request endpoint's own fresh-read posture, so disabling the
+        // magicLink module immediately stops outstanding links being redeemed
+        // rather than leaving them live for up to the full TTL. Placed BEFORE
+        // the single-use token claim on purpose: a temporary disable must not
+        // burn an unredeemed link — re-enabling the module lets the same link
+        // still work within its TTL, which is what an admin toggling expects.
+        const modules = await loadEffectiveModuleFlags();
+        if (!modules.magicLink) {
+          return null;
+        }
+
         const tokenHash = hashActionToken(rawToken.trim());
         const tokenRow = await prisma.magicLinkToken.findUnique({
           where: { tokenHash },

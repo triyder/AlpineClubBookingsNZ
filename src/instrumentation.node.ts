@@ -705,6 +705,14 @@ export async function register() {
             where: { expiresAt: { lt: new Date() } },
           }),
         );
+        // Magic-link tokens (#2034): prune expired OR already-used rows. Used
+        // rows are single-use and inert, so they can be swept immediately
+        // alongside the expired ones.
+        await runStep("prune-magic-link-tokens", () =>
+          prisma.magicLinkToken.deleteMany({
+            where: { OR: [{ expiresAt: { lt: new Date() } }, { used: true }] },
+          }),
+        );
         // Expired partner-invite tokens (#1682): idempotent hard-delete sweep.
         await runStep("expire-partner-invite-tokens", () =>
           expireStalePartnerInviteTokens(),

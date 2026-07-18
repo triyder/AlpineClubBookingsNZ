@@ -117,7 +117,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockTokenUpdateMany.mockResolvedValue({ count: 1 });
   mockMemberUpdate.mockResolvedValue({ id: "member-1" });
-  mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: false });
+  // Module on by default so the verify-side kill-switch does not short-circuit
+  // the gate/parity tests below.
+  mockLoadEffectiveModuleFlags.mockResolvedValue({
+    magicLink: true,
+    twoFactor: false,
+  });
   mockConsumeTwoFactorSessionChallenge.mockResolvedValue(false);
 });
 
@@ -144,6 +149,35 @@ describe("magic-link verify provider", () => {
       where: { id: "member-1" },
       data: { lastLoginAt: expect.any(Date) },
     });
+  });
+
+  it("refuses a valid, unexpired token when the module is disabled (verify-side kill-switch)", async () => {
+    mockLoadEffectiveModuleFlags.mockResolvedValue({
+      magicLink: false,
+      twoFactor: false,
+    });
+    mockTokenFindUnique.mockResolvedValue(freshTokenRow());
+    mockMemberFindFirst.mockResolvedValue(verifiedMember);
+
+    const user = await magicLinkProvider().authorize({ token: VALID_TOKEN });
+
+    expect(user).toBeNull();
+    // Checked before any token I/O so a disabled module cannot burn the link:
+    // no lookup, no claim, no member load.
+    expect(mockTokenFindUnique).not.toHaveBeenCalled();
+    expect(mockTokenUpdateMany).not.toHaveBeenCalled();
+    expect(mockMemberFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("redeems the same unexpired token once the module is re-enabled (link not burned by a disable)", async () => {
+    // Module on (the default): the token the disable test refused still works.
+    mockTokenFindUnique.mockResolvedValue(freshTokenRow());
+    mockMemberFindFirst.mockResolvedValue(verifiedMember);
+
+    const user = await magicLinkProvider().authorize({ token: VALID_TOKEN });
+
+    expect(user).toMatchObject({ id: "member-1", email: "member@example.com" });
+    expect(mockTokenUpdateMany).toHaveBeenCalled();
   });
 
   it("claims the token single-use with a conditional updateMany (race-safe)", async () => {
