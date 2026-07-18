@@ -100,6 +100,45 @@ keeping their own check-out date.
 
 ![Full lodge occupancy variants](mockups/screenshots/full-lodge-occupancy.png)
 
+## Template gallery
+
+The pre-built boards a lodge can assign straight away (issue #2047). Every board
+also carries the fixed lodge header and the info footer; the module lists below
+are the content each board adds. The same gallery is surfaced in-app on
+**Admin → Display → Reference** (with monogram placeholders — open a live
+**Preview** from the Templates page to see the real board), and the built-ins
+appear ready to assign on **Admin → Display → Templates**.
+
+**Delivery split.** The four broadly-useful boards ship as **built-in seeds**
+(seeded into every install and refreshed from code on re-seed, like the three
+originals). The two situational boards ship in the importable **extras bundle**
+[`seeds/display-template-pack.bundle.zip`](seeds/README.md) — keeping the
+built-in set focused on the everyday boards while still shipping the niche ones
+for the installs that want them. Between them the pack also completes built-in
+coverage of the module catalogue: they are the first built-in use of
+`room-cards`, `night-columns`, and `status-board`.
+
+### Built-in boards
+
+| Board | Modules | What it shows |
+|---|---|---|
+| **Everyday board** | arrivals-board · chores-board · lodge-rules · notice-board | The daily arrivals bar board with a stacked side rail (chores, house rules, and a committee notice when one is set). |
+| **Whole lodge** | occupancy-grid · welcome · notice-board | A rotating statement: the whole-lodge blockout when the lodge is booked out, a welcome panel, and a committee notice when one is set. |
+| **Singles house** | singles-board · notice-board | The by-booking singles board, rotating with a committee notice when one is set. |
+| **Room by room** | room-cards · arrivals-board | Tonight's rooms as cards (who sleeps where) with a live arrivals side rail. Room cards need bed allocation. |
+| **Week ahead** | night-columns · notice-board | A next-nights planner (a column per upcoming night, with rooms when bed allocation is on) over a committee-notice band that appears only when a notice is set. |
+| **Lodge operations** | status-board · chores-board · notice-board | The roomless tonight status board (arriving / staying / leaving) with a chores and notice rail; the chores card hides itself when the Chores module is off, so the rail keeps its shape. |
+| **Welcome kiosk** | welcome · lodge-rules · notice-board | Maximum-privacy greeter: a welcome hero over a rotator cycling the house rules and (when set) the committee notice. **Shows no individual guest names** — safe for the most public spot in the lodge. |
+
+### Extras bundle boards
+
+Import [`seeds/display-template-pack.bundle.zip`](seeds/README.md) to add these.
+
+| Board | Modules | What it shows |
+|---|---|---|
+| **Busy weekend (rotating)** | occupancy-grid · arrivals-board · notice-board | One rotating statement for a packed weekend: the whole-lodge blockout when booked out, a tight two-night arrivals board, and a committee notice when one is set. |
+| **Minimal arrivals strip** | arrivals-board · welcome | A compact board for a small secondary screen: tonight's arrivals as a single-night strip (lead name + count) above a welcome panel. |
+
 ## Design documents
 
 | Document | What it covers |
