@@ -27,26 +27,30 @@ All notable public reference-release changes should be recorded here.
   `add_lobby_display` migration. Guest phone numbers appear on screens only
   under a two-sided opt-in (#133–#136, #151): the member must opt in **and**
   the lodge must enable it, enforced in the serialisers, with both flags
-  defaulting off. Documentation lives under `docs/lobby-display/`.
+  defaulting off — and only ever for adult members; youth and child phone
+  numbers are never shown. Documentation lives under `docs/lobby-display/`.
 
-- **Exclusive whole-lodge holds (#144–#148, #166, #180–#187; ADR-001 in
-  `docs/exclusive-booking/`).** A school/group booking request can now ask for
-  sole occupancy of the lodge (`exclusivityRequested`), and an admin approving
-  it — or acting directly — can place a whole-lodge hold on the resulting
-  booking. While the hold stands, capacity enforcement blocks every other
-  booking for those nights, the hold is visible on availability and admin
-  surfaces, and bed allocation respects it. Hold placement, lifecycle, and
+- **Exclusive whole-lodge holds (#144–#148, #166, #180, #181, #183, #185,
+  #187; ADR-001 in `docs/exclusive-booking/`).** A school/group booking
+  request can now ask for sole occupancy of the lodge
+  (`exclusivityRequested`), and an admin approving it — or acting directly —
+  can place a whole-lodge hold on the resulting booking. While the hold
+  stands, capacity enforcement blocks every other booking for those nights,
+  the hold is visible on availability and admin surfaces, and bed allocation
+  respects it. Hold placement, lifecycle, and
   confirm-pending conversion are guarded by status checks and advisory locks
   so concurrent bookings cannot slip past a hold. All new fields default off
   in `add_exclusive_hold_fields`.
 
 - **Multi-lodge is now core, not a module (#138, #140–#143).** The `multiLodge`
   module flag is removed and lodge routes are un-gated: every installation is
-  a multi-lodge installation with at least one (default) lodge. The retired
-  legacy single-lodge columns are cleaned up (#140), navigation is
-  lodge-aware (#141), the admin home becomes a lodge hub (#142), and
-  backwards compatibility for existing single-lodge installs is preserved
-  (#143) — a single-lodge club sees no operational change.
+  a multi-lodge installation with at least one (default) lodge. The vestigial
+  `ClubModuleSettings.multiLodge` column is retired but not yet dropped — the
+  drop is deferred to a future contract migration (fork #129), reads are
+  already drop-safe (fork #150), and ADR-005 records the decision (#140) —
+  navigation is lodge-aware (#141), the admin home becomes a lodge hub
+  (#142), and backwards compatibility for existing single-lodge installs is
+  preserved (#143) — a single-lodge club sees no operational change.
 
 - **Authoritative fee schedules and membership billing (#1855/#1858,
   #1857/#1861, #1870/#1879, #1930/#1958, #1931/#1968, #1932/#1973,
@@ -63,7 +67,9 @@ All notable public reference-release changes should be recorded here.
   `{{annual-fees}}` embed, and configuration transfer carries fee
   configuration. Day-one amounts are backfilled from the existing
   configuration; the legacy tables are retained (not dropped) so the old
-  colour prices identically during cutover.
+  colour prices season and annual fees identically during cutover
+  (entrance/joining fees carry a window-bounded old-colour caveat — see the
+  Migration/deployment notes).
 
 - **Database-first club identity and configuration, with boot-time self-heal
   and DR auto-import (#1929/#1957, #1980/#1991, #1981/#1999, #1982/#2013,
@@ -133,16 +139,17 @@ All notable public reference-release changes should be recorded here.
   and a narrative-safe booking-history event; and admins can book on behalf
   of a non-member.
 
-- **Member CSV import can create already-cancelled members (#1946).** The member
-  import gains an optional **Cancelled Date** column. A row with a cancelled date
-  is created in the cancelled end-state — inactive, non-login, with `cancelledAt`
-  set to the given NZ date-only value — matching what the normal admin
-  cancellation flow produces, minus notifications: the import sends no
-  cancellation email and performs no Xero/Stripe work (a freshly imported member
-  has no Xero contact). A cancelled row never claims the login for a shared
-  email, and the cancelled date may not be in the future. The import still only
-  creates members, so a row matching an existing member is skipped unchanged —
-  cancelling an existing member remains an admin cancellation-flow action.
+- **Member CSV import can create already-cancelled members (#1946/#1990).**
+  The member import gains an optional **Cancelled Date** column. A row with a
+  cancelled date is created in the cancelled end-state — inactive, non-login,
+  with `cancelledAt` set to the given NZ date-only value — matching what the
+  normal admin cancellation flow produces, minus notifications: the import
+  sends no cancellation email and performs no Xero/Stripe work (a freshly
+  imported member has no Xero contact). A cancelled row never claims the
+  login for a shared email, and the cancelled date may not be in the future.
+  The import still only creates members, so a row matching an existing member
+  is skipped unchanged — cancelling an existing member remains an admin
+  cancellation-flow action.
 
 - **Public content, generic starter copy, and committee CRUD retirement
   (#1856/#1862, #1864/#1866, #1928/#1950, #1945/#1964, #1947/#1969).** Public
@@ -162,10 +169,11 @@ All notable public reference-release changes should be recorded here.
   load-stability fixes land, form errors and UI states meet accessibility
   expectations, and admin UI polish rounds out the sweep.
 
-- **CI, security, dependencies, and docs (#1867/#1868, #1871/#1872, #1873,
-  #1874, #1876/#1877, #1926/#1955, #1962/#1971, #1966/#1970, #1979,
-  fork #169/#170, #15/#1863/#1913).** Semgrep static analysis joins CI and its
-  findings are remediated, GitHub Actions dependencies are updated, Xero error
+- **CI, security, dependencies, and docs (#1865, #1867/#1868, #1871/#1872,
+  #1873, #1874, #1876/#1877, #1926/#1955, #1962/#1971, #1966/#1970, #1979,
+  fork #169/#170, #15/#1863/#1913).** Semgrep static analysis joins CI
+  (#1865) and its findings are remediated (#1867/#1868), GitHub Actions
+  dependencies are updated, Xero error
   shapes are corrected, a production-hardening review lands, ops docs are
   corrected, the agent orchestration workflow is documented, non-member and
   identity-smoke E2E suites are added, a migration timestamp collision is
@@ -176,15 +184,26 @@ All notable public reference-release changes should be recorded here.
   tested backup. One **contract migration**,
   `20260714140000_drop_committee_member`, removes the legacy standalone
   committee directory table: its member-linked replacement shipped and was
-  backfilled in v0.11.0, so the drop loses no data, but the old colour's
-  admin committee CRUD routes error between migrate and cutover — idle or
-  drain old-colour admin traffic, cut over promptly, and supply the documented
-  `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` override acknowledgement. The
+  backfilled in v0.11.0, so the drop loses no data beyond the retired
+  directory itself — no assignment or contact data lives only in the dropped
+  table — but the old colour's admin committee CRUD routes error between
+  migrate and cutover. Idle or drain old-colour admin traffic, cut over
+  promptly, and supply the documented
+  `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` override together with a
+  non-empty `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` acknowledgement. The
   `joining_fee_model` and `xero_member_grouping` expand migrations carry
-  window-bounded old-colour caveats (a Xero item-code categorisation nuance
-  and stale grouping-rule edits) described in
-  `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`. No migration makes a Xero call, and
-  no member is re-grouped until the admin-run dry-run and bulk re-sync in
+  window-bounded old-colour caveats described in
+  `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`: once `joining_fee_model` re-keys
+  the entrance-fee Xero item-code mappings, the old colour resolves both the
+  item code and the amount of a new entrance-fee invoice from the legacy
+  flat mappings — it can mint a wrong per-category amount, or silently skip
+  the invoice as SUCCEEDED when the flat amount is unset — so membership
+  approvals and entrance-fee minting must be fully idle on the old colour
+  from migrate until cutover (operations queued before the window carry
+  frozen amount/item payloads and replay safely); and `xero_member_grouping`
+  converges grouping rules, so avoid grouping-rule saves on the draining old
+  colour. No migration makes a Xero call, and no member is re-grouped until
+  the admin-run dry-run and bulk re-sync in
   `docs/XERO_MEMBER_GROUPING_RUNBOOK.md`. See `docs/UPGRADING.md` for the
   complete operator checklist.
 

@@ -101,37 +101,59 @@ section before starting.
    the new `CONFIG_BUNDLE_IMPORT_PATH` boot auto-import is a database backup;
    both intentionally exclude members and transactional data.
 2. **Schedule a quiet, low-write window.** Most of the 25 migrations are
-   catalog-only, but several build indexes over `Booking` and
-   `MemberSubscription` (fast, over all-NULL new columns), and the fee,
-   joining-fee, and Xero-grouping migrations run one-time backfills over small
-   configuration tables.
+   catalog-only, but single index builds run over `Booking`, `Member`, and
+   `MemberSubscription` — each fast over an all-NULL new column, but a plain
+   (non-`CONCURRENTLY`) build that briefly blocks writes to that table — and
+   the fee, joining-fee, and Xero-grouping migrations run one-time backfills
+   over small configuration tables.
 3. **Plan the contract-migration window.**
    `20260714140000_drop_committee_member` drops the legacy standalone
    committee directory table. Its expand predecessor,
    `20260629130000_add_committee_roles_assignments`, shipped in `v0.11.0`
    (deployed 2026-07-13) and backfilled the member-linked roles/assignments
-   while the table still existed, so confirm `v0.11.0` is fully deployed and
-   the drop loses no data. The old colour's admin committee CRUD routes error
-   with relation-does-not-exist between migrate and cutover (public committee
-   and contact surfaces are unaffected). Idle or drain old-colour admin
-   traffic, cut over promptly, and use
+   while the table still existed, so confirm `v0.11.0` is fully deployed. The
+   drop loses no data beyond the retired directory itself — no assignment or
+   contact data lives only in the dropped table. The old colour's admin
+   committee CRUD routes error with relation-does-not-exist between migrate
+   and cutover (public committee and contact surfaces are unaffected). Idle
+   or drain old-colour admin traffic, cut over promptly, and use
    `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` only with a non-empty
    `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` acknowledging this reviewed window.
+   Do not use the override to bypass an unreviewed validator failure.
 4. **Review the new fee and billing configuration surfaces.** Season rates
    keyed by membership type, joining fees, annual-fee components,
    subscription-billing settings, and family billing modes are backfilled
    from the club's existing configuration, and the legacy tables are retained
-   so both colours price identically during cutover. Read
+   so both colours price season and annual fees identically during cutover
+   (entrance/joining fees carry the window caveat below). Read
    `docs/AUTHORITATIVE_FEES.md`, and where possible confirm on a staging
    restore that the backfilled schedules reproduce the club's current
    amounts before deploying.
-5. **Know the Xero member-grouping cutover plan.** The
+5. **Idle membership approvals and entrance-fee minting on the old colour
+   from migrate until cutover.** Once `20260717170000_joining_fee_model`
+   re-keys the entrance-fee Xero item-code mappings from `ENTRANCE_FEE` to
+   `JOINING_FEE`, the old colour resolves **both** the item code **and** the
+   amount of a new entrance-fee invoice from the legacy flat mappings: it can
+   mint a wrong per-category amount, or — if the flat amount is unset — mark
+   the operation SUCCEEDED and silently never create the invoice. Operations
+   queued before the window carry frozen amount/item payloads and replay
+   safely. Keep membership approvals and entrance-fee minting fully idle on
+   the old colour for the whole migrate→cutover window.
+6. **Know the Xero member-grouping cutover plan.** The
    `xero_member_grouping` migration converges grouping configuration locally
    and performs **zero** Xero calls; no member is re-grouped until an admin
    runs the dry-run and bulk re-sync in
    `docs/XERO_MEMBER_GROUPING_RUNBOOK.md`. Avoid saving membership-type
    grouping rules on the draining old colour during the window, and re-run
    the runbook pre-checks after cutover.
+
+**Rollback boundary.** A validator or pre-migration failure aborts the deploy
+before any schema change: the old colour is untouched and keeps serving. A
+failed cutover auto-restores traffic to the old colour, which then runs
+against the migrated schema — the admin committee CRUD errors and the
+old-colour entrance-fee caveat above apply until you either roll forward (fix
+and redeploy the new colour — the preferred path) or restore the pre-upgrade
+backup, losing all writes since it was taken. There is no down-migration.
 
 ### Post-upgrade actions
 
@@ -141,24 +163,35 @@ section before starting.
    config-file fallback; the boot-time config self-heal backfills any missing
    database values from the effective configuration and never overwrites an
    admin edit.
-2. Confirm fee schedules render correctly: admin fee configuration (season
+2. Remove the retired email environment variables — `EMAIL_FROM_NAME`,
+   `SUPPORT_EMAIL`, `CONTACT_EMAIL`, and `NEXT_PUBLIC_CONTACT_EMAIL` — from
+   the deployment `.env`: their values are ignored, and a boot warning fires
+   while any of them remains set (`EMAIL_FROM` remains required). Then
+   confirm the support and contact addresses under **Admin > Email
+   Messages**.
+3. Confirm fee schedules render correctly: admin fee configuration (season
    rates by membership type, joining fees, annual fees and their components,
    subscription billing) and the public join/fees pages must show the same
-   amounts the club charged before the upgrade. The public `{{annual-fees}}`
-   embed stays hidden until its visibility gate is enabled.
-3. Review **Admin > Modules**: the Lobby Display module defaults off —
+   amounts the club charged before the upgrade. A previously visible public
+   fee embed stays visible — the `public_content_annual_fees` migration seeds
+   the new `{{annual-fees}}` visibility gate from the legacy public
+   membership-types toggle — while a hidden one stays hidden until
+   deliberately enabled, so verify public amounts wherever the club displayed
+   them before.
+4. Review **Admin > Modules**: the Lobby Display module defaults off —
    enable it only deliberately, following `docs/lobby-display/operating.md`,
    and confirm guest phone numbers stay hidden unless both the member and
-   the lodge opt in. Multi-lodge is no longer a module and needs no flag.
-4. If the club uses school/group requests, smoke-check exclusive holds: a
+   the lodge opt in (and only adult members' phones ever show; youth/child
+   are never shown). Multi-lodge is no longer a module and needs no flag.
+5. If the club uses school/group requests, smoke-check exclusive holds: a
    request can flag exclusivity, and an admin whole-lodge hold blocks all
    other bookings for its nights until released.
-5. Before enabling any Xero member-grouping bulk re-sync, verify only the
+6. Before enabling any Xero member-grouping bulk re-sync, verify only the
    migration's backfilled tier rules are active (runbook pre-check) and run
    a fresh dry-run; the re-sync refuses a stale dry-run.
-6. Spot-check a view-only admin access role: it can read admin surfaces but
+7. Spot-check a view-only admin access role: it can read admin surfaces but
    every action button, editor, and mutating route refuses writes.
-7. Confirm `CONFIG_BUNDLE_IMPORT_PATH` is unset on the production deployment
+8. Confirm `CONFIG_BUNDLE_IMPORT_PATH` is unset on the production deployment
    unless deliberately used for disaster recovery or cloning; when set, it
    imports only at boot and only into a database empty of non-seed
    configuration.
