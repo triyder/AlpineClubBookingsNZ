@@ -135,11 +135,18 @@ export function defaultChildKey(index: number): string {
   return `slot-${index + 1}`;
 }
 
-/** The board-key slug pattern (mirrors the layouts route `keyField` regex): a
- * lower-case slug of letters, digits and hyphens, not leading with a hyphen. The
- * builder validates the key against this client-side so an invalid key is caught
- * inline rather than round-tripping to a bare server "Invalid request" (§U2/U3). */
-export const BUILDER_KEY_REGEX = /^[a-z0-9][a-z0-9-]*$/;
+/** The board-key slug pattern (mirrors the layouts/templates route `keyField`): a
+ * lower-case slug of letters, digits and hyphens, not leading with a hyphen, and
+ * capped at the server's `.max(80)` (the `{0,79}` allows 1 lead char + 79 more =
+ * 80 total). The builder validates the key against this client-side so an invalid
+ * or over-long key is caught inline rather than round-tripping to a bare server
+ * "Invalid request" — a long auto-derived slug would otherwise come back as a
+ * misattributed charset error (§U2/U3, #2048 L1). */
+export const BUILDER_KEY_REGEX = /^[a-z0-9][a-z0-9-]{0,79}$/;
+
+/** The server-enforced max key length (`keyField.max(80)`), mirrored for the
+ * inline hint copy so the two never drift. */
+export const BUILDER_KEY_MAX_LENGTH = 80;
 
 /** True when `key` is a valid board slug the save routes accept. */
 export function isValidBuilderKey(key: string): boolean {

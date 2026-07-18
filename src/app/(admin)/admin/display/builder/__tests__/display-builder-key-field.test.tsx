@@ -69,6 +69,31 @@ describe("DisplayBuilder — board key field (§U2/U3)", () => {
     ).toBeInTheDocument();
   });
 
+  // #2048 L1: the client mirrors the server's `.max(80)` so a long auto-derived
+  // slug is caught inline, not bounced back as a misattributed charset error.
+  it("blocks Save on an over-length key and says so (mirrors the server 80-char cap)", () => {
+    renderNewBuilder();
+    const key = screen.getByLabelText(/Board key/i) as HTMLInputElement;
+    // 81 chars — one past the server cap.
+    fireEvent.change(key, { target: { value: "a".repeat(81) } });
+
+    expect(key).toHaveAttribute("aria-invalid", "true");
+    // The inline alert (distinct from the always-on hint) names the cap.
+    expect(screen.getByRole("alert")).toHaveTextContent(/up to 80 characters/i);
+    expect(screen.getByRole("button", { name: /Create board/i })).toBeDisabled();
+
+    // Exactly 80 chars is accepted (with a name present to unblock Save).
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Long board" } });
+    fireEvent.change(key, { target: { value: "a".repeat(80) } });
+    expect(key).toHaveAttribute("aria-invalid", "false");
+    expect(screen.getByRole("button", { name: /Create board/i })).toBeEnabled();
+  });
+
+  it("mentions the 80-character cap in the key hint", () => {
+    renderNewBuilder();
+    expect(screen.getByText(/up to 80 characters/i)).toBeInTheDocument();
+  });
+
   it("does not clobber a hand-edited key when the name changes again", () => {
     renderNewBuilder();
     fireEvent.change(screen.getByLabelText("Name"), {

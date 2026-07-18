@@ -39,6 +39,7 @@ import {
   builderLayout,
   builderSlotContent,
   BUILDER_SKELETONS,
+  BUILDER_KEY_MAX_LENGTH,
   isValidBuilderKey,
   slugifyKey,
   type BuilderContent,
@@ -460,12 +461,13 @@ export default function DisplayBuilder(props: DisplayBuilderProps) {
             />
             <p id="builder-key-hint" className="text-muted-foreground text-xs">
               {creating
-                ? "Auto-filled from the name. Lower-case letters, numbers and hyphens only; fixed after creation."
+                ? `Auto-filled from the name. Lower-case letters, numbers and hyphens only, up to ${BUILDER_KEY_MAX_LENGTH} characters; fixed after creation.`
                 : "Locked after creation."}
             </p>
             {creating && key.trim() !== "" && !keyValid && (
               <p className="text-destructive text-xs" role="alert">
-                Use lower-case letters, numbers and hyphens only (e.g. foyer-board).
+                Use lower-case letters, numbers and hyphens only, up to{" "}
+                {BUILDER_KEY_MAX_LENGTH} characters (e.g. foyer-board).
               </p>
             )}
           </div>
@@ -642,7 +644,7 @@ export default function DisplayBuilder(props: DisplayBuilderProps) {
               ? "Enter a name to save."
               : !key.trim()
                 ? "Enter a board key to save."
-                : "Fix the board key to save — lower-case letters, numbers and hyphens only."}
+                : `Fix the board key to save — lower-case letters, numbers and hyphens only, up to ${BUILDER_KEY_MAX_LENGTH} characters.`}
           </p>
         )}
 

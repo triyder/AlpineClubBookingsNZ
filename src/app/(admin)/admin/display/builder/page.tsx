@@ -11,7 +11,10 @@ import {
   parseBuilderModel,
   type BuilderModel,
 } from "@/lib/lodge-display/builder-model";
-import { isBuiltInDisplayTemplateKey } from "@/lib/lodge-display/built-in-seeds";
+import {
+  isBuiltInDisplayLayoutKey,
+  isBuiltInDisplayTemplateKey,
+} from "@/lib/lodge-display/built-in-seeds";
 import DisplayBuilder from "./display-builder";
 
 // Visual builder surface (ADR-004 §1/§4). A NEW board is composed from a blank
@@ -27,6 +30,10 @@ interface LoadedTemplate {
   name: string;
   layout: {
     id: string;
+    // The layout's own key — a CUSTOM template can be bound to a BUILT-IN layout,
+    // which is read-only server-side, so the Advanced-only branch must check this
+    // too and never offer a Rebuild whose layout PUT would 409 (#2048 E).
+    key: string;
     bodyHtml: string;
     defaultCss: string;
     areas: unknown;
@@ -164,8 +171,8 @@ export default function DisplayBuilderPage() {
         !rebuild &&
         !duplicate &&
         (isBuiltInDisplayTemplateKey(state.loaded.key) ? (
-          // A built-in is code-managed and read-only, so Rebuild-then-Save could
-          // never persist. Offer a real fork instead: duplicate into a fresh,
+          // A built-in TEMPLATE is code-managed and read-only, so Rebuild-then-Save
+          // could never persist. Offer a real fork instead: duplicate into a fresh,
           // editable board in the builder (§U1).
           <div className="space-y-3 rounded-md border border-amber-400/50 bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
             <p className="font-medium">This is a built-in design.</p>
@@ -179,6 +186,49 @@ export default function DisplayBuilderPage() {
                 Advanced mode
               </Link>
               .
+            </p>
+            <p>
+              Duplicating here starts a <strong>blank</strong> board (the built-in
+              body can&apos;t open in the builder). To keep the built-in&apos;s
+              existing design, use <strong>Duplicate to customise</strong> in{" "}
+              <Link className="underline" href="/admin/display/templates">
+                Advanced mode
+              </Link>{" "}
+              instead, which copies its content.
+            </p>
+            <Button
+              variant="outline"
+              disabled={!canEdit}
+              onClick={() => setDuplicate(true)}
+            >
+              Duplicate to customise
+            </Button>
+          </div>
+        ) : isBuiltInDisplayLayoutKey(state.loaded.layout.key) ? (
+          // A CUSTOM template bound to a BUILT-IN layout: the template itself is
+          // editable, but its layout is read-only server-side, so Rebuild (which
+          // re-saves the layout body) would 409 with a message blaming the wrong
+          // entity. Offer the paths that actually work instead — never Rebuild
+          // (#2048 E).
+          <div className="space-y-3 rounded-md border border-amber-400/50 bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            <p className="font-medium">
+              This board&apos;s layout is a built-in.
+            </p>
+            <p>
+              The board itself is custom, but it is built on a built-in layout,
+              which is refreshed from code on every upgrade and is read-only — so
+              the builder can&apos;t rebuild and save over it. To adjust the
+              content and styling in place, edit it in{" "}
+              <Link className="underline" href="/admin/display/templates">
+                Advanced mode
+              </Link>
+              . To get a fully builder-editable board, duplicate it into a new
+              board (a fresh layout and template you own).
+            </p>
+            <p>
+              Duplicating here starts a <strong>blank</strong> board. To keep the
+              existing design, use <strong>Duplicate to customise</strong> in
+              Advanced mode instead, which copies its content.
             </p>
             <Button
               variant="outline"
