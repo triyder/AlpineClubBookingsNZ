@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
@@ -47,6 +48,8 @@ interface MemberLifecycleCardProps {
     action: "approve" | "reject",
     notifyMember?: boolean,
   ) => void
+  /** Whether the actor may act (membership edit, #1997). */
+  canEdit?: boolean
   className?: string
 }
 
@@ -71,6 +74,7 @@ export function MemberLifecycleCard({
   onSubmitArchive,
   onSubmitCancellation,
   onReviewArchive,
+  canEdit = true,
   className,
 }: MemberLifecycleCardProps) {
   // #1788: which archive review is waiting on the admin's notify-or-not choice.
@@ -191,9 +195,9 @@ export function MemberLifecycleCard({
                 Admin-initiated cancellation requests go directly to the review queue without requiring the member to confirm by email.
               </p>
             </div>
-            <Button className="mt-3" size="sm" onClick={onSubmitCancellation} disabled={cancellationSubmitting}>
+            <ViewOnlyActionButton canEdit={canEdit} className="mt-3" size="sm" onClick={onSubmitCancellation} disabled={cancellationSubmitting}>
               {cancellationSubmitting ? "Submitting..." : "Request Cancellation"}
-            </Button>
+            </ViewOnlyActionButton>
           </div>
         )}
 
@@ -222,22 +226,24 @@ export function MemberLifecycleCard({
                     className="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
                   />
                   <div className="flex justify-end gap-2">
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       variant="outline"
                       size="sm"
                       disabled={Boolean(archiveActionLoading)}
                       onClick={() => startReview(pendingArchiveRequest.id, "reject")}
                     >
                       {archiveActionLoading === `reject:${pendingArchiveRequest.id}` ? "Rejecting..." : "Reject"}
-                    </Button>
-                    <Button
+                    </ViewOnlyActionButton>
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       variant="destructive"
                       size="sm"
                       disabled={Boolean(archiveActionLoading)}
                       onClick={() => startReview(pendingArchiveRequest.id, "approve")}
                     >
                       {archiveActionLoading === `approve:${pendingArchiveRequest.id}` ? "Archiving..." : "Approve Archive"}
-                    </Button>
+                    </ViewOnlyActionButton>
                   </div>
                 </div>
               )}
@@ -261,7 +267,8 @@ export function MemberLifecycleCard({
                 A different admin must approve this request before the member is archived.
               </p>
             </div>
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               className="mt-3"
               size="sm"
               onClick={onSubmitArchive}
@@ -269,7 +276,7 @@ export function MemberLifecycleCard({
             >
               <Archive className="h-4 w-4 mr-1" />
               {archiveActionLoading === "request" ? "Submitting..." : "Request Archive"}
-            </Button>
+            </ViewOnlyActionButton>
           </div>
         )}
 

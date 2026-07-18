@@ -25,6 +25,7 @@ import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { hasAccessRole, isFullAdmin } from "@/lib/access-roles";
 import { toast } from "sonner";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useXeroStatus } from "@/hooks/use-xero-status";
 import { Accordion } from "@/components/ui/accordion";
 import { subscriptionStatusLabel } from "@/lib/status-colors";
@@ -89,6 +90,10 @@ export default function MemberDetailPage({
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session } = useSession();
+  // Lifecycle/deletion actions write membership-area routes; a view-only
+  // membership admin sees the record but cannot act (#1997). The credit card
+  // gates itself on finance edit; other cards remain follow-up work (see #1997).
+  const canEditMembership = useAdminAreaEditAccess("membership");
 
   const [member, setMember] = useState<MemberDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -785,6 +790,7 @@ export default function MemberDetailPage({
           <div className="divide-y">
             <MemberLifecycleCard
               className={embeddedCardClassName}
+              canEdit={canEditMembership}
               member={member}
               pendingArchiveRequest={pendingArchiveRequest}
               reviewedArchiveRequests={reviewedArchiveRequests}
@@ -813,6 +819,7 @@ export default function MemberDetailPage({
             />
             <MemberDeletionCard
               className={embeddedCardClassName}
+              canEdit={canEditMembership}
               deleteEligibility={member.deleteEligibility}
               deleteRequests={deleteRequests}
               pendingDeleteRequest={pendingDeleteRequest}

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
+import type { ComponentProps } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
@@ -141,6 +142,9 @@ import MembershipCancellationsPage from "@/app/(admin)/admin/membership-cancella
 // #1997 admin action-button surfaces (support / communications lane).
 import AdminIssueReportsPage from "@/app/(admin)/admin/issue-reports/page";
 import CommunicationsPage from "@/app/(admin)/admin/communications/page";
+// #1997 member-detail action cards (membership / finance lane).
+import { MemberDeletionCard } from "@/app/(admin)/admin/members/[id]/_components/member-deletion-card";
+import { MemberCreditCard } from "@/app/(admin)/admin/members/[id]/_components/member-credit-card";
 
 const SITE_CONTENT_DOCUMENTS = [
   { key: "FOOTER_BLURB", contentHtml: "<p>Blurb</p>", updatedAt: null },
@@ -2662,5 +2666,88 @@ describe("CommunicationsPage view-only gating (#1997, membership)", () => {
     expect(
       screen.queryByText(/can view communications but cannot send bulk emails/i),
     ).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1997 member-detail action cards. The Lifecycle & Deletion cards gate on
+// membership edit; the Account Credit card gates on finance edit (its route is
+// remapped to finance). Other member-detail cards are follow-up work.
+// ---------------------------------------------------------------------------
+
+describe("MemberDeletionCard view-only gating (#1997, membership)", () => {
+  afterEach(() => {
+    sessionMatrix = null;
+    vi.restoreAllMocks();
+  });
+
+  const props = {
+    deleteEligibility: { eligible: true, blockers: [] },
+    deleteRequests: [],
+    pendingDeleteRequest: undefined,
+    approvalBlockerCount: 0,
+    canReviewPendingDeleteRequest: true,
+    onOpenRequestDialog: vi.fn(),
+    onOpenReviewDialog: vi.fn(),
+  } as unknown as ComponentProps<typeof MemberDeletionCard>;
+
+  it("disables Request Delete for a membership:view admin", () => {
+    sessionMatrix = matrix("view", { membership: "view" });
+    render(<MemberDeletionCard {...props} canEdit={false} />);
+
+    expect(
+      screen.getByRole("button", { name: /Request Delete/i }),
+    ).toBeDisabled();
+  });
+
+  it("enables Request Delete for a membership:edit admin", () => {
+    sessionMatrix = matrix("view", { membership: "edit" });
+    render(<MemberDeletionCard {...props} canEdit={true} />);
+
+    expect(screen.getByRole("button", { name: /Request Delete/i })).toBeEnabled();
+  });
+});
+
+describe("MemberCreditCard view-only gating (#1997, finance)", () => {
+  afterEach(() => {
+    sessionMatrix = null;
+    vi.restoreAllMocks();
+  });
+
+  const props = {
+    creditBalance: 0,
+    creditHistory: [],
+    creditLoading: false,
+    creditError: "",
+    pendingAdjustmentRequests: [],
+    reviewingAdjustmentId: null,
+    showAdjustmentForm: false,
+    adjustmentError: "",
+    adjustmentAmount: "",
+    adjustmentDescription: "",
+    adjustmentSaving: false,
+    onToggleAdjustmentForm: vi.fn(),
+    onChangeAdjustmentAmount: vi.fn(),
+    onChangeAdjustmentDescription: vi.fn(),
+    onSubmitAdjustment: vi.fn(),
+    onReviewAdjustment: vi.fn(),
+  } as unknown as ComponentProps<typeof MemberCreditCard>;
+
+  it("disables Request Adjustment for a finance:view admin", () => {
+    sessionMatrix = matrix("view", { finance: "view" });
+    render(<MemberCreditCard {...props} />);
+
+    expect(
+      screen.getByRole("button", { name: /Request Adjustment/i }),
+    ).toBeDisabled();
+  });
+
+  it("enables Request Adjustment for a finance:edit admin", () => {
+    sessionMatrix = matrix("view", { finance: "edit" });
+    render(<MemberCreditCard {...props} />);
+
+    expect(
+      screen.getByRole("button", { name: /Request Adjustment/i }),
+    ).toBeEnabled();
   });
 });

@@ -1,6 +1,6 @@
 "use client"
 
-import { Button } from "@/components/ui/button"
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Trash2 } from "lucide-react"
 import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers"
@@ -21,6 +21,8 @@ interface MemberDeletionCardProps {
     request: MemberLifecycleActionRequest,
     action: "approve" | "reject"
   ) => void
+  /** Whether the actor may act (membership edit, #1997). */
+  canEdit?: boolean
   className?: string
 }
 
@@ -38,6 +40,7 @@ export function MemberDeletionCard({
   canReviewPendingDeleteRequest,
   onOpenRequestDialog,
   onOpenReviewDialog,
+  canEdit = true,
   className,
 }: MemberDeletionCardProps) {
   const deleteBlockers = deleteEligibility.blockers
@@ -51,7 +54,8 @@ export function MemberDeletionCard({
             Hard deletion is only available for records added in error with no meaningful history.
           </p>
         </div>
-        <Button
+        <ViewOnlyActionButton
+          canEdit={canEdit}
           variant="destructive"
           size="sm"
           onClick={onOpenRequestDialog}
@@ -59,7 +63,7 @@ export function MemberDeletionCard({
         >
           <Trash2 className="h-4 w-4 mr-1" />
           Request Delete
-        </Button>
+        </ViewOnlyActionButton>
       </CardHeader>
       <CardContent className="space-y-4">
         {pendingDeleteRequest ? (
@@ -71,22 +75,24 @@ export function MemberDeletionCard({
             </div>
             <div className="mt-2 text-amber-800">{pendingDeleteRequest.reason}</div>
             <div className="mt-3 flex flex-wrap gap-2">
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 size="sm"
                 variant="destructive"
                 onClick={() => onOpenReviewDialog(pendingDeleteRequest, "approve")}
                 disabled={!canReviewPendingDeleteRequest || approvalBlockerCount > 0}
               >
                 Approve Delete
-              </Button>
-              <Button
+              </ViewOnlyActionButton>
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 size="sm"
                 variant="outline"
                 onClick={() => onOpenReviewDialog(pendingDeleteRequest, "reject")}
                 disabled={!canReviewPendingDeleteRequest}
               >
                 Reject
-              </Button>
+              </ViewOnlyActionButton>
               {!canReviewPendingDeleteRequest && (
                 <span className="self-center text-xs text-amber-800">
                   Requester cannot approve or reject their own delete request.
