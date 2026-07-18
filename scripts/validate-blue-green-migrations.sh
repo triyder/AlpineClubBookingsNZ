@@ -31,7 +31,7 @@ SESSION_CLOCK_DML_BASELINE="${SESSION_CLOCK_DML_BASELINE:-20260709000000}"
 # an explicit UTC literal) over adding a row here; only acknowledge when the write
 # is cosmetic on a cold table with no createdAt-ordering invariant to skew.
 SESSION_CLOCK_DML_ACKNOWLEDGED=(
-  # 20260717180000_genericise_starter_lodge_copy: two UPDATEs on the cold
+  # 20260717180000_genericise_starter_lodge_copy: three UPDATEs on the cold
   # PageContent table set "updatedAt" = CURRENT_TIMESTAMP purely for content-edit
   # freshness. PageContent carries no createdAt/updatedAt ordering invariant (unlike
   # the #1627 default-lodge row whose relative createdAt decides the club default),
