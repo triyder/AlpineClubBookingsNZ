@@ -115,6 +115,9 @@ describe("AdminSidebar", () => {
     expect(section?.items.map((item) => item.label)).toEqual([
       "Setup",
       "Modules",
+      // Login & Security page (#2033): sits with the other system-config
+      // surfaces in Setup & Configuration.
+      "Login & Security",
       "Lodges",
       "Membership & Members",
       "Site Appearance & Content",

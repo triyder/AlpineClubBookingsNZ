@@ -1306,6 +1306,39 @@ The Admin dashboard includes `/admin/modules` for club-level activation of the
 optional modules above. These settings are stored in the `ClubModuleSettings`
 database table as booleans only.
 
+## Login And Security (Password Policy)
+
+Admin > Login & Security (`/admin/security`) sets the club-wide password
+complexity policy, stored in the `LoginSecuritySetting` singleton (one row,
+`id = "default"`). The page is gated by the `support` admin permission area
+(view to read, edit to change), and every save is written to the audit log under
+the `security` category.
+
+| Setting | Default | Accepted range | Notes |
+| --- | --- | --- | --- |
+| Minimum password length | 12 | 8–64 | A non-configurable hard maximum of 128 characters always applies. |
+| Require an uppercase letter | off | on/off | `A–Z` |
+| Require a lowercase letter | off | on/off | `a–z` |
+| Require a number | off | on/off | `0–9` |
+| Require a symbol | off | on/off | any non-alphanumeric character |
+| Magic-link TTL (minutes) | 15 | 5–60 | Field only; reserved for the magic-link sign-in work and not read yet. |
+
+The policy governs only the paths where a member **chooses** a password —
+`/change-password` and the reset/setup-invite redemption at `/reset-password`.
+It is enforced at set time by a shared validator (`src/lib/password-policy.ts`,
+loaded from the DB via `src/lib/login-security-settings.ts`); existing password
+hashes are never re-validated, so a stronger policy never locks anyone out at
+login. When no row is configured the effective policy is the code default (min
+12, no required character classes), which is byte-identical to the historical
+behaviour. To force existing members onto a new policy, set
+`Member.forcePasswordChange` (the "require password change" lever), which routes
+them through `/change-password` on next sign-in.
+
+A public, unauthenticated endpoint (`GET /api/auth/password-policy`) discloses
+the active rules so the reset and change-password forms can show live hints and
+validate length client-side; disclosing the policy is standard and the server
+enforces it regardless.
+
 ## Two-Factor Authentication
 
 The Two-factor authentication Admin Modules toggle is a global enforcement

@@ -110,7 +110,14 @@ recommended reading paths.
    two-factor authentication, email sign-in link (passwordless magic link, additive
    to password login), and Google Analytics default off until an admin enables
    them. General-purpose modules default on and can be disabled there.
-6. Use **Admin > Members** to assign access roles. `Full Admin` keeps all
+6. Use **Admin > Login & Security** (`/admin/security`) to set the club password
+   policy: minimum length (8–64, default 12) and optional required character
+   classes (uppercase, lowercase, number, symbol). Rules apply when a member sets
+   or changes a password (never at login), a hard 128-character maximum always
+   applies, and existing passwords keep working until each member next changes
+   theirs. With no policy configured the behaviour is unchanged (minimum 12, no
+   required classes).
+7. Use **Admin > Members** to assign access roles. `Full Admin` keeps all
    admin permissions and is never editable; `Read-only Admin`,
    `Booking Officer`, `Membership Officer`, `Treasurer`, `Finance Viewer`, and
    `Content Manager` are seeded permission bundles that can be combined on one

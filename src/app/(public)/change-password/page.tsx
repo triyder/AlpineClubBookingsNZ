@@ -7,9 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { usePasswordPolicyHints } from "@/hooks/use-password-policy-hints";
 
 export default function ChangePasswordPage() {
   const router = useRouter();
+  const policy = usePasswordPolicyHints();
   const [form, setForm] = useState({
     currentPassword: "",
     newPassword: "",
@@ -22,8 +24,10 @@ export default function ChangePasswordPage() {
     e.preventDefault();
     setError("");
 
-    if (form.newPassword.length < 12) {
-      setError("New password must be at least 12 characters.");
+    if (form.newPassword.length < policy.minPasswordLength) {
+      setError(
+        `New password must be at least ${policy.minPasswordLength} characters.`,
+      );
       return;
     }
 
@@ -93,16 +97,23 @@ export default function ChangePasswordPage() {
                 id="newPassword"
                 type="password"
                 required
-                minLength={12}
+                minLength={policy.minPasswordLength}
+                maxLength={policy.maxPasswordLength}
                 value={form.newPassword}
                 onChange={(e) =>
                   setForm({ ...form, newPassword: e.target.value })
                 }
                 className="mt-1"
+                aria-describedby="new-password-requirements"
               />
-              <p className="text-xs text-slate-500 mt-1">
-                Minimum 12 characters.
-              </p>
+              <ul
+                id="new-password-requirements"
+                className="text-xs text-slate-500 mt-1 space-y-0.5"
+              >
+                {policy.hints.map((hint) => (
+                  <li key={hint}>{hint}</li>
+                ))}
+              </ul>
             </div>
             <div>
               <Label htmlFor="confirmPassword">Confirm New Password</Label>
@@ -110,7 +121,8 @@ export default function ChangePasswordPage() {
                 id="confirmPassword"
                 type="password"
                 required
-                minLength={12}
+                minLength={policy.minPasswordLength}
+                maxLength={policy.maxPasswordLength}
                 value={form.confirmPassword}
                 onChange={(e) =>
                   setForm({ ...form, confirmPassword: e.target.value })

@@ -16,6 +16,12 @@ vi.mock("@/lib/prisma", () => ({
     auditLog: {
       create: vi.fn(),
     },
+    // No configured login-security policy row: loadLoginSecuritySettings() falls
+    // back to the code default (min 12, classes off), so the reset route stays
+    // byte-identical to the historical inline min(12).max(128). Regression pin.
+    loginSecuritySetting: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     $transaction: vi.fn(),
   },
 }));

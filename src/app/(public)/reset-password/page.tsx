@@ -7,10 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { usePasswordPolicyHints } from "@/hooks/use-password-policy-hints";
 
 function ResetPasswordForm() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token") ?? "";
+  const policy = usePasswordPolicyHints();
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -65,8 +67,10 @@ function ResetPasswordForm() {
 
     let valid = true;
 
-    if (password.length < 12) {
-      setPasswordError("Password must be at least 12 characters");
+    if (password.length < policy.minPasswordLength) {
+      setPasswordError(
+        `Password must be at least ${policy.minPasswordLength} characters`,
+      );
       valid = false;
     }
 
@@ -134,15 +138,26 @@ function ResetPasswordForm() {
             <Input
               id="password"
               type="password"
-              placeholder="At least 12 characters"
+              placeholder={`At least ${policy.minPasswordLength} characters`}
               value={password}
               onChange={(e) => {
                 setPassword(e.target.value);
                 setPasswordError("");
               }}
+              minLength={policy.minPasswordLength}
+              maxLength={policy.maxPasswordLength}
               autoComplete="new-password"
               required
+              aria-describedby="password-requirements"
             />
+            <ul
+              id="password-requirements"
+              className="mt-1 space-y-0.5 text-xs text-muted-foreground"
+            >
+              {policy.hints.map((hint) => (
+                <li key={hint}>{hint}</li>
+              ))}
+            </ul>
             {passwordError && (
               <p className="text-xs text-destructive">{passwordError}</p>
             )}

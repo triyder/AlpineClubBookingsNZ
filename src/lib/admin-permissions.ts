@@ -287,6 +287,10 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/config-transfer",
       "/admin/setup",
       "/admin/modules",
+      // Login & Security page (epic #2030, child #2033): password policy today;
+      // magic-link / Google sign-in cards land here in #2034/#2035. Pinned to
+      // `support` alongside /admin/modules and the other system-config surfaces.
+      "/admin/security",
       "/admin/subscription-lockout",
       "/admin/notifications",
       "/admin/notification-rules",
@@ -303,6 +307,9 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/config-transfer",
       "/api/admin/setup",
       "/api/admin/modules",
+      // Login & Security config API (epic #2030, child #2033): support-area
+      // system configuration, same as /api/admin/modules.
+      "/api/admin/security",
       "/api/admin/notifications",
       "/api/admin/notification-delivery-policies",
       "/api/admin/booking-messages",

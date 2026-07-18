@@ -9,14 +9,17 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
+import { buildPasswordSchema } from "@/lib/password-policy";
 
-const resetPasswordSchema = z.object({
-  token: z
-    .string()
-    .trim()
-    .refine(isActionTokenFormat, "Reset token is invalid"),
-  password: z.string().min(12, "Password must be at least 12 characters").max(128, "Password must be at most 128 characters"),
-});
+// The password field is validated against the club's configured login-security
+// policy (min length + optional character classes; hard 128 ceiling always).
+// With no configured row this is byte-identical to the historical
+// min(12).max(128). Built per-request from the loaded policy.
+const tokenSchema = z
+  .string()
+  .trim()
+  .refine(isActionTokenFormat, "Reset token is invalid");
 
 export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.resetPassword, req);
@@ -30,6 +33,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const { policy } = await loadLoginSecuritySettings();
+    const resetPasswordSchema = z.object({
+      token: tokenSchema,
+      password: buildPasswordSchema(policy),
+    });
     const parsed = resetPasswordSchema.safeParse(body);
 
     if (!parsed.success) {

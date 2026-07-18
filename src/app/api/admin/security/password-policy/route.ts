@@ -1,0 +1,103 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import {
+  buildStructuredAuditLogCreateArgs,
+  getAuditRequestContext,
+} from "@/lib/audit";
+import {
+  LOGIN_SECURITY_SETTINGS_ID,
+  loadLoginSecuritySettings,
+} from "@/lib/login-security-settings";
+import {
+  MIN_PASSWORD_LENGTH_CEILING,
+  MIN_PASSWORD_LENGTH_FLOOR,
+} from "@/lib/password-policy";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/session-guards";
+
+// Admin API for the club password-complexity policy (epic #2030, child #2033).
+// The Login & Security page's password-policy card reads GET and writes PUT.
+// Pinned to the `support` admin area (mirroring /api/admin/modules — verified via
+// the admin-route-area-matrix pin): support:view to read, support:edit to write.
+// Every write is audited under the `security` category. This endpoint governs the
+// password rules ONLY; magicLinkTtlMinutes is owned by the sibling magic-link
+// issue (#2034) and is deliberately not writable here.
+
+const AREA = "support" as const;
+
+const policyInputSchema = z
+  .object({
+    minPasswordLength: z
+      .number()
+      .int()
+      .min(MIN_PASSWORD_LENGTH_FLOOR)
+      .max(MIN_PASSWORD_LENGTH_CEILING),
+    requireUppercase: z.boolean(),
+    requireLowercase: z.boolean(),
+    requireDigit: z.boolean(),
+    requireSymbol: z.boolean(),
+  })
+  .strict();
+
+export async function GET() {
+  const guard = await requireAdmin({ permission: { area: AREA, level: "view" } });
+  if (!guard.ok) return guard.response;
+
+  return NextResponse.json(await loadLoginSecuritySettings());
+}
+
+export async function PUT(request: Request) {
+  const guard = await requireAdmin({ permission: { area: AREA, level: "edit" } });
+  if (!guard.ok) return guard.response;
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const parsed = policyInputSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid settings", details: parsed.error.flatten().fieldErrors },
+      { status: 400 },
+    );
+  }
+
+  const data = parsed.data;
+  const memberId = guard.session.user.id;
+
+  await prisma.$transaction(async (tx) => {
+    const before = await tx.loginSecuritySetting.findUnique({
+      where: { id: LOGIN_SECURITY_SETTINGS_ID },
+      select: {
+        minPasswordLength: true,
+        requireUppercase: true,
+        requireLowercase: true,
+        requireDigit: true,
+        requireSymbol: true,
+      },
+    });
+    await tx.loginSecuritySetting.upsert({
+      where: { id: LOGIN_SECURITY_SETTINGS_ID },
+      update: { ...data, updatedByMemberId: memberId },
+      create: { id: LOGIN_SECURITY_SETTINGS_ID, ...data, updatedByMemberId: memberId },
+    });
+    await tx.auditLog.create(
+      buildStructuredAuditLogCreateArgs({
+        action: "LOGIN_SECURITY_PASSWORD_POLICY_UPDATED",
+        actor: { memberId },
+        entity: { type: "LoginSecuritySetting", id: LOGIN_SECURITY_SETTINGS_ID },
+        category: "security",
+        severity: "important",
+        outcome: "success",
+        summary: "Login & Security password policy updated",
+        metadata: { before, after: data },
+        request: getAuditRequestContext(request),
+      }),
+    );
+  });
+
+  return NextResponse.json(await loadLoginSecuritySettings());
+}

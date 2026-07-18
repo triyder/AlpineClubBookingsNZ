@@ -50,6 +50,11 @@ export const explicitPublicApiRoutes = {
     reason:
       "Magic-link sign-in request endpoint with non-enumerating behavior (always {success:true}) and rate limiting; mints a token only for an active, verified member while the module is enabled.",
   },
+  "src/app/api/auth/password-policy/route.ts": {
+    boundary: "public",
+    reason:
+      "Public read of the club password-complexity policy (#2033) so the reset/change-password forms can show live hints; discloses only rule metadata (min length, required character classes), no member data, and the server enforces the same policy regardless.",
+  },
   "src/app/api/auth/register/route.ts": {
     boundary: "public",
     reason: "Disabled legacy registration endpoint returning 410.",

@@ -291,6 +291,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/runtime-status": "support",
   "/api/admin/seasons": "bookings",
   "/api/admin/seasons/[id]": "bookings",
+  // Login & Security password-policy config (#2033): support-area system config,
+  // pinned alongside /api/admin/modules. See admin-permissions.ts.
+  "/api/admin/security/password-policy": "support",
   "/api/admin/setup": "support",
   "/api/admin/setup/finance-report-mappings": "finance",
   "/api/admin/setup/finance-report-mappings/backfill": "finance",
