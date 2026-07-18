@@ -8,7 +8,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,6 +36,9 @@ interface HistoryEntry {
 }
 
 export default function CommunicationsPage() {
+  // Bulk send writes the communications route, which the route-area matrix maps
+  // to the membership area; a view-only membership admin cannot send (#1997).
+  const canEdit = useAdminAreaEditAccess("membership");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [recipientFilter, setRecipientFilter] = useState("all");
@@ -78,6 +85,7 @@ export default function CommunicationsPage() {
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
+    if (!canEdit) return;
     setSending(true);
     setResult(null);
 
@@ -119,6 +127,13 @@ export default function CommunicationsPage() {
           Send bulk emails to club members. Respects notification preferences.
         </p>
       </div>
+
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view communications but cannot send bulk emails to
+          members.
+        </AdminViewOnlyNotice>
+      )}
 
       {/* Compose Form */}
       <Card>
@@ -193,9 +208,13 @@ export default function CommunicationsPage() {
               </div>
             )}
 
-            <Button type="submit" disabled={sending || !subject || !body}>
+            <ViewOnlyActionButton
+              canEdit={canEdit}
+              type="submit"
+              disabled={sending || !subject || !body}
+            >
               {sending ? "Sending..." : "Send to Members"}
-            </Button>
+            </ViewOnlyActionButton>
           </form>
         </CardContent>
       </Card>

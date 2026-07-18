@@ -13,6 +13,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -112,6 +117,9 @@ function screenshotBadge(report: IssueReportSummary) {
 }
 
 export default function AdminIssueReportsPage() {
+  // resolve/reopen/delete-screenshot write the support-area issue-reports route;
+  // a view-only support admin browses but cannot act (#1997).
+  const canEdit = useAdminAreaEditAccess("support");
   const searchParams = useSearchParams();
   const highlightedReportId = searchParams.get("report");
   const [statusFilter, setStatusFilter] = useState("OPEN");
@@ -168,7 +176,7 @@ export default function AdminIssueReportsPage() {
   }, [fetchReportDetail, highlightedReportId]);
 
   async function updateReport(action: "resolve" | "reopen" | "deleteScreenshot") {
-    if (!selectedReport) return;
+    if (!selectedReport || !canEdit) return;
     setSubmitting(true);
     try {
       const response = await fetch(`/api/admin/issue-reports/${selectedReport.id}`, {
@@ -200,6 +208,13 @@ export default function AdminIssueReportsPage() {
           Review member issue reports and manage retained screenshots.
         </p>
       </div>
+
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view issue reports but cannot resolve, reopen, or
+          delete their screenshots.
+        </AdminViewOnlyNotice>
+      )}
 
       <Card>
         <CardHeader>
@@ -360,7 +375,8 @@ export default function AdminIssueReportsPage() {
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <p className="text-sm font-medium text-slate-900">Screenshot</p>
                     {selectedReport.screenshot.retained ? (
-                      <Button
+                      <ViewOnlyActionButton
+                        canEdit={canEdit}
                         type="button"
                         size="sm"
                         variant="outline"
@@ -370,7 +386,7 @@ export default function AdminIssueReportsPage() {
                       >
                         <Trash2 className="h-4 w-4" />
                         Delete
-                      </Button>
+                      </ViewOnlyActionButton>
                     ) : null}
                   </div>
                   {selectedReport.screenshot.dataUrl ? (
@@ -417,7 +433,8 @@ export default function AdminIssueReportsPage() {
               </div>
               <DialogFooter className="gap-2 sm:gap-0">
                 {selectedReport.resolvedAt ? (
-                  <Button
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     type="button"
                     variant="outline"
                     className="gap-2"
@@ -426,9 +443,10 @@ export default function AdminIssueReportsPage() {
                   >
                     <RotateCcw className="h-4 w-4" />
                     Reopen
-                  </Button>
+                  </ViewOnlyActionButton>
                 ) : (
-                  <Button
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     type="button"
                     className="gap-2"
                     disabled={submitting}
@@ -436,7 +454,7 @@ export default function AdminIssueReportsPage() {
                   >
                     <CheckCircle2 className="h-4 w-4" />
                     Resolve
-                  </Button>
+                  </ViewOnlyActionButton>
                 )}
               </DialogFooter>
             </>

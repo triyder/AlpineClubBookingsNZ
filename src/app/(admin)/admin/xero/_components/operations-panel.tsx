@@ -5,6 +5,11 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { CheckCircle2 } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { redactSensitiveText } from "@/lib/redact-sensitive-json"
@@ -38,6 +43,9 @@ export function OperationsPanel({
   refreshToken: number
 }) {
   const { prompt, confirmDialog } = useConfirm()
+  // Retry/reset/mark-non-replayable/resolve all write finance-area Xero
+  // operations routes; a view-only finance admin browses but cannot act (#1997).
+  const canEdit = useAdminAreaEditAccess("finance")
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -303,12 +311,12 @@ export function OperationsPanel({
       onToggle={(nextOpen) => onToggle("operations", nextOpen)}
       actions={
         <>
-          <Button size="sm" onClick={() => void retryAllFailed()} disabled={retryingAllFailed}>
+          <ViewOnlyActionButton canEdit={canEdit} size="sm" onClick={() => void retryAllFailed()} disabled={retryingAllFailed}>
             {retryingAllFailed ? "Queueing..." : "Retry Active Failed"}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => void resetStaleRunning()} disabled={resettingStale}>
+          </ViewOnlyActionButton>
+          <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => void resetStaleRunning()} disabled={resettingStale}>
             {resettingStale ? "Resetting..." : "Reset stale running"}
-          </Button>
+          </ViewOnlyActionButton>
           <Button variant="outline" size="sm" onClick={() => void fetchOperations()} disabled={loading}>
             {loading ? "Refreshing..." : "Refresh"}
           </Button>
@@ -317,6 +325,12 @@ export function OperationsPanel({
     >
       <div className="space-y-4">
         {confirmDialog}
+        {!canEdit ? (
+          <AdminViewOnlyNotice>
+            Your admin role can view Xero operations but cannot retry, reset, or
+            resolve them.
+          </AdminViewOnlyNotice>
+        ) : null}
         {error ? <p className="text-sm text-danger">{error}</p> : null}
         <details className="rounded-md border bg-muted p-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer font-medium text-foreground">What do these statuses mean?</summary>
@@ -367,6 +381,7 @@ export function OperationsPanel({
               <OperationItem
                 key={operation.id}
                 operation={operation}
+                canEdit={canEdit}
                 retrying={retryingOperationId === operation.id}
                 markingNonReplayable={markingNonReplayableOperationId === operation.id}
                 resolving={resolvingOperationId === operation.id}
@@ -395,6 +410,7 @@ export function OperationsPanel({
 
 export function OperationItem({
   operation,
+  canEdit = true,
   retrying,
   markingNonReplayable,
   resolving,
@@ -403,6 +419,8 @@ export function OperationItem({
   onResolve,
 }: {
   operation: XeroOperation
+  /** Whether the actor may act on the operation (finance edit, #1997). */
+  canEdit?: boolean
   retrying: boolean
   markingNonReplayable: boolean
   resolving: boolean
@@ -471,21 +489,21 @@ export function OperationItem({
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           {operation.supported && operation.failureState !== "REPAIRED" && operation.failureState !== "SUPERSEDED" ? (
-            <Button variant="outline" size="sm" onClick={onRetry} disabled={retrying}>
+            <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={onRetry} disabled={retrying}>
               {retrying ? "Queueing..." : "Retry in background"}
-            </Button>
+            </ViewOnlyActionButton>
           ) : operation.reason && isFailedOrPartial ? (
             <p className="text-xs text-muted-foreground">{operation.reason}</p>
           ) : null}
           {operation.replayable && isFailedOrPartial ? (
-            <Button variant="outline" size="sm" onClick={onMarkNonReplayable} disabled={markingNonReplayable}>
+            <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={onMarkNonReplayable} disabled={markingNonReplayable}>
               {markingNonReplayable ? "Archiving..." : "Mark non-replayable"}
-            </Button>
+            </ViewOnlyActionButton>
           ) : null}
           {isFailedOrPartial ? (
-            <Button variant="outline" size="sm" onClick={onResolve} disabled={resolving}>
+            <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={onResolve} disabled={resolving}>
               {resolving ? "Resolving..." : "Resolve (fixed in Xero)"}
-            </Button>
+            </ViewOnlyActionButton>
           ) : null}
         </div>
       )}

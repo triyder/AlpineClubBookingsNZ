@@ -9,6 +9,10 @@ import { todayDateOnlyForTimeZone } from "@/lib/date-only";
 import { Alert } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  ADMIN_VIEW_ONLY_ACTION_REASON,
+  useAdminAreaEditAccess,
+} from "@/hooks/use-admin-area-edit-access";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import {
@@ -308,6 +312,9 @@ function SummaryCard({
 export default function PaymentsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Generate Invoice writes the finance-area generate-invoice route; a view-only
+  // finance admin browses payments but cannot mint invoices (#1997).
+  const canEditFinance = useAdminAreaEditAccess("finance");
   const [generatingInvoice, setGeneratingInvoice] = useState<string | null>(null);
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
   const [invoiceNotice, setInvoiceNotice] = useState<string | null>(null);
@@ -427,6 +434,7 @@ export default function PaymentsPage() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   async function handleGenerateInvoice(paymentId: string) {
+    if (!canEditFinance) return;
     setGeneratingInvoice(paymentId);
     setInvoiceError(null);
     setInvoiceNotice(null);
@@ -990,7 +998,12 @@ export default function PaymentsPage() {
                       ) : p.status === "SUCCEEDED" ? (
                         <button
                           onClick={() => handleGenerateInvoice(p.id)}
-                          disabled={generatingInvoice === p.id}
+                          disabled={generatingInvoice === p.id || !canEditFinance}
+                          title={
+                            !canEditFinance
+                              ? ADMIN_VIEW_ONLY_ACTION_REASON
+                              : undefined
+                          }
                           className="inline-flex items-center gap-1 rounded-sm text-xs text-warning hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                         >
                           <FileText className="h-3 w-3" />

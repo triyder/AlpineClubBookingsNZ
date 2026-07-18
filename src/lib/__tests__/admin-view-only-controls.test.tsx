@@ -138,6 +138,9 @@ import AdminBookPage from "@/app/(admin)/admin/book/page";
 import DeletionRequestsClient from "@/app/(admin)/admin/deletion-requests/deletion-requests-client";
 import MemberApplicationsPage from "@/app/(admin)/admin/member-applications/page";
 import MembershipCancellationsPage from "@/app/(admin)/admin/membership-cancellations/page";
+// #1997 admin action-button surfaces (support / communications lane).
+import AdminIssueReportsPage from "@/app/(admin)/admin/issue-reports/page";
+import CommunicationsPage from "@/app/(admin)/admin/communications/page";
 
 const SITE_CONTENT_DOCUMENTS = [
   { key: "FOOTER_BLURB", contentHtml: "<p>Blurb</p>", updatedAt: null },
@@ -2573,6 +2576,91 @@ describe("MembershipCancellationsPage view-only gating (#1997, membership)", () 
       screen.queryByText(
         /can view membership cancellations but cannot approve or reject/i,
       ),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1997 admin action-button surfaces (support / communications lane).
+// ---------------------------------------------------------------------------
+
+describe("AdminIssueReportsPage view-only gating (#1997, support)", () => {
+  beforeEach(() => {
+    sessionMatrix = null;
+    stubFetchRoutes({
+      "/api/admin/issue-reports": { reports: [], total: 0 },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("shows the view-only notice for a support:view admin", async () => {
+    sessionMatrix = matrix("view", { support: "view" });
+    render(<AdminIssueReportsPage />);
+
+    expect(
+      await screen.findByText(
+        /can view issue reports but cannot resolve, reopen/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the view-only notice for a support:edit admin", async () => {
+    sessionMatrix = matrix("view", { support: "edit" });
+    render(<AdminIssueReportsPage />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: /Issue Reports/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText(/can view issue reports but cannot resolve, reopen/i),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("CommunicationsPage view-only gating (#1997, membership)", () => {
+  beforeEach(() => {
+    sessionMatrix = null;
+    stubFetchRoutes({
+      "/api/admin/communications/send": { limit: 5, windowSeconds: 3600 },
+      "/api/admin/communications/history": { history: [] },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("disables Send to Members for a membership:view admin", async () => {
+    sessionMatrix = matrix("view", { membership: "view" });
+    render(<CommunicationsPage />);
+
+    expect(
+      await screen.findByRole("button", { name: /Send to Members/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/can view communications but cannot send bulk emails/i),
+    ).toBeInTheDocument();
+  });
+
+  it("enables Send to Members for a membership:edit admin (with content)", async () => {
+    sessionMatrix = matrix("view", { membership: "edit" });
+    render(<CommunicationsPage />);
+
+    const subject = await screen.findByLabelText(/Subject/i);
+    const body = screen.getByLabelText(/Message|Body/i);
+    fireEvent.change(subject, { target: { value: "Hello" } });
+    fireEvent.change(body, { target: { value: "World" } });
+
+    expect(
+      screen.getByRole("button", { name: /Send to Members/i }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByText(/can view communications but cannot send bulk emails/i),
     ).not.toBeInTheDocument();
   });
 });

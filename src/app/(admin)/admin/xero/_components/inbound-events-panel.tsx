@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { fetchJson, postJson } from "./api"
@@ -34,6 +39,9 @@ export function InboundEventsPanel({
   onRefreshDiagnostics: () => void
   refreshToken: number
 }) {
+  // Replay writes the finance-area inbound-events replay route; a view-only
+  // finance admin browses the events but cannot replay them (#1997).
+  const canEdit = useAdminAreaEditAccess("finance")
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -202,6 +210,11 @@ export function InboundEventsPanel({
       actions={<Button variant="outline" size="sm" onClick={() => void fetchEvents()} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</Button>}
     >
       <div className="space-y-4">
+        {!canEdit ? (
+          <AdminViewOnlyNotice>
+            Your admin role can view Xero inbound events but cannot replay them.
+          </AdminViewOnlyNotice>
+        ) : null}
         {error ? <p className="text-sm text-danger">{error}</p> : null}
         <details className="rounded-md border bg-muted p-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer font-medium text-foreground">What do these statuses mean?</summary>
@@ -267,9 +280,9 @@ export function InboundEventsPanel({
                 </div>
                 {event.errorMessage ? <p className="text-sm text-danger">{event.errorMessage}</p> : null}
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => void replay(event.id)} disabled={!event.canReplay || replayingEventId === event.id}>
+                  <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => void replay(event.id)} disabled={!event.canReplay || replayingEventId === event.id}>
                     {replayingEventId === event.id ? "Replaying..." : inboundEventActionLabel(event.status)}
-                  </Button>
+                  </ViewOnlyActionButton>
                   {!event.canReplay ? <p className="text-xs text-muted-foreground">This event is currently being processed.</p> : null}
                 </div>
                 <details className="rounded-md bg-muted p-2">

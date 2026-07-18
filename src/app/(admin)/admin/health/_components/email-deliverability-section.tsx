@@ -3,6 +3,11 @@
 import { useState } from "react";
 import { Mail, CheckCircle } from "lucide-react";
 import { useConfirm } from "@/components/confirm-dialog";
+import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
+import {
+  ADMIN_VIEW_ONLY_ACTION_REASON,
+  useAdminAreaEditAccess,
+} from "@/hooks/use-admin-area-edit-access";
 import { StatusBadge, formatDate } from "./shared";
 import type { HealthData } from "./types";
 
@@ -21,12 +26,16 @@ export function EmailDeliverabilitySection({
   onRefresh: () => Promise<void> | void;
   onError: (message: string) => void;
 }) {
+  // Clear-suppression, reissue, and archive write support-area email routes; a
+  // view-only support admin browses deliverability but cannot act (#1997).
+  const canEdit = useAdminAreaEditAccess("support");
   const [clearingSuppressionId, setClearingSuppressionId] = useState<string | null>(null);
   const [reviewingEmailFailureId, setReviewingEmailFailureId] = useState<string | null>(null);
   const [reissuingTokenEmailId, setReissuingTokenEmailId] = useState<string | null>(null);
   const { confirm, prompt, confirmDialog } = useConfirm();
 
   async function clearSuppression(id: string, email: string) {
+    if (!canEdit) return;
     if (!(await confirm({ title: `Clear email suppression for ${email}?` }))) {
       return;
     }
@@ -48,6 +57,7 @@ export function EmailDeliverabilitySection({
   }
 
   async function archiveEmailFailure(id: string, to: string) {
+    if (!canEdit) return;
     const reason = await prompt({
       title: `Archive exhausted email failure for ${to}?`,
       inputLabel: "Reason",
@@ -75,6 +85,7 @@ export function EmailDeliverabilitySection({
   }
 
   async function reissueTokenEmail(id: string, to: string) {
+    if (!canEdit) return;
     if (
       !(await confirm({
         title: `Reissue and resend token email for ${to}?`,
@@ -107,6 +118,12 @@ export function EmailDeliverabilitySection({
   return (
     <div className="space-y-6">
       {confirmDialog}
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view email deliverability but cannot clear
+          suppressions, reissue, or archive failed emails.
+        </AdminViewOnlyNotice>
+      )}
       {/* Email Deliverability */}
       <div>
         <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
@@ -172,7 +189,10 @@ export function EmailDeliverabilitySection({
                       onClick={() =>
                         clearSuppression(suppression.id, suppression.email)
                       }
-                      disabled={clearingSuppressionId === suppression.id}
+                      disabled={
+                        clearingSuppressionId === suppression.id || !canEdit
+                      }
+                      title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                       className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
                     >
                       <CheckCircle className="h-3.5 w-3.5" />
@@ -249,7 +269,8 @@ export function EmailDeliverabilitySection({
                     </span>
                     <button
                       onClick={() => reissueTokenEmail(failure.id, failure.to)}
-                      disabled={reissuingTokenEmailId === failure.id}
+                      disabled={reissuingTokenEmailId === failure.id || !canEdit}
+                      title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                       className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
                     >
                       <Mail className="h-3.5 w-3.5" />
@@ -332,7 +353,8 @@ export function EmailDeliverabilitySection({
                     </span>
                     <button
                       onClick={() => archiveEmailFailure(failure.id, failure.to)}
-                      disabled={reviewingEmailFailureId === failure.id}
+                      disabled={reviewingEmailFailureId === failure.id || !canEdit}
+                      title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                       className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
                     >
                       <CheckCircle className="h-3.5 w-3.5" />
