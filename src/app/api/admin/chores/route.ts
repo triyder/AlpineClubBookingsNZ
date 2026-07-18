@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
+import { createAuditLog } from "@/lib/audit"
 import {
   lodgeNullTolerantScope,
   resolveOptionalActiveLodgeId,
@@ -100,5 +101,27 @@ export async function POST(req: NextRequest) {
   }
 
   const chore = await prisma.choreTemplate.create({ data: { ...data, lodgeId } })
+
+  // Audit the config write with the acting admin as actor (mirrors the
+  // lodge-settings editor). This is what the bootstrap-import six-signal probe
+  // (signal 6) relies on to detect a hand-configured club's chore templates.
+  await createAuditLog({
+    action: "CHORE_TEMPLATE_CREATED",
+    memberId: guard.session.user.id,
+    actorMemberId: guard.session.user.id,
+    entityType: "ChoreTemplate",
+    entityId: chore.id,
+    category: "admin",
+    severity: "important",
+    outcome: "success",
+    summary: "Chore template created",
+    metadata: {
+      lodgeId,
+      name: chore.name,
+      isEssential: chore.isEssential,
+      active: chore.active,
+    },
+  })
+
   return NextResponse.json(chore, { status: 201 })
 }

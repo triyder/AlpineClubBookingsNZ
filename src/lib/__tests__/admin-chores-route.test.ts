@@ -6,6 +6,7 @@ const mockChoreCreate = vi.fn();
 const mockChoreFindMany = vi.fn();
 const mockLodgeFindFirst = vi.fn();
 const mockLodgeFindUnique = vi.fn();
+const mockAuditCreate = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   auth: mockAuth,
@@ -28,6 +29,9 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: mockLodgeFindFirst,
       findUnique: mockLodgeFindUnique,
     },
+    auditLog: {
+      create: mockAuditCreate,
+    },
   },
 }));
 
@@ -39,6 +43,7 @@ describe("POST /api/admin/chores", () => {
     mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockChoreCreate.mockResolvedValue({ id: "ct1" });
     mockLodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
+    mockAuditCreate.mockResolvedValue({});
     const mod = await import("@/app/api/admin/chores/route");
     POST = mod.POST;
   });
@@ -83,6 +88,16 @@ describe("POST /api/admin/chores", () => {
         frequencyMode: "SPECIFIC_DAYS",
         frequencyDaysOfWeek: [1, 4],
         lodgeId: "lodge-1",
+      }),
+    });
+    // #1988: the create must leave a member-actor audit row so the
+    // bootstrap-import six-signal probe (signal 6) detects hand-configured
+    // chore templates.
+    expect(mockAuditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "CHORE_TEMPLATE_CREATED",
+        actorMemberId: "admin1",
+        entityType: "ChoreTemplate",
       }),
     });
   });

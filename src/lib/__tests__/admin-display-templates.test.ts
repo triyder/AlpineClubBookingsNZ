@@ -15,6 +15,7 @@ const { mockPrisma, mockRequireAdmin } = vi.hoisted(() => ({
     booking: { findMany: vi.fn() },
     choreAssignment: { findMany: vi.fn() },
     displayTemplate: { findMany: vi.fn().mockResolvedValue([]) },
+    auditLog: { create: vi.fn().mockResolvedValue({}) },
   },
   mockRequireAdmin: vi.fn(),
 }));
@@ -135,6 +136,17 @@ describe("lodge display settings (AC4/AC5/AC6)", () => {
         },
       })
     );
+    // #1988: the display-config write must leave a member-actor audit row so
+    // the bootstrap-import six-signal probe (signal 6) detects a
+    // hand-configured lodge display.
+    expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "LODGE_DISPLAY_CONFIG_UPDATED",
+        actorMemberId: "admin-1",
+        entityType: "Lodge",
+        entityId: "lodge-default",
+      }),
+    });
   });
 
   it("requires an admin session (AC7)", async () => {

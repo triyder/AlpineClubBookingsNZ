@@ -77,9 +77,12 @@ import type { ImportMode, ReadDb } from "./import-types";
  *      `/admin/setup` without pressing "finish".
  *   6. No audit-log row has a MEMBER actor — no row whose `memberId` or
  *      `actorMemberId` is set to anything other than a `system:`-prefixed
- *      synthetic actor. Admin configuration edits (direct editors, wizard
- *      steps, logins) all audit with a member actor, so this catches a club
- *      configured through the admin UI without any of the other footprints.
+ *      synthetic actor. Coverage rests on per-editor auditing: the admin
+ *      configuration editors (the direct config editors — including the chores
+ *      and display lodge-config editors — and the wizard steps) all audit with
+ *      a member actor, so this catches a club configured through the admin UI
+ *      without any of the other footprints. (Successful logins are NOT audited
+ *      — only auth bounces are — so this signal does not rest on them.)
  *
  * ALL six must be absent to apply. Any one present refuses — strictly safer
  * than an update-count check, because it also refuses a manually-configured
@@ -297,9 +300,11 @@ export async function assessBootstrapReadiness(
       },
     }),
     // 6. ANY audit row written by a member actor (either actor column set to a
-    //    non-`system:` id). Admin config edits, wizard steps, and logins all
-    //    audit with a member actor; synthetic `system:`-prefixed actors (this
-    //    feature) and actor-less system/cron rows are excluded.
+    //    non-`system:` id). Admin config edits (direct editors and wizard
+    //    steps) all audit with a member actor; synthetic `system:`-prefixed
+    //    actors (this feature) and actor-less system/cron rows are excluded.
+    //    (Successful logins are not audited — only auth bounces — so this does
+    //    not rely on login rows.)
     db.auditLog.count({
       where: {
         OR: [

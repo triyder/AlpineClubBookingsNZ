@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getDefaultLodgeId } from "@/lib/lodges";
+import { createAuditLog } from "@/lib/audit";
 
 // Per-lodge display settings (fork issue #34): the {{config:<key>}} glob and
 // the name-granularity override. Validation mirrors the serialiser's
@@ -107,9 +108,15 @@ export async function PUT(req: NextRequest) {
   }
 
   const lodgeId = await resolveLodgeId(body.lodgeId ?? null);
+  // Load the current display fields for before/after audit metadata (mirrors
+  // the lodge-settings editor loading its previous settings before writing).
   const lodge = await prisma.lodge.findUnique({
     where: { id: lodgeId },
-    select: { id: true },
+    select: {
+      id: true,
+      displayNameGranularity: true,
+      showGuestPhonesOnScreens: true,
+    },
   });
   if (!lodge) {
     return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
@@ -132,5 +139,49 @@ export async function PUT(req: NextRequest) {
         : {}),
     },
   });
+
+  // Audit the config write with the acting admin as actor. All four editable
+  // fields sit in the config bundle's LODGE_FIELDS allowlist, so this is what
+  // the bootstrap-import six-signal probe (signal 6) relies on to detect a
+  // hand-configured lodge display.
+  const changedFields = [
+    ...(body.displayConfig !== undefined ? ["displayConfig"] : []),
+    ...(body.displayNameGranularity !== undefined
+      ? ["displayNameGranularity"]
+      : []),
+    ...(body.displayNotice !== undefined ? ["displayNotice"] : []),
+    ...(body.showGuestPhonesOnScreens !== undefined
+      ? ["showGuestPhonesOnScreens"]
+      : []),
+  ];
+  await createAuditLog({
+    action: "LODGE_DISPLAY_CONFIG_UPDATED",
+    memberId: guard.session.user.id,
+    actorMemberId: guard.session.user.id,
+    entityType: "Lodge",
+    entityId: lodgeId,
+    category: "admin",
+    severity: "important",
+    outcome: "success",
+    summary: "Lodge display configuration updated",
+    metadata: {
+      changedFields,
+      before: {
+        displayNameGranularity: lodge.displayNameGranularity,
+        showGuestPhonesOnScreens: lodge.showGuestPhonesOnScreens,
+      },
+      after: {
+        displayNameGranularity:
+          body.displayNameGranularity !== undefined
+            ? body.displayNameGranularity
+            : lodge.displayNameGranularity,
+        showGuestPhonesOnScreens:
+          body.showGuestPhonesOnScreens !== undefined
+            ? body.showGuestPhonesOnScreens
+            : lodge.showGuestPhonesOnScreens,
+      },
+    },
+  });
+
   return NextResponse.json({ ok: true });
 }

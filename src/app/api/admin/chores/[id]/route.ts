@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
+import { createAuditLog } from "@/lib/audit"
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
@@ -50,15 +51,50 @@ export async function PUT(
     )
   }
 
+  // Snapshot the row for before/after audit metadata (mirrors the
+  // lodge-settings editor loading its previous settings before writing).
+  const before = await prisma.choreTemplate.findUnique({ where: { id } })
+  let chore
   try {
-    const chore = await prisma.choreTemplate.update({
+    chore = await prisma.choreTemplate.update({
       where: { id },
       data,
     })
-    return NextResponse.json(chore)
   } catch {
     return NextResponse.json({ error: "Chore not found" }, { status: 404 })
   }
+
+  // Audit with the acting admin as actor so the bootstrap-import six-signal
+  // probe (signal 6) detects hand-configured chore templates.
+  await createAuditLog({
+    action: "CHORE_TEMPLATE_UPDATED",
+    memberId: guard.session.user.id,
+    actorMemberId: guard.session.user.id,
+    entityType: "ChoreTemplate",
+    entityId: chore.id,
+    category: "admin",
+    severity: "important",
+    outcome: "success",
+    summary: "Chore template updated",
+    metadata: {
+      lodgeId: chore.lodgeId,
+      changedFields: Object.keys(data),
+      before: before
+        ? {
+            name: before.name,
+            active: before.active,
+            isEssential: before.isEssential,
+          }
+        : null,
+      after: {
+        name: chore.name,
+        active: chore.active,
+        isEssential: chore.isEssential,
+      },
+    },
+  })
+
+  return NextResponse.json(chore)
 }
 
 export async function DELETE(
@@ -71,10 +107,28 @@ export async function DELETE(
   if (!guard.ok) return guard.response;
   const { id } = await params
 
+  const before = await prisma.choreTemplate.findUnique({ where: { id } })
   try {
     await prisma.choreTemplate.delete({ where: { id } })
-    return NextResponse.json({ success: true })
   } catch {
     return NextResponse.json({ error: "Chore not found" }, { status: 404 })
   }
+
+  await createAuditLog({
+    action: "CHORE_TEMPLATE_DELETED",
+    memberId: guard.session.user.id,
+    actorMemberId: guard.session.user.id,
+    entityType: "ChoreTemplate",
+    entityId: id,
+    category: "admin",
+    severity: "important",
+    outcome: "success",
+    summary: "Chore template deleted",
+    metadata: {
+      lodgeId: before?.lodgeId ?? null,
+      name: before?.name ?? null,
+    },
+  })
+
+  return NextResponse.json({ success: true })
 }
