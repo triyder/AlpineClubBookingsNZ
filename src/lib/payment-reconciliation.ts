@@ -27,6 +27,7 @@ import {
 import {
   buildBookingModificationRefundMetadata,
   buildCapacityClaimFailedRefundStripeKeyPrefix,
+  buildDuplicateCaptureRefundRecoveryIdempotencyKey,
   buildDuplicateCaptureRefundStripeKeyPrefix,
 } from "@/lib/payment-recovery-keys";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
@@ -34,8 +35,14 @@ import {
   deriveBookingAppliedCreditCents,
   restoreCreditFromBooking,
 } from "@/lib/member-credit";
-import { recordBookingEvent } from "@/lib/booking-events";
-import { sendAdminPaymentFailureAlert } from "@/lib/email";
+import {
+  recordBookingEvent,
+  recordDuplicateCaptureRefundEvent,
+} from "@/lib/booking-events";
+import {
+  sendAdminDuplicateCaptureRefundAlert,
+  sendAdminPaymentFailureAlert,
+} from "@/lib/email";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -649,12 +656,14 @@ export async function markBookingPaymentSucceeded({
       "Duplicate Stripe capture on an already-paid booking (#1992); auto-refunding the duplicate capture"
     );
 
-    // No BookingEvent is recorded for this refund ON PURPOSE: the booking
-    // stays PAID and its settlement money is untouched, while a REFUNDED
-    // event would be picked up by resolveBookingNarrative as the settlement
-    // clause of a LATER member cancellation and misstate that refund. The
-    // durable audit trail is the PaymentRecoveryOperation row, the
-    // PaymentRefund ledger entries, this log line and the admin alert below.
+    // #2008 — a durable, ADMIN-ONLY BookingEvent IS recorded for this refund
+    // once its recovery operation reaches SUCCEEDED (see below), but it is a
+    // REFUNDED event carrying the `duplicate_capture_refund` discriminator so
+    // resolveBookingNarrative EXCLUDES it (isDuplicateCaptureRefundEvent) and
+    // it can never masquerade as the settlement clause of a LATER member
+    // cancellation. The rest of the audit trail is unchanged: the
+    // PaymentRecoveryOperation row, the PaymentRefund ledger entries, this log
+    // line and the admin alert below.
     try {
       await refundPaymentTransactions({
         paymentId: reconciliation.paymentId,
@@ -680,27 +689,47 @@ export async function markBookingPaymentSucceeded({
       // Happy-path close of the pre-persisted operation. Best-effort: a lost
       // close leaves a PENDING row whose replay re-requests the identical
       // slice/keys, which Stripe answers with the original refund.
-      await markDuplicateCaptureRefundRecoverySucceeded({
+      const markResult = await markDuplicateCaptureRefundRecoverySucceeded({
         bookingId,
         paymentIntentId,
-      }).catch((markErr) =>
+      }).catch((markErr) => {
         logger.error(
           { err: markErr, bookingId, paymentIntentId },
           "Failed to mark duplicate-capture refund recovery succeeded; the cron will replay the frozen plan idempotently"
-        )
-      );
+        );
+        return null;
+      });
+
+      // #2008 — record the admin-only history event EXACTLY ONCE, gated on this
+      // call being the one that flipped the operation to SUCCEEDED (count > 0).
+      // If the mark was lost or the cron already closed the operation, this
+      // path records nothing and the cron-replay path owns the event, so the
+      // inline and cron paths never double-record. Post-commit, base client.
+      if (markResult && markResult.count > 0) {
+        await recordDuplicateCaptureRefundEvent({
+          bookingId,
+          amountCents: plannedRefundCents,
+          duplicatePaymentIntentId: paymentIntentId,
+          settledPaymentIntentId: settledPaymentIntentId ?? null,
+        });
+      }
 
       // Alert the admins even on success: an automatic refund of a duplicate
       // charge is an anomaly worth eyes, and the alert is the operator's cue
-      // to check how the double capture happened. Reuses the existing payment
-      // anomaly template (a dedicated template is deliberately out of scope).
-      sendAdminPaymentFailureAlert({
+      // to check how the double capture happened. Dedicated template (#2007)
+      // whose success variant states the duplicate was refunded in full.
+      sendAdminDuplicateCaptureRefundAlert({
         memberName: `${reconciliation.booking.member.firstName} ${reconciliation.booking.member.lastName}`,
         checkIn: reconciliation.booking.checkIn,
         checkOut: reconciliation.booking.checkOut,
         amountCents: plannedRefundCents,
-        errorMessage: `Duplicate card capture on an already-paid booking: intent ${paymentIntentId} captured after the booking was settled by ${settledPaymentIntentId ?? "another capture"}. The duplicate charge was automatically refunded in full; no action is needed unless the member reports otherwise.`,
         paymentIntentId,
+        settledPaymentIntentId: settledPaymentIntentId ?? null,
+        operationReference: buildDuplicateCaptureRefundRecoveryIdempotencyKey(
+          bookingId,
+          paymentIntentId
+        ),
+        refundFailed: false,
       }).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId, paymentIntentId },
@@ -735,13 +764,22 @@ export async function markBookingPaymentSucceeded({
           "Failed to record inline duplicate-capture refund failure on the recovery operation"
         )
       );
-      sendAdminPaymentFailureAlert({
+      sendAdminDuplicateCaptureRefundAlert({
         memberName: `${reconciliation.booking.member.firstName} ${reconciliation.booking.member.lastName}`,
         checkIn: reconciliation.booking.checkIn,
         checkOut: reconciliation.booking.checkOut,
         amountCents: plannedRefundCents,
-        errorMessage: `Duplicate card capture on an already-paid booking: intent ${paymentIntentId} captured after the booking was settled by ${settledPaymentIntentId ?? "another capture"}. The automatic refund failed inline (${refundError instanceof Error ? refundError.message : String(refundError)}); the payment recovery cron will retry it.`,
         paymentIntentId,
+        settledPaymentIntentId: settledPaymentIntentId ?? null,
+        operationReference: buildDuplicateCaptureRefundRecoveryIdempotencyKey(
+          bookingId,
+          paymentIntentId
+        ),
+        errorMessage:
+          refundError instanceof Error
+            ? refundError.message
+            : String(refundError),
+        refundFailed: true,
       }).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId, paymentIntentId },

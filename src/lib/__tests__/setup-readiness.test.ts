@@ -225,6 +225,65 @@ describe("setup-readiness", () => {
     expect(ageCheck?.details).toContain("Database age-tier settings: 4");
   });
 
+  it("treats a valid 2-tier SUBSET club as complete, not a warning (#2009)", () => {
+    // A club running only CHILD + ADULT saves 2 rows. The DB is authoritative and
+    // the save route guarantees the set is a complete valid tiling, so the age
+    // step must report complete with the DB's own count — NOT nag it for having
+    // fewer than the 4-tier default, even though club.json still lists 4 tiers.
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(), // validClubConfig has 4 ageTiers
+      database: { ...completeDatabase, ageTierSettingCount: 2 },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const bookingCategory = readiness.categories.find((c) => c.id === "booking");
+    const ageCheck = bookingCategory?.checks.find((c) => c.id === "age-tiers");
+    expect(ageCheck?.status).toBe("complete");
+    expect(ageCheck?.details).toContain("Expected age tiers: 2");
+    expect(ageCheck?.details).toContain("Database age-tier settings: 2");
+  });
+
+  it("still warns when the age-tier table is empty (pre-config) (#2009)", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: { ...completeDatabase, ageTierSettingCount: 0 },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+    const bookingCategory = readiness.categories.find((c) => c.id === "booking");
+    const ageCheck = bookingCategory?.checks.find((c) => c.id === "age-tiers");
+    expect(ageCheck?.status).toBe("warning");
+    // Pre-config falls back to the config/seed contract count as the hint.
+    expect(ageCheck?.details).toContain("Expected age tiers: 4");
+  });
+
+  it("scopes rate-gap coverage to the club's configured tier subset (#2009)", async () => {
+    const { computeMembershipTypeRateGaps } = await import("@/lib/setup-readiness");
+    const types = [{ id: "type-full", name: "Full Member", ageGroupsApply: true }];
+    const seasons = [{ id: "s-1", name: "Winter 2026" }];
+    // A CHILD + ADULT club that has priced BOTH its present tiers has no gap,
+    // even though INFANT and YOUTH have no rows (no guest ever classifies into
+    // them). Without the subset scoping this would falsely report a gap.
+    const rateRows = [
+      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "CHILD" },
+      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "ADULT" },
+    ];
+    expect(
+      computeMembershipTypeRateGaps({
+        types,
+        seasons,
+        rateRows,
+        bookableAgeTiers: ["CHILD", "ADULT"],
+      }),
+    ).toEqual([]);
+    // With the default full-four set it WOULD flag the absent tiers, proving the
+    // scoping is what suppresses the false positive.
+    expect(
+      computeMembershipTypeRateGaps({ types, seasons, rateRows }),
+    ).toEqual(["Full Member — Winter 2026 (missing INFANT, YOUTH)"]);
+  });
+
   it("computes tier-aware membership-type rate gaps (#1930, E4 review F7)", async () => {
     const { computeMembershipTypeRateGaps } = await import("@/lib/setup-readiness");
     const types = [
@@ -465,7 +524,10 @@ describe("setup-readiness club-config reconcile (D3, epic #1943)", () => {
     expect(clubConfigCheck(dir).status).toBe("blocked");
   });
 
-  it("reports complete for an absent primary with a valid example", () => {
+  it("reports a warning (not complete) for an absent primary with only an example and no DB check (#1987)", () => {
+    // C8: config/club.json is an optional seed and club.example.json is a
+    // placeholder — neither counts as "configured" on its own. Without a
+    // primary and without a DB snapshot the gate warns; the DB is authoritative.
     const dir = makeDir();
     fs.writeFileSync(
       path.join(dir, "club.example.json"),
@@ -473,11 +535,116 @@ describe("setup-readiness club-config reconcile (D3, epic #1943)", () => {
     );
 
     const check = clubConfigCheck(dir);
-    expect(check.status).toBe("complete");
-    expect(check.message).toContain("Adopter Club");
+    expect(check.status).toBe("warning");
+    expect(check.message).not.toContain("Adopter Club");
   });
 
-  it("reports blocked when neither file exists", () => {
-    expect(clubConfigCheck(makeDir()).status).toBe("blocked");
+  it("reports a warning (not blocked) when neither file exists and the DB was not checked (#1987)", () => {
+    // C8: config/club.json is only an optional seed now. With no primary on
+    // disk and no DB snapshot, the gate cannot confirm configuration, so it
+    // warns rather than hard-blocking.
+    const check = clubConfigCheck(makeDir());
+    expect(check.status).toBe("warning");
+    expect(check.message).toContain("database was not checked");
+  });
+
+  it("does NOT treat a valid club.example.json alone as configured when the DB is checked (#1987)", () => {
+    const dir = makeDir();
+    fs.writeFileSync(
+      path.join(dir, "club.example.json"),
+      JSON.stringify({ ...validClubConfig, name: "Placeholder Club" }, null, 2),
+    );
+    // DB snapshot present but no persisted identity -> not configured -> blocked.
+    const readiness = buildSetupReadiness({
+      configDir: dir,
+      database: { ...completeDatabase, clubIdentityName: null },
+    });
+    const check = readiness.categories
+      .flatMap((c) => c.checks)
+      .find((c) => c.id === "club-config");
+    expect(check?.status).toBe("blocked");
+    expect(check?.message).not.toContain("Placeholder Club");
+  });
+});
+
+describe("setup-readiness club-config DB-first gate (#1987, C8)", () => {
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function emptyDir(): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-readiness-c8-"));
+    dirs.push(dir);
+    return dir;
+  }
+
+  function clubConfigCheck(readiness: ReturnType<typeof buildSetupReadiness>) {
+    const check = readiness.categories
+      .flatMap((c) => c.checks)
+      .find((c) => c.id === "club-config");
+    if (!check) throw new Error("club-config check not found");
+    return check;
+  }
+
+  it("reports not-configured (blocked) for a fresh DB with no club.json, then complete once identity is filled", () => {
+    const dir = emptyDir();
+
+    const before = buildSetupReadiness({
+      configDir: dir,
+      database: { ...completeDatabase, clubIdentityName: null, configuredCapacity: null },
+    });
+    const beforeCheck = clubConfigCheck(before);
+    expect(beforeCheck.status).toBe("blocked");
+    expect(beforeCheck.message).toContain("not configured yet");
+
+    const after = buildSetupReadiness({
+      configDir: dir,
+      database: {
+        ...completeDatabase,
+        clubIdentityName: "Rimutaka Alpine Club",
+        configuredCapacity: 24,
+      },
+    });
+    const afterCheck = clubConfigCheck(after);
+    expect(afterCheck.status).toBe("complete");
+    expect(afterCheck.message).toContain("Rimutaka Alpine Club");
+    expect(afterCheck.message).toContain("24 total beds");
+    // No file was involved.
+    expect(afterCheck.details).toContain(
+      "Source: database (ClubIdentitySettings / EmailMessageSetting)",
+    );
+  });
+
+  it("still blocks loudly on a malformed primary club.json even when the DB is configured", () => {
+    const dir = emptyDir();
+    fs.writeFileSync(path.join(dir, "club.json"), "{ not json");
+
+    const readiness = buildSetupReadiness({
+      configDir: dir,
+      database: { ...completeDatabase, clubIdentityName: "Configured Club" },
+    });
+    const check = clubConfigCheck(readiness);
+    expect(check.status).toBe("blocked");
+    expect(check.message).toContain("invalid");
+  });
+
+  it("marks the age-tiers step complete from the fixed four DB slots without a club.json", () => {
+    const dir = emptyDir();
+    const readiness = buildSetupReadiness({
+      configDir: dir,
+      database: {
+        ...completeDatabase,
+        clubIdentityName: "Configured Club",
+        ageTierSettingCount: 4,
+      },
+    });
+    const ageCheck = readiness.categories
+      .flatMap((c) => c.checks)
+      .find((c) => c.id === "age-tiers");
+    expect(ageCheck?.status).toBe("complete");
   });
 });

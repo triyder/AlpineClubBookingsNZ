@@ -16,8 +16,13 @@ export {
   computeAgeTierWithSettings,
   getSeasonStartDate,
   normalizeAgeTierSettings,
+  validateAgeTierPartition,
 } from "./policies/age-tier";
-export type { AgeTierSettingData } from "./policies/age-tier";
+export type {
+  AgeTierSettingData,
+  AgeTierPartitionRow,
+  AgeTierPartitionResult,
+} from "./policies/age-tier";
 
 let _cachedSettings: AgeTierSettingData[] | null = null;
 let _cacheExpiry = 0;

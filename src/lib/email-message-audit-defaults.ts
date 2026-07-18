@@ -246,6 +246,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Payment Failed — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Payment Failed\n\nA payment has failed and may require manual attention.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount: {{amount}}\nError: {{errorMessage}}\nStripe PI: {{paymentIntentId}}\n\nView Payments: {{BASE_URL}}/admin/payments"
   },
+  "admin-duplicate-capture-refund": {
+    "defaultSubject": "Duplicate capture auto-refunded: {{memberName}}",
+    "defaultBody": "Duplicate Card Capture Auto-Refunded\n\nA second, distinct card capture arrived on a booking that was already paid (settled by another capture), so the duplicate charge was automatically refunded in full — the member has not been double-charged and no action is needed unless the member reports otherwise. [when the automatic refund could not complete inline: the refund could not complete and a durable recovery operation is queued — the payment recovery cron will retry it with backoff; watch the recovery queue and confirm the refund lands. Failure detail: {{errorMessage}}]\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount refunded: {{amount}}\nDuplicate Stripe PI: {{paymentIntentId}}\nRecovery operation: {{operation}}\n\nThe booking's own settlement is untouched.\n\nView Payments: {{reviewUrl}}"
+  },
   "admin-pending-deadline": {
     "defaultSubject": "{{count}} Pending Booking{{s}} Approaching Deadline",
     "defaultBody": "Pending Bookings Approaching Deadline\n\n{{count}} pending booking(s) will reach their hold deadline within 48 hours.\n\nMember | Dates | Guests | Deadline | Remaining\n{{memberName}} | {{checkIn}} – {{checkOut}} | {{guestCount}} | {{deadline}} | {{hoursRemaining}}h\n...\n\nView Bookings: {{BASE_URL}}/admin/bookings"

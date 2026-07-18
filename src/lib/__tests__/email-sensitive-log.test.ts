@@ -29,6 +29,12 @@ describe("sensitive EmailLog HTML classification", () => {
     expect(shouldPersistEmailHtml("booking-request-declined")).toBe(true);
   });
 
+  it("retains HTML for the #1992/#2007 duplicate-capture refund alert (no bearer token)", () => {
+    // The dedicated duplicate-capture alert carries no bearer /pay link, so its
+    // HTML must NOT be redacted at rest.
+    expect(shouldPersistEmailHtml("admin-duplicate-capture-refund")).toBe(true);
+  });
+
   it("retains HTML for the #1993 terminal split-cancellation templates (no bearer token)", () => {
     // Neither the admin terminal notice nor the member guest-portion-cancelled
     // notice carries a bearer /pay link, so they must NOT be redacted at rest.

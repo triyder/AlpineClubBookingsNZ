@@ -26,6 +26,7 @@ import {
 } from "@/lib/payment-transactions";
 import { attachPaymentIntentToWaitingSupplementaryInvoiceOperations } from "@/lib/xero-operation-outbox";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
+import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
@@ -1428,6 +1429,49 @@ async function processBookingModificationRefundOperation(
     metadata,
     idempotencyKeyPrefix,
   });
+
+  // #2008 — the #1992 duplicate-capture auto-refund replays through this generic
+  // modification-refund executor (its durable operation is a
+  // REFUND_BOOKING_MODIFICATION carrying a `duplicate_capture_<bookingId>_<pi>`
+  // idempotency key). On this recovery-replay path record the admin-only
+  // history event, gated on the terminal SUCCEEDED transition actually flipping
+  // the operation (count > 0) so it lands EXACTLY ONCE across the inline and
+  // cron paths: if the inline refund already closed the operation and recorded
+  // the event, this replay sees count 0 and records nothing. The guarded
+  // updateMany sets the identical terminal fields completePaymentRecoveryOperation
+  // would.
+  const duplicateCapturePrefix =
+    buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking(operation.bookingId);
+  if (operation.idempotencyKey.startsWith(duplicateCapturePrefix)) {
+    const transition = await prisma.paymentRecoveryOperation.updateMany({
+      where: {
+        id: operation.id,
+        status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+      },
+      data: {
+        status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        nextRetryAt: null,
+        lastError: null,
+        processingStartedAt: null,
+        succeededAt: new Date(),
+      },
+    });
+    if (transition.count > 0) {
+      await recordDuplicateCaptureRefundEvent({
+        bookingId: operation.bookingId,
+        amountCents: operation.amountCents,
+        // The duplicate intent id is the suffix of the operation's per-booking
+        // idempotency key. The settling intent is not persisted on the
+        // operation, so the replay records it as null (the inline path, which
+        // owns the common case, carries the settling intent).
+        duplicatePaymentIntentId: operation.idempotencyKey.slice(
+          duplicateCapturePrefix.length,
+        ),
+        settledPaymentIntentId: null,
+      });
+    }
+    return;
+  }
 
   await completePaymentRecoveryOperation(operation.id);
 }

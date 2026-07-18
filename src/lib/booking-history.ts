@@ -51,12 +51,32 @@ export interface BookingHistoryItem {
   tone: BookingHistoryTone;
 }
 
+/**
+ * A #1992 duplicate-capture auto-refund, surfaced on the booking history
+ * timeline (#2008). The page passes these ONLY for admin viewers, so this entry
+ * stays admin-only while every member-facing history item is unchanged.
+ */
+interface BookingHistoryDuplicateCaptureRefund {
+  /** Stable id for the timeline item key (the BookingEvent id). */
+  id: string;
+  occurredAt: Date;
+  amountCents: number;
+  /** The refunded duplicate capture's PaymentIntent id, when known. */
+  duplicatePaymentIntentId: string | null;
+}
+
 interface BuildBookingHistoryOptions {
   createdAt: Date;
   payment: BookingHistoryPayment | null;
   modifications: BookingHistoryModification[];
   refundRequests: BookingHistoryRefundRequest[];
   auditLogs: BookingHistoryAuditLog[];
+  /**
+   * #1992 duplicate-capture auto-refunds (#2008). Admin-only: the page supplies
+   * these only when the viewer can see admin tools, so members see nothing new.
+   * Defaults to none.
+   */
+  duplicateCaptureRefunds?: BookingHistoryDuplicateCaptureRefund[];
 }
 
 const MODIFICATION_LABELS: Record<string, string> = {
@@ -141,6 +161,7 @@ export function buildBookingHistoryItems({
   modifications,
   refundRequests,
   auditLogs,
+  duplicateCaptureRefunds = [],
 }: BuildBookingHistoryOptions): BookingHistoryItem[] {
   const items: BookingHistoryItem[] = [
     {
@@ -383,6 +404,23 @@ export function buildBookingHistoryItems({
       detail: "The latest extra payment required by a booking change failed.",
       amountDisplay: formatCents(payment.additionalAmountCents),
       tone: "danger",
+    });
+  }
+
+  for (const refund of duplicateCaptureRefunds) {
+    const intentClause = refund.duplicatePaymentIntentId
+      ? ` Duplicate intent ${refund.duplicatePaymentIntentId}.`
+      : "";
+    items.push({
+      id: `duplicate-capture-refund-${refund.id}`,
+      occurredAt: refund.occurredAt,
+      category: "Payment",
+      title: "Duplicate capture auto-refunded",
+      detail:
+        "A second card capture on this already-paid booking was automatically refunded — the booking's settlement is unaffected." +
+        intentClause,
+      amountDisplay: formatCents(refund.amountCents),
+      tone: "warning",
     });
   }
 

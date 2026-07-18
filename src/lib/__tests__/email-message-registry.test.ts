@@ -23,6 +23,29 @@ describe("email message registry", () => {
     expect(getDefaultDeliveryMode("admin-payment-failure")).toBe("always");
   });
 
+  it("registers the #1992/#2007 duplicate-capture refund alert as a delivery-editable admin alert", () => {
+    const definition = getEmailTemplateDefinition(
+      "admin-duplicate-capture-refund",
+    );
+    if (!definition) throw new Error("missing admin-duplicate-capture-refund");
+
+    // Admin audience, admin-system, NOT delivery-locked (an operational nudge —
+    // the refund already happened or is durably queued, so muting loses no
+    // money). Required tokens are the member name + admin action link.
+    expect(definition.audience).toBe("admin");
+    expect(isAdminSystemTemplate("admin-duplicate-capture-refund")).toBe(true);
+    expect(definition.deliveryEditable).toBe(true);
+    expect(getDefaultDeliveryMode("admin-duplicate-capture-refund")).toBe(
+      "always",
+    );
+    expect(definition.requiredTokens).toEqual(
+      expect.arrayContaining(["memberName", "reviewUrl"]),
+    );
+    for (const token of definition.requiredTokens) {
+      expect(definition.defaultBody).toContain(`{{${token}}}`);
+    }
+  });
+
   it("has editor-safe defaults for every registered template", () => {
     const invalidDefinitions = EMAIL_TEMPLATE_DEFINITIONS.flatMap((definition) => {
       const validation = validateEmailTemplateContent({

@@ -51,6 +51,10 @@ import {
   type NarrativeEvent,
 } from "@/lib/booking-narrative";
 import {
+  asDuplicateCaptureRefundSnapshot,
+  isDuplicateCaptureRefundEvent,
+} from "@/lib/duplicate-capture-refund-event";
+import {
   getRemainingRefundableCents,
   hasCapturedPayment,
 } from "@/lib/booking-payment-state";
@@ -344,6 +348,7 @@ export default async function BookingDetailPage({
     where: { bookingId: booking.id },
     orderBy: { occurredAt: "asc" },
     select: {
+      id: true,
       type: true,
       occurredAt: true,
       amountCents: true,
@@ -486,6 +491,23 @@ export default async function BookingDetailPage({
     : 0;
   const latestRefundAppeal = booking.refundRequests[0] ?? null;
   const maxRefundableCents = getRemainingRefundableCents(booking.payment);
+  // #2008 — the #1992 duplicate-capture auto-refund is an ADMIN-ONLY history
+  // entry: it never enters the shared member/guest narrative, and only admin
+  // viewers see it on the timeline. Gating the data feed (not just the render)
+  // keeps it off member-facing surfaces entirely.
+  const duplicateCaptureRefunds = canSeeAdminTools
+    ? bookingEvents
+        .filter((event) => isDuplicateCaptureRefundEvent(event))
+        .map((event) => ({
+          id: event.id,
+          occurredAt: event.occurredAt,
+          amountCents: event.amountCents ?? 0,
+          duplicatePaymentIntentId:
+            asDuplicateCaptureRefundSnapshot(event.snapshot)
+              ?.duplicatePaymentIntentId ?? null,
+        }))
+    : [];
+
   const bookingHistory = buildBookingHistoryItems({
     createdAt: booking.createdAt,
     payment: booking.payment
@@ -502,6 +524,7 @@ export default async function BookingDetailPage({
     modifications: booking.modifications,
     refundRequests: booking.refundRequests,
     auditLogs: bookingAuditLogs,
+    duplicateCaptureRefunds,
   });
 
   const editorData: BookingEditorData = {

@@ -11,8 +11,10 @@ import {
   computeAge,
   invalidateAgeTierCache,
   normalizeAgeTierSettings,
+  validateAgeTierPartition,
   type AgeTierSettingData,
 } from "../age-tier";
+import type { AgeTier } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
 // computeAgeTierWithSettings unit tests
@@ -477,6 +479,196 @@ describe("normalizeAgeTierSettings", () => {
 // ---------------------------------------------------------------------------
 // Admin API validation logic (unit-testable business rules)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Issue #2009 — age-tier SUBSET validity rule (validateAgeTierPartition)
+// ---------------------------------------------------------------------------
+
+describe("validateAgeTierPartition — subset validity rule (#2009)", () => {
+  type Row = { tier: AgeTier; minAge: number; maxAge: number | null };
+  const row = (tier: AgeTier, minAge: number, maxAge: number | null): Row => ({
+    tier,
+    minAge,
+    maxAge,
+  });
+
+  describe("accepted sets", () => {
+    it("accepts the canonical four-tier TAC install and returns age-ascending order", () => {
+      const input: Row[] = [
+        row("INFANT", 0, 4),
+        row("CHILD", 5, 9),
+        row("YOUTH", 10, 17),
+        row("ADULT", 18, null),
+      ];
+      const result = validateAgeTierPartition(input);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.sorted.map((r) => r.tier)).toEqual([
+          "INFANT",
+          "CHILD",
+          "YOUTH",
+          "ADULT",
+        ]);
+      }
+    });
+
+    it("accepts CHILD 0-17 + ADULT 18+ (skips INFANT and YOUTH)", () => {
+      expect(
+        validateAgeTierPartition([row("CHILD", 0, 17), row("ADULT", 18, null)])
+          .ok,
+      ).toBe(true);
+    });
+
+    it("accepts INFANT 0-4 + ADULT 5+", () => {
+      expect(
+        validateAgeTierPartition([row("INFANT", 0, 4), row("ADULT", 5, null)])
+          .ok,
+      ).toBe(true);
+    });
+
+    it("accepts ADULT-only starting at 0", () => {
+      expect(validateAgeTierPartition([row("ADULT", 0, null)]).ok).toBe(true);
+    });
+
+    it("accepts YOUTH 0-17 + ADULT 18+", () => {
+      expect(
+        validateAgeTierPartition([row("YOUTH", 0, 17), row("ADULT", 18, null)])
+          .ok,
+      ).toBe(true);
+    });
+
+    it("accepts rows given out of age order and sorts them ascending", () => {
+      const result = validateAgeTierPartition([
+        row("ADULT", 18, null),
+        row("CHILD", 0, 17),
+      ]);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.sorted.map((r) => r.tier)).toEqual(["CHILD", "ADULT"]);
+      }
+    });
+  });
+
+  describe("rejected sets", () => {
+    const expectRejected = (rows: Row[], match: RegExp) => {
+      const result = validateAgeTierPartition(rows);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(match);
+    };
+
+    it("rejects an empty set", () => {
+      expectRejected([], /at least one age tier/i);
+    });
+
+    it("rejects a set without ADULT", () => {
+      expectRejected(
+        [row("CHILD", 0, 9), row("YOUTH", 10, 17)],
+        /must include the ADULT tier/i,
+      );
+    });
+
+    it("rejects a duplicate tier slot", () => {
+      expectRejected(
+        [row("ADULT", 0, null), row("ADULT", 0, null)],
+        /at most once/i,
+      );
+    });
+
+    it("rejects NOT_APPLICABLE in the partition (defense-in-depth)", () => {
+      expectRejected(
+        [row("NOT_APPLICABLE", 0, 17), row("ADULT", 18, null)],
+        /N\/A age tier is not part of the bookable age partition/i,
+      );
+    });
+
+    it("rejects a non-ADULT tier with no upper limit", () => {
+      expectRejected(
+        [row("CHILD", 0, null), row("ADULT", 5, null)],
+        /Only the ADULT tier can have no upper age limit/i,
+      );
+    });
+
+    it("rejects a bounded ADULT (ADULT must be the terminal catch-all)", () => {
+      expectRejected(
+        [row("INFANT", 0, 4), row("ADULT", 5, 10)],
+        /ADULT tier must have no upper age limit/i,
+      );
+    });
+
+    it("rejects a youngest tier that does not start at age 0", () => {
+      expectRejected(
+        [row("CHILD", 5, 9), row("ADULT", 10, null)],
+        /must start at age 0/i,
+      );
+    });
+
+    it("rejects a gap between tiers", () => {
+      expectRejected(
+        [row("CHILD", 0, 8), row("ADULT", 10, null)],
+        /contiguous/i,
+      );
+    });
+
+    it("rejects an overlap between tiers", () => {
+      expectRejected(
+        [row("CHILD", 0, 10), row("ADULT", 10, null)],
+        /contiguous/i,
+      );
+    });
+  });
+});
+
+describe("computeAgeTierWithSettings — 2-tier subset club (#2009)", () => {
+  const ref = getSeasonStartDate(2026); // April 1, 2026
+  // CHILD 0-17 + ADULT 18+.
+  const subset: AgeTierSettingData[] = [
+    { tier: "CHILD", minAge: 0, maxAge: 17, label: "Child (0-17)", sortOrder: 0 },
+    { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 1 },
+  ];
+
+  it("classifies a newborn into the youngest present tier (CHILD)", () => {
+    expect(computeAgeTierWithSettings(new Date("2026-01-01"), ref, subset)).toBe(
+      "CHILD",
+    );
+  });
+
+  it("classifies age 17 (day before 18th birthday) as CHILD", () => {
+    expect(computeAgeTierWithSettings(new Date("2008-04-02"), ref, subset)).toBe(
+      "CHILD",
+    );
+  });
+
+  it("classifies age 18 exactly as ADULT", () => {
+    expect(computeAgeTierWithSettings(new Date("2008-04-01"), ref, subset)).toBe(
+      "ADULT",
+    );
+  });
+});
+
+describe("normalizeAgeTierSettings — deliberate subsets are NOT treated as legacy/empty (#2009)", () => {
+  it("passes a 2-tier CHILD+ADULT subset through untouched", () => {
+    const subset: AgeTierSettingData[] = [
+      { tier: "CHILD", minAge: 0, maxAge: 17, label: "Child (0-17)", subscriptionRequiredForBooking: false, familyGroupRequestCreateMemberAllowed: true, sortOrder: 0 },
+      { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", subscriptionRequiredForBooking: true, familyGroupRequestCreateMemberAllowed: false, sortOrder: 1 },
+    ];
+    expect(normalizeAgeTierSettings(subset)).toEqual(subset);
+  });
+
+  it("passes a deliberate 3-tier CHILD/YOUTH/ADULT subset with 0-based sortOrder through untouched (not the legacy 1/2/3 shape)", () => {
+    // The relaxed save route re-indexes sortOrder to 0..n-1, so a modern subset
+    // never collides with the legacy-3-tier auto-migration shape (pinned to
+    // sortOrder 1/2/3). This 0-based CHILD 0-9 / YOUTH / ADULT set must survive
+    // normalization intact rather than being rewritten to the 4-tier default.
+    const subset: AgeTierSettingData[] = [
+      { tier: "CHILD", minAge: 0, maxAge: 9, label: "Child (0-9)", subscriptionRequiredForBooking: false, familyGroupRequestCreateMemberAllowed: true, sortOrder: 0 },
+      { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", subscriptionRequiredForBooking: true, familyGroupRequestCreateMemberAllowed: false, sortOrder: 1 },
+      { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", subscriptionRequiredForBooking: true, familyGroupRequestCreateMemberAllowed: false, sortOrder: 2 },
+    ];
+    const result = normalizeAgeTierSettings(subset);
+    expect(result).toEqual(subset);
+    expect(result.map((r) => r.tier)).toEqual(["CHILD", "YOUTH", "ADULT"]);
+  });
+});
 
 describe("Age tier contiguity validation rules", () => {
   it("recognises a gap between tiers as invalid", () => {

@@ -8,21 +8,38 @@ import {
 } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 
-// Club config bed total, used only when no admin capacity override is set and
-// the Bed Allocation module is not providing an active bed count. The club
-// config describes the club's original (default) lodge, so this fallback never
-// applies to additional lodges (see getLodgeCapacityStatus).
+// Club config bed total. Since #1982 the DB is the SOLE runtime source of a
+// lodge's booking capacity (the per-lodge `LodgeSettings.capacity`, backfilled
+// from this total by the boot-time config self-heal — see
+// `config-self-heal.ts`). This constant is therefore NO LONGER read by
+// `getLodgeCapacityStatus`; it survives only as a SEED-TEMPLATE reference — the
+// "import rooms & beds from config" affordance (`admin-bed-allocation.ts`) and
+// the admin lodge-settings screen's "config suggests N beds" hint
+// (`api/admin/lodge-settings`). `club.json beds[]` is a seed input, never a
+// runtime capacity source.
 export const CLUB_CONFIG_LODGE_CAPACITY = clubConfig.beds.reduce(
   (total, bed) => total + bed.capacity,
   0,
 );
 
 /**
- * @deprecated Prefer the resolved `fallbackCapacity` from getLodgeCapacityStatus,
- * which honours the admin capacity override. Retained for callers that need a
- * static default with no database access.
+ * A fixed, database-less default lodge capacity for the handful of legacy
+ * DISPLAY / scaling call sites that cannot reach the database (email templates,
+ * chore people-count scaling, sample-token previews, and the public request
+ * form's client-side guest-cap hint). It is a fixed constant (#1982) — no
+ * longer derived from `clubConfig.beds` — so `club.json` is not read at runtime.
+ *
+ * IMPORTANT: this value NEVER decides booking capacity. Every booking,
+ * availability, finance and cron path resolves through
+ * `getLodgeCapacityStatus`, whose unconfigured fallback is 0 (never silently
+ * overbook) plus a setup-readiness warning. Do not reintroduce it into a
+ * capacity decision.
+ *
+ * @deprecated Prefer the resolved capacity from getLodgeCapacityStatus, which
+ * reads the database and honours the admin capacity override. Retained only for
+ * the static, DB-less display defaults above.
  */
-export const FALLBACK_LODGE_CAPACITY = CLUB_CONFIG_LODGE_CAPACITY;
+export const FALLBACK_LODGE_CAPACITY = 20;
 
 type ModuleSettingsRecord = Partial<ModuleSettingsValues> | null;
 
@@ -61,7 +78,6 @@ export interface LodgeCapacityStatus {
     | "configured_beds"
     | "capped_beds"
     | "capacity_override"
-    | "club_config"
     | "unconfigured_lodge";
   bedAllocationEnabled: boolean;
   activeBedCount: number;
@@ -99,23 +115,6 @@ async function loadCapacityModuleState(
   }
 }
 
-// The club-config bed list and the LodgeSettings capacity override describe
-// the club's original lodge only. They apply to the default lodge (oldest
-// active) and never to an additional lodge, which would otherwise inherit
-// lodge A's bed total and be overbookable before it is configured.
-async function isDefaultLodge(
-  db: LodgeCapacityDb,
-  lodgeId: string,
-): Promise<boolean> {
-  if (!db.lodge?.findFirst) return true;
-  const defaultLodge = await db.lodge.findFirst({
-    where: { active: true },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    select: { id: true },
-  });
-  return defaultLodge === null || defaultLodge.id === lodgeId;
-}
-
 /**
  * Capacity for one lodge on one night. Never sums beds across lodges
  * (docs/multi-lodge/lodge-scoping-contract.md).
@@ -128,14 +127,17 @@ async function isDefaultLodge(
  *    sleep (#1653). No capacity set (or set ≥ bed count) → the bed count wins
  *    ("configured_beds"); a capacity below the bed count caps it ("capped_beds").
  * 2. Otherwise (module off, or on with no active beds): the admin capacity
- *    value for this lodge (LodgeSettings row linked to this lodge).
- * 3. Default lodge only: club-config bed total (legacy single-lodge fallback).
- *    Additional lodges resolve to 0 until beds or a capacity are configured,
- *    so an unconfigured lodge can never be overbooked.
- *
- * The club-config fallback (step 3) is never treated as a ceiling — only an
- * explicit per-lodge capacity caps the bed count, so enabling Bed Allocation
- * on the default lodge keeps using the bed count unless a capacity is set.
+ *    value for this lodge (the per-lodge `LodgeSettings.capacity` override,
+ *    source "capacity_override").
+ * 3. Neither → 0 ("unconfigured_lodge"), for EVERY lodge including the default.
+ *    Since #1982 the DB is the sole runtime source: the default lodge carries
+ *    an explicit `LodgeSettings.capacity` backfilled from the club-config bed
+ *    total by the boot-time self-heal (`config-self-heal.ts`), so it normally
+ *    resolves via step 2. A default lodge that still resolves to 0 here is
+ *    genuinely unconfigured (no beds AND no override — e.g. a fork whose boot
+ *    self-heal was skipped) and is flagged loudly by the setup-readiness
+ *    club-config check rather than being handed phantom capacity that could
+ *    silently overbook. `club.json` is never read here.
  */
 export async function getLodgeCapacityStatus(
   lodgeId: string,
@@ -152,15 +154,14 @@ export async function getLodgeCapacityStatus(
   const { loadLodgeCapacityOverride } = await import("@/lib/lodge-settings");
   const override = await loadLodgeCapacityOverride(client, lodgeId);
 
-  const defaultLodge = await isDefaultLodge(client, lodgeId);
-  const fallbackCapacity =
-    override ?? (defaultLodge ? CLUB_CONFIG_LODGE_CAPACITY : 0);
+  // No club-config fallback (#1982): an unconfigured lodge — default or
+  // additional — resolves to 0 so it can never be overbooked before its
+  // capacity is configured or self-healed into the DB.
+  const fallbackCapacity = override ?? 0;
   const fallbackSource =
     override !== null && override !== undefined
       ? ("capacity_override" as const)
-      : defaultLodge
-        ? ("club_config" as const)
-        : ("unconfigured_lodge" as const);
+      : ("unconfigured_lodge" as const);
 
   if (!modules.bedAllocation) {
     return {
@@ -177,8 +178,8 @@ export async function getLodgeCapacityStatus(
   });
 
   if (activeBedCount <= 0) {
-    // Module on but no beds configured yet: fall back to the capacity value
-    // (or the club-config/unconfigured fallback), unchanged.
+    // Module on but no beds configured yet: fall back to the per-lodge
+    // capacity override, else 0 (unconfigured), unchanged.
     return {
       capacity: fallbackCapacity,
       source: fallbackSource,
@@ -190,8 +191,8 @@ export async function getLodgeCapacityStatus(
 
   // Beds are the placement inventory; an explicit per-lodge capacity is the
   // maximum sleeping capacity ceiling. Effective capacity is the lower of the
-  // two (#1653). Only an explicit override caps — the club-config fallback does
-  // not, so `override` (not `fallbackCapacity`) is the ceiling here.
+  // two (#1653). Only an explicit override caps — an unconfigured (0) fallback
+  // does not, so `override` (not `fallbackCapacity`) is the ceiling here.
   const capped =
     override !== null && override !== undefined && override < activeBedCount;
 
@@ -291,8 +292,7 @@ export async function getDefaultLodgeCapacity(
       client as unknown as Parameters<typeof getDefaultLodgeId>[0],
     );
   }
-  // Without a lodge delegate (structural test mocks), the sentinel id flows
-  // into a db that also has no lodge delegate, so isDefaultLodge treats it as
-  // the default lodge and legacy single-lodge behaviour is preserved.
+  // Without a lodge delegate (structural test mocks) the sentinel id is used;
+  // capacity still resolves via the per-lodge override, else 0 (#1982).
   return getLodgeCapacity(lodgeId, client);
 }

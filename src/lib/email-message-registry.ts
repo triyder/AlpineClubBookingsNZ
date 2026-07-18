@@ -29,6 +29,13 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-partner-share-swept",
   "admin-new-booking",
   "admin-payment-failure",
+  // #1992/#2007: duplicate-capture auto-refund alert. Ships via sendToAdmins, so
+  // it classifies as an admin alert. Deliberately NOT delivery-locked — the
+  // #1994 adjudication: muting causes no direct money loss because the refund
+  // already happened inline or is durably queued for the recovery cron. Still
+  // gated by the adminPaymentFailure notification preference at send time, like
+  // its siblings.
+  "admin-duplicate-capture-refund",
   "admin-pending-deadline",
   "admin-booking-bumped",
   "admin-capacity-warning",
@@ -251,6 +258,9 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #2012: member-facing terminal notice. No bearer token (so NOT
   // sensitive-log); firstName + the stay dates are the load-bearing content.
   "booking-request-payment-expired": ["firstName", "checkIn", "checkOut"],
+  // #1992/#2007: memberName identifies the affected member and reviewUrl is the
+  // admin action link (the payments board), mirroring the other admin alerts.
+  "admin-duplicate-capture-refund": ["memberName", "reviewUrl"],
   "admin-split-settlement-unpaid": ["memberName", "reviewUrl"],
   // #1993 Part A: terminal notice — memberName identifies the member and
   // reviewUrl is the admin action link, mirroring the recurring alert.
@@ -283,6 +293,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "admin-booking-change-request": {
     triggerSummary: "Locked booking change request submitted",
     frequency: "Per member/admin request submission",
+  },
+  "admin-duplicate-capture-refund": {
+    triggerSummary:
+      "A second, distinct Stripe capture arrived on an already-settled booking, so the duplicate charge was auto-refunded (inline in full, or a durable retry queued when the inline refund could not complete)",
+    frequency:
+      "On duplicate-capture adjudication — rare; once per distinct duplicate capture that is auto-refunded",
   },
   "admin-minors-review": {
     triggerSummary:

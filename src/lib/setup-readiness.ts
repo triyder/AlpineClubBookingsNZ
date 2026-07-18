@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
-import { AGE_TIER_DEFAULTS } from "@/lib/policies/age-tier";
 import { clubConfigSchema, type ClubConfig } from "../config/schema";
 import {
   DEFAULT_ADMIN_MODULE_SETTINGS,
@@ -74,6 +73,20 @@ export interface SetupDatabaseSnapshot {
   // for that type on some (or all) of those dates hard-throws at pricing, so
   // the Seasons And Rates step drops to a warning.
   membershipTypeRateGaps?: string[];
+  // DB-first club-config gate (#1987, C8): the club's persisted identity name
+  // (ClubIdentitySettings.name, else EmailMessageSetting.clubName), and the
+  // admin-set default-lodge capacity (LodgeSettings.capacity). A truthy
+  // clubIdentityName means the club is configured in the DB, so an absent
+  // config/club.json is normal — the file is only an optional seed now.
+  clubIdentityName?: string | null;
+  configuredCapacity?: number | null;
+  // Resolved booking capacity of the club's DEFAULT lodge
+  // (getDefaultLodgeCapacity). Since #1982 the club-config check warns when this
+  // is 0 — a default lodge with no active beds AND no capacity override accepts
+  // no bookings, the never-overbook signal for a fork whose boot self-heal was
+  // skipped. Undefined when the snapshot omits it (older callers / no DB) → no
+  // capacity warning is raised.
+  defaultLodgeCapacity?: number | null;
 }
 
 // One membership type × season pair for the rate-gap check (#1930, E4).
@@ -183,6 +196,10 @@ type Env = Record<string, string | undefined>;
 interface ClubConfigReadResult {
   sourcePath: string;
   exists: boolean;
+  // Whether the PRIMARY config/club.json (not the example) exists on disk. The
+  // DB-first gate treats only a valid primary as a real committed config; the
+  // committed club.example.json placeholder never satisfies readiness (#1987).
+  primaryExists: boolean;
   config: ClubConfig | null;
   issues: string[];
 }
@@ -332,12 +349,14 @@ export function normalizeSetupProgress(
 function readClubConfig(configDir: string): ClubConfigReadResult {
   const primaryPath = path.join(configDir, "club.json");
   const examplePath = path.join(configDir, "club.example.json");
-  const sourcePath = fs.existsSync(primaryPath) ? primaryPath : examplePath;
+  const primaryExists = fs.existsSync(primaryPath);
+  const sourcePath = primaryExists ? primaryPath : examplePath;
 
   if (!fs.existsSync(sourcePath)) {
     return {
       sourcePath,
       exists: false,
+      primaryExists,
       config: null,
       issues: [`No club config found at ${primaryPath} or ${examplePath}`],
     };
@@ -350,6 +369,7 @@ function readClubConfig(configDir: string): ClubConfigReadResult {
       return {
         sourcePath,
         exists: true,
+        primaryExists,
         config: null,
         issues: result.error.issues.map((issue) => {
           const fieldPath =
@@ -362,6 +382,7 @@ function readClubConfig(configDir: string): ClubConfigReadResult {
     return {
       sourcePath,
       exists: true,
+      primaryExists,
       config: result.data,
       issues: [],
     };
@@ -369,6 +390,7 @@ function readClubConfig(configDir: string): ClubConfigReadResult {
     return {
       sourcePath,
       exists: true,
+      primaryExists,
       config: null,
       issues: [
         error instanceof Error
@@ -408,33 +430,136 @@ function unresolvedStatuses(checks: SetupStepCheck[]): SetupStatus[] {
     .map((check) => check.status);
 }
 
+/**
+ * Club-config gate, DB-first (#1987, C8). Configuration lives in the database;
+ * `config/club.json` is only an optional seed. Resolution order:
+ *
+ * 1. A MALFORMED primary `club.json` (present but invalid JSON/schema) is still
+ *    reported *blocked* and loudly, regardless of DB state — the C1/D3 rule so a
+ *    broken primary is never silently masked (mirrors the runtime loader).
+ * 2. The club is "configured" when the DB holds a persisted identity name OR a
+ *    valid PRIMARY `config/club.json` is committed (an adopter's real config,
+ *    which the runtime resolves through). The committed `club.example.json`
+ *    placeholder never counts — it is only a seed.
+ * 3. When a database snapshot is available and the club is not configured, the
+ *    step is *blocked* (not configured yet). With no snapshot (e.g. setup:check
+ *    before the DB is reachable) and no primary config, it is a *warning*
+ *    ("configure via /admin/setup") — an absent file is no longer a hard block.
+ */
 function buildClubConfigCheck(
   club: ClubConfigReadResult,
+  db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
 ): SetupStepCheck {
-  const capacity =
-    club.config?.beds.reduce((total, bed) => total + bed.capacity, 0) ?? 0;
-  const details = club.config
-    ? [
-        `Source: ${club.sourcePath}`,
-        `Club: ${club.config.name}`,
-        `Configured capacity: ${capacity} beds`,
-      ]
-    : [`Source: ${club.sourcePath}`, ...club.issues];
+  const base = {
+    id: "club-config" as const,
+    title: "Club Config",
+    description:
+      "Club identity, contact details, bed capacity, age tiers, and default rates.",
+    required: true,
+    href: "/admin/setup",
+  };
 
+  // 1. A malformed primary always blocks loudly (C1/D3), whatever the DB holds.
+  if (club.primaryExists && !club.config) {
+    return applyProgress(
+      {
+        ...base,
+        status: "blocked",
+        message:
+          "config/club.json is present but invalid; fix or remove it (configuration otherwise lives in the database).",
+        details: [`Source: ${club.sourcePath}`, ...club.issues],
+      },
+      progress,
+    );
+  }
+
+  const dbClubName = db?.clubIdentityName?.trim() || null;
+  const hasPrimaryConfig = club.primaryExists && Boolean(club.config);
+  // #1982 never-overbook signal: the RESOLVED default-lodge capacity is 0, so
+  // the club is configured but accepts no bookings until beds/capacity are set
+  // (e.g. a fork whose boot self-heal was skipped). Undefined → not checked.
+  const capacityUnconfigured =
+    db?.defaultLodgeCapacity != null && db.defaultLodgeCapacity <= 0;
+  const capacityWarningDetail =
+    "Resolved default-lodge capacity is 0 — configure beds or a capacity override before taking bookings.";
+
+  // 2. Configured via the DB identity.
+  if (dbClubName) {
+    const capacity = db?.configuredCapacity ?? null;
+    return applyProgress(
+      {
+        ...base,
+        status: capacityUnconfigured ? "warning" : "complete",
+        message: capacityUnconfigured
+          ? `${dbClubName} is configured, but its default lodge has no bookable capacity yet.`
+          : capacity != null
+            ? `${dbClubName} is configured with ${capacity} total beds.`
+            : `${dbClubName} is configured. Set the default-lodge capacity in /admin/setup if it is not yet defined.`,
+        details: [
+          "Source: database (ClubIdentitySettings / EmailMessageSetting)",
+          `Club: ${dbClubName}`,
+          capacity != null
+            ? `Configured capacity: ${capacity} beds`
+            : "Configured capacity: not set (falls back to lodge beds)",
+          ...(capacityUnconfigured ? [capacityWarningDetail] : []),
+        ],
+      },
+      progress,
+    );
+  }
+
+  // 2b. Configured via a committed PRIMARY club.json (adopter's real config).
+  if (hasPrimaryConfig && club.config) {
+    const capacity = club.config.beds.reduce(
+      (total, bed) => total + bed.capacity,
+      0,
+    );
+    return applyProgress(
+      {
+        ...base,
+        status: capacityUnconfigured ? "warning" : "complete",
+        message: capacityUnconfigured
+          ? `${club.config.name} is configured, but its default lodge has no bookable capacity yet.`
+          : `${club.config.name} is configured with ${capacity} total beds.`,
+        details: [
+          `Source: ${club.sourcePath}`,
+          `Club: ${club.config.name}`,
+          `Configured capacity: ${capacity} beds`,
+          "Admin edits in /admin/setup override these seed values in the database.",
+          ...(capacityUnconfigured ? [capacityWarningDetail] : []),
+        ],
+      },
+      progress,
+    );
+  }
+
+  // 3. Not configured. Blocked when the DB was checked; a warning otherwise.
+  if (db) {
+    return applyProgress(
+      {
+        ...base,
+        status: "blocked",
+        message:
+          "Club identity is not configured yet. Run npm run setup:wizard or open /admin/setup to enter the club name, capacity, and age tiers.",
+        details: [
+          "Source: database (ClubIdentitySettings / EmailMessageSetting)",
+          "No persisted club identity found, and no primary config/club.json is committed.",
+        ],
+      },
+      progress,
+    );
+  }
   return applyProgress(
     {
-      id: "club-config",
-      title: "Club Config",
-      description:
-        "Club identity, contact details, bed capacity, age tiers, and default rates.",
-      status: club.config ? "complete" : "blocked",
-      required: true,
-      message: club.config
-        ? `${club.config.name} is configured with ${capacity} total beds.`
-        : "A valid config/club.json or config/club.example.json is required.",
-      details,
-      href: "/admin/setup",
+      ...base,
+      status: "warning",
+      message:
+        "Club identity is not configured on disk and the database was not checked. Configuration lives in the database — run npm run setup:wizard or verify /admin/setup after migrations.",
+      details: [
+        "Source: none (config/club.json is an optional seed; club.example.json does not count)",
+        "Database state was not checked.",
+      ],
     },
     progress,
   );
@@ -704,15 +829,23 @@ function buildAgeTierCheck(
     );
   }
 
-  // The DB is the sole runtime source of age tiers (#1983). Age tiers are
-  // seeded / self-healed to the DB/seed contract, so the "expected" count comes
-  // from that contract (AGE_TIER_DEFAULTS), not `config/club.json` — the file may
-  // be absent once ageTiers[] is demoted to a seed-only input. When a primary
-  // config is present its tier count still refines the expectation for forks
-  // that configure a non-default number of tiers.
-  const expected = club.config?.ageTiers.length ?? AGE_TIER_DEFAULTS.length;
+  // The DB is the sole runtime source of age tiers (#1983), the readiness gate
+  // is DB-first (#1987, C8), and the admin save route (#2009) guarantees any
+  // persisted set is a complete, valid tiling of 0 → ∞ with ADULT as the
+  // terminal tier — including a deliberate SUBSET (e.g. CHILD + ADULT). So
+  // "configured" is simply "≥1 row exists": once the club has saved its tiers,
+  // whatever count it chose is complete by construction, and we must NOT nag a
+  // valid 2-tier club for having fewer rows than the 4-tier default. Pre-config
+  // (no rows yet) the fixed slot count (INFANT/CHILD/YOUTH/ADULT —
+  // NOT_APPLICABLE never gets a row) is the "expected" hint for the operator;
+  // a primary config, when present, refines that hint for forks that seed a
+  // non-default number of tiers.
   const actual = db?.ageTierSettingCount ?? 0;
-  const complete = expected > 0 && actual >= expected;
+  const configured = actual >= 1;
+  const configExpected =
+    club.config?.ageTiers.length ?? bookableAgeTierEnum.options.length;
+  const expected = configured ? actual : configExpected;
+  const complete = configured;
   return applyProgress(
     {
       id: "age-tiers",
@@ -1147,7 +1280,7 @@ export function buildSetupReadiness(
 
   const checksByCategory: Record<SetupCategoryId, SetupStepCheck[]> = {
     foundation: [
-      buildClubConfigCheck(club, progress),
+      buildClubConfigCheck(club, input.database, progress),
       buildRuntimeEnvCheck(env, progress),
       buildSeedAdminCheck(input.database, progress),
       buildFeatureFlagCheck(input.database, progress),

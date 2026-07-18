@@ -7,9 +7,9 @@ import { ageTierEnum } from "@/lib/age-tier-schema";
 import { logAudit } from "@/lib/audit";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import {
-  AGE_TIER_DEFAULTS,
   invalidateAgeTierCache,
   normalizeAgeTierSettings,
+  validateAgeTierPartition,
 } from "@/lib/age-tier";
 
 type AgeTierSettingInput = {
@@ -83,78 +83,155 @@ export async function PUT(request: NextRequest) {
     ...setting,
     tier: setting.tier as AgeTier,
   }));
-  const requiredTiers = new Set(AGE_TIER_DEFAULTS.map((setting) => setting.tier));
-  const providedTiers = new Set(settings.map((setting) => setting.tier));
 
-  if (
-    settings.length !== requiredTiers.size ||
-    providedTiers.size !== requiredTiers.size ||
-    [...requiredTiers].some((tier) => !providedTiers.has(tier))
-  ) {
-    return NextResponse.json(
-      {
-        error: `Age tier settings must include each tier exactly once: ${[...requiredTiers].join(", ")}`,
-      },
-      { status: 400 }
-    );
+  // --- Validity rule (issue #2009 — interim age-tier subset relaxation) -------
+  // A club may save ANY subset of the bookable AgeTier slots (not just all four),
+  // provided the saved rows still form a single, complete, non-overlapping
+  // partition of [0, ∞) with ADULT as the unbounded terminal tier. The exact rule
+  // (≥1 tier, no duplicate slot, ADULT present + the only unbounded tier, ranges
+  // tile 0 → ∞ with no gaps/overlaps) lives in `validateAgeTierPartition` so it is
+  // pure and unit-testable. Which enum identities make up the subset is otherwise
+  // free (e.g. CHILD 0-17 + ADULT 18+ legally skips INFANT and YOUTH; ADULT-only
+  // 0+ is legal). The canonical all-four TAC install still satisfies every clause,
+  // so its behaviour is byte-unchanged.
+  const validation = validateAgeTierPartition(settings);
+  if (!validation.ok) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
+  const sorted = validation.sorted;
+
+  // Re-index sortOrder to a canonical, gap-free 0..n-1 in ascending-age order.
+  // Every consumer that orders by sortOrder (computeAgeTierWithSettings, the
+  // admin UI's next-tier maxAge derivation, normalizeAgeTierSettings) then sees
+  // the same age-ascending sequence regardless of the sortOrder values the client
+  // sent. It also keeps a saved subset clear of the legacy-3-tier auto-migration
+  // shape, which is pinned to sortOrder 1/2/3 (see isLegacyThreeTierSettings):
+  // a subset saved here always uses 0-based sortOrders, so a deliberate
+  // CHILD/YOUTH/ADULT subset is never mistaken for an unmigrated legacy DB. The
+  // canonical four-tier save already sends 0,1,2,3 in age order, so this is a
+  // no-op for it (behaviour byte-unchanged).
+  const normalizedSettings = sorted.map((s, index) => ({
+    ...s,
+    sortOrder: index,
+  }));
+
+  // --- Tier removal safety (issue #2009) -------------------------------------
+  // A subset save may DROP tiers that previously existed in the table. Deleting a
+  // tier row while a person still classifies into it would orphan their stored
+  // ageTier (no matching AgeTierSetting row → wrong label / price / Xero group),
+  // so we fail CLOSED: a tier can only be removed when NO member (archived
+  // included) and no current-or-upcoming booking guest is still classified into
+  // it. Archived members are counted deliberately — an archived member sitting
+  // in a removed tier would orphan the moment they are un-archived, so we block
+  // now rather than surprise later. Past booking guests are frozen historical
+  // snapshots and never re-priced, so they do not block.
+  //
+  // The guard COUNTS and the deleteMany/upserts run in ONE interactive
+  // transaction: the guard reads and the delete write share the same tx, and a
+  // block throws from inside it (aborting every write). This closes the
+  // check-then-act race the previous pre-transaction count left open.
+  const existingTiers = await prisma.ageTierSetting.findMany({
+    select: { tier: true },
+  });
+  const keptTiers = new Set(normalizedSettings.map((s) => s.tier));
+  const removedTiers = existingTiers
+    .map((row) => row.tier)
+    .filter((tier) => !keptTiers.has(tier));
+
+  // Thrown from inside the transaction to abort it and carry the counts out to
+  // the 409 response. Reclassifying blocked people is a manual, per-member edit
+  // today; a bulk age-tier reclassify tool could be a future convenience but is
+  // deliberately out of scope for #2009.
+  class TierRemovalBlockedError extends Error {
+    constructor(
+      readonly activeMembers: number,
+      readonly archivedMembers: number,
+      readonly liveGuests: number,
+    ) {
+      super("age tier removal blocked");
+    }
   }
 
-  // Validate: tiers must be contiguous — no gaps or overlaps
-  const sorted = [...settings].sort((a, b) => a.minAge - b.minAge);
-  for (let i = 0; i < sorted.length - 1; i++) {
-    const current = sorted[i];
-    const next = sorted[i + 1];
-    if (current.maxAge === null) {
-      return NextResponse.json(
-        { error: "Only the highest tier (ADULT) can have no upper age limit" },
-        { status: 400 }
-      );
-    }
-    if (current.maxAge + 1 !== next.minAge) {
+  try {
+    await prisma.$transaction(async (tx) => {
+      if (removedTiers.length > 0) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const [activeMembers, archivedMembers, liveGuests] = await Promise.all([
+          tx.member.count({
+            where: { ageTier: { in: removedTiers }, archivedAt: null },
+          }),
+          tx.member.count({
+            where: { ageTier: { in: removedTiers }, archivedAt: { not: null } },
+          }),
+          tx.bookingGuest.count({
+            where: { ageTier: { in: removedTiers }, stayEnd: { gte: today } },
+          }),
+        ]);
+        if (activeMembers + archivedMembers > 0 || liveGuests > 0) {
+          throw new TierRemovalBlockedError(
+            activeMembers,
+            archivedMembers,
+            liveGuests,
+          );
+        }
+        // Guarded above, in-tx: no person is classified into these tiers.
+        // Deleting the row cascades its Xero group aliases
+        // (AgeTierXeroAcceptedContactGroup).
+        await tx.ageTierSetting.deleteMany({
+          where: { tier: { in: removedTiers } },
+        });
+      }
+
+      for (const s of normalizedSettings) {
+        await tx.ageTierSetting.upsert({
+          where: { tier: s.tier },
+          update: {
+            minAge: s.minAge,
+            maxAge: s.maxAge,
+            label: s.label,
+            subscriptionRequiredForBooking: s.subscriptionRequiredForBooking,
+            familyGroupRequestCreateMemberAllowed:
+              s.familyGroupRequestCreateMemberAllowed,
+            sortOrder: s.sortOrder,
+          },
+          create: {
+            tier: s.tier,
+            minAge: s.minAge,
+            maxAge: s.maxAge,
+            label: s.label,
+            subscriptionRequiredForBooking: s.subscriptionRequiredForBooking,
+            familyGroupRequestCreateMemberAllowed:
+              s.familyGroupRequestCreateMemberAllowed,
+            sortOrder: s.sortOrder,
+          },
+        });
+      }
+    });
+  } catch (error) {
+    if (error instanceof TierRemovalBlockedError) {
+      const plural = removedTiers.length > 1;
+      const totalMembers = error.activeMembers + error.archivedMembers;
       return NextResponse.json(
         {
-          error: `Age boundaries must be contiguous: gap or overlap between maxAge ${current.maxAge} and minAge ${next.minAge}`,
+          error:
+            `Cannot remove age tier${plural ? "s" : ""} ${removedTiers.join(", ")}: ` +
+            `${totalMembers} member(s) (including ${error.archivedMembers} archived) ` +
+            `and ${error.liveGuests} current or upcoming booking guest(s) are still ` +
+            `classified into ${plural ? "them" : "it"}. Open each affected member's ` +
+            `page and change their age tier or date of birth so they map to a tier ` +
+            `you are keeping (and reduce the guests on any upcoming bookings), then ` +
+            `save again.`,
+          removedTiers,
+          activeMembers: error.activeMembers,
+          archivedMembers: error.archivedMembers,
+          liveGuests: error.liveGuests,
         },
-        { status: 400 }
+        { status: 409 },
       );
     }
+    throw error;
   }
-
-  // ADULT must have maxAge = null
-  const adult = settings.find((s) => s.tier === "ADULT");
-  if (adult && adult.maxAge !== null) {
-    return NextResponse.json(
-      { error: "ADULT tier must have no upper age limit (maxAge must be null)" },
-      { status: 400 }
-    );
-  }
-
-  await prisma.$transaction(
-    settings.map((s) =>
-      prisma.ageTierSetting.upsert({
-        where: { tier: s.tier },
-        update: {
-          minAge: s.minAge,
-          maxAge: s.maxAge,
-          label: s.label,
-          subscriptionRequiredForBooking: s.subscriptionRequiredForBooking,
-          familyGroupRequestCreateMemberAllowed:
-            s.familyGroupRequestCreateMemberAllowed,
-          sortOrder: s.sortOrder,
-        },
-        create: {
-          tier: s.tier,
-          minAge: s.minAge,
-          maxAge: s.maxAge,
-          label: s.label,
-          subscriptionRequiredForBooking: s.subscriptionRequiredForBooking,
-          familyGroupRequestCreateMemberAllowed:
-            s.familyGroupRequestCreateMemberAllowed,
-          sortOrder: s.sortOrder,
-        },
-      })
-    )
-  );
 
   // Invalidate cache so next computeAgeTier reads fresh values
   invalidateAgeTierCache();
@@ -162,7 +239,7 @@ export async function PUT(request: NextRequest) {
   await logAudit({
     action: "AGE_TIER_SETTINGS_UPDATED",
     memberId: session.user.id,
-    details: JSON.stringify(settings),
+    details: JSON.stringify({ settings: normalizedSettings, removedTiers }),
   });
 
   const updated = await prisma.ageTierSetting.findMany({

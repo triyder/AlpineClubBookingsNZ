@@ -21,6 +21,7 @@ import type {
   CancellationEventSnapshot,
   BumpEventSnapshot,
 } from "@/lib/booking-events";
+import { isDuplicateCaptureRefundEvent } from "@/lib/duplicate-capture-refund-event";
 
 export type BookingNarrativeState =
   | "payable"
@@ -235,10 +236,16 @@ function buildCancelledNarrative(
   );
 
   if (paidEvent) {
+    // #2008 — the #1992 duplicate-capture auto-refund is recorded as a REFUNDED
+    // event too, but it settles a SECOND capture on an already-PAID booking and
+    // leaves the booking's own settlement untouched. It must NEVER be picked up
+    // here as this cancellation's settlement clause (that would falsely claim
+    // the member was refunded), so it is excluded from the settlement finder.
     const settlementEvent = events.find(
       (e) =>
-        e.type === BookingEventType.REFUNDED ||
-        e.type === BookingEventType.CREDITED
+        (e.type === BookingEventType.REFUNDED ||
+          e.type === BookingEventType.CREDITED) &&
+        !isDuplicateCaptureRefundEvent(e)
     );
     return buildCancelledPostPaymentNarrative(
       booking,
