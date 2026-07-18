@@ -52,6 +52,11 @@ read at a glance, always matching the booking system.
   each screen area shows; panels rotate only when they make sense (e.g. the
   whole-lodge view appears only while the lodge actually has a full-lodge
   booking).
+- **Visual builder (no HTML)** — compose a board by picking a shape and dropping
+  modules into zones, with a live sandboxed preview, then save (`ADR-004`). It
+  writes a valid layout + template for you; the raw-HTML editors remain as
+  **Advanced mode**. Drag-and-drop is fully keyboard-operable with menu/button
+  fallbacks, and the option controls only ever offer privacy-safe values.
 - **Admin preview** — administrators can open any device's board or any
   template full-screen in their own browser (read-only, same privacy rules,
   no effect on the device's "last seen") before it ever reaches a lobby wall.
@@ -148,7 +153,7 @@ Import [`seeds/display-template-pack.bundle.zip`](seeds/README.md) to add these.
 | [`operating.md`](operating.md) | Runbook to set up a screen (pair, assign a template, per-lodge config) and a developer guide to extending (add a module / condition) |
 | [`phone-visibility.md`](phone-visibility.md) | Member phone-number opt-in (#37): the two-sided consent gate, the staff-kiosk exemption, and where each control lives |
 | [`config-transfer-workflow.md`](config-transfer-workflow.md) | Moving display config between environments as bundles |
-| `decisions/` | ADRs (pairing/auth model; template model + storage) — authored with their keystone tasks |
+| `decisions/` | ADRs (pairing/auth model; template model + storage; Layout/Template authoring; **the guided visual builder — ADR-004**) — authored with their keystone tasks |
 | [`mockups/`](mockups/) | The full design-exploration catalogue, organised by concept |
 
 ## Delivery

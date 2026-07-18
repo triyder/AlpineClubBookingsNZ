@@ -14,9 +14,10 @@ The feature is **off by default**. An organisation admin must first enable the
 tokens exist.
 
 The whole admin surface lives under one sidebar entry, **Lobby Display**
-(`/admin/display`), a hub of cards: **Devices**, **Layouts**, **Templates**, and
-**Reference**. Per-lodge display settings live on the lodge configuration hub
-(**Admin → Lodges → [lodge]**), not under Lobby Display.
+(`/admin/display`), a hub of cards: **Devices**, **Visual builder**, **Layouts
+(Advanced)**, **Templates**, and **Reference**. Per-lodge display settings live on
+the lodge configuration hub (**Admin → Lodges → [lodge]**), not under Lobby
+Display.
 
 ### 1. Pair the device
 
@@ -36,7 +37,31 @@ The state poll doubles as a heartbeat, so the device's **last seen** updates on
 its normal refresh cadence. You can **revoke** a device at any time; it returns
 to the pairing screen within one refresh interval.
 
-### 2. Assign a Template
+### 2. Build a board (visual builder)
+
+Most boards are easiest to build with the **Visual builder**
+(`/admin/display/builder`) — no HTML required (ADR-004):
+
+1. Pick a **shape**: columns, rows, or main + side-rail (1–3 zones).
+2. **Drop a module** into each zone — drag it from the Modules palette, or use a
+   zone's **Add** menu (fully keyboard-operable; the arrow buttons reorder zones).
+3. Open a zone's **Settings** to choose whether it is always shown, shown only
+   when a condition holds, or rotates between slots, and to set the module's
+   options (e.g. how many nights an arrivals board shows). Options come straight
+   from the module, so you can only pick values it accepts.
+4. Click **Live preview** to see the board rendered against a chosen lodge in a
+   safe sandbox before you save. If anything is wrong, the preview shows the same
+   errors a save would.
+5. **Create board** — the builder writes a valid Layout + Template for you; bind
+   it to a device on the Devices page like any other Template.
+
+For full manual control (custom HTML/CSS), use **Advanced mode**
+(`/admin/display/layouts` + `/admin/display/templates`). The two surfaces edit the
+same stored fields. A board that was hand-edited in Advanced mode (or a built-in
+board with its own styling) can't be re-opened in the builder — it stays in
+Advanced mode, with an option to rebuild it from a fresh skeleton if you prefer.
+
+### 3. Assign a Template
 
 Each device shows the **club-default board** until you bind it to a Template.
 
@@ -54,7 +79,7 @@ Templates render dynamically against whichever lodge the device is bound to, so
 one Template serves every lodge — lodge-specific values come from
 `{{config:…}}` tokens (below), never from hard-coded content.
 
-### 3. Set the per-lodge display config
+### 4. Set the per-lodge display config
 
 On **Admin → Lodges → [lodge]**, the **Lobby Display settings** card (below the
 Capacity card, shown only when the module is enabled) holds the three per-lodge

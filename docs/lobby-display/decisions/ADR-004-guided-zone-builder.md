@@ -306,13 +306,19 @@ unsaved work.
 
 ### 8. Drag-and-drop accessibility
 
-DnD uses **@dnd-kit** (`@dnd-kit/core` + `@dnd-kit/utilities` are already
-dependencies; **`@dnd-kit/sortable` must be added** for zone/child ordering):
+DnD uses **@dnd-kit** (`@dnd-kit/core` + `@dnd-kit/utilities`, already
+dependencies):
 
-- Register both `PointerSensor` and `KeyboardSensor` so every drag (module →
-  zone, reordering rail zones / rotator children) is fully **keyboard-operable**
-  (space/enter to lift, arrows to move, escape to cancel) — dragging is never the
-  only way to place or reorder a module.
+- Register both `PointerSensor` and `KeyboardSensor` so every module → zone drag
+  is fully **keyboard-operable** (space/enter to lift, arrows to move, escape to
+  cancel) — dragging is never the only way to place a module.
+- **Reordering** (rail zones / rotator children) is done with keyboard-accessible
+  **arrow (↑/↓) buttons** + pure move helpers, not drag-sortable. *Implementation
+  note:* the ADR originally called for adding **`@dnd-kit/sortable`**; in build we
+  found the accessible arrow-button reordering is equal-or-better for a11y (no
+  pointer required, explicit labels, trivially testable) and fully substitutes
+  sortable's DnD-only reordering, so `@dnd-kit/sortable` was **not** added — the
+  smallest faithful deviation, keeping the a11y guarantee intact.
 - Provide `DragOverlay` and `aria-live` screen-reader announcements
   (`announcements` / `screenReaderInstructions`) for pick-up, over, drop, cancel.
 - **Focus management:** after a drop the moved item retains focus; opening the
@@ -351,8 +357,9 @@ ADR-003 Layout+Template that the existing save contract and render pipeline
 already trust. No schema migration.
 
 **Additive code changes (no schema):** one `options` descriptor field on
-`DisplayModuleMetadata` + its drift-guard; `@dnd-kit/sortable` added; the
-preview grant widened to carry a draft handle + an ephemeral draft-render store.
+`DisplayModuleMetadata` + its drift-guard; the preview grant widened to carry a
+draft handle + an ephemeral draft-render store. (No new runtime dependency:
+`@dnd-kit/sortable` proved unnecessary — see §8's implementation note.)
 
 **What gets harder — two edit surfaces to keep coherent.** The builder and
 Advanced mode target the same fields, so the round-trip contract (§4) is
