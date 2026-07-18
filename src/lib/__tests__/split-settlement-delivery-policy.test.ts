@@ -81,6 +81,29 @@ describe("admin-split-settlement-unpaid delivery policy (#1967/#1994)", () => {
     expect(disabled).toEqual({ send: false, mode: "disabled", reason: "disabled" });
   });
 
+  it("resolves the #1992/#2007 duplicate-capture refund alert through its own delivery policy", async () => {
+    // The dedicated duplicate-capture alert is an admin system template, so its
+    // delivery mode resolves from its own registry + policy row. NOT
+    // delivery-locked, so an admin can mute it (the refund already happened or
+    // is durably queued, so no money is lost).
+    const sends = await shouldSendAdminSystemEmail({
+      templateName: "admin-duplicate-capture-refund",
+    });
+    expect(sends).toEqual({ send: true, mode: "always" });
+    expect(mockPrisma.notificationDeliveryPolicy.findUnique).toHaveBeenCalledWith(
+      { where: { templateName: "admin-duplicate-capture-refund" } },
+    );
+
+    mockPrisma.notificationDeliveryPolicy.findUnique.mockResolvedValue({
+      templateName: "admin-duplicate-capture-refund",
+      mode: "DISABLED",
+    });
+    const disabled = await shouldSendAdminSystemEmail({
+      templateName: "admin-duplicate-capture-refund",
+    });
+    expect(disabled).toEqual({ send: false, mode: "disabled", reason: "disabled" });
+  });
+
   it("does not treat the member split-guest-portion-cancelled notice as an admin system template", async () => {
     const result = await shouldSendAdminSystemEmail({
       templateName: "split-guest-portion-cancelled",

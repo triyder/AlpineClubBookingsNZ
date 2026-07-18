@@ -11,6 +11,7 @@ import {
   adminPendingDeadlineTemplate,
   adminIssueReportTemplate,
   adminRefundRequestTemplate,
+  adminDuplicateCaptureRefundTemplate,
   preArrivalReminderTemplate,
   waitlistOfferTemplate,
   adminSplitSettlementUnpaidTemplate,
@@ -35,6 +36,62 @@ describe("email-templates", () => {
 
       expect(html).toContain("background-color: #d4ddd7; color: #17231c;");
       expect(html).not.toContain("background-color: #d4ddd7; color: #57b3ab;");
+    });
+  });
+
+  describe("adminDuplicateCaptureRefundTemplate (#1992 / #2007)", () => {
+    const base = {
+      memberName: "Alice Member",
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      amountCents: 10000,
+      paymentIntentId: "pi_link_intent",
+      settledPaymentIntentId: "pi_auto_charge",
+      operationReference: "duplicate_capture_booking-1_pi_link_intent",
+      reviewUrl: "https://example.com/admin/payments",
+    };
+
+    it("success variant states the duplicate was refunded in full and needs no action", () => {
+      const html = adminDuplicateCaptureRefundTemplate({
+        ...base,
+        refundFailed: false,
+      });
+      expect(html).toContain("Duplicate Card Capture Auto-Refunded");
+      expect(html).toContain("automatically refunded in full");
+      expect(html).toContain("no action is needed");
+      // Booking/member/amount/intent context is carried.
+      expect(html).toContain("Alice Member");
+      expect(html).toContain("pi_link_intent");
+      expect(html).toContain("pi_auto_charge");
+      expect(html).toContain("duplicate_capture_booking-1_pi_link_intent");
+      // Not the failed wording.
+      expect(html).not.toContain("could not complete");
+      expect(html).not.toContain("Retry Queued");
+    });
+
+    it("failed variant states the refund could not complete and a durable retry is queued, with the op reference and failure detail", () => {
+      const html = adminDuplicateCaptureRefundTemplate({
+        ...base,
+        refundFailed: true,
+        errorMessage: "Stripe is unavailable (503)",
+      });
+      expect(html).toContain("Retry Queued");
+      expect(html).toContain("could not be automatically refunded");
+      expect(html).toContain("watch the recovery queue");
+      // Op reference and the inline failure detail are surfaced.
+      expect(html).toContain("duplicate_capture_booking-1_pi_link_intent");
+      expect(html).toContain("Stripe is unavailable (503)");
+      // Not the success wording.
+      expect(html).not.toContain("no action is needed");
+    });
+
+    it("falls back to 'another capture' when the settling intent id is unknown", () => {
+      const html = adminDuplicateCaptureRefundTemplate({
+        ...base,
+        settledPaymentIntentId: null,
+        refundFailed: false,
+      });
+      expect(html).toContain("another capture");
     });
   });
 

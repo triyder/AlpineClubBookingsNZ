@@ -27,6 +27,7 @@ import {
 import {
   buildBookingModificationRefundMetadata,
   buildCapacityClaimFailedRefundStripeKeyPrefix,
+  buildDuplicateCaptureRefundRecoveryIdempotencyKey,
   buildDuplicateCaptureRefundStripeKeyPrefix,
 } from "@/lib/payment-recovery-keys";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
@@ -35,7 +36,10 @@ import {
   restoreCreditFromBooking,
 } from "@/lib/member-credit";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { sendAdminPaymentFailureAlert } from "@/lib/email";
+import {
+  sendAdminDuplicateCaptureRefundAlert,
+  sendAdminPaymentFailureAlert,
+} from "@/lib/email";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -692,15 +696,20 @@ export async function markBookingPaymentSucceeded({
 
       // Alert the admins even on success: an automatic refund of a duplicate
       // charge is an anomaly worth eyes, and the alert is the operator's cue
-      // to check how the double capture happened. Reuses the existing payment
-      // anomaly template (a dedicated template is deliberately out of scope).
-      sendAdminPaymentFailureAlert({
+      // to check how the double capture happened. Dedicated template (#2007)
+      // whose success variant states the duplicate was refunded in full.
+      sendAdminDuplicateCaptureRefundAlert({
         memberName: `${reconciliation.booking.member.firstName} ${reconciliation.booking.member.lastName}`,
         checkIn: reconciliation.booking.checkIn,
         checkOut: reconciliation.booking.checkOut,
         amountCents: plannedRefundCents,
-        errorMessage: `Duplicate card capture on an already-paid booking: intent ${paymentIntentId} captured after the booking was settled by ${settledPaymentIntentId ?? "another capture"}. The duplicate charge was automatically refunded in full; no action is needed unless the member reports otherwise.`,
         paymentIntentId,
+        settledPaymentIntentId: settledPaymentIntentId ?? null,
+        operationReference: buildDuplicateCaptureRefundRecoveryIdempotencyKey(
+          bookingId,
+          paymentIntentId
+        ),
+        refundFailed: false,
       }).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId, paymentIntentId },
@@ -735,13 +744,22 @@ export async function markBookingPaymentSucceeded({
           "Failed to record inline duplicate-capture refund failure on the recovery operation"
         )
       );
-      sendAdminPaymentFailureAlert({
+      sendAdminDuplicateCaptureRefundAlert({
         memberName: `${reconciliation.booking.member.firstName} ${reconciliation.booking.member.lastName}`,
         checkIn: reconciliation.booking.checkIn,
         checkOut: reconciliation.booking.checkOut,
         amountCents: plannedRefundCents,
-        errorMessage: `Duplicate card capture on an already-paid booking: intent ${paymentIntentId} captured after the booking was settled by ${settledPaymentIntentId ?? "another capture"}. The automatic refund failed inline (${refundError instanceof Error ? refundError.message : String(refundError)}); the payment recovery cron will retry it.`,
         paymentIntentId,
+        settledPaymentIntentId: settledPaymentIntentId ?? null,
+        operationReference: buildDuplicateCaptureRefundRecoveryIdempotencyKey(
+          bookingId,
+          paymentIntentId
+        ),
+        errorMessage:
+          refundError instanceof Error
+            ? refundError.message
+            : String(refundError),
+        refundFailed: true,
       }).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId, paymentIntentId },

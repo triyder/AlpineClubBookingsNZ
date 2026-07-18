@@ -50,6 +50,7 @@ const mocks = vi.hoisted(() => ({
   restoreCreditFromBooking: vi.fn(),
   deriveBookingAppliedCreditCents: vi.fn(),
   sendAdminPaymentFailureAlert: vi.fn(),
+  sendAdminDuplicateCaptureRefundAlert: vi.fn(),
   reconcileBedAllocationsForBooking: vi.fn(),
   recordBookingEvent: vi.fn(),
   lodgeFindFirst: vi.fn(),
@@ -99,6 +100,8 @@ vi.mock("@/lib/member-credit", () => ({
 vi.mock("@/lib/email", () => ({
   sendAdminPaymentFailureAlert: (...args: unknown[]) =>
     mocks.sendAdminPaymentFailureAlert(...args),
+  sendAdminDuplicateCaptureRefundAlert: (...args: unknown[]) =>
+    mocks.sendAdminDuplicateCaptureRefundAlert(...args),
 }));
 
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
@@ -312,6 +315,7 @@ beforeEach(() => {
   mocks.restoreCreditFromBooking.mockResolvedValue(undefined);
   mocks.deriveBookingAppliedCreditCents.mockResolvedValue(0);
   mocks.sendAdminPaymentFailureAlert.mockResolvedValue(undefined);
+  mocks.sendAdminDuplicateCaptureRefundAlert.mockResolvedValue(undefined);
   mocks.recordBookingEvent.mockResolvedValue(undefined);
   mocks.refundPaymentTransactions.mockResolvedValue({ refunds: [] });
   mocks.enqueueDuplicateCaptureRefundRecovery.mockResolvedValue({
@@ -411,13 +415,18 @@ describe("#1992 duplicate-capture auto-refund", () => {
         paymentIntentId: DUPLICATE_PI,
       })
     );
-    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+    // #2007: the dedicated duplicate-capture template is sent (success variant),
+    // NOT the generic payment-anomaly alert.
+    expect(mocks.sendAdminDuplicateCaptureRefundAlert).toHaveBeenCalledWith(
       expect.objectContaining({
         amountCents: 10000,
         paymentIntentId: DUPLICATE_PI,
-        errorMessage: expect.stringContaining("automatically refunded"),
+        settledPaymentIntentId: SETTLED_PI,
+        refundFailed: false,
+        operationReference: `duplicate_capture_booking-1_${DUPLICATE_PI}`,
       })
     );
+    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
 
     // The booking's status/settlement is untouched: no PAID/CANCELLED claim,
     // no booking event that could later masquerade as a cancellation refund.
@@ -479,11 +488,17 @@ describe("#1992 duplicate-capture auto-refund", () => {
         message: expect.stringContaining("503"),
       })
     );
-    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+    // #2007: the dedicated template is sent in its failed variant carrying the
+    // inline error and the queued recovery-operation reference.
+    expect(mocks.sendAdminDuplicateCaptureRefundAlert).toHaveBeenCalledWith(
       expect.objectContaining({
-        errorMessage: expect.stringContaining("recovery cron will retry"),
+        paymentIntentId: DUPLICATE_PI,
+        refundFailed: true,
+        operationReference: `duplicate_capture_booking-1_${DUPLICATE_PI}`,
+        errorMessage: expect.stringContaining("503"),
       })
     );
+    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
 
   it("pins the distinctness predicate's where-clause: captured PRIMARY Stripe transactions with net cash only (SUCCEEDED/PARTIALLY_REFUNDED — never fully REFUNDED), excluding the arriving intent, NULL intent ids and superseded-machinery-owned intents", async () => {
@@ -595,6 +610,11 @@ describe("#1992 duplicate-capture auto-refund", () => {
       expect(mocks.enqueueDuplicateCaptureRefundRecovery).not.toHaveBeenCalled();
       expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
       expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+      // #2007: neither the generic anomaly alert NOR the dedicated
+      // duplicate-capture template fires on a benign same-intent replay.
+      expect(
+        mocks.sendAdminDuplicateCaptureRefundAlert
+      ).not.toHaveBeenCalled();
     });
   });
 
@@ -705,8 +725,12 @@ describe("#1992 duplicate-capture auto-refund", () => {
       expect(mocks.enqueueDuplicateCaptureRefundRecovery).not.toHaveBeenCalled();
       expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
       // Admins are NOT emailed — this is the benign replay outcome, not an
-      // anomaly.
+      // anomaly. Neither the generic anomaly alert nor the #2007 dedicated
+      // duplicate-capture template fires.
       expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+      expect(
+        mocks.sendAdminDuplicateCaptureRefundAlert
+      ).not.toHaveBeenCalled();
       // X's money still belongs to the superseded machinery: its queued
       // REFUND_SUPERSEDED_PAYMENT operation is read, never written (the tx
       // stub exposes NO write methods on paymentRecoveryOperation, so any
@@ -746,6 +770,9 @@ describe("#1992 duplicate-capture auto-refund", () => {
       expect(mocks.enqueueDuplicateCaptureRefundRecovery).not.toHaveBeenCalled();
       expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
       expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+      expect(
+        mocks.sendAdminDuplicateCaptureRefundAlert
+      ).not.toHaveBeenCalled();
     });
 
     it("an exhausted (FAILED) superseded refund op still owns X's money: Y's replay stays already_paid", async () => {

@@ -907,6 +907,78 @@ export function adminPaymentFailureTemplate(data: {
   `);
 }
 
+/**
+ * #1992 / #2007 — dedicated admin alert for the duplicate-capture auto-refund.
+ * A SECOND, distinct Stripe capture arrived on a booking already settled by a
+ * different intent (the residual #1967 split-child window), so the duplicate
+ * charge is auto-refunded. This replaces the generic payment-anomaly template on
+ * both outcomes so the copy states the real situation instead of reading as a
+ * payment failure. `refundFailed` selects the variant (one-template-with-boolean
+ * precedent, like adminSplitSettlementUnpaidTemplate's parentUnpaid):
+ * - false: the duplicate charge was refunded in full inline — no action needed;
+ * - true: the inline refund could not complete, a durable recovery operation is
+ *   queued and the recovery cron will retry it — watch the recovery queue.
+ * No bearer token, so this is not sensitive-log material.
+ */
+export function adminDuplicateCaptureRefundTemplate(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  amountCents: number;
+  paymentIntentId: string;
+  settledPaymentIntentId: string | null;
+  operationReference: string;
+  errorMessage?: string | null;
+  reviewUrl: string;
+  refundFailed: boolean;
+}): string {
+  const settledBy = data.settledPaymentIntentId
+    ? escapeHtml(data.settledPaymentIntentId)
+    : "another capture";
+  return layout(`
+    ${heading(
+      data.refundFailed
+        ? "Duplicate Capture Auto-Refund Failed — Retry Queued"
+        : "Duplicate Card Capture Auto-Refunded"
+    )}
+    ${
+      data.refundFailed
+        ? alertBox(
+            "A duplicate card charge could not be automatically refunded. A durable retry is queued — watch the recovery queue and confirm the refund lands.",
+            "warning"
+          )
+        : alertBox(
+            "A duplicate card charge was automatically refunded in full — no action is needed.",
+            "success"
+          )
+    }
+    ${paragraph(
+      data.refundFailed
+        ? "A second, distinct card capture arrived on a booking that was already paid and settled by another capture. The system tried to refund the duplicate charge automatically, but the refund could not complete inline. A durable recovery operation is queued and the payment recovery cron will retry it with backoff — watch the recovery queue and confirm the refund lands. The booking's own settlement is untouched."
+        : "A second, distinct card capture arrived on a booking that was already paid and settled by another capture. The duplicate charge was automatically refunded in full, so the member has not been double-charged and no action is needed unless the member reports otherwise. The booking's own settlement is untouched."
+    )}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      {
+        label: data.refundFailed ? "Amount to refund" : "Amount refunded",
+        value: formatCents(data.amountCents),
+      },
+      { label: "Duplicate Stripe PI", value: escapeHtml(data.paymentIntentId) },
+      { label: "Settled by", value: settledBy },
+      {
+        label: "Recovery operation",
+        value: escapeHtml(data.operationReference),
+      },
+      ...(data.refundFailed && data.errorMessage
+        ? [{ label: "Failure detail", value: escapeHtml(data.errorMessage) }]
+        : []),
+    ])}
+    ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
 // ---- N-06: Admin Alert — Pending Approaching Deadline ----
 
 export function adminPendingDeadlineTemplate(bookings: Array<{
