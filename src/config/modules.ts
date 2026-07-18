@@ -19,6 +19,7 @@ export const MODULE_KEYS = [
   "communications",
   "skifieldConditions",
   "twoFactor",
+  "magicLink",
   "analytics",
   "lobbyDisplay",
 ] as const;
@@ -70,6 +71,7 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   communications: true,
   skifieldConditions: true,
   twoFactor: false,
+  magicLink: false,
   analytics: false,
   lobbyDisplay: false,
 };
@@ -209,6 +211,16 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "Require members and admins to verify an authenticator app, email code, or recovery code after password login.",
     dependencies: [
       "Transactional email delivery should be configured before enabling email one-time codes.",
+    ],
+  },
+  magicLink: {
+    key: "magicLink",
+    label: "Email sign-in link",
+    description:
+      "Let members request a single-use email link to sign in without typing their password. Additive to password login, never a replacement, and only for existing verified members.",
+    dependencies: [
+      "Transactional email delivery must be configured so sign-in links can be sent.",
+      "The link expiry (default 15 minutes) is set on the Login & Security page.",
     ],
   },
   analytics: {

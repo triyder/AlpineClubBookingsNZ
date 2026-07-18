@@ -251,6 +251,16 @@ export function passwordResetTemplate(resetUrl: string): string {
   `);
 }
 
+export function magicLinkLoginTemplate(loginUrl: string): string {
+  return layout(`
+    ${heading("Sign In")}
+    ${paragraph(`You asked to sign in to your ${escapeHtml(CLUB_NAME)} booking account with an email link.`)}
+    ${paragraph("Click the button below to sign in. This link can be used once and expires shortly.")}
+    ${button("Sign In", loginUrl)}
+    ${muted("If you didn't request this, you can safely ignore this email — your account stays secure and you can still sign in with your password.")}
+  `);
+}
+
 export function adminPasswordResetTemplate(
   resetUrl: string,
   expiryLabel = "1 hour"

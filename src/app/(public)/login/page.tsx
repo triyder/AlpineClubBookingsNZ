@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { isValidAuthBounceRef, resolvePostLoginPath } from "@/lib/auth-redirect";
+import { getCachedEffectiveModuleFlags } from "@/lib/public-layout-config";
 import { LoginForm } from "./login-form";
 
 function singleSearchParam(value?: string | string[]) {
@@ -50,6 +51,10 @@ export default async function LoginPage({
     redirect(redirectTo);
   }
 
+  // Only needed on the form-render path (an authenticated visitor redirects
+  // above). Mirrors the public layout's cached read of effective module flags.
+  const modules = await getCachedEffectiveModuleFlags();
+
   return (
     <LoginForm
       verified={verified}
@@ -57,6 +62,7 @@ export default async function LoginPage({
       emailChanged={emailChanged}
       redirectTo={redirectTo}
       authBounceRef={authBounceRef}
+      magicLinkEnabled={modules.magicLink}
     />
   );
 }

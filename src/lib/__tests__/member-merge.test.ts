@@ -344,6 +344,7 @@ describe("spec bucket integrity", () => {
     expect(new Set(cascadeModels)).toEqual(
       new Set([
         "PasswordResetToken",
+        "MagicLinkToken",
         "EmailVerificationToken",
         "EmailChangeToken",
         "TwoFactorEmailCode",

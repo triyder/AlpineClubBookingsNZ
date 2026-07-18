@@ -45,6 +45,11 @@ export const explicitPublicApiRoutes = {
     reason:
       "Password reset request endpoint with non-enumerating behavior and rate limiting.",
   },
+  "src/app/api/auth/magic-link/route.ts": {
+    boundary: "public",
+    reason:
+      "Magic-link sign-in request endpoint with non-enumerating behavior (always {success:true}) and rate limiting; mints a token only for an active, verified member while the module is enabled.",
+  },
   "src/app/api/auth/register/route.ts": {
     boundary: "public",
     reason: "Disabled legacy registration endpoint returning 410.",

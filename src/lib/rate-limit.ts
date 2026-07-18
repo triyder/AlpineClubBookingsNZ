@@ -285,6 +285,8 @@ export const rateLimiters = {
   membershipApplication: { id: "membership-application", limit: 3, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Password reset request: 5 per hour */
   forgotPassword: { id: "forgot-password", limit: 5, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
+  /** Magic-link sign-in request: 5 per hour (mirrors forgot-password) */
+  magicLinkRequest: { id: "magic-link-request", limit: 5, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Password reset submission: 10 per hour */
   resetPassword: { id: "reset-password", limit: 10, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** General API: 100 per minute */

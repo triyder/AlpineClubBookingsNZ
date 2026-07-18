@@ -81,6 +81,7 @@ const effectiveModulesOn = {
   communications: false,
   skifieldConditions: false,
   twoFactor: false,
+  magicLink: false,
   analytics: false,
   lobbyDisplay: false,
 };

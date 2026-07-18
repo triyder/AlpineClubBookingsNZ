@@ -26,6 +26,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Email change requested — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Email Change Requested\n\nSomeone requested to change the email address on your {{CLUB_NAME}} account to {{newEmail}}.\n\nIf this wasn't you, please contact the club immediately.\n\nIf you made this request, you can safely ignore this email. The change will only take effect after verification."
   },
+  "magic-link-login": {
+    "defaultSubject": "Your {{CLUB_NAME}} sign-in link",
+    "defaultBody": "Sign In to {{CLUB_NAME}}\n\nYou asked to sign in to your {{CLUB_NAME}} booking account with an email link.\n\nClick the button below to sign in. This link can be used once and expires shortly.\n\nSign In: {{BASE_URL}}/login/magic?token={{token}}\n\nIf you didn't request this, you can safely ignore this email — your account stays secure and you can still sign in with your password."
+  },
   "booking-confirmed": {
     "defaultSubject": "Booking Confirmed - {{CLUB_LODGE_NAME}}",
     "defaultBody": "Booking Confirmed\n\nHi {{firstName}}, your lodge booking has been confirmed!\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nSubtotal: {{subtotal}}                  [only when discountCents > 0]\nDiscount ({{promoCode}}): -{{discount}} [only when promoCode exists]\nDiscount: -{{discount}}                 [only when discount exists without promoCode]\nTotal Paid: {{totalPaid}}\n\nPayment has been processed successfully.\n\n{{provisionalGuestsNote}} [only when non-member guests are held provisionally as a split linked booking]\n\nHow to get to the lodge\n\n{{CLUB_LODGE_TRAVEL_NOTE}}\n\nDoor code: {{doorCode}} [only when a door code is set]\n\nYou can view your booking details and manage your stay from your account.\n\nView Booking: {{BASE_URL}}/bookings"

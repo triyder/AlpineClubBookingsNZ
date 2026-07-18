@@ -16,6 +16,10 @@ vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
 }));
 
+vi.mock("@/lib/public-layout-config", () => ({
+  getCachedEffectiveModuleFlags: () => Promise.resolve({ magicLink: false }),
+}));
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
   redirect: (path: string) => mockRedirect(path),

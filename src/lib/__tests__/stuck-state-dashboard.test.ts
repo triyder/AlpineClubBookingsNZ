@@ -23,6 +23,7 @@ const modulesOn: FeatureFlags = {
   communications: true,
   skifieldConditions: true,
   twoFactor: false,
+  magicLink: false,
   analytics: false,
   lobbyDisplay: false,
 };

@@ -123,6 +123,7 @@ const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> =
   "password-reset": ["resetUrl"],
   "admin-password-reset": ["resetUrl"],
   "member-setup-invite": ["resetUrl"],
+  "magic-link-login": ["loginUrl"],
   "email-verification": ["verifyUrl"],
   "email-change-verification": ["verifyUrl"],
   "nomination-request": ["reviewUrl"],
@@ -184,6 +185,11 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "password-reset": ["token"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],
+  // #2034: the tokenised /login/magic?token=<token> link is the essential body
+  // content — the required "token" blocks an override that drops the sign-in
+  // link. Sensitive-log redaction is driven separately by
+  // SENSITIVE_EMAIL_LOG_TEMPLATES in src/lib/email/internal.ts.
+  "magic-link-login": ["token"],
   "email-verification": ["token"],
   "email-change-verification": ["newEmail", "token"],
   "email-change-notification": ["newEmail"],
@@ -701,6 +707,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "latestErrorMessage",
   "localId",
   "localModel",
+  "loginUrl",
   "lookbackHours",
   "memberEmail",
   "memberName",
@@ -802,6 +809,7 @@ const SENSITIVE_EMAIL_SUBJECT_TOKENS = [
   "confirmUrl",
   "confirmationUrl",
   "doorCode",
+  "loginUrl",
   "payUrl",
   "pin",
   "resetUrl",

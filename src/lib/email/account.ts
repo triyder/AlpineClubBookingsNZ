@@ -1,5 +1,6 @@
 import {
   passwordResetTemplate,
+  magicLinkLoginTemplate,
   emailVerificationTemplate,
   emailChangeVerificationTemplate,
   emailChangeNotificationTemplate,
@@ -31,6 +32,19 @@ export async function sendPasswordResetEmail(email: string, token: string) {
     html: passwordResetTemplate(resetUrl),
     templateName: "password-reset",
     templateData: { token, resetUrl },
+  });
+}
+
+export async function sendMagicLinkEmail(email: string, token: string) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const loginUrl = `${baseUrl}/login/magic?token=${token}`;
+
+  await sendEmail({
+    to: email,
+    subject: `Your ${CLUB_NAME} sign-in link`,
+    html: magicLinkLoginTemplate(loginUrl),
+    templateName: "magic-link-login",
+    templateData: { token, loginUrl },
   });
 }
 

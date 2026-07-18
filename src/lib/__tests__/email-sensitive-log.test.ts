@@ -25,6 +25,12 @@ describe("sensitive EmailLog HTML classification", () => {
     expect(shouldPersistEmailHtml("split-guest-payment-link")).toBe(false);
   });
 
+  it("redacts the magic-link sign-in template, whose HTML carries a live /login/magic?token link (#2034)", () => {
+    // The rendered HTML embeds a single-use /login/magic?token=<token> sign-in
+    // link, so it must never persist at rest in EmailLog or the retry table.
+    expect(shouldPersistEmailHtml("magic-link-login")).toBe(false);
+  });
+
   it("continues to retain HTML for a non-sensitive template", () => {
     expect(shouldPersistEmailHtml("booking-request-declined")).toBe(true);
   });

@@ -551,6 +551,7 @@ model Member {
 
   // Relations
   passwordResetTokens                        PasswordResetToken[]
+  magicLinkTokens                            MagicLinkToken[]
   emailVerificationTokens                    EmailVerificationToken[]
   emailChangeTokens                          EmailChangeToken[]
   twoFactorEmailCodes                        TwoFactorEmailCode[]
@@ -687,6 +688,25 @@ model AccessRoleDefinition {
 }
 
 model PasswordResetToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  memberId  String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  // Relations
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+}
+
+// Single-use, short-lived passwordless sign-in token (#2034). Cloned from
+// PasswordResetToken: only the SHA-256 hash of the emailed token is stored, the
+// row is claimed atomically on first use, and it expires after the configurable
+// magic-link TTL (default 15 minutes). Additive to password login — never a
+// replacement or an email-verification bypass.
+model MagicLinkToken {
   id        String   @id @default(cuid())
   tokenHash String   @unique
   memberId  String
@@ -3190,6 +3210,7 @@ model ClubModuleSettings {
   skifieldConditions      Boolean  @default(true)
   multiLodge              Boolean  @default(false)
   twoFactor               Boolean  @default(false)
+  magicLink               Boolean  @default(false)
   analytics               Boolean  @default(false)
   lobbyDisplay            Boolean  @default(false)
   updatedByMemberId       String?
