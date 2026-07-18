@@ -670,6 +670,7 @@ interface MembershipTypeMergeDialogProps {
   membershipTypes: MembershipType[];
   targetId: string;
   merging: boolean;
+  error: string;
   canEdit: boolean;
   onTargetChange: (targetId: string) => void;
   onCancel: () => void;
@@ -681,6 +682,7 @@ function MembershipTypeMergeDialog({
   membershipTypes,
   targetId,
   merging,
+  error,
   canEdit,
   onTargetChange,
   onCancel,
@@ -714,6 +716,15 @@ function MembershipTypeMergeDialog({
             this one. This cannot be undone.
           </DialogDescription>
         </DialogHeader>
+
+        {error && (
+          <div
+            role="alert"
+            className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+          >
+            {error}
+          </div>
+        )}
 
         <div className="space-y-4">
           <div className="space-y-2">
@@ -1762,6 +1773,7 @@ export default function AdminMembershipTypesPage() {
         membershipTypes={sortedTypes}
         targetId={mergeTargetId}
         merging={merging}
+        error={mergeSource ? error : ""}
         canEdit={canEdit}
         onTargetChange={setMergeTargetId}
         onCancel={() => {

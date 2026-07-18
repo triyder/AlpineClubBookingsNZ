@@ -351,4 +351,51 @@ describe("AdminMembershipTypesPage delete + merge", () => {
       expect(screen.queryByRole("dialog", { name: "Delete Social" })).toBeNull(),
     );
   });
+
+  it("keeps the merge dialog open and shows the server error inside it when the merge fails", async () => {
+    fetchMock.mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          url === "/api/admin/membership-types/type-social/merge" &&
+          method === "POST"
+        ) {
+          return jsonResponse({ error: "Target type is archived." }, false);
+        }
+        if (url === "/api/admin/membership-types") {
+          return jsonResponse({ membershipTypes });
+        }
+        if (url.startsWith("/api/admin/xero/contact-groups")) {
+          return jsonResponse({ groups: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      },
+    );
+
+    await renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Social" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Social" });
+    fireEvent.change(within(dialog).getByRole("combobox"), {
+      target: { value: "type-associate" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Merge and delete" }),
+    );
+
+    // A failed merge keeps the dialog open and surfaces the reason on the
+    // modal itself (the page banner is occluded by the overlay).
+    await waitFor(() =>
+      expect(
+        within(dialog).queryByText("Target type is archived."),
+      ).not.toBeNull(),
+    );
+    expect(screen.getByRole("dialog", { name: "Delete Social" })).not.toBeNull();
+    expect(
+      within(dialog)
+        .getByRole("button", { name: "Merge and delete" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+  });
 });
