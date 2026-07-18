@@ -8,7 +8,7 @@ alongside a club's lodge configuration.
 
 > **Built-in designs are seeded automatically** (LTV-038, issue #2047). The
 > built-ins — the three originals `everyday-board`, `whole-lodge`, `singles-house`
-> plus the issue-#2047 pack `room-by-room`, `week-ahead`, `operations-board`,
+> plus the issue-#2047 pack `room-by-room`, `nights-ahead`, `operations-board`,
 > `welcome-kiosk` — are code-defined in
 > `src/lib/lodge-display/built-in-seeds.ts` and seeded by `prisma/seed.ts`
 > (`ensureBuiltInDisplays`), so a fresh install already has them as ordinary v2

@@ -59,7 +59,7 @@ const EXPECTED_BUILT_IN_KEYS = [
   "whole-lodge",
   "singles-house",
   "room-by-room",
-  "week-ahead",
+  "nights-ahead",
   "operations-board",
   "welcome-kiosk",
 ];

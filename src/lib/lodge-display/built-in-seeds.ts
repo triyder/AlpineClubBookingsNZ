@@ -365,29 +365,32 @@ const ROOM_BY_ROOM_TEMPLATE: BuiltInTemplateSeed = {
 };
 
 // ---------------------------------------------------------------------------
-// week-ahead — a next-nights planner (first built-in use of night-columns) over
-// a notice band that only appears when a committee notice is set.
+// nights-ahead — the coming nights at a glance (first built-in use of
+// night-columns): room-level night columns over a notice band that only appears
+// when a committee notice is set. Named "Nights ahead" (not "Week ahead")
+// because it honestly renders a handful of nights, not a full week — see the
+// `days` note below.
 // ---------------------------------------------------------------------------
 
-const WEEK_AHEAD_BODY =
-  '<div class="wa-grid">' +
-  '<div class="wa-main">{{area:planner}}</div>' +
-  '<div class="wa-band">{{area:notice}}</div>' +
+const NIGHTS_AHEAD_BODY =
+  '<div class="na-grid">' +
+  '<div class="na-main">{{area:planner}}</div>' +
+  '<div class="na-band">{{area:notice}}</div>' +
   "</div>";
 
-const WEEK_AHEAD_CSS = `
+const NIGHTS_AHEAD_CSS = `
 .display-layout-body { height: 100%; min-height: 0; }
-.wa-grid {
+.na-grid {
   display: grid;
   grid-template-rows: 1fr auto;
   row-gap: 1.8vmin;
   height: 100%;
   min-height: 0;
 }
-.wa-main { overflow: hidden; min-height: 0; }
-.wa-main > [data-display-area] { display: block; height: 100%; }
-.wa-band { overflow: hidden; }
-.wa-band .display-notice-board {
+.na-main { overflow: hidden; min-height: 0; }
+.na-main > [data-display-area] { display: block; height: 100%; }
+.na-band { overflow: hidden; }
+.na-band .display-notice-board {
   height: auto;
   padding: 1.6vmin 2vmin;
   text-align: left;
@@ -398,23 +401,26 @@ const WEEK_AHEAD_CSS = `
 }
 `;
 
-const WEEK_AHEAD_LAYOUT: BuiltInLayoutSeed = {
-  key: "week-ahead",
-  name: "Week ahead",
+const NIGHTS_AHEAD_LAYOUT: BuiltInLayoutSeed = {
+  key: "nights-ahead",
+  name: "Nights ahead",
   description:
-    "A next-nights planner (a column per upcoming night, with rooms when bed allocation is on) over a committee-notice band that appears only when a notice is set.",
-  bodyHtml: WEEK_AHEAD_BODY,
-  defaultCss: WEEK_AHEAD_CSS,
+    "The coming nights at a glance — room-level night columns (rooms shown when bed allocation is on) over a committee-notice band that appears only when a notice is set.",
+  bodyHtml: NIGHTS_AHEAD_BODY,
+  defaultCss: NIGHTS_AHEAD_CSS,
   areas: [
     {
       key: "planner",
-      description: "Next-nights look-ahead.",
+      description: "The coming nights, one column each.",
       kind: "static",
-      // night-columns clamps its own `days` to NIGHT_COLUMNS_MAX_DAYS; 7 is the
-      // authored intent (the whole booking window), rendered up to that cap.
+      // Ask for the module's own ceiling (NIGHT_COLUMNS_MAX_DAYS = 5). Note this
+      // is aspirational today: the display-state device window is 3 days by
+      // default, so a stock device currently renders 3 night columns regardless.
+      // Widening that window is a tracked follow-up; until then the board is
+      // named "Nights ahead" (not "Week ahead") to stay honest about the count.
       defaultContent: {
         module: "night-columns",
-        options: { days: 7, "show-rooms": true },
+        options: { days: 5, "show-rooms": true },
       },
     },
     {
@@ -427,12 +433,12 @@ const WEEK_AHEAD_LAYOUT: BuiltInLayoutSeed = {
   ],
 };
 
-const WEEK_AHEAD_TEMPLATE: BuiltInTemplateSeed = {
-  key: "week-ahead",
-  name: "Week ahead",
-  layoutKey: "week-ahead",
+const NIGHTS_AHEAD_TEMPLATE: BuiltInTemplateSeed = {
+  key: "nights-ahead",
+  name: "Nights ahead",
+  layoutKey: "nights-ahead",
   slotContent: {
-    planner: { module: "night-columns", options: { days: 7, "show-rooms": true } },
+    planner: { module: "night-columns", options: { days: 5, "show-rooms": true } },
     notice: { module: "notice-board" },
   },
   cssOverrides: "",
@@ -620,7 +626,7 @@ export const BUILT_IN_DISPLAY_LAYOUTS: BuiltInLayoutSeed[] = [
   WHOLE_LODGE_LAYOUT,
   SINGLES_LAYOUT,
   ROOM_BY_ROOM_LAYOUT,
-  WEEK_AHEAD_LAYOUT,
+  NIGHTS_AHEAD_LAYOUT,
   OPERATIONS_LAYOUT,
   WELCOME_KIOSK_LAYOUT,
 ];
@@ -633,7 +639,7 @@ export const BUILT_IN_DISPLAY_TEMPLATES: BuiltInTemplateSeed[] = [
   WHOLE_LODGE_TEMPLATE,
   SINGLES_TEMPLATE,
   ROOM_BY_ROOM_TEMPLATE,
-  WEEK_AHEAD_TEMPLATE,
+  NIGHTS_AHEAD_TEMPLATE,
   OPERATIONS_TEMPLATE,
   WELCOME_KIOSK_TEMPLATE,
 ];

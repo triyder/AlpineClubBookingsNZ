@@ -201,8 +201,8 @@ describe("issue #2047 pack — built-in boards", () => {
     expect(arrivals?.closest(".rbr-rail")).not.toBeNull();
   });
 
-  it("week-ahead renders the next-nights planner and the notice band when a notice is set", async () => {
-    const def = await builtInDef("week-ahead");
+  it("nights-ahead renders the night columns and the notice band when a notice is set", async () => {
+    const def = await builtInDef("nights-ahead");
     const state = baseState({
       rooms: [{ id: "r1", name: "Kea" }],
       bookings: [
@@ -230,12 +230,12 @@ describe("issue #2047 pack — built-in boards", () => {
     expect(container.querySelector(".display-night-columns")).not.toBeNull();
     const notice = container.querySelector(".display-notice-board");
     expect(notice).not.toBeNull();
-    expect(notice?.closest(".wa-band")).not.toBeNull();
+    expect(notice?.closest(".na-band")).not.toBeNull();
     expect(screen.getByText(/Snow report at 8am/)).toBeDefined();
   });
 
-  it("week-ahead drops the notice band when no notice is set (conditional area)", async () => {
-    const def = await builtInDef("week-ahead");
+  it("nights-ahead drops the notice band when no notice is set (conditional area)", async () => {
+    const def = await builtInDef("nights-ahead");
     const { container } = await renderBoard(def, baseState({ notice: null }));
     expect(container.querySelector(".display-night-columns")).not.toBeNull();
     expect(container.querySelector(".display-notice-board")).toBeNull();
