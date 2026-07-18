@@ -58,6 +58,13 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "website-contact",
   "admin-booking-request-pending",
   "admin-booking-request-hold-expired",
+  // #2012: terminal one-off notice when a request-origin booking is
+  // auto-cancelled past check-in (its held beds released). Its own registry
+  // entry (not a variant of the recurring hold-expired alert) so an admin
+  // override of the recurring alert cannot rewrite this terminal notice, and
+  // muting the recurring alert does not mute this one. Same admin-alert
+  // plumbing: sendToAdmins, adminBookingRequest gating, NOT delivery-locked.
+  "admin-booking-request-hold-cancelled",
   "admin-school-manual-invoice",
   // #1967/#1994: split non-member guest portion unpaid at hold expiry (no card
   // on file). Ships via sendToAdmins, so it classifies as an admin alert.
@@ -245,6 +252,12 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "booking-request-quote": ["token"],
   "admin-booking-request-pending": ["requesterName", "reviewUrl"],
   "admin-booking-request-hold-expired": ["requesterName", "reviewUrl"],
+  // #2012: terminal notice — requesterName identifies the requester and
+  // reviewUrl is the admin action link, mirroring the recurring alert.
+  "admin-booking-request-hold-cancelled": ["requesterName", "reviewUrl"],
+  // #2012: member-facing terminal notice. No bearer token (so NOT
+  // sensitive-log); firstName + the stay dates are the load-bearing content.
+  "booking-request-payment-expired": ["firstName", "checkIn", "checkOut"],
   // #1992/#2007: memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-duplicate-capture-refund": ["memberName", "reviewUrl"],
@@ -405,7 +418,19 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   },
   "admin-booking-request-hold-expired": {
     triggerSummary: "Request-origin booking unpaid at hold expiry",
-    frequency: "Per hold-expiry check on an unpaid request booking",
+    frequency:
+      "On a capped cadence while the request booking stays unpaid: the first three hold extensions, then every seventh. A terminal cancellation past the check-in day ends the series and sends the separate 'admin-booking-request-hold-cancelled' notice instead",
+  },
+  "admin-booking-request-hold-cancelled": {
+    triggerSummary:
+      "A booking created from a public booking request was still unpaid with no card on file at the end of its check-in day, so it was automatically cancelled and its held beds released",
+    frequency:
+      "Once per request booking, when it is auto-cancelled past check-in; ends the recurring 'admin-booking-request-hold-expired' alert series",
+  },
+  "booking-request-payment-expired": {
+    triggerSummary:
+      "The booking created from the member's approved public booking request was released because it stayed unpaid up to the check-in day (nothing was ever charged)",
+    frequency: "Once per request booking auto-cancelled past check-in",
   },
   "admin-split-settlement-unpaid": {
     triggerSummary:

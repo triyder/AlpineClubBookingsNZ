@@ -2851,6 +2851,32 @@ export function bookingRequestDeclinedTemplate(data: {
   `);
 }
 
+/**
+ * #2012 — member-facing terminal notice that the booking created from their
+ * approved public booking request (#707) stayed unpaid up to the check-in day,
+ * so the provisional booking was released. Distinct wording from
+ * bookingRequestDeclinedTemplate ("unable to accommodate"): this request WAS
+ * approved and priced — the payment window simply lapsed — so it must not
+ * imply a refusal. Reassures that nothing was ever charged. No bearer token, so
+ * this is not sensitive-log material.
+ */
+export function bookingRequestPaymentExpiredTemplate(data: {
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+}): string {
+  return layout(`
+    ${heading("Your Booking Was Released — Payment Not Received")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", the booking we approved from your request stayed unpaid up to the check-in day, so it has now been released. Nothing was ever charged.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+    ])}
+    ${paragraph("If you still want to stay, you are welcome to submit a new booking request for these or other dates.")}
+    ${supportContactSentence("If you have questions, contact the club at ")}
+  `);
+}
+
 export function adminBookingRequestPendingTemplate(data: {
   requesterName: string;
   checkIn: Date;
@@ -2916,6 +2942,42 @@ export function adminBookingRequestHoldExpiredTemplate(data: {
       { label: "Hold extended to", value: formatNZDateTime(data.holdUntil) },
     ])}
     ${paragraph("Consider following up with the requester or cancelling the booking if payment is not expected.")}
+    ${muted("This alert repeats on a capped cadence (the first three hold extensions, then every seventh) while the request booking stays unpaid; a terminal cancellation past the check-in day ends the series with a separate final notice.")}
+    ${button("View Bookings", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
+/**
+ * #2012 — terminal one-off admin notice: a booking created from an approved
+ * public booking request (#707) was still unpaid at the end of its check-in day
+ * with no saved card to charge, so it was automatically cancelled and its held
+ * capacity released. A DEDICATED registered template
+ * (`admin-booking-request-hold-cancelled`), not a variant of the recurring
+ * adminBookingRequestHoldExpiredTemplate, so an admin override of the noisy
+ * recurring alert cannot rewrite this terminal notice and muting the recurring
+ * one does not mute this. Symmetric twin of adminSplitSettlementCancelledTemplate,
+ * but this booking DID hold real beds, so the copy states the release explicitly.
+ */
+export function adminBookingRequestHoldCancelledTemplate(data: {
+  requesterName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+  reviewUrl: string;
+}): string {
+  return layout(`
+    ${heading("Request Booking Auto-Cancelled — Unpaid Past Check-in")}
+    ${paragraph("A booking created from a public booking request was still unpaid at the end of its check-in day, with no saved card to charge. The provisional booking has now been automatically cancelled and the beds it was holding have been released back to availability. No payment was taken. The requester has been notified.")}
+    ${infoTable([
+      { label: "Requester", value: escapeHtml(data.requesterName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Amount (unpaid)", value: formatCents(data.totalCents) },
+    ])}
+    ${paragraph("No further action is required. If the requester still intends to come and pay, ask them to submit a new booking request.")}
+    ${muted("This is a one-off notice — it ends the capped hold-extension alert series for this request booking.")}
     ${button("View Bookings", data.reviewUrl, { sameOrigin: true })}
   `);
 }

@@ -11,6 +11,7 @@ import {
   adminBookingRequestPendingTemplate,
   adminSchoolManualInvoiceTemplate,
   adminBookingRequestHoldExpiredTemplate,
+  adminBookingRequestHoldCancelledTemplate,
   adminSplitSettlementUnpaidTemplate,
   adminSplitSettlementCancelledTemplate,
 } from "../email-templates";
@@ -360,6 +361,48 @@ export async function sendAdminBookingRequestHoldExpiredEmail(data: {
       guestCount: data.guestCount,
       total: formatMoneyCents(data.totalCents),
       holdUntil: formatNZDateTime(data.holdUntil),
+      reviewUrl,
+    },
+    preferenceKey: "adminBookingRequest",
+  });
+}
+
+// #2012: terminal one-off admin notice — a booking created from an approved
+// public booking request (#707) was still unpaid (no saved card) at the end of
+// its check-in day, so it was automatically cancelled and its held beds were
+// released. A DEDICATED registered template (`admin-booking-request-hold-cancelled`),
+// not a variant of the recurring adminBookingRequestHoldExpired alert, so an
+// admin override of the recurring alert cannot rewrite this terminal notice and
+// muting the recurring one does not mute this. Same admin-alert plumbing and
+// adminBookingRequest gating as the recurring alert. Symmetric twin of
+// sendAdminSplitSettlementCancelledAlert.
+export async function sendAdminBookingRequestHoldCancelledEmail(data: {
+  requesterName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/bookings`;
+
+  await sendToAdmins({
+    subject: `Request booking auto-cancelled — unpaid past check-in: ${data.requesterName}`,
+    html: adminBookingRequestHoldCancelledTemplate({
+      requesterName: data.requesterName,
+      checkIn: data.checkIn,
+      checkOut: data.checkOut,
+      guestCount: data.guestCount,
+      totalCents: data.totalCents,
+      reviewUrl,
+    }),
+    templateName: "admin-booking-request-hold-cancelled",
+    templateData: {
+      requesterName: data.requesterName,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+      guestCount: data.guestCount,
+      total: formatMoneyCents(data.totalCents),
       reviewUrl,
     },
     preferenceKey: "adminBookingRequest",

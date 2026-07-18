@@ -330,13 +330,21 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Update on your booking request — {{CLUB_NAME}}",
     "defaultBody": "Booking Request Update\n\nHi {{firstName}}, thank you for your interest in staying with {{CLUB_NAME}}.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nUnfortunately we're unable to accommodate this request.\n\nNote: {{reason}} [only when reason exists]\n\nIf you have any questions, please contact the club at {{SUPPORT_EMAIL}}."
   },
+  "booking-request-payment-expired": {
+    "defaultSubject": "Your booking was released — payment not received — {{CLUB_NAME}}",
+    "defaultBody": "Your Booking Was Released — Payment Not Received\n\nHi {{firstName}}, the booking we approved from your request stayed unpaid up to the check-in day, so it has now been released. Nothing was ever charged.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nIf you still want to stay, you are welcome to submit a new booking request for these or other dates.\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}."
+  },
   "admin-booking-request-pending": {
     "defaultSubject": "Booking request ready for review: {{requesterName}}",
     "defaultBody": "Booking Request Ready for Review\n\n{{requesterName}} has verified their email and the request is ready for pricing.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nReview Request: {{reviewUrl}}"
   },
   "admin-booking-request-hold-expired": {
     "defaultSubject": "Request booking unpaid at hold expiry: {{requesterName}}",
-    "defaultBody": "Request Booking Unpaid at Hold Expiry\n\n{{requesterName}}'s request-origin booking has reached its hold deadline without payment.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal due: {{total}}\nHold until: {{holdUntil}}\n\nReview Bookings: {{reviewUrl}}"
+    "defaultBody": "Request Booking Unpaid at Hold Expiry\n\n{{requesterName}}'s request-origin booking has reached its hold deadline without payment.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal due: {{total}}\nHold until: {{holdUntil}}\n\nThis alert repeats on a capped cadence (the first three hold extensions, then every seventh) while the request booking stays unpaid. A terminal cancellation past the check-in day ends the series with a separate final notice.\n\nReview Bookings: {{reviewUrl}}"
+  },
+  "admin-booking-request-hold-cancelled": {
+    "defaultSubject": "Request booking auto-cancelled — unpaid past check-in: {{requesterName}}",
+    "defaultBody": "Request Booking Auto-Cancelled — Unpaid Past Check-in\n\n{{requesterName}}'s booking from a public booking request was still unpaid at the end of its check-in day, with no saved card to charge, so it was automatically cancelled and the beds it was holding have been released. No payment was taken. The requester has been notified.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nAmount (unpaid): {{total}}\n\nNo further action is required. If the requester still intends to come and pay, ask them to submit a new booking request.\n\nThis is a one-off notice — it ends the capped hold-extension alert series for this request booking.\n\nView Bookings: {{reviewUrl}}"
   },
   "admin-split-settlement-unpaid": {
     "defaultSubject": "Split booking guest portion unpaid — no card on file: {{memberName}}",

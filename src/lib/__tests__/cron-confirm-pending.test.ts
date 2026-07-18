@@ -42,8 +42,23 @@ vi.mock("../payment-transactions", () => ({
     mockUpsertPaymentIntentTransaction(...args),
 }));
 
+const mockProcessWaitlistForDates = vi.fn().mockResolvedValue(undefined);
 vi.mock("../waitlist", () => ({
-  processWaitlistForDates: vi.fn().mockResolvedValue(undefined),
+  processWaitlistForDates: (...args: unknown[]) =>
+    mockProcessWaitlistForDates(...args),
+}));
+
+// #2012: the request-hold terminal cancel RELEASES held capacity via the bed
+// reconcile (unlike the split child, which holds none). Mock it as an
+// observable no-op so tests can assert the release fires (or does not, on the
+// lost-CAS path). Fire-and-forget side effect on beds; the reconcile logic
+// itself is covered in bed-allocation-lifecycle.test.ts.
+const mockReconcileBedAllocationsForBooking = vi
+  .fn()
+  .mockResolvedValue(undefined);
+vi.mock("@/lib/bed-allocation-lifecycle", () => ({
+  reconcileBedAllocationsForBooking: (...args: unknown[]) =>
+    mockReconcileBedAllocationsForBooking(...args),
 }));
 
 // Mock email
@@ -69,6 +84,14 @@ const mockSendAdminSplitSettlementCancelledAlert = vi
 const mockSendSplitGuestPortionCancelledEmail = vi
   .fn()
   .mockResolvedValue(undefined);
+// #2012: dedicated terminal notices for an auto-cancelled request-origin
+// booking (its own registered templates, symmetric with #1993).
+const mockSendAdminBookingRequestHoldCancelledEmail = vi
+  .fn()
+  .mockResolvedValue(undefined);
+const mockSendBookingRequestPaymentExpiredEmail = vi
+  .fn()
+  .mockResolvedValue(undefined);
 vi.mock("../email", () => ({
   sendBookingConfirmedEmail: (...args: unknown[]) => mockSendConfirmedEmail(...args),
   sendBookingBumpedEmail: (...args: unknown[]) => mockSendBumpedEmail(...args),
@@ -79,6 +102,10 @@ vi.mock("../email", () => ({
   sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
   sendAdminBookingRequestHoldExpiredEmail: (...args: unknown[]) =>
     mockSendAdminHoldExpiredAlert(...args),
+  sendAdminBookingRequestHoldCancelledEmail: (...args: unknown[]) =>
+    mockSendAdminBookingRequestHoldCancelledEmail(...args),
+  sendBookingRequestPaymentExpiredEmail: (...args: unknown[]) =>
+    mockSendBookingRequestPaymentExpiredEmail(...args),
   sendSplitGuestPaymentLinkEmail: (...args: unknown[]) =>
     mockSendSplitGuestPaymentLinkEmail(...args),
   sendAdminSplitSettlementUnpaidAlert: (...args: unknown[]) =>
@@ -357,6 +384,10 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockSendAdminSplitSettlementUnpaidAlert.mockResolvedValue(undefined);
     mockSendAdminSplitSettlementCancelledAlert.mockResolvedValue(undefined);
     mockSendSplitGuestPortionCancelledEmail.mockResolvedValue(undefined);
+    mockSendAdminBookingRequestHoldCancelledEmail.mockResolvedValue(undefined);
+    mockSendBookingRequestPaymentExpiredEmail.mockResolvedValue(undefined);
+    mockProcessWaitlistForDates.mockResolvedValue(undefined);
+    mockReconcileBedAllocationsForBooking.mockResolvedValue(undefined);
     mockGetNonMemberHoldDays.mockResolvedValue(7);
     mockBookingEventCreate.mockResolvedValue({ id: "evt_1" });
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
@@ -1062,6 +1093,267 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
     expect(mockChargePaymentMethod).not.toHaveBeenCalled();
     expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  // #2012 — the symmetric twin of #1993 Part A for request-origin bookings
+  // (#707). Two behaviours: (1) a terminal auto-cancel once the check-in day has
+  // ended that RELEASES the booking's held capacity (unlike the split child,
+  // which holds none), and (2) the #1993 Part B capped alert cadence applied to
+  // the previously-every-run pre-check-in hold-expired admin alert.
+  describe("#2012 request-hold terminal auto-cancel + capped cadence", () => {
+    it("cancels a past-check-in unpaid request booking: guarded CAS, in-tx link revoke + capacity release, POST-COMMIT event, requester email + dedicated final admin notice, waitlist wake, no charge, no Xero", async () => {
+      const booking = makePendingBooking("b1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: false,
+        originBookingRequest: { id: "req_1" },
+        finalPriceCents: 14000,
+        guestCount: 2,
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      // Terminal cancel bucket; never confirmed/bumped/failed.
+      expect(result.cancelledBookingIds).toEqual(["b1"]);
+      expect(result.confirmedBookingIds).toEqual([]);
+      expect(result.bumpedBookingIds).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+
+      // Guarded PENDING -> CANCELLED CAS.
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+        where: { id: "b1", status: "PENDING" },
+        data: { status: "CANCELLED", nonMemberHoldUntil: null },
+      });
+
+      // Capacity released (bed reconcile) and link revoked IN the transaction;
+      // CANCELLED narrative event recorded POST-COMMIT on the base client.
+      expect(mockReconcileBedAllocationsForBooking).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "b1" })
+      );
+      expect(mockRevokePaymentLinksForBooking).toHaveBeenCalledWith(
+        "b1",
+        expect.anything()
+      );
+      expect(mockBookingEventCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            bookingId: "b1",
+            type: "CANCELLED",
+          }),
+        })
+      );
+
+      // Never charged, never touched Xero, never extended the hold, and the
+      // recurring hold-expired alert did NOT fire on the terminal run.
+      expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+      expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+      expect(mockBookingUpdateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { nonMemberHoldUntil: expect.any(Date) },
+        })
+      );
+      expect(mockSendAdminHoldExpiredAlert).not.toHaveBeenCalled();
+
+      // Post-commit: dedicated requester payment-expired email + ONE dedicated
+      // terminal admin notice + waitlist wake for the freed beds.
+      expect(mockSendBookingRequestPaymentExpiredEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendBookingRequestPaymentExpiredEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: "b1@example.com",
+          firstName: "Test",
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        })
+      );
+      expect(
+        mockSendAdminBookingRequestHoldCancelledEmail
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        mockSendAdminBookingRequestHoldCancelledEmail
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requesterName: "Test User",
+          totalCents: 14000,
+          guestCount: 2,
+        })
+      );
+      expect(mockProcessWaitlistForDates).toHaveBeenCalledWith(
+        expect.objectContaining({
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        })
+      );
+    });
+
+    it("records the CANCELLED event post-commit so a bookingEvent write failure never blocks the cancel", async () => {
+      const booking = makePendingBooking("b1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: false,
+        originBookingRequest: { id: "req_1" },
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+      mockBookingEventCreate.mockRejectedValueOnce(
+        new Error("event insert failed")
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.cancelledBookingIds).toEqual(["b1"]);
+      expect(result.failedBookingIds).toEqual([]);
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+        where: { id: "b1", status: "PENDING" },
+        data: { status: "CANCELLED", nonMemberHoldUntil: null },
+      });
+      // Notices still went out despite the swallowed event failure.
+      expect(mockSendBookingRequestPaymentExpiredEmail).toHaveBeenCalledTimes(1);
+      expect(
+        mockSendAdminBookingRequestHoldCancelledEmail
+      ).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not cancel when a payment won the lock first (CAS count 0): already_processed, zero side effects — also the idempotent-rerun guard", async () => {
+      const booking = makePendingBooking("b1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: false,
+        originBookingRequest: { id: "req_1" },
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+      // The guarded PENDING -> CANCELLED CAS finds no PENDING row: a /pay
+      // settlement (or a prior cron pass) resolved it seconds earlier. A second
+      // cron pass on an already-cancelled booking takes this same branch.
+      mockBookingUpdateMany.mockResolvedValue({ count: 0 });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.cancelledBookingIds).toEqual([]);
+      expect(result.confirmedBookingIds).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+      // Zero side effects on the lost claim: no capacity release, no revoke, no
+      // event, no requester email, no admin notice, no waitlist.
+      expect(mockReconcileBedAllocationsForBooking).not.toHaveBeenCalled();
+      expect(mockRevokePaymentLinksForBooking).not.toHaveBeenCalled();
+      expect(mockBookingEventCreate).not.toHaveBeenCalled();
+      expect(mockSendBookingRequestPaymentExpiredEmail).not.toHaveBeenCalled();
+      expect(
+        mockSendAdminBookingRequestHoldCancelledEmail
+      ).not.toHaveBeenCalled();
+      expect(mockProcessWaitlistForDates).not.toHaveBeenCalled();
+    });
+
+    it("still auto-charges a past-check-in request booking that DOES have a saved card (terminal cancel is only for the no-card path)", async () => {
+      const booking = makePendingBooking("b1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: true,
+        originBookingRequest: { id: "req_1" },
+        finalPriceCents: 14000,
+        guestCount: 1,
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 3,
+        nightDetails: [],
+      });
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_req_charge",
+        status: "succeeded",
+        amount: 14000,
+        payment_method: "pm_b1",
+      });
+
+      const result = await confirmPendingBookings();
+
+      // The saved-card path settles it; the terminal cancel never runs.
+      expect(result.cancelledBookingIds).toEqual([]);
+      expect(result.confirmedBookingIds).toEqual(["b1"]);
+      expect(mockChargePaymentMethod).toHaveBeenCalled();
+      expect(mockSendBookingRequestPaymentExpiredEmail).not.toHaveBeenCalled();
+      expect(
+        mockSendAdminBookingRequestHoldCancelledEmail
+      ).not.toHaveBeenCalled();
+    });
+
+    it("before the check-in day, still extends the hold and alerts admins on window 1 (no terminal cancel)", async () => {
+      // Default dates: checkIn 2026-07-15 (future), origin = checkIn - 7d =
+      // 2026-07-08; now 2026-07-09 => window 1 => alert.
+      const booking = makePendingBooking("b1", {
+        hasPaymentMethod: false,
+        originBookingRequest: { id: "req_1" },
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.cancelledBookingIds).toEqual([]);
+      // Hold extended (low-churn continues), not cancelled.
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: "b1", status: "PENDING" }),
+          data: { nonMemberHoldUntil: expect.any(Date) },
+        })
+      );
+      expect(mockSendAdminHoldExpiredAlert).toHaveBeenCalledTimes(1);
+      expect(
+        mockSendAdminBookingRequestHoldCancelledEmail
+      ).not.toHaveBeenCalled();
+    });
+
+    it("caps the pre-check-in admin alert: stays silent on a capped window (4) while still extending the hold", async () => {
+      // Anchor the origin at 2026-07-02 (now - 7d => window 4, silent) via a
+      // 40-day hold and a check-in far enough ahead that the terminal branch
+      // does not fire.
+      mockGetNonMemberHoldDays.mockResolvedValue(40);
+      const booking = makePendingBooking("b1", {
+        checkIn: "2026-08-11",
+        checkOut: "2026-08-13",
+        hasPaymentMethod: false,
+        originBookingRequest: { id: "req_1" },
+      });
+      booking.createdAt = new Date("2026-03-01T00:00:00.000Z");
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      // Hold still extended, but no admin alert this window, and not cancelled.
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: "b1", status: "PENDING" }),
+          data: { nonMemberHoldUntil: expect.any(Date) },
+        })
+      );
+      expect(mockSendAdminHoldExpiredAlert).not.toHaveBeenCalled();
+      expect(result.cancelledBookingIds).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+    });
   });
 
   // A genuinely Internet-Banking-settled parent: switch-at-pay flips the

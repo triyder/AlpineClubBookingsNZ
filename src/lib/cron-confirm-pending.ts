@@ -30,6 +30,7 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "./xero-operation-outbox";
 import {
+  sendAdminBookingRequestHoldCancelledEmail,
   sendAdminBookingRequestHoldExpiredEmail,
   sendAdminPaymentFailureAlert,
   sendAdminSplitSettlementCancelledAlert,
@@ -37,6 +38,7 @@ import {
   sendBookingBumpedEmail,
   sendBookingConfirmedEmail,
   sendBookingGuestsCancelledEmail,
+  sendBookingRequestPaymentExpiredEmail,
   sendSplitGuestPaymentLinkEmail,
   sendSplitGuestPortionCancelledEmail,
 } from "./email";
@@ -56,6 +58,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * preserved by the extension CAS upstream — exactly one cron run wins per
  * window, and within a window `now` maps to a stable number, so a rerun in the
  * same window never re-alerts.
+ *
+ * #2012 reuses this generic ~2-day-window helper unchanged for the request-hold
+ * (#707) admin-alert stream — both holds extend by REQUEST_HOLD_EXTENSION_MS, so
+ * the window math is identical. Kept split-settlement-named (not renamed) so the
+ * existing call sites and tests stay byte-equivalent.
  */
 export function splitSettlementExtensionNumber(
   originalHoldExpiry: Date,
@@ -144,6 +151,23 @@ type HoldResolution =
       booking: PendingBooking;
       extendedHoldUntil: Date;
     }
+  | {
+      // #2012 (symmetric twin of #1993 Part A) — terminal state for a booking
+      // created from an approved public booking request (#707) still PENDING
+      // (unpaid, no saved card) once its check-in day has ended. UNLIKE the
+      // split child, this booking HOLDS REAL CAPACITY (AWAITING_REVIEW -> PENDING
+      // on approval keeps the beds reserved), so the terminal action must RELEASE
+      // that capacity: the guarded PENDING -> CANCELLED CAS, bed reconcile
+      // (release), promo cleanup and link revocation commit inside the lock
+      // transaction; the CANCELLED narrative event, the requester's payment-
+      // expired email, ONE final admin notice and the waitlist wake fire
+      // post-commit. The request row stays CONVERTED (it is a historical fact
+      // that a booking was created); the booking's own CANCELLED status is the
+      // capacity source of truth. A PAID/CONFIRMED booking is never reached (it
+      // is not PENDING) — a concurrent /pay settlement wins the CAS cleanly.
+      type: "request_hold_terminal_cancelled";
+      booking: PendingBooking;
+    }
   | { type: "missing_payment_method"; booking: PendingBooking }
   | {
       type: "split_child_payment_link";
@@ -194,7 +218,9 @@ export interface CronConfirmResult {
   confirmedBookingIds: string[];
   bumpedBookingIds: string[];
   // #1993 Part A: split non-member children auto-cancelled at end of check-in
-  // day while still unsettled (PENDING, no saved card). Distinct from bumped
+  // day while still unsettled (PENDING, no saved card). #2012: also request-
+  // origin bookings (#707) still unpaid past check-in — those additionally
+  // RELEASE held capacity (bed reconcile + waitlist wake). Distinct from bumped
   // (capacity loss) and failed (processing error) — a clean terminal cancel.
   cancelledBookingIds: string[];
   // Retained for response-shape stability. The cron no longer partial-bumps at
@@ -214,6 +240,14 @@ export interface CronConfirmResult {
  * very first extension run would compute a high index and skip the first alert.
  * Stable across cron reruns (all inputs are immutable booking/policy values),
  * which is what keeps the cadence idempotent.
+ *
+ * #2012 reuses this anchor for request-origin holds. Their true first expiry is
+ * `max(checkIn - holdDays, approvalTime + minimum hold)` and the approval time
+ * is not stored on the Booking, so for a request approved inside the hold
+ * window the computed window index can run ~1 high — which under the
+ * 1,2,3-then-every-7th rule can only SKIP an early alert, never spam or break
+ * the cap. Accepted imprecision; a request-specific anchor would need the
+ * approval timestamp persisted.
  */
 async function resolveOriginalHoldExpiry(
   booking: PendingBooking
@@ -495,6 +529,65 @@ async function resolveHoldWindowUnderLock(
         // Request-origin bookings (#707) pay via a tokenised PaymentLink, not
         // a saved card. Keep the link path alive when capacity is still
         // available; revoke it in the unavailable branch above.
+
+        // #2012 (symmetric twin of #1993 Part A) — terminal state. Once the
+        // check-in day has ended, stop extending the hold forever and cancel
+        // the still-unpaid request booking. Use the SAME boundary the approval
+        // uses for the payment link's hard expiry
+        // (booking-request.ts:approveBookingRequest sets
+        // paymentLinkExpiresAt = endOfDateOnlyForTimeZone(checkIn)), so the two
+        // can never disagree: past it the requester's /pay link is dead anyway,
+        // yet without this the hold kept extending (and the admin alert kept
+        // firing) forever. UNLIKE the split child (#1993), this booking HOLDS
+        // REAL capacity, so this is a capacity change: the guarded
+        // PENDING -> CANCELLED CAS (count 0 => a /pay settlement won the lock
+        // seconds earlier: already_processed, safe), then bed reconcile
+        // (RELEASE), promo cleanup and link revocation, all in this tx —
+        // mirroring the capacity-releasing `bumped` path above. The CANCELLED
+        // narrative event, the requester email, one final admin notice and the
+        // waitlist wake fire post-commit (the event must not sit in-tx — see
+        // booking-events.ts). A PAID/CONFIRMED booking is never here (not
+        // PENDING); the CONVERTED request row is left as the historical record.
+        const checkInDayEnded =
+          endOfDateOnlyForTimeZone(
+            formatDateOnly(booking.checkIn)
+          ).getTime() <= now.getTime();
+        if (checkInDayEnded) {
+          const cancelled = await tx.booking.updateMany({
+            where: { id: booking.id, status: BookingStatus.PENDING },
+            data: {
+              status: BookingStatus.CANCELLED,
+              nonMemberHoldUntil: null,
+            },
+          });
+          if (cancelled.count === 0) {
+            return { type: "already_processed" };
+          }
+
+          await reconcileBedAllocationsForBooking({
+            bookingId: booking.id,
+            db: tx,
+            previousRange: {
+              checkIn: booking.checkIn,
+              checkOut: booking.checkOut,
+            },
+          });
+
+          // Defensive promo cleanup, matching the capacity-releasing bump path
+          // (a request-origin booking is officer-priced and normally carries no
+          // promo redemption, but never leak a redemption count if one exists).
+          const promoRedemption = await tx.promoRedemption.findUnique({
+            where: { bookingId: booking.id },
+          });
+          if (promoRedemption) {
+            await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
+          }
+
+          await revokePaymentLinksForBooking(booking.id, tx);
+
+          return { type: "request_hold_terminal_cancelled", booking };
+        }
+
         const extendedHoldUntil = new Date(
           now.getTime() + REQUEST_HOLD_EXTENSION_MS
         );
@@ -875,7 +968,10 @@ async function cancelSupersededLinkIntentsBestEffort(
  * 3. If beds are available and a saved payment method exists, claim capacity,
  *    charge off-session, then move to PAID and queue the booking's Xero invoice.
  * 4. If the booking is request-origin and has no saved card, keep the #707
- *    payment-link path alive by extending the follow-up hold and alerting admins.
+ *    payment-link path alive by extending the follow-up hold and alerting admins
+ *    on a capped cadence — until the check-in day has ended, at which point the
+ *    still-unpaid booking is auto-cancelled, its held capacity released, and the
+ *    requester + admins are given a terminal notice (#2012).
  */
 export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   const now = new Date();
@@ -951,14 +1047,69 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       }
 
       if (resolution.type === "extended_request_hold") {
+        // #2012 — cap the previously-every-run admin alert to the same derived
+        // cadence #1993 Part B applies to the split-settlement stream:
+        // extension windows 1, 2, 3, then every 7th. The extension CAS upstream
+        // already fired exactly once for this window, so this decision is
+        // idempotent across cron reruns. The helpers are shared, generic
+        // ~2-day-window functions (keyed on REQUEST_HOLD_EXTENSION_MS, the
+        // request-hold constant) — no rename, so the split-settlement call
+        // sites stay byte-equivalent.
+        const extensionNumber = splitSettlementExtensionNumber(
+          await resolveOriginalHoldExpiry(resolution.booking),
+          now
+        );
+        if (shouldAlertOnSplitSettlementExtension(extensionNumber)) {
+          try {
+            await sendAdminBookingRequestHoldExpiredEmail({
+              requesterName: `${resolution.booking.member.firstName} ${resolution.booking.member.lastName}`,
+              checkIn: resolution.booking.checkIn,
+              checkOut: resolution.booking.checkOut,
+              guestCount: resolution.booking.guests.length,
+              totalCents: resolution.booking.finalPriceCents,
+              holdUntil: resolution.extendedHoldUntil,
+            });
+          } catch (emailErr) {
+            logger.error(
+              {
+                err: emailErr,
+                bookingId: resolution.booking.id,
+                job: "confirmPendingBookings",
+              },
+              "Failed to send admin hold-expired alert"
+            );
+          }
+        }
+        continue;
+      }
+
+      if (resolution.type === "request_hold_terminal_cancelled") {
+        // #2012 — the guarded cancel, bed reconcile (capacity RELEASED), promo
+        // cleanup and link revocation already committed under the lodge lock.
+        // Post-commit, outside any transaction: record the CANCELLED narrative
+        // event (kept OUT of the tx per booking-events.ts — an in-tx INSERT
+        // failure would abort the whole transaction and block the cancel), tell
+        // the requester their approved booking was released (nothing charged),
+        // send ONE dedicated final admin notice, and wake the waitlist for the
+        // freed beds. None of the four is load-bearing for the transition — a
+        // failure is logged, never retried into a double-cancel.
+        result.cancelledBookingIds.push(resolution.booking.id);
+
+        await recordBookingEvent({
+          bookingId: resolution.booking.id,
+          type: BookingEventType.CANCELLED,
+          reason:
+            "The booking created from a public booking request was still unpaid at the end of the check-in day, so it was automatically cancelled and its held beds released. No payment was taken.",
+          snapshot: { autoCancelledPastCheckIn: true },
+        });
+
         try {
-          await sendAdminBookingRequestHoldExpiredEmail({
-            requesterName: `${resolution.booking.member.firstName} ${resolution.booking.member.lastName}`,
+          await sendBookingRequestPaymentExpiredEmail({
+            email: resolution.booking.member.email,
+            firstName: resolution.booking.member.firstName,
             checkIn: resolution.booking.checkIn,
             checkOut: resolution.booking.checkOut,
-            guestCount: resolution.booking.guests.length,
-            totalCents: resolution.booking.finalPriceCents,
-            holdUntil: resolution.extendedHoldUntil,
+            lodgeId: resolution.booking.lodgeId,
           });
         } catch (emailErr) {
           logger.error(
@@ -967,9 +1118,30 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               bookingId: resolution.booking.id,
               job: "confirmPendingBookings",
             },
-            "Failed to send admin hold-expired alert"
+            "Failed to send requester payment-expired email for auto-cancelled request booking (#2012)"
           );
         }
+
+        try {
+          await sendAdminBookingRequestHoldCancelledEmail({
+            requesterName: `${resolution.booking.member.firstName} ${resolution.booking.member.lastName}`,
+            checkIn: resolution.booking.checkIn,
+            checkOut: resolution.booking.checkOut,
+            guestCount: resolution.booking.guests.length,
+            totalCents: resolution.booking.finalPriceCents,
+          });
+        } catch (alertErr) {
+          logger.error(
+            {
+              err: alertErr,
+              bookingId: resolution.booking.id,
+              job: "confirmPendingBookings",
+            },
+            "Failed to send final admin notice for auto-cancelled request booking (#2012)"
+          );
+        }
+
+        triggerWaitlistProcessing(resolution.booking);
         continue;
       }
 

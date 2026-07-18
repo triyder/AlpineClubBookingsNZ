@@ -168,6 +168,28 @@ capacity re-check bumps it and revokes its link like any other provisional child
 Paying the parent by card instead keeps the automatic saved-card settlement path
 unchanged.
 
+Terminal state at check-in for request-origin holds (#2012, the #1993 sibling).
+A request-origin booking (`originBookingRequest` set, request `CONVERTED`) still
+`PENDING` with no saved card once its check-in day has ended is likewise
+**auto-cancelled** by the settlement cron under the same boundary and the same
+per-lodge-lock + guarded `PENDING -> CANCELLED` CAS discipline (count 0 => a
+`/pay` settlement won — `already_processed`, zero side effects). The structural
+difference from the split child: a request booking **holds real capacity**, so
+the in-transaction bed reconcile genuinely RELEASES beds (mirroring the `bumped`
+path), promo redemptions are cleaned up, and the post-commit waitlist wake has
+real freed capacity to offer. The `CONVERTED` request row is deliberately left
+as the historical record — the booking's CANCELLED status is the capacity source
+of truth (a CONVERTED request is not declinable, so the decline flow cannot and
+does not run here). Post-commit the requester gets a **dedicated**
+`booking-request-payment-expired` email (no payment link — it is dead past
+check-in; the path back is a new request) and admins get ONE dedicated
+`admin-booking-request-hold-cancelled` notice with its own registry entry
+(independently mutable/overridable from the recurring hold alert). The recurring
+request-hold alert now follows the same capped cadence (extension windows 1, 2,
+3, then every 7th), and the terminal cancel ends the series. A booking whose
+parent request path acquired a saved card still auto-charges as before; `$0`
+request bookings still auto-confirm.
+
 Lodge check-in gate (F27 / #1372 + #1422) — status-preserving. A booking that
 carries a pending admin review (`requiresAdminReview` true and
 `adminReviewStatus = PENDING`) is BLOCKED from lodge check-in, but the block
