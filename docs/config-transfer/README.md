@@ -1,5 +1,7 @@
 # Configuration Export & Import (config transfer)
 
+> Part of the [documentation hub](../README.md).
+
 A full-admin tool that exports a club's configuration, site content, and lodge
 setup as a single portable zip bundle, and imports such a bundle into another
 (or the same) instance through a plan → resolve → apply flow.

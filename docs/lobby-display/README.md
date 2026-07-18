@@ -1,5 +1,7 @@
 # Lobby TV Display
 
+> Part of the [documentation hub](../README.md).
+
 **A live, self-updating lodge noticeboard — the whiteboard that keeps itself current.**
 
 Pair a TV's browser with the booking system and it shows guests and hut leaders

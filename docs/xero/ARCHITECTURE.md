@@ -1,5 +1,7 @@
 # Xero Subsystem Architecture
 
+> Part of the [documentation hub](../README.md).
+
 This document maps the operational Xero integration: the ~50 `xero-*` modules
 in `src/lib`, the database tables they own, the API routes and cron tasks that
 drive them, and the dataflow through the three main flows (outbound documents,

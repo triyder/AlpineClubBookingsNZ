@@ -60,6 +60,14 @@ before changing Next.js APIs or conventions.
   implementation or operator notes. Keep code, tests, and docs in lockstep. Skip
   doc churn only for incidental internal refactors that change no contract or
   behavior.
+- When writing or changing documentation, follow `docs/STYLE_GUIDE.md`: the
+  audience labels (adopter/operator/developer/agent), the required operator-guide
+  page skeleton, plain-English-first-with-technical-detail, and the screenshot
+  (`docs/images/**` via `npm run docs:screenshots`), mermaid, and linking
+  conventions. Every doc must be reachable from a hub (`docs/README.md` or a
+  feature hub) and every hub back-links. Run `npm run docs:linkcheck` (CI runs
+  the equivalent lychee offline check) before pushing doc changes, and when you
+  add a new admin route area add its row to `docs/COVERAGE_MATRIX.md`.
 - Security, payment, booking, membership lifecycle, Xero, Stripe, and
   data-integrity work requires high or xhigh reasoning effort and human review
   before merge.

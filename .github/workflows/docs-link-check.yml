@@ -1,0 +1,62 @@
+name: Docs link check
+
+# Verifies that relative links between Markdown docs resolve. This is a NEW,
+# separate workflow/job (issue #2049) — it deliberately does not touch or rename
+# any branch-protection-required check (verify, Migration drift check,
+# Playwright E2E, E2E multi-lodge, Static analysis gate).
+#
+# It runs lychee in OFFLINE mode: only local file links (and their fragments)
+# are checked, never external URLs, so the job is deterministic and never flakes
+# on a third-party site being down. External-URL health, if ever wanted, should
+# be a separate scheduled, non-blocking job.
+#
+# Until an owner adds "Docs link check" to the required status checks it is
+# advisory (start non-blocking, promote to blocking later — the accepted path).
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-link-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  link-check:
+    name: Markdown relative-link check (offline)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # Fast, dependency-free sanity check that mirrors what contributors run
+      # locally via `npm run docs:linkcheck`. Catches most breaks even if the
+      # lychee action has an outage.
+      - name: Set up Node.js
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 24
+
+      - name: Run repo link checker
+        run: node scripts/check-doc-links.mjs
+
+      # Authoritative offline link check (config in lychee.toml). Also validates
+      # in-file fragments/anchors, which the Node checker does not.
+      - name: Run lychee (offline)
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # Pin the lychee binary for reproducibility (repo pinning convention).
+          # --include-fragments validates in-file anchors; it MUST be a CLI flag,
+          # not a lychee.toml key (the config key is rejected by this version and
+          # aborts the run — see lychee.toml). Verified: 191 OK / 0 errors.
+          lycheeVersion: v0.24.2
+          args: --offline --include-fragments --no-progress "./**/*.md"
+          fail: true

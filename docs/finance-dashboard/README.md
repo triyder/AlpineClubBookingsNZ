@@ -1,5 +1,7 @@
 # Finance Dashboard
 
+> Part of the [documentation hub](../README.md).
+
 The finance dashboard is the native AlpineClubBookingsNZ reporting workspace under
 `/finance`. It uses AlpineClubBookingsNZ credentials, explicit finance access
 roles, first-party booking data, and the single operational Xero connection.
