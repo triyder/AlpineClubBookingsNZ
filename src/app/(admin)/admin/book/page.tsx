@@ -24,6 +24,11 @@ import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input"
 import { TimePicker } from "@/components/time-picker";
 import { MemberPicker } from "@/components/admin/member-picker";
 import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
   NonMemberContactForm,
   type NonMemberOwner,
 } from "@/components/admin/non-member-contact-form";
@@ -66,6 +71,10 @@ interface SelectedMember {
 
 export default function AdminBookPage() {
   const router = useRouter();
+  // Booking on behalf writes POST /api/bookings, which admits only a
+  // bookings-manage (bookings:edit) actor. A view-only bookings admin can walk
+  // the wizard but cannot create/confirm the booking (#1997).
+  const canEditBookings = useAdminAreaEditAccess("bookings");
   const { lodgeCapacity } = useClubIdentity();
   const [selectedMember, setSelectedMember] = useState<SelectedMember | null>(null);
   // Book for an existing member, or inline-create a non-login non-member owner
@@ -476,6 +485,13 @@ export default function AdminBookPage() {
   return (
     <div className="max-w-3xl space-y-6">
       <h1 className="text-3xl font-bold">Book on Behalf of Member</h1>
+
+      {!canEditBookings && (
+        <AdminViewOnlyNotice>
+          Your admin role can view booking tools but cannot create bookings on
+          behalf of members.
+        </AdminViewOnlyNotice>
+      )}
 
       {/* Owner selection — pick an existing member, or inline-create a
           non-login non-member owner (#1935). The toggle only shows before an
@@ -917,7 +933,8 @@ export default function AdminBookPage() {
                   </li>
                 ))}
               </ul>
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEditBookings}
                 className="mt-3"
                 variant="destructive"
                 disabled={submitting}
@@ -929,7 +946,7 @@ export default function AdminBookPage() {
                 }
               >
                 Confirm over-capacity and create
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           )}
 
@@ -938,7 +955,8 @@ export default function AdminBookPage() {
               Back
             </Button>
             <div className="flex gap-3">
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEditBookings}
                 variant="outline"
                 onClick={handleSaveAsDraft}
                 disabled={
@@ -956,14 +974,15 @@ export default function AdminBookPage() {
                 }
               >
                 {savingDraft ? "Saving draft..." : "Save as Draft"}
-              </Button>
-              <Button
+              </ViewOnlyActionButton>
+              <ViewOnlyActionButton
+                canEdit={canEditBookings}
                 onClick={handleConfirmClick}
                 disabled={submitting || savingDraft}
                 size="lg"
               >
                 {submitting ? "Creating booking..." : "Confirm Booking"}
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           </div>
         </div>

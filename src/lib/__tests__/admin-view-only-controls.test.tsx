@@ -26,6 +26,7 @@ vi.mock("next-auth/react", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
   useParams: () => ({ id: "lodge-1" }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 // Default matrix sets both content and lodge to `level`; pass overrides to
@@ -125,6 +126,14 @@ import LodgeConfigurationHubPage from "@/app/(admin)/admin/lodges/[id]/page";
 import LodgeSetupWizardPage from "@/app/(admin)/admin/lodges/[id]/setup/page";
 import { ClubIdentityProvider } from "@/components/club-identity-provider";
 import { clubIdentity } from "@/config/club-identity";
+// #1997 admin action-button surfaces (bookings lane).
+import { CopyBookingButton } from "@/components/admin/copy-booking-button";
+import { AdminCapacityHoldControls } from "@/components/admin/admin-capacity-hold-controls";
+import { AdminExclusiveHoldControls } from "@/components/admin/admin-exclusive-hold-controls";
+import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
+import { NonMemberContactForm } from "@/components/admin/non-member-contact-form";
+import AdminWaitlistPage from "@/app/(admin)/admin/waitlist/page";
+import AdminBookPage from "@/app/(admin)/admin/book/page";
 
 const SITE_CONTENT_DOCUMENTS = [
   { key: "FOOTER_BLURB", contentHtml: "<p>Blurb</p>", updatedAt: null },
@@ -2158,5 +2167,264 @@ describe("LodgeSetupWizardPage view-only gating (#1940, lodge)", () => {
     expect(
       await screen.findByRole("button", { name: /Save and continue/i }),
     ).toBeEnabled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1997 admin action-button surfaces (bookings lane). Each write route these
+// back is bookings-area (path-inferred, now made explicit on the guard), so
+// gating is keyed on bookings edit vs view.
+// ---------------------------------------------------------------------------
+
+describe("CopyBookingButton view-only gating (#1997, bookings)", () => {
+  afterEach(() => {
+    sessionMatrix = null;
+    vi.restoreAllMocks();
+  });
+
+  it("disables the Copy Booking trigger for a bookings:view admin", () => {
+    sessionMatrix = matrix("view", { bookings: "view" });
+    render(
+      <CopyBookingButton
+        bookingId="b1"
+        sourceCheckIn="2026-08-01"
+        sourceCheckOut="2026-08-03"
+        minCheckIn="2026-07-20"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Copy Booking/i })).toBeDisabled();
+  });
+
+  it("enables the Copy Booking trigger for a bookings:edit admin", () => {
+    sessionMatrix = matrix("view", { bookings: "edit" });
+    render(
+      <CopyBookingButton
+        bookingId="b1"
+        sourceCheckIn="2026-08-01"
+        sourceCheckOut="2026-08-03"
+        minCheckIn="2026-07-20"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Copy Booking/i })).toBeEnabled();
+  });
+});
+
+describe("AdminCapacityHoldControls view-only gating (#1997, bookings)", () => {
+  afterEach(() => {
+    sessionMatrix = null;
+    vi.restoreAllMocks();
+  });
+
+  const props = {
+    bookingId: "b1",
+    hasAdminCapacityHold: false,
+    adminCapacityHoldAt: null,
+    heldByName: null,
+    holdsCapacityNaturally: false,
+    canPlaceHold: true,
+  };
+
+  it("disables Hold capacity for a bookings:view admin", () => {
+    sessionMatrix = matrix("view", { bookings: "view" });
+    render(<AdminCapacityHoldControls {...props} />);
+
+    expect(
+      screen.getByRole("button", { name: /Hold capacity/i }),
+    ).toBeDisabled();
+  });
+
+  it("enables Hold capacity for a bookings:edit admin", () => {
+    sessionMatrix = matrix("view", { bookings: "edit" });
+    render(<AdminCapacityHoldControls {...props} />);
+
+    expect(screen.getByRole("button", { name: /Hold capacity/i })).toBeEnabled();
+  });
+});
+
+describe("AdminExclusiveHoldControls view-only gating (#1997, bookings)", () => {
+  afterEach(() => {
+    sessionMatrix = null;
+    vi.restoreAllMocks();
+  });
+
+  const props = {
+    bookingId: "b1",
+    wholeLodgeHold: false,
+    wholeLodgeHoldAt: null,
+    heldByName: null,
+    holdsCapacity: true,
+  };
+
+  it("disables Set exclusive hold for a bookings:view admin", () => {
+    sessionMatrix = matrix("view", { bookings: "view" });
+    render(<AdminExclusiveHoldControls {...props} />);
+
+    expect(
+      screen.getByRole("button", { name: /Set exclusive hold/i }),
+    ).toBeDisabled();
+  });
+
+  it("enables Set exclusive hold for a bookings:edit admin", () => {
+    sessionMatrix = matrix("view", { bookings: "edit" });
+    render(<AdminExclusiveHoldControls {...props} />);
+
+    expect(
+      screen.getByRole("button", { name: /Set exclusive hold/i }),
+    ).toBeEnabled();
+  });
+});
+
+describe("ConfirmPendingGuestsButton view-only gating (#1997, bookings)", () => {
+  afterEach(() => {
+    sessionMatrix = null;
+    vi.restoreAllMocks();
+  });
+
+  it("disables Confirm pending guests for a bookings:view admin", () => {
+    sessionMatrix = matrix("view", { bookings: "view" });
+    render(
+      <ConfirmPendingGuestsButton
+        bookingId="b1"
+        hasSavedPaymentMethod={false}
+        finalPriceCents={0}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Confirm pending guests/i }),
+    ).toBeDisabled();
+  });
+
+  it("enables Confirm pending guests for a bookings:edit admin", () => {
+    sessionMatrix = matrix("view", { bookings: "edit" });
+    render(
+      <ConfirmPendingGuestsButton
+        bookingId="b1"
+        hasSavedPaymentMethod={false}
+        finalPriceCents={0}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Confirm pending guests/i }),
+    ).toBeEnabled();
+  });
+});
+
+describe("NonMemberContactForm view-only gating (#1997, bookings)", () => {
+  afterEach(() => {
+    sessionMatrix = null;
+    vi.restoreAllMocks();
+  });
+
+  it("disables Create new & continue for a bookings:view admin", () => {
+    sessionMatrix = matrix("view", { bookings: "view" });
+    render(<NonMemberContactForm onSelected={vi.fn()} />);
+
+    expect(
+      screen.getByRole("button", { name: /Create new & continue/i }),
+    ).toBeDisabled();
+  });
+
+  it("enables Create new & continue for a bookings:edit admin", () => {
+    sessionMatrix = matrix("view", { bookings: "edit" });
+    render(<NonMemberContactForm onSelected={vi.fn()} />);
+
+    expect(
+      screen.getByRole("button", { name: /Create new & continue/i }),
+    ).toBeEnabled();
+  });
+});
+
+describe("AdminWaitlistPage view-only gating (#1997, bookings)", () => {
+  beforeEach(() => {
+    sessionMatrix = null;
+    stubFetchRoutes({
+      "/api/admin/waitlist": {
+        entries: [],
+        pagination: { page: 1, pageSize: 25, total: 0 },
+      },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("shows the view-only notice for a bookings:view admin", async () => {
+    sessionMatrix = matrix("view", { bookings: "view" });
+    render(<AdminWaitlistPage />);
+
+    expect(
+      await screen.findByText(
+        /can view the waitlist but cannot force-confirm/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the view-only notice for a bookings:edit admin", async () => {
+    sessionMatrix = matrix("view", { bookings: "edit" });
+    render(<AdminWaitlistPage />);
+
+    // Let the mount fetch settle so the table (not the notice) renders.
+    await waitFor(() =>
+      expect(screen.getByText(/Waitlist/i)).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText(/can view the waitlist but cannot force-confirm/i),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("AdminBookPage view-only gating (#1997, bookings)", () => {
+  beforeEach(() => {
+    sessionMatrix = null;
+    stubFetchRoutes({
+      "/api/admin/lodges": { lodges: [] },
+      "/api/payments/options": {
+        methods: { internetBanking: { enabled: false } },
+      },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("shows the view-only notice for a bookings:view admin", async () => {
+    sessionMatrix = matrix("view", { bookings: "view" });
+    render(
+      <ClubIdentityProvider value={clubIdentity}>
+        <AdminBookPage />
+      </ClubIdentityProvider>,
+    );
+
+    expect(
+      await screen.findByText(
+        /can view booking tools but cannot create bookings on behalf/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the view-only notice for a bookings:edit admin", async () => {
+    sessionMatrix = matrix("view", { bookings: "edit" });
+    render(
+      <ClubIdentityProvider value={clubIdentity}>
+        <AdminBookPage />
+      </ClubIdentityProvider>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: /Book on Behalf of Member/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText(
+        /can view booking tools but cannot create bookings on behalf/i,
+      ),
+    ).not.toBeInTheDocument();
   });
 });

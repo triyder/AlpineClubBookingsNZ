@@ -14,6 +14,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useConfirm } from "@/components/confirm-dialog";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
 
 interface ConfirmPendingGuestsButtonProps {
@@ -28,6 +30,10 @@ export function ConfirmPendingGuestsButton({
   finalPriceCents,
 }: ConfirmPendingGuestsButtonProps) {
   const router = useRouter();
+  // Writes /api/admin/bookings/[id]/confirm-pending-guests (bookings area). A
+  // view-only bookings admin sees the action disabled (#1997); the notify
+  // dialog is unreachable behind it.
+  const canEdit = useAdminAreaEditAccess("bookings");
   const { confirm, confirmDialog } = useConfirm();
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
@@ -131,9 +137,13 @@ export function ConfirmPendingGuestsButton({
             {error}
           </div>
         )}
-        <Button onClick={handleConfirm} disabled={confirming}>
+        <ViewOnlyActionButton
+          canEdit={canEdit}
+          onClick={handleConfirm}
+          disabled={confirming}
+        >
           {confirming ? "Confirming..." : "Confirm pending guests"}
-        </Button>
+        </ViewOnlyActionButton>
       </CardContent>
 
       {/* #1769b (#1705 pattern): the admin chooses, per confirmation, whether

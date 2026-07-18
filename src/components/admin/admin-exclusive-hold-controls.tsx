@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/confirm-dialog";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 
 /** Admin-only summary of a booking that overlaps this hold (issue #119). */
 export interface ExclusiveHoldConflict {
@@ -65,6 +67,9 @@ export function AdminExclusiveHoldControls({
   conflicts = [],
 }: AdminExclusiveHoldControlsProps) {
   const router = useRouter();
+  // Set/clear writes /api/admin/bookings/[id]/exclusive-hold (bookings area).
+  // A view-only bookings admin sees the controls disabled (#1997).
+  const canEdit = useAdminAreaEditAccess("bookings");
   const { confirm, confirmDialog } = useConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -200,14 +205,25 @@ export function AdminExclusiveHoldControls({
       )}
       {wholeLodgeHold ? (
         // Clearing is always allowed, regardless of status — a stale hold must
-        // never be un-clearable (issue #173).
-        <Button variant="outline" onClick={handleClear} disabled={busy}>
+        // never be un-clearable (issue #173). Still edit-gated (#1997): a
+        // view-only admin cannot mutate the hold either way.
+        <ViewOnlyActionButton
+          canEdit={canEdit}
+          variant="outline"
+          onClick={handleClear}
+          disabled={busy}
+        >
           {busy ? "Clearing..." : "Clear exclusive hold"}
-        </Button>
+        </ViewOnlyActionButton>
       ) : holdsCapacity ? (
-        <Button variant="outline" onClick={handleSet} disabled={busy}>
+        <ViewOnlyActionButton
+          canEdit={canEdit}
+          variant="outline"
+          onClick={handleSet}
+          disabled={busy}
+        >
           {busy ? "Setting..." : "Set exclusive hold"}
-        </Button>
+        </ViewOnlyActionButton>
       ) : (
         // Non-capacity-holding booking (issue #173): setting a hold here would
         // block nothing (ADR-001 capacity rule — enforcement reads only the

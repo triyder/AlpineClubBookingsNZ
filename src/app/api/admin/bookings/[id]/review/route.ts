@@ -29,11 +29,16 @@ const reviewSchema = z
     path: ["adminNotes"],
   });
 
+// Approve/decline a booking request: a bookings write. Explicit bookings:edit
+// matches the area the route-area matrix already infers for /api/admin/bookings
+// (#1997), pairing the queue's view-only UI gating with a route-level guard.
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
 

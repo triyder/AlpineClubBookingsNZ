@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 
 /**
  * Inline non-member booking owner (issue #1935, E9).
@@ -43,6 +44,9 @@ interface Props {
 const ENDPOINT = "/api/admin/bookings/non-member-contact";
 
 export function NonMemberContactForm({ onSelected }: Props) {
+  // Reuse/create writes /api/admin/bookings/non-member-contact (bookings area,
+  // route already enforces bookings:edit). Mirror that in the UI (#1997).
+  const canEdit = useAdminAreaEditAccess("bookings");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -91,6 +95,7 @@ export function NonMemberContactForm({ onSelected }: Props) {
   }, [email, firstName, lastName, noEmail]);
 
   async function reuseExisting(contactId: string) {
+    if (!canEdit) return;
     setSubmitting(true);
     setError("");
     try {
@@ -113,6 +118,7 @@ export function NonMemberContactForm({ onSelected }: Props) {
   }
 
   async function createNew() {
+    if (!canEdit) return;
     setError("");
     if (!firstName.trim() || !lastName.trim()) {
       setError("First and last name are required");
@@ -245,7 +251,8 @@ export function NonMemberContactForm({ onSelected }: Props) {
                     {s.bookingCount} booking{s.bookingCount === 1 ? "" : "s"}
                   </span>
                 </div>
-                <Button
+                <ViewOnlyActionButton
+                  canEdit={canEdit}
                   type="button"
                   size="sm"
                   variant="outline"
@@ -253,7 +260,7 @@ export function NonMemberContactForm({ onSelected }: Props) {
                   onClick={() => void reuseExisting(s.id)}
                 >
                   Use existing
-                </Button>
+                </ViewOnlyActionButton>
               </div>
             ))}
           </div>
@@ -265,9 +272,14 @@ export function NonMemberContactForm({ onSelected }: Props) {
       )}
 
       <div className="flex justify-end">
-        <Button type="button" disabled={submitting} onClick={() => void createNew()}>
+        <ViewOnlyActionButton
+          canEdit={canEdit}
+          type="button"
+          disabled={submitting}
+          onClick={() => void createNew()}
+        >
           {submitting ? "Saving…" : "Create new & continue"}
-        </Button>
+        </ViewOnlyActionButton>
       </div>
     </div>
   );

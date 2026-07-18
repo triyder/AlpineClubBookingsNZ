@@ -15,6 +15,10 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  ADMIN_VIEW_ONLY_ACTION_REASON,
+  useAdminAreaEditAccess,
+} from "@/hooks/use-admin-area-edit-access";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -49,6 +53,9 @@ export function CopyBookingButton({
   minCheckIn: string;
 }) {
   const router = useRouter();
+  // Copy writes /api/admin/bookings/[id]/copy (bookings area). A view-only
+  // bookings admin can see the button but cannot open the dialog (#1997).
+  const canEdit = useAdminAreaEditAccess("bookings");
   const [open, setOpen] = useState(false);
   const [checkIn, setCheckIn] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -60,7 +67,7 @@ export function CopyBookingButton({
   const checkOut = checkIn ? addDaysDateOnly(checkIn, nights) : "";
 
   async function handleCopy() {
-    if (!checkIn || submitting) return;
+    if (!canEdit || !checkIn || submitting) return;
 
     setError("");
     setSubmitting(true);
@@ -89,7 +96,11 @@ export function CopyBookingButton({
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !submitting && setOpen(nextOpen)}>
       <DialogTrigger asChild>
-        <Button variant="outline">
+        <Button
+          variant="outline"
+          disabled={!canEdit}
+          title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+        >
           <Copy className="mr-2 h-4 w-4" />
           Copy Booking
         </Button>

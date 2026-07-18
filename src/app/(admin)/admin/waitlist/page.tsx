@@ -12,6 +12,11 @@ import { Label } from "@/components/ui/label";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
   TableBody,
   TableCell,
   TableHead,
@@ -202,6 +207,9 @@ function buildForceConfirmAuditPath(report: ForceConfirmReport) {
 
 export default function AdminWaitlistPage() {
   const router = useRouter();
+  // Force Confirm writes /api/admin/bookings/[id]/force-confirm (bookings
+  // area). A view-only bookings admin browses the queue but cannot act (#1997).
+  const canEditBookings = useAdminAreaEditAccess("bookings");
   const searchParams = useSearchParams();
   // Memoized so the React Compiler treats the derived string as immutable
   // when it is passed to helpers and used as a loadEntries dependency.
@@ -412,6 +420,13 @@ export default function AdminWaitlistPage() {
         title="Waitlist"
         actions={<Badge variant="secondary">{pagination.total} total</Badge>}
       />
+
+      {!canEditBookings && (
+        <AdminViewOnlyNotice>
+          Your admin role can view the waitlist but cannot force-confirm
+          bookings.
+        </AdminViewOnlyNotice>
+      )}
 
       {error && (
         <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">{error}</div>
@@ -713,7 +728,8 @@ export default function AdminWaitlistPage() {
                   </TableCell>
                   <TableCell className="text-xs">{formatDateTime(entry.createdAt)}</TableCell>
                   <TableCell>
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEditBookings}
                       size="sm"
                       variant="outline"
                       onClick={() =>
@@ -733,7 +749,7 @@ export default function AdminWaitlistPage() {
                       disabled={forceConfirming === entry.id}
                     >
                       {forceConfirming === entry.id ? "..." : "Force Confirm"}
-                    </Button>
+                    </ViewOnlyActionButton>
                   </TableCell>
                 </TableRow>
               ))}
