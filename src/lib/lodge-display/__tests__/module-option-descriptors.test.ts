@@ -122,6 +122,12 @@ describe("module option descriptors — privacy floor (ADR-004 §5)", () => {
   // be one of these — a new key must be reviewed and added deliberately, so a
   // widening control (e.g. `show-full-names`, `name-granularity`, `reveal-phone`)
   // can never slip into the drawer unnoticed.
+  //
+  // PRIVACY REVIEW GATE: editing this allowlist IS the privacy review. Adding a
+  // key here (to make a new module option pass this sweep) must be justified in
+  // the PR that adds it as non-widening — i.e. it can only reduce or leave name /
+  // guest-detail exposure unchanged, never raise it. Do not add a key to make a
+  // test go green without that justification recorded in the PR.
   const ALLOWED_KEYS = new Set(["days", "max-names", "name-style", "variant", "show-rooms"]);
 
   // Patterns that would smell like a name/privacy WIDENING control.
