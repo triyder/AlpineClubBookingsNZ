@@ -53,5 +53,10 @@ jobs:
       - name: Run lychee (offline)
         uses: lycheeverse/lychee-action@v2
         with:
-          args: --offline --no-progress "./**/*.md"
+          # Pin the lychee binary for reproducibility (repo pinning convention).
+          # --include-fragments validates in-file anchors; it MUST be a CLI flag,
+          # not a lychee.toml key (the config key is rejected by this version and
+          # aborts the run — see lychee.toml). Verified: 191 OK / 0 errors.
+          lycheeVersion: v0.24.2
+          args: --offline --include-fragments --no-progress "./**/*.md"
           fail: true

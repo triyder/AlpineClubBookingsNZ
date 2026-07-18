@@ -24,6 +24,8 @@ exclude = [
   "^https?://example\\.(com|org|test)",
 ]
 
-# Anchors/fragments are checked against the target file's headings where lychee
-# can parse them; keep this on so a renamed heading surfaces as a broken anchor.
-include_fragments = true
+# NOTE: fragment/anchor checking is enabled via the CLI flag `--include-fragments`
+# in .github/workflows/docs-link-check.yml, NOT here. The `include_fragments`
+# config key is rejected as an unknown field by the lychee release the action
+# ships (v0.24.2), which aborts the run with a TOML parse error. Keep the flag in
+# the workflow so a renamed heading still surfaces as a broken anchor.
