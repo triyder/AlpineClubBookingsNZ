@@ -48,9 +48,39 @@ Running a live club: admins, treasurers, and committee members.
 blue/green deployment, then the runbook for whatever you are doing.
 
 Per-area, task-focused **operator guides** (with screenshots) are being produced
-under issue #2050 on the foundation this hub establishes; until they land, use
-the reference docs below and see [`COVERAGE_MATRIX.md`](COVERAGE_MATRIX.md) for
-the per-admin-area status.
+under issue #2050 on the foundation this hub establishes. See
+[`COVERAGE_MATRIX.md`](COVERAGE_MATRIX.md) for the per-admin-area status; the
+guides that have landed are linked below.
+
+**Bookings & capacity guides** (batch 1 — the booking lifecycle, capacity/beds,
+seasons, promos, and booking money):
+
+- [Bookings](guides/bookings.md) — the master booking list, filters, and
+  availability calendar.
+- [Book on Behalf](guides/book.md) — create a booking for a member or
+  non-member.
+- [Booking Requests](guides/booking-requests.md) — approvals, locked-period
+  change requests, and public (non-member) requests. (Also covers the
+  `booking-approvals` and `booking-change-requests` routes, which redirect
+  here.)
+- [Booking Policies](guides/booking-policies.md) — cancellation refunds,
+  date-specific periods, group discount, minimum stay, and public-request
+  settings.
+- [Booking Messages](guides/booking-messages.md) — member-facing booking,
+  payment, and cancellation copy.
+- [Bookings Setup](guides/bookings-setup.md) — the rooms/beds and booking-copy
+  setup hub.
+- [Seasons](guides/seasons.md) — season windows per lodge.
+- [Age Groups](guides/age-tier-settings.md) — membership age tiers and their
+  booking rules.
+- [Promo Codes](guides/promo-codes.md) — discount codes and vouchers.
+- [Bed Allocation](guides/bed-allocation.md) — the drag-and-drop bed board.
+- [Waitlist](guides/waitlist.md) — the waitlist queue and force-confirm.
+- [Payments](guides/payments.md) — the booking-payment ledger and Xero invoice
+  state.
+- [Reports](guides/reports.md) — occupancy, revenue, and member analytics.
+
+Until the remaining batches land, use the reference docs below for other areas.
 
 - [`../DEPLOYMENT.md`](../DEPLOYMENT.md) — bootstrap and blue/green deployment
   reference (repository root).

@@ -41,19 +41,19 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | Area (`/admin/…`) | Permission area | Reference coverage | Operator guide | Batch |
 | --- | --- | --- | --- | --- |
 | `access-roles` | support | `ARCHITECTURE.md` (access roles / definitions) | GAP | 4 |
-| `age-tier-settings` | bookings | `ARCHITECTURE.md`, `AUTHORITATIVE_FEES.md` | GAP | 1 |
+| `age-tier-settings` | bookings | `ARCHITECTURE.md`, `AUTHORITATIVE_FEES.md` | [guide](guides/age-tier-settings.md) | 1 |
 | `appearance` | content | — | GAP | 4 |
 | `audit-log` | support | `AUDIT_RETENTION_ARCHIVE_RUNBOOK.md` | GAP | 4 |
 | `background-jobs` | support | `ARCHITECTURE.md` (Cron Jobs) | GAP | 4 |
-| `bed-allocation` | bookings | `ARCHITECTURE.md` (bed allocation), `CAPACITY_MODEL.md` | GAP | 1 |
-| `book` | bookings | — (admin book-on-behalf) | GAP | 1 |
-| `booking-approvals` | bookings | `STATE_MACHINES.md` | GAP | 1 |
-| `booking-change-requests` | bookings | `STATE_MACHINES.md` | GAP | 1 |
-| `booking-messages` | support | — | GAP | 1 |
-| `booking-policies` | bookings | `ARCHITECTURE.md` (booking policies), `CANCELLATIONS.md` | GAP | 1 |
-| `booking-requests` | bookings | `ARCHITECTURE.md` (public booking requests) | GAP | 1 |
-| `bookings` | bookings | `ARCHITECTURE.md` (booking/payment flow), `STATE_MACHINES.md` | GAP | 1 |
-| `bookings-setup` | bookings | — | GAP | 1 |
+| `bed-allocation` | bookings | `ARCHITECTURE.md` (bed allocation), `CAPACITY_MODEL.md` | [guide](guides/bed-allocation.md) | 1 |
+| `book` | bookings | — (admin book-on-behalf) | [guide](guides/book.md) | 1 |
+| `booking-approvals` | bookings | `STATE_MACHINES.md` | [guide](guides/booking-requests.md) (redirect → Approvals tab) | 1 |
+| `booking-change-requests` | bookings | `STATE_MACHINES.md` | [guide](guides/booking-requests.md) (redirect → Changes tab) | 1 |
+| `booking-messages` | support | — | [guide](guides/booking-messages.md) | 1 |
+| `booking-policies` | bookings | `ARCHITECTURE.md` (booking policies), `CANCELLATIONS.md` | [guide](guides/booking-policies.md) | 1 |
+| `booking-requests` | bookings | `ARCHITECTURE.md` (public booking requests) | [guide](guides/booking-requests.md) | 1 |
+| `bookings` | bookings | `ARCHITECTURE.md` (booking/payment flow), `STATE_MACHINES.md` | [guide](guides/bookings.md) | 1 |
+| `bookings-setup` | bookings | — | [guide](guides/bookings-setup.md) | 1 |
 | `chores` | lodge | — | GAP | 3 |
 | `committee` | membership | `ARCHITECTURE.md` (committee roles/assignments) | GAP | 2 |
 | `communications` | membership | `src/lib/email-message-registry.ts` | GAP | 4 |
@@ -91,13 +91,13 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `notification-rules` | support | `ARCHITECTURE.md` (email / notifications) | GAP | 4 |
 | `notifications` | support | email registry, `ARCHITECTURE.md` (email) | GAP | 4 |
 | `page-content` | content | `PUBLIC_PAGE_CONTENT_TOKENS.md` | GAP | 4 |
-| `payments` | finance | `ARCHITECTURE.md` (Stripe), `finance-dashboard/README.md` | GAP | 1 |
-| `promo-codes` | bookings | `ARCHITECTURE.md` (promo codes / redemptions) | GAP | 1 |
+| `payments` | finance | `ARCHITECTURE.md` (Stripe), `finance-dashboard/README.md` | [guide](guides/payments.md) | 1 |
+| `promo-codes` | bookings | `ARCHITECTURE.md` (promo codes / redemptions) | [guide](guides/promo-codes.md) | 1 |
 | `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery) | GAP | 2 |
-| `reports` | finance | `finance-dashboard/README.md` | GAP | 1 |
+| `reports` | finance | `finance-dashboard/README.md` | [guide](guides/reports.md) | 1 |
 | `rooms-beds` | lodge | `CAPACITY_MODEL.md`, `ARCHITECTURE.md` (bed inventory) | GAP | 3 |
 | `roster` | lodge | `ARCHITECTURE.md` (roster/chores) | GAP | 3 |
-| `seasons` | bookings | `ARCHITECTURE.md` (seasons / season rates) | GAP | 1 |
+| `seasons` | bookings | `ARCHITECTURE.md` (seasons / season rates) | [guide](guides/seasons.md) | 1 |
 | `security` | support | `SECURITY.md`, `docs/SECURITY.md` | GAP | 4 |
 | `setup` | support | `CONFIGURATION.md`, `IMPLEMENTATION_GUIDE.md` | GAP | 4 |
 | `site-banners` | content | `ARCHITECTURE.md` (SiteBanner) | GAP | 4 |
@@ -106,7 +106,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `stuck-states` | support | `ARCHITECTURE.md` (stuck-state dashboard) | GAP | 4 |
 | `subscription-lockout` | finance | `ARCHITECTURE.md` (subscription lockout) | GAP | 2 |
 | `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | GAP | 2 |
-| `waitlist` | bookings | `ARCHITECTURE.md` (waitlist), `E2E_PLAYWRIGHT.md` | GAP | 1 |
+| `waitlist` | bookings | `ARCHITECTURE.md` (waitlist), `E2E_PLAYWRIGHT.md` | [guide](guides/waitlist.md) | 1 |
 | `work-parties` | lodge | — | GAP | 3 |
 | `xero` | finance | `xero/ARCHITECTURE.md`, `XERO_MEMBER_GROUPING_RUNBOOK.md` | GAP | 2 |
 
@@ -138,6 +138,18 @@ flagging for #2050 scoping:
   one guide or three; they share the Membership permission area.
 - The audit under-counted: there are **69** areas, not ~20 — the ~20 was the
   "obviously uncovered" subset. This matrix is the exhaustive version.
+
+### Batch 1 route realities (#2050)
+
+Two batch-1 route dirs are pure `redirect()` pages, so they are **folded** into
+the [Booking Requests](guides/booking-requests.md) guide rather than given their
+own page: `booking-approvals` redirects to `/admin/booking-requests?tab=approvals`
+and `booking-change-requests` to `?tab=changes`. Their matrix rows link to that
+guide with the redirect noted. `seasons` has **no direct sidebar entry** (ADR-005)
+— it is reached from **Fees → Hut Fees** or the lodge hub, and the
+[Seasons](guides/seasons.md) guide documents that navigation. `booking-messages`
+is edited under the **support** permission area (via Notifications & Email /
+Bookings Setup), not bookings, even though it belongs to the bookings cluster.
 
 ## Delivery batches (#2050)
 
