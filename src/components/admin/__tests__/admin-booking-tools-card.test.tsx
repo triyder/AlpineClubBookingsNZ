@@ -7,6 +7,28 @@ import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 import { AdminBookingToolsCard } from "@/components/admin/admin-booking-tools-card";
 
+// #1997: the admin tools sub-controls now derive view-only gating from the
+// session matrix via useAdminAreaEditAccess("bookings"). Mock an all-edit admin
+// so the existing capacity/exclusive-hold gating assertions hold.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     push: vi.fn(),

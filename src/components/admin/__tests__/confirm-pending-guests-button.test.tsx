@@ -22,6 +22,27 @@ vi.mock("next/navigation", () => ({
 vi.mock("sonner", () => ({
   toast: { success: mocks.toastSuccess, error: mocks.toastError },
 }));
+// #1997: the button derives view-only gating from the session matrix via
+// useAdminAreaEditAccess("bookings"). Mock an all-edit admin so the existing
+// confirm-flow assertions (enabled action) hold.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
 
 import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
 
