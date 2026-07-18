@@ -81,6 +81,32 @@ every screen:
 New code follows this rule; existing inline success panels are converted
 opportunistically when a file is already being touched.
 
+## Back-link convention (admin drill-down leaves) (#2046)
+
+Admin hubs (`/admin/setup`, `/admin/display`, `/admin/appearance`, …) open a
+landing page of cards; each card drills into a **leaf** page. Every admin
+drill-down leaf must render the shared `BackLink`
+(`src/components/admin/back-link.tsx`) to its parent so a user — especially on a
+kiosk/touch screen where there may be no browser history — always has a
+predictable way back:
+
+- **Static-hub leaves** (the common case) link to their fixed parent hub, e.g.
+  the five Lobby Display leaves (`devices`, `layouts`, `templates`, `reference`)
+  return to `/admin/display` and `preview` returns to `/admin/display/templates`.
+- **Dynamic-parent leaves** (the documented exception) sit under a parent that is
+  itself a record or a caller-provided origin rather than a fixed hub — the
+  per-lodge `/admin/lodges/[id]/*` sub-pages, the member detail/merge pages, and
+  the Xero record drill-down. `BackLink` already takes an arbitrary `href`/`label`,
+  so these pass the resolved dynamic route (e.g. `/admin/lodges/${id}` or a
+  sanitised `returnTo`) — no separate component is needed. Ad-hoc `ArrowLeft`
+  buttons/links are normalised onto `BackLink` so the affordance looks and behaves
+  the same everywhere.
+
+The rule is frozen by the enforcement test
+`src/lib/__tests__/admin-leaf-back-links.test.tsx`: when you add a new admin leaf
+add its `BackLink` **and** extend that test, so the suite fails if any listed
+leaf loses its back link.
+
 ## Design Foundation — Restrained Alpine (#1800)
 
 The public utility (`/login`, `/school-bookings`, `/booking-requests`),
