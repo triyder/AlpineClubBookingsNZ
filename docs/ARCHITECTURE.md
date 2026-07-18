@@ -37,6 +37,26 @@ The production Compose model runs:
 - `postgres` as the database
 - `migrate` as an explicit Prisma migration runner
 
+The same runtime shape as a diagram (the `app` container is the cron leader and
+warm fallback; `app_blue`/`app_green` are web-only slots that disable cron):
+
+```mermaid
+flowchart TD
+    Browser["Browser"] --> Caddy["Caddy reverse proxy"]
+    Caddy --> AppBlue["app_blue (web only)"]
+    Caddy --> AppGreen["app_green (web only)"]
+    Caddy --> App["app (cron leader + warm fallback)"]
+    AppBlue --> PG[("PostgreSQL 16")]
+    AppGreen --> PG
+    App --> PG
+    App -->|cron leader only| Cron["Scheduled jobs"]
+    App --> Stripe["Stripe API + webhooks"]
+    App --> Xero["Xero API + webhooks"]
+    App --> SES["AWS SES SMTP + SNS feedback"]
+    App --> Obs["Sentry + structured logs"]
+    Migrate["migrate (explicit Prisma runner)"] --> PG
+```
+
 ## Project Structure
 
 ```text
@@ -74,6 +94,55 @@ Important route groups:
 This application is intentionally still a single Next.js monolith. The
 important boundary is not process separation; it is keeping route handlers thin,
 business rules testable, and integration code behind narrow helpers.
+
+The curated module-boundary map below shows the allowed dependency direction:
+the route boundary (`src/app`) delegates into business logic (`src/lib`), which
+owns the database and the external providers. UI and config are leaf
+dependencies; providers and the database are the sinks. Arrows point from the
+depender to its dependency — there is no arrow back up from `src/lib` into
+`src/app`.
+
+```mermaid
+flowchart LR
+    subgraph Edge["Route boundary — src/app"]
+        Pages["Pages / Server Components"]
+        API["API route handlers /api/**"]
+    end
+    subgraph Lib["Business logic — src/lib"]
+        BookingSvc["booking-create / booking-modify"]
+        Beds["bed-allocation*"]
+        Policies["policies/*"]
+        Status["booking-status<br/>(capacity source of truth)"]
+        Locks["advisory locks<br/>(concurrency)"]
+        MemberSvc["member-* / membership-*"]
+        XeroLib["xero-* modules"]
+        EmailSvc["email registry / sendEmail"]
+    end
+    Config["config/ + src/config<br/>(club identity, module flags)"]
+    UI["src/components<br/>(shared UI)"]
+    DB[("Prisma / PostgreSQL")]
+    Providers["Stripe / Xero / SES / Sentry"]
+
+    Pages --> UI
+    Pages --> BookingSvc
+    Pages --> MemberSvc
+    API --> BookingSvc
+    API --> MemberSvc
+    API --> Config
+    Pages --> Config
+    BookingSvc --> Status
+    BookingSvc --> Policies
+    BookingSvc --> Locks
+    BookingSvc --> Beds
+    Beds --> Locks
+    BookingSvc --> XeroLib
+    BookingSvc --> EmailSvc
+    MemberSvc --> XeroLib
+    Lib --> DB
+    XeroLib --> Providers
+    EmailSvc --> Providers
+    BookingSvc --> Providers
+```
 
 Use these ownership boundaries when adding new code:
 
@@ -212,6 +281,33 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
   window, rendered above the public and member site headers.
 
 ## Booking and Payment Flow
+
+The happy-path request/data flow for a card booking. Capacity is claimed under
+a per-lodge advisory lock inside the transaction; the Stripe call and any Xero
+queueing happen outside it (the durable-recovery and webhook paths are covered
+in [Integrations](#integrations)):
+
+```mermaid
+sequenceDiagram
+    participant M as Member (browser)
+    participant R as /api/bookings route
+    participant B as booking-create (src/lib)
+    participant L as acquireLodgeCapacityLock
+    participant DB as PostgreSQL
+    participant S as Stripe
+    participant X as Xero outbox
+
+    M->>R: POST booking (dates, guests)
+    R->>B: validate session/input, delegate
+    B->>L: acquire per-lodge capacity lock
+    B->>DB: re-read capacity, apply policy + pricing
+    B->>DB: persist booking + guests + audit (one txn)
+    B-->>L: commit releases the lock
+    B->>S: create PaymentIntent (outside txn)
+    B->>X: queue invoice op (Internet Banking path)
+    R-->>M: booking + client secret
+    S-->>R: webhook confirms payment (idempotent)
+```
 
 1. A member selects a lodge (implicit when only one active lodge exists) and
    check-in and check-out dates.
@@ -668,6 +764,23 @@ exposing the full admin interface.
 
 ## Integrations
 
+The external integration map: what the app calls, what calls back, and the
+gate/direction of each. Every provider call stays behind a narrow helper and, by
+policy, outside long database transactions.
+
+```mermaid
+flowchart LR
+    App["Next.js app"]
+    App -->|"PaymentIntents, SetupIntents, refunds"| Stripe["Stripe"]
+    Stripe -->|"webhooks (idempotent)"| App
+    App -->|"invoices, credit notes, contacts, payments"| Xero["Xero"]
+    Xero -->|"inbound webhooks + reconciliation"| App
+    App -->|"SMTP transactional email"| SES["AWS SES"]
+    SES -->|"SNS bounce/complaint feedback"| App
+    App -->|"cron/webhook errors via observability-bridge"| Sentry["Sentry"]
+    App -->|"address autocomplete (optional, module-gated)"| Addy["Addy proxy"]
+```
+
 ### Stripe
 
 Stripe is used for PaymentIntents, SetupIntents, saved payment methods, refunds,
@@ -809,6 +922,19 @@ shared `sendEmail` path.
 
 Cron jobs run inside the `app` cron-leader container. Web-only blue/green slots
 disable cron with `CRON_ENABLED=false`.
+
+The jobs grouped by cadence (the table below is the authoritative per-job
+reference):
+
+```mermaid
+flowchart TD
+    Leader["app cron-leader<br/>(CRON_ENABLED=true)"]
+    Leader --> Q15["Every 15 min<br/>payment-recovery, xero-outbox,<br/>xero-operation-replay, xero-inbound-reconcile"]
+    Leader --> Q30["Every 30 min<br/>waitlist-processor, email-retry"]
+    Leader --> Q3h["Every 3 h<br/>confirm-pending, pre-arrival-reminders,<br/>purge-booking-requests, quote-expiry-reminders,<br/>school-attendee-confirmations, group-settlement-reaper"]
+    Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-reconciliation-report"]
+    Leader --> Cfg["Configurable<br/>backup"]
+```
 
 | Job | Schedule | Purpose |
 | --- | --- | --- |
