@@ -122,6 +122,56 @@ family/committee, the membership lifecycle, and membership billing):
 - [Xero Sync](guides/xero.md) — the Xero connection, sync, reconciliation
   ledger, and records browser.
 
+**Comms, content & support-platform guides** (batch 4 — outbound comms, public
+content and appearance, and the platform/support admin surfaces):
+
+- [Notifications & Email](guides/notifications.md) — the delivery-rules,
+  recipients, email-messages, and message-copy hub.
+- [Delivery Rules](guides/notification-rules.md) — which admin and system emails
+  are sent when jobs or alerts run.
+- [Recipients](guides/notification-recipients.md) — which system alerts each
+  admin receives.
+- [Email Messages](guides/email-messages.md) — shared email variables and the
+  wording of audited email templates.
+- [Communications](guides/communications.md) — admin bulk email to opted-in
+  members.
+- [Email Deliverability](guides/email-deliverability.md) — suppressions and
+  exhausted delivery failures.
+- [Site Appearance & Content](guides/appearance.md) — the content hub and club
+  identity.
+- [Site Style](guides/site-style.md) — public theme, logo, colours, and fonts.
+- [Site Content](guides/site-content.md) — shared public site chrome and
+  reusable text.
+- [Page Content](guides/page-content.md) — public website pages, menus, rich
+  text, and tokens.
+- [Site Banners](guides/site-banners.md) — dated notice banners for visitors and
+  members.
+- [Mountain Conditions](guides/mountain-conditions.md) — the Whakapapa
+  conditions cache and public widget.
+- [Image Manager](guides/image-manager.md) — filesystem images for public
+  content editors.
+- [Admin Dashboard](guides/dashboard.md) — the attention cards, stat cards, and
+  quick actions.
+- [Access Roles](guides/access-roles.md) — custom admin roles and their
+  permissions (Full Admin only).
+- [Audit Log](guides/audit-log.md) — the searchable activity timeline.
+- [System Health](guides/health.md) — service checks, system info, and webhooks.
+- [Background Jobs](guides/background-jobs.md) — cron job health and run history.
+- [Stuck States](guides/stuck-states.md) — the operator queue for stuck records.
+- [Issue Reports](guides/issue-reports.md) — the member issue-report triage
+  queue.
+- [Modules](guides/modules.md) — the on/off panel for every optional feature.
+- [Login & Security](guides/security.md) — password policy and sign-in methods.
+- [Setup](guides/setup.md) — the installation checklist and configuration hub.
+- [Integrations](guides/integrations.md) — connected services (Xero;
+  feature-gated).
+- [Export & Import](guides/config-transfer.md) — portable configuration/content
+  bundles (Full Admin only).
+
+The lobby TV display keeps its own [feature hub](lobby-display/README.md) (with
+the [operating guide](lobby-display/operating.md)); it is an optional module,
+off by default. Lodge-operations guides (batch 3) are sequenced separately.
+
 Until the remaining batches land, use the reference docs below for other areas.
 
 - [`../DEPLOYMENT.md`](../DEPLOYMENT.md) — bootstrap and blue/green deployment

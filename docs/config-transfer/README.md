@@ -10,6 +10,11 @@ Feature issue: hoppers99/AlpineClubBookingsNZ#22 (fork). Available to full
 admins at **Admin → Setup & Configuration → Export & Import**
 (`/admin/config-transfer`).
 
+For the task-focused operator walkthrough (export categories, the
+plan → resolve → apply import flow, write modes, and reseal), see the
+[Export & Import operator guide](../guides/config-transfer.md). This page is the
+deeper reference for what each category contains and the import safety model.
+
 ## Using it
 
 - **Export:** tick the categories to include (door codes are opt-in), download a
