@@ -71,6 +71,9 @@ import DisplayLayoutsPage from "@/app/(admin)/admin/display/layouts/page";
 import DisplayTemplatesPage from "@/app/(admin)/admin/display/templates/page";
 import DisplayReferencePage from "@/app/(admin)/admin/display/reference/page";
 import DisplayPreviewPage from "@/app/(admin)/admin/display/preview/page";
+// #2048: the visual builder is a statically-renderable Lobby Display leaf (its
+// header renders before the loading/fetch gate), so it joins the frozen suite.
+import DisplayBuilderPage from "@/app/(admin)/admin/display/builder/page";
 import LodgeDisplaySettingsPage from "@/app/(admin)/admin/lodges/[id]/display/page";
 import XeroRecordActivityPage from "@/app/(admin)/admin/xero/records/[localModel]/[localId]/page";
 import AdminInductionSettingsPage from "@/app/(admin)/admin/induction/settings/page";
@@ -115,6 +118,7 @@ describe("admin drill-down leaf back links", () => {
     ["Layouts", DisplayLayoutsPage, "/admin/display", "← Lobby Display"],
     ["Templates", DisplayTemplatesPage, "/admin/display", "← Lobby Display"],
     ["Reference", DisplayReferencePage, "/admin/display", "← Lobby Display"],
+    ["Builder", DisplayBuilderPage, "/admin/display", "← Lobby Display"],
     [
       "Preview",
       DisplayPreviewPage,

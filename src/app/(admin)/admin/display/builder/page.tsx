@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { BackLink } from "@/components/admin/back-link";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import {
@@ -69,6 +70,11 @@ export default function DisplayBuilderPage() {
   // A "Rebuild in builder" click forces a fresh skeleton while keeping the ids so
   // Save overwrites the same rows (ADR-004 §4).
   const [rebuild, setRebuild] = useState(false);
+  // A built-in reaches the builder only as Advanced-only (built-ins never carry the
+  // dlb-root signature). Rebuilding one can never save (the row is read-only), so a
+  // built-in offers "Duplicate to customise" instead, which opens a fresh, editable
+  // create seeded from the built-in's name/key (§U1).
+  const [duplicate, setDuplicate] = useState(false);
 
   const load = useCallback(async () => {
     const lodgesRes = await fetch("/api/admin/lodges").catch(() => null);
@@ -126,7 +132,8 @@ export default function DisplayBuilderPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-bold">Visual builder</h1>
+        <BackLink href="/admin/display" label="Lobby Display" />
+        <h1 className="mt-2 text-2xl font-bold">Visual builder</h1>
         <p className="text-muted-foreground text-sm">
           Compose a board by picking a shape and dropping modules into zones. No
           HTML required — the builder writes a valid layout and template for you.
@@ -153,23 +160,51 @@ export default function DisplayBuilderPage() {
         </div>
       )}
 
-      {state.status === "advanced-only" && !rebuild && (
-        <div className="space-y-3 rounded-md border border-amber-400/50 bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-          <p className="font-medium">This board can&apos;t be opened in the visual builder.</p>
-          <p>
-            It was hand-edited (or built with a different layout idiom), so the
-            builder can&apos;t safely reinterpret it. Edit it in{" "}
-            <Link className="underline" href="/admin/display/templates">
-              Advanced mode
-            </Link>
-            , or rebuild it in the builder — which <strong>replaces the layout
-            body</strong> with a fresh skeleton (your current body is discarded).
-          </p>
-          <Button variant="outline" disabled={!canEdit} onClick={() => setRebuild(true)}>
-            Rebuild in builder (replaces the body)
-          </Button>
-        </div>
-      )}
+      {state.status === "advanced-only" &&
+        !rebuild &&
+        !duplicate &&
+        (isBuiltInDisplayTemplateKey(state.loaded.key) ? (
+          // A built-in is code-managed and read-only, so Rebuild-then-Save could
+          // never persist. Offer a real fork instead: duplicate into a fresh,
+          // editable board in the builder (§U1).
+          <div className="space-y-3 rounded-md border border-amber-400/50 bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            <p className="font-medium">This is a built-in design.</p>
+            <p>
+              Built-ins are refreshed from code on every upgrade, so the builder
+              can&apos;t save over one. They also aren&apos;t opened for direct
+              editing here. To customise it, duplicate it into a new board — you
+              can then compose and save your copy in the builder. The built-in is
+              left untouched. You can also inspect it in{" "}
+              <Link className="underline" href="/admin/display/templates">
+                Advanced mode
+              </Link>
+              .
+            </p>
+            <Button
+              variant="outline"
+              disabled={!canEdit}
+              onClick={() => setDuplicate(true)}
+            >
+              Duplicate to customise
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3 rounded-md border border-amber-400/50 bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            <p className="font-medium">This board can&apos;t be opened in the visual builder.</p>
+            <p>
+              It was hand-edited (or built with a different layout idiom), so the
+              builder can&apos;t safely reinterpret it. Edit it in{" "}
+              <Link className="underline" href="/admin/display/templates">
+                Advanced mode
+              </Link>
+              , or rebuild it in the builder — which <strong>replaces the layout
+              body</strong> with a fresh skeleton (your current body is discarded).
+            </p>
+            <Button variant="outline" disabled={!canEdit} onClick={() => setRebuild(true)}>
+              Rebuild in builder (replaces the body)
+            </Button>
+          </div>
+        ))}
 
       {state.status === "new" && (
         <DisplayBuilder
@@ -220,6 +255,9 @@ export default function DisplayBuilderPage() {
       )}
 
       {state.status === "advanced-only" && rebuild && (
+        // Rebuild keeps the same row ids so Save overwrites in place. Only a
+        // NON-built-in reaches here (built-ins take the duplicate path), so this is
+        // never a read-only row — isBuiltIn is false.
         <DisplayBuilder
           layoutId={state.loaded.layout.id}
           templateId={state.loaded.id}
@@ -228,7 +266,27 @@ export default function DisplayBuilderPage() {
           initialName={state.loaded.name}
           initialFooterHtml={state.loaded.footerHtml}
           initialCssOverrides={state.loaded.cssOverrides}
-          isBuiltIn={isBuiltInDisplayTemplateKey(state.loaded.key)}
+          isBuiltIn={false}
+          canEdit={canEdit}
+          lodges={lodges}
+          onDuplicate={() => undefined}
+        />
+      )}
+
+      {state.status === "advanced-only" && duplicate && (
+        // Fork a built-in into a NEW editable board: no row ids (Save creates fresh
+        // rows), a suffixed key/name, and a fresh skeleton (the built-in body can't
+        // be reinterpreted). The author lands editable — the fix for the dead-end
+        // Rebuild path (§U1).
+        <DisplayBuilder
+          layoutId={null}
+          templateId={null}
+          initialModel={emptyBuilderModel("side-rail", 2)}
+          initialKey={`${state.loaded.key}-copy`}
+          initialName={`${state.loaded.name} (copy)`}
+          initialFooterHtml={state.loaded.footerHtml}
+          initialCssOverrides={state.loaded.cssOverrides}
+          isBuiltIn={false}
           canEdit={canEdit}
           lodges={lodges}
           onDuplicate={() => undefined}
