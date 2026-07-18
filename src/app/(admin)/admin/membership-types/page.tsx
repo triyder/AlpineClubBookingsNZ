@@ -298,6 +298,7 @@ interface MembershipTypeEditorDialogProps {
   availableAgeTiers: AgeTier[];
   saving: boolean;
   canEdit: boolean;
+  error: string;
   onDraftChange: (patch: Partial<DraftMembershipType>) => void;
   onSave: () => void;
   onCancel: () => void;
@@ -311,6 +312,7 @@ function MembershipTypeEditorDialog({
   availableAgeTiers,
   saving,
   canEdit,
+  error,
   onDraftChange,
   onSave,
   onCancel,
@@ -329,6 +331,12 @@ function MembershipTypeEditorDialog({
       : `Edit ${membershipType?.name ?? "membership type"}`;
 
   async function requestDismiss() {
+    // While a save is in flight the editor auto-closes on success; treat
+    // dismissal as inert so the X/Escape cannot open a discard-confirm that the
+    // save's own close would then orphan (#2045 F2).
+    if (saving) {
+      return;
+    }
     if (!dirty) {
       onCancel();
       return;
@@ -359,14 +367,21 @@ function MembershipTypeEditorDialog({
       <Dialog
         open={isOpen}
         onOpenChange={(open) => {
-          if (!open) {
+          if (!open && !saving) {
             void requestDismiss();
           }
         }}
       >
         <DialogContent
           className="max-h-[92vh] overflow-y-auto sm:max-w-5xl"
+          showCloseButton={!saving}
           onEscapeKeyDown={(event) => {
+            // A save in flight makes Escape inert (mirrors the merge dialog's
+            // guard) so it cannot race the auto-close (#2045 F2).
+            if (saving) {
+              event.preventDefault();
+              return;
+            }
             if (dirty) {
               event.preventDefault();
               void requestDismiss();
@@ -390,6 +405,15 @@ function MembershipTypeEditorDialog({
               seasonal membership type.
             </DialogDescription>
           </DialogHeader>
+
+        {error && (
+          <div
+            role="alert"
+            className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+          >
+            {error}
+          </div>
+        )}
 
         {validationError && dirty && (
           <div
@@ -680,7 +704,7 @@ function MembershipTypeMergeDialog({
         if (!open && !merging) onCancel();
       }}
     >
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg" showCloseButton={!merging}>
         <DialogHeader>
           <DialogTitle>Delete {source?.name ?? "membership type"}</DialogTitle>
           <DialogDescription>
@@ -1710,6 +1734,7 @@ export default function AdminMembershipTypesPage() {
         availableAgeTiers={availableAgeTiers}
         saving={editorSaving}
         canEdit={canEdit}
+        error={editorTarget ? error : ""}
         onDraftChange={updateEditorDraft}
         onSave={() => {
           if (editorTarget?.mode === "new") {

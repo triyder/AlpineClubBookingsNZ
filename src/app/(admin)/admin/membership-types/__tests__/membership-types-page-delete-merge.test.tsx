@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
@@ -249,6 +255,100 @@ describe("AdminMembershipTypesPage delete + merge", () => {
           "Moved 4 assignments from Social to Associate, then deleted Social.",
         ),
       ).not.toBeNull(),
+    );
+  });
+
+  it("cancels the merge dialog from the header close (X) when idle and resets the target", async () => {
+    await renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Social" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Social" });
+
+    // Pick a target so a non-empty selection exists.
+    fireEvent.change(within(dialog).getByRole("combobox"), {
+      target: { value: "type-associate" },
+    });
+    expect(
+      within(dialog)
+        .getByRole("button", { name: "Merge and delete" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+
+    // The header X closes the dialog when idle without posting a merge (#2045 F3).
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Delete Social" })).toBeNull(),
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/admin/membership-types/type-social/merge",
+      expect.anything(),
+    );
+
+    // Reopening starts with no target selected again (Merge stays disabled),
+    // confirming the cancel reset the selection.
+    fireEvent.click(screen.getByRole("button", { name: "Delete Social" }));
+    const reopened = await screen.findByRole("dialog", {
+      name: "Delete Social",
+    });
+    expect(
+      within(reopened)
+        .getByRole("button", { name: "Merge and delete" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("hides the merge dialog X while a merge is in flight", async () => {
+    let resolveMerge: (value?: unknown) => void = () => {};
+    const mergePromise = new Promise((resolve) => {
+      resolveMerge = resolve;
+    });
+    fetchMock.mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          url === "/api/admin/membership-types/type-social/merge" &&
+          method === "POST"
+        ) {
+          await mergePromise;
+          return jsonResponse({ ok: true, reassignedCount: 4 });
+        }
+        if (url === "/api/admin/membership-types") {
+          return jsonResponse({ membershipTypes });
+        }
+        if (url.startsWith("/api/admin/xero/contact-groups")) {
+          return jsonResponse({ groups: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      },
+    );
+
+    await renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Social" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Social" });
+    fireEvent.change(within(dialog).getByRole("combobox"), {
+      target: { value: "type-associate" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Merge and delete" }));
+
+    // Mid-merge the header X is hidden (mirrors the disabled Cancel) so it is not
+    // a silent no-op (#2045 F3); the dialog stays open until the merge resolves.
+    await waitFor(() =>
+      expect(
+        within(dialog).queryByRole("button", { name: "Close" }),
+      ).toBeNull(),
+    );
+    expect(
+      within(dialog)
+        .getByRole("button", { name: "Cancel" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    expect(screen.getByRole("dialog", { name: "Delete Social" })).not.toBeNull();
+
+    resolveMerge(undefined);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Delete Social" })).toBeNull(),
     );
   });
 });

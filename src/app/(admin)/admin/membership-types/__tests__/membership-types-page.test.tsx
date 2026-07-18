@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // #1940: the page now reads the session permission matrix for view-only gating;
 // provide an edit-level admin session so the pre-existing edit-interaction cases
@@ -314,6 +314,109 @@ describe("AdminMembershipTypesPage", () => {
     expect(screen.getByLabelText("Description")).toHaveProperty(
       "value",
       "Default full club membership.",
+    );
+  });
+
+  it("keeps the editor open and shows the server error inside the dialog when a save fails", async () => {
+    await renderPage();
+
+    // A 500/network failure keeps the editor open; the error must be visible on
+    // the dialog itself, not only in the page banner behind the modal (#2045 F1).
+    fetchMock.mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          url === "/api/admin/membership-types/type-full" &&
+          method === "PATCH"
+        ) {
+          return jsonResponse({ error: "Server rejected the save." }, false);
+        }
+        if (url === "/api/admin/membership-types") {
+          return jsonResponse({ membershipTypes });
+        }
+        if (url.startsWith("/api/admin/xero/contact-groups")) {
+          return jsonResponse({ groups: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      },
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Updated description" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Edit Full" });
+    // The server error renders inside the still-open dialog...
+    await waitFor(() =>
+      expect(
+        within(dialog).queryByText("Server rejected the save."),
+      ).not.toBeNull(),
+    );
+    // ...and the unsaved edit is preserved.
+    expect(within(dialog).getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Updated description",
+    );
+  });
+
+  it("makes the editor header X and Escape inert while a save is in flight", async () => {
+    await renderPage();
+
+    let resolveSave: (value?: unknown) => void = () => {};
+    const savePromise = new Promise((resolve) => {
+      resolveSave = resolve;
+    });
+    fetchMock.mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          url === "/api/admin/membership-types/type-full" &&
+          method === "PATCH"
+        ) {
+          await savePromise;
+          return jsonResponse({
+            membershipType: {
+              ...membershipTypes[0],
+              description: "Updated description",
+            },
+          });
+        }
+        if (url === "/api/admin/membership-types") {
+          return jsonResponse({ membershipTypes });
+        }
+        if (url.startsWith("/api/admin/xero/contact-groups")) {
+          return jsonResponse({ groups: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      },
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Updated description" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    // While the save is in flight the header X is hidden so dismissal cannot
+    // open a discard-confirm the auto-close would orphan (#2045 F2).
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Close" })).toBeNull(),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Edit Full" });
+
+    // Escape is inert mid-save: no discard-confirm, dialog stays open.
+    fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+    expect(screen.queryByText("Discard unsaved changes?")).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Edit Full" })).not.toBeNull();
+
+    // Completing the save closes the editor via the success path.
+    resolveSave(undefined);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Edit Full" })).toBeNull(),
     );
   });
 
