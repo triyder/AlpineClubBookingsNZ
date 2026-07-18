@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BackLink } from "@/components/admin/back-link";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
@@ -424,7 +425,8 @@ export default function AdminDisplayTemplatesPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-bold">Display Templates</h1>
+        <BackLink href="/admin/display" label="Lobby Display" />
+        <h1 className="mt-2 text-2xl font-bold">Display Templates</h1>
         <p className="text-muted-foreground">
           A Template fills a <strong>Layout</strong>&apos;s slots with content or
           embedded modules, layers CSS overrides on the layout default, and

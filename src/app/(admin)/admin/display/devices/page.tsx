@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BackLink } from "@/components/admin/back-link";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
@@ -233,7 +234,8 @@ export default function AdminDisplayDevicesPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-bold">Display Devices</h1>
+        <BackLink href="/admin/display" label="Lobby Display" />
+        <h1 className="mt-2 text-2xl font-bold">Display Devices</h1>
         <p className="text-muted-foreground">
           Paired lobby screens per lodge. Create a device, open the display URL
           on the TV, then enter the code it shows to pair. Devices are

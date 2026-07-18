@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { BackLink } from "@/components/admin/back-link";
 import { MODULE_DEFINITIONS } from "@/config/modules";
 import {
   listDisplayConditions,
@@ -181,7 +182,8 @@ export default function AdminDisplayReferencePage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-bold">Reference</h1>
+        <BackLink href="/admin/display" label="Lobby Display" />
+        <h1 className="mt-2 text-2xl font-bold">Reference</h1>
         <p className="text-muted-foreground">
           The lobby display vocabulary: the modules you can embed, the conditions
           that gate areas, and the CSS tokens you can reference in authored CSS.
