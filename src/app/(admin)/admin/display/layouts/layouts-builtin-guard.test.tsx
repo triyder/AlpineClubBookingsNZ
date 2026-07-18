@@ -149,7 +149,11 @@ describe("AdminDisplayLayoutsPage — built-in guard", () => {
     expect(screen.getByRole("button", { name: "Create layout" })).toBeDefined();
   });
 
-  it("requires confirmation before saving an in-place built-in edit; cancel blocks the PUT", async () => {
+  // #2048 D: built-in layouts are read-only server-side (PUT 409s), so Save never
+  // fires a doomed in-place PUT. It offers ONLY the duplicate-to-customise fork.
+  // These assert the REAL contract (no PUT for a built-in), not a mocked PUT that
+  // would mask the mismatch.
+  it("Save on a built-in never fires the doomed PUT; Cancel leaves it open", async () => {
     const { calls } = installFetch();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<AdminDisplayLayoutsPage />);
@@ -159,18 +163,21 @@ describe("AdminDisplayLayoutsPage — built-in guard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
+    // The prompt offers to duplicate (read-only), not to "save anyway".
     expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(confirmSpy.mock.calls[0][0]).toMatch(/not upgrade-safe/i);
-    // Cancelled → no PUT reached the API.
+    expect(confirmSpy.mock.calls[0][0]).toMatch(/read-only/i);
+    expect(confirmSpy.mock.calls[0][0]).toMatch(/duplicate/i);
+    // Cancelled → no PUT reached the API, and still the built-in (no fork).
     await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
     expect(
       calls.some(
         (c) => c.method === "PUT" && c.url.includes("/api/admin/display/layouts/")
       )
     ).toBe(false);
+    expect(screen.getByText("This is a built-in layout.")).toBeDefined();
   });
 
-  it("confirming the built-in save sends the PUT", async () => {
+  it("confirming the built-in Save forks to a duplicate — still no PUT", async () => {
     const { calls } = installFetch();
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<AdminDisplayLayoutsPage />);
@@ -180,15 +187,19 @@ describe("AdminDisplayLayoutsPage — built-in guard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
+    // Confirming duplicates rather than saving: the draft becomes a new custom
+    // layout (key suffixed, Create action), and no PUT is ever sent.
     await waitFor(() =>
-      expect(
-        calls.some(
-          (c) =>
-            c.method === "PUT" &&
-            c.url === `/api/admin/display/layouts/${BUILT_IN_ROW.id}`
-        )
-      ).toBe(true)
+      expect(screen.queryByText("This is a built-in layout.")).toBeNull()
     );
+    const keyInput = screen.getByLabelText("Key") as HTMLInputElement;
+    expect(keyInput.value).toBe("everyday-board-copy");
+    expect(screen.getByRole("button", { name: "Create layout" })).toBeDefined();
+    expect(
+      calls.some(
+        (c) => c.method === "PUT" && c.url.includes("/api/admin/display/layouts/")
+      )
+    ).toBe(false);
   });
 
   it("a custom layout shows no built-in notice", async () => {

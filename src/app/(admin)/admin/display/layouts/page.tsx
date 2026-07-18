@@ -321,19 +321,23 @@ export default function AdminDisplayLayoutsPage() {
   }
 
   async function save() {
-    // Saving an in-place edit to a built-in is not upgrade-safe (it is
-    // overwritten on the next re-seed/upgrade, #111); require an explicit
-    // acknowledgement before persisting (#156).
-    if (
-      draft.id !== null &&
-      isBuiltInDisplayLayoutKey(draft.key) &&
-      !window.confirm(
-        `"${draft.name || draft.key}" is a built-in layout. Saving this ` +
-          "in-place edit is NOT upgrade-safe — it will be overwritten the next " +
-          "time the built-in designs are re-seeded or the app is upgraded. " +
-          "Duplicate it to customise safely instead.\n\nSave the in-place edit anyway?"
-      )
-    ) {
+    // Built-in layouts are code-managed and READ-ONLY: the PUT route now 409s on
+    // a `builtin-*` key (#2048), so an in-place save can never persist. Never
+    // fire that doomed PUT — offer the duplicate-to-customise fork instead, the
+    // only path that keeps the admin's changes (#156, #2048 D).
+    if (draft.id !== null && isBuiltInDisplayLayoutKey(draft.key)) {
+      if (
+        window.confirm(
+          `"${draft.name || draft.key}" is a built-in layout and is ` +
+            "read-only — in-place edits can't be saved (they would be " +
+            "overwritten the next time the built-in designs are re-seeded or " +
+            "the app is upgraded). Duplicate it to a new custom layout to keep " +
+            "your changes?\n\nOK duplicates it now; Cancel leaves the built-in " +
+            "open."
+        )
+      ) {
+        duplicateLayout();
+      }
       return;
     }
 
