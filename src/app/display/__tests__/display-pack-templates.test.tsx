@@ -339,15 +339,106 @@ describe("issue #2047 pack — built-in boards", () => {
     expect(container.querySelector(".display-lodge-rules")).not.toBeNull();
     expect(screen.getByText(/Boots off at the door/)).toBeDefined();
 
-    // No individual guest name anywhere — the maximum-privacy guarantee. The only
-    // name-bearing modules (arrivals/room/status/singles/night) are never embedded.
+    // No guest ROSTER / arrivals name anywhere — the whole-lodge holder here is an
+    // organisation ("Harakeke College"), so not even a group person-name shows. The
+    // only name-bearing roster modules (arrivals/room/status/singles/night) are never
+    // embedded. F6 hardening: scan innerHTML too (not just textContent), so a name
+    // hidden in an attribute value (title / aria-label) can't slip past.
     const text = container.textContent ?? "";
-    expect(text).not.toContain("Priya");
+    const html = container.innerHTML;
+    for (const forbidden of ["Priya", "Priya N", "Priya Nathan"]) {
+      expect(text).not.toContain(forbidden);
+      expect(html).not.toContain(forbidden);
+    }
     expect(container.querySelector(".display-arrivals-board")).toBeNull();
     expect(container.querySelector(".display-room-cards")).toBeNull();
     expect(container.querySelector(".display-status-board")).toBeNull();
     expect(container.querySelector(".display-singles-board")).toBeNull();
     expect(container.querySelector(".display-night-columns")).toBeNull();
+  });
+
+  it("welcome-kiosk whole-lodge group label CAN be a named member's name at FULL_NAME — the true, bounded behaviour (F2)", async () => {
+    const def = await builtInDef("welcome-kiosk");
+    // An EXCLUSIVE whole-lodge hold booked by a single named member (no minors,
+    // not an organisation) under FULL_NAME granularity: the server has already
+    // reduced its label to `bookingLabel` = the organiser's name at the lodge's
+    // setting, so `wholeLodgeRow.label` here is that member's own name. The kiosk
+    // is the LOWEST-name-surface board, not a zero-name board: it may show this
+    // one whole-lodge GROUP label (never more than the lodge granularity), and no
+    // roster/arrivals names at all.
+    const state = baseState({
+      bookings: [
+        {
+          key: "wl",
+          label: "Priya Nathan", // FULL_NAME reduction of a single-member whole-lodge hold
+          wholeLodge: true,
+          roomId: null,
+          guests: null,
+          guestCount: 4,
+          stayStart: "2026-04-13",
+          stayEnd: "2026-04-15",
+        },
+      ],
+      rules: [{ title: "House rules", html: "<p>Boots off at the door.</p>" }],
+      notice: null,
+    });
+    const { container } = await renderBoard(def, state);
+
+    // The whole-lodge group label renders — and this test ACCEPTS it: the copy
+    // must match reality. It appears in the welcome-group span, i.e. the whole-lodge
+    // label surface, not via any roster module.
+    const group = container.querySelector(".display-welcome-group");
+    expect(group?.textContent).toContain("Priya Nathan");
+
+    // Nothing MORE than the lodge granularity's whole-lodge label: the name occurs
+    // ONLY inside the welcome-group label — nowhere else in text OR markup — and no
+    // name-bearing roster module is embedded to emit any further name.
+    const occurrences = (container.innerHTML.match(/Priya Nathan/g) ?? []).length;
+    expect(occurrences).toBe(1);
+    expect(container.querySelector(".display-arrivals-board")).toBeNull();
+    expect(container.querySelector(".display-room-cards")).toBeNull();
+    expect(container.querySelector(".display-status-board")).toBeNull();
+    expect(container.querySelector(".display-singles-board")).toBeNull();
+    expect(container.querySelector(".display-night-columns")).toBeNull();
+  });
+
+  it("welcome-kiosk rotator skips the rules card when the lodge has no instruction docs — notice still rotates (F3)", async () => {
+    const def = await builtInDef("welcome-kiosk");
+    // Notice set, but NO instruction docs. The `rules` child is gated on
+    // `content:instructions`, so it is skipped (no blank rules card flashing);
+    // the notice is the only eligible rotator child and shows.
+    const state = baseState({
+      rules: null,
+      notice: "Committee meeting Friday",
+    });
+    const { container } = await renderBoard(def, state);
+
+    expect(container.querySelector(".display-welcome")).not.toBeNull();
+    // Rules card skipped (no empty div rotating in), notice shown.
+    expect(container.querySelector(".display-lodge-rules")).toBeNull();
+    expect(container.querySelector(".display-notice-board")).not.toBeNull();
+    expect(screen.getByText(/Committee meeting Friday/)).toBeDefined();
+  });
+
+  it("welcome-kiosk rotator degrades to nothing (no crash, hero still shows) when there are NEITHER docs NOR a notice (F3)", async () => {
+    const def = await builtInDef("welcome-kiosk");
+    // Both rotator children are gated (rules on content:instructions, notice on
+    // content:notice) and neither holds: the rotator has zero eligible children,
+    // so RotatorArea renders null (its `.wk-info` slot is simply empty). The board
+    // does NOT go fully blank — the welcome hero + header + footer still render —
+    // and nothing crashes.
+    const state = baseState({ rules: null, notice: null });
+    const { container } = await renderBoard(def, state);
+
+    // Hero still present → not a blank screen.
+    expect(container.querySelector(".display-welcome")).not.toBeNull();
+    // Rotator degraded to empty: neither card renders.
+    expect(container.querySelector(".display-lodge-rules")).toBeNull();
+    expect(container.querySelector(".display-notice-board")).toBeNull();
+    // The info area's portal marker still exists but carries no rendered card.
+    const infoArea = container.querySelector('[data-display-area="info"]');
+    expect(infoArea).not.toBeNull();
+    expect(infoArea?.querySelector(".display-lodge-rules, .display-notice-board")).toBeNull();
   });
 });
 

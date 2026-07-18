@@ -527,10 +527,16 @@ const OPERATIONS_TEMPLATE: BuiltInTemplateSeed = {
 // ---------------------------------------------------------------------------
 // welcome-kiosk — the maximum-privacy board: a welcome hero over a rotator that
 // cycles house rules and (when set) the committee notice. It embeds ONLY
-// welcome / lodge-rules / notice-board — none of the name-bearing modules — so
-// no individual guest name can ever appear on it (welcome greets the whole-lodge
-// GROUP label, already privacy-reduced, or the lodge generally). Enforced by a
-// test that renders it against named bookings and asserts no name shows.
+// welcome / lodge-rules / notice-board — none of the guest-roster / arrivals
+// modules — so no guest ROSTER or arrivals name ever appears on it. The one name
+// it can show is the whole-lodge GROUP label (WelcomePanel renders
+// `wholeLodgeRow.label`), which is `bookingLabel` already reduced to the lodge's
+// privacy granularity and never exceeds it — for an exclusive whole-lodge hold
+// booked by a single named member (no minors, not an organisation) that label
+// CAN be that member's own name at the lodge's setting, so this is the
+// lowest-name-surface board, not a zero-name board. Enforced by tests that
+// render it against named bookings and assert nothing MORE than the lodge
+// granularity's whole-lodge label ever shows (no roster/arrivals names).
 // ---------------------------------------------------------------------------
 
 const WELCOME_KIOSK_BODY =
@@ -558,7 +564,7 @@ const WELCOME_KIOSK_LAYOUT: BuiltInLayoutSeed = {
   key: "welcome-kiosk",
   name: "Welcome kiosk",
   description:
-    "Maximum-privacy greeter: a welcome hero over a rotator cycling the house rules and, when one is set, the committee notice. Shows no individual guest names — safe for the most public spot in the lodge.",
+    "Maximum-privacy greeter: a welcome hero over a rotator cycling the house rules and, when one is set, the committee notice. Shows no guest roster or arrivals names — only the whole-lodge group label, reduced to the lodge's privacy setting — so it is safe for the most public spot in the lodge.",
   bodyHtml: WELCOME_KIOSK_BODY,
   defaultCss: WELCOME_KIOSK_CSS,
   areas: [
@@ -574,7 +580,16 @@ const WELCOME_KIOSK_LAYOUT: BuiltInLayoutSeed = {
       kind: "rotator",
       rotateSeconds: 10,
       children: [
-        { key: "rules", description: "House rules / arrival information." },
+        {
+          key: "rules",
+          description: "House rules / arrival information.",
+          // Gated so the rotator never flashes an empty rules card when the
+          // lodge has no instruction docs (F3): with no docs, LodgeRules renders
+          // an empty div, which would otherwise rotate 10s-blank / 10s-notice.
+          // With docs absent AND no notice, the rotator has no eligible child and
+          // degrades to nothing (no crash), exactly as any all-gated rotator does.
+          condition: "content:instructions",
+        },
         {
           key: "notice",
           description: "Committee notice — shown only when a notice is set.",
