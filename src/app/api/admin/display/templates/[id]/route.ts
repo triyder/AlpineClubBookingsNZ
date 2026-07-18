@@ -5,6 +5,14 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { validateTemplateForSave } from "@/lib/lodge-display/authoring-validation";
+import { isBuiltInDisplayTemplateKey } from "@/lib/lodge-display/built-in-seeds";
+
+// Built-in boards are code-managed scaffolding, refreshed from code on every
+// re-seed (built-in-seeds.ts). Duplicate-to-customise is the ADR-004 property; a
+// PUT to a built-in row is therefore rejected server-side, not just hidden in the
+// UI. Note the seed and config-transfer import paths write via prisma directly
+// (not this route), so this guard does not affect them.
+const BUILT_IN_READ_ONLY = "Built-in boards are read-only — duplicate to customise";
 
 // Admin lobby-display TEMPLATE read / update / delete (fork issue #79, LTV-033):
 //  • GET    — the full authored row PLUS its layout's areas, so the editor can
@@ -105,6 +113,12 @@ export async function PUT(
   });
   if (!existing) {
     return NextResponse.json({ error: "Template not found" }, { status: 404 });
+  }
+
+  // Built-in rows are read-only (duplicate-to-customise, ADR-004). Refuse before
+  // any other check so the reason is unambiguous.
+  if (isBuiltInDisplayTemplateKey(existing.key)) {
+    return NextResponse.json({ error: BUILT_IN_READ_ONLY }, { status: 409 });
   }
 
   // Key is immutable once device bindings reference it.

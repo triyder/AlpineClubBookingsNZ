@@ -213,6 +213,24 @@ describe("PUT /api/admin/display/layouts/[id]", () => {
     expect(mockPrisma.displayLayout.update).toHaveBeenCalledTimes(1);
   });
 
+  // §S1: built-in rows are code-managed and read-only — a PUT is refused
+  // server-side (duplicate-to-customise, ADR-004), not just hidden in the UI.
+  it("refuses a PUT to a built-in layout (409, read-only — duplicate to customise)", async () => {
+    mockPrisma.displayLayout.findUnique.mockResolvedValue({
+      id: "builtin-layout-everyday-board",
+      key: "everyday-board",
+      name: "Everyday board",
+    });
+    const { PUT } = await import("@/app/api/admin/display/layouts/[id]/route");
+    const res = await PUT(
+      await jsonRequest("http://localhost/x", "PUT", VALID_BODY),
+      routeParams("builtin-layout-everyday-board")
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/read-only — duplicate to customise/i);
+    expect(mockPrisma.displayLayout.update).not.toHaveBeenCalled();
+  });
+
   it("404s an unknown layout", async () => {
     mockPrisma.displayLayout.findUnique.mockResolvedValue(null);
     const { PUT } = await import("@/app/api/admin/display/layouts/[id]/route");
