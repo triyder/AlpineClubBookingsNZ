@@ -684,6 +684,21 @@ transaction and the booking's PAID status are untouched, and
 (#1765), never a settlement a repay generation could "duplicate", and at most
 one side of a capture pair is ever refunded (adjudicated under `lock(1)`).
 
+Audit trail (#2008): the auto-refund is recorded as a durable, ADMIN-ONLY
+`BookingEvent` once its recovery operation reaches `SUCCEEDED` — a `REFUNDED`
+event carrying a `duplicate_capture_refund` discriminator in its `snapshot`
+(`src/lib/duplicate-capture-refund-event.ts`). It is written exactly once
+across the inline and cron-replay paths, each gated on the operation's terminal
+`SUCCEEDED` transition (`count > 0`). Because the discriminator makes
+`isDuplicateCaptureRefundEvent` true, `resolveBookingNarrative` EXCLUDES it from
+the settlement finder, so a later member cancellation never misreads it as its
+own refund clause. The admin booking-history timeline renders it with honest
+copy ("Duplicate capture auto-refunded — the booking's settlement is
+unaffected"), while the shared member/guest narrative and every member-facing
+surface show nothing new. The rest of the audit trail (recovery-operation row,
+`PaymentRefund` ledger entries, error log, and the dedicated #2007 admin alert)
+is unchanged.
+
 To verify: whether Internet Banking uses the same `PaymentStatus` transitions
 or Xero invoice state as the effective settlement state.
 

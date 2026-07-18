@@ -35,7 +35,10 @@ import {
   deriveBookingAppliedCreditCents,
   restoreCreditFromBooking,
 } from "@/lib/member-credit";
-import { recordBookingEvent } from "@/lib/booking-events";
+import {
+  recordBookingEvent,
+  recordDuplicateCaptureRefundEvent,
+} from "@/lib/booking-events";
 import {
   sendAdminDuplicateCaptureRefundAlert,
   sendAdminPaymentFailureAlert,
@@ -653,12 +656,14 @@ export async function markBookingPaymentSucceeded({
       "Duplicate Stripe capture on an already-paid booking (#1992); auto-refunding the duplicate capture"
     );
 
-    // No BookingEvent is recorded for this refund ON PURPOSE: the booking
-    // stays PAID and its settlement money is untouched, while a REFUNDED
-    // event would be picked up by resolveBookingNarrative as the settlement
-    // clause of a LATER member cancellation and misstate that refund. The
-    // durable audit trail is the PaymentRecoveryOperation row, the
-    // PaymentRefund ledger entries, this log line and the admin alert below.
+    // #2008 — a durable, ADMIN-ONLY BookingEvent IS recorded for this refund
+    // once its recovery operation reaches SUCCEEDED (see below), but it is a
+    // REFUNDED event carrying the `duplicate_capture_refund` discriminator so
+    // resolveBookingNarrative EXCLUDES it (isDuplicateCaptureRefundEvent) and
+    // it can never masquerade as the settlement clause of a LATER member
+    // cancellation. The rest of the audit trail is unchanged: the
+    // PaymentRecoveryOperation row, the PaymentRefund ledger entries, this log
+    // line and the admin alert below.
     try {
       await refundPaymentTransactions({
         paymentId: reconciliation.paymentId,
@@ -684,15 +689,30 @@ export async function markBookingPaymentSucceeded({
       // Happy-path close of the pre-persisted operation. Best-effort: a lost
       // close leaves a PENDING row whose replay re-requests the identical
       // slice/keys, which Stripe answers with the original refund.
-      await markDuplicateCaptureRefundRecoverySucceeded({
+      const markResult = await markDuplicateCaptureRefundRecoverySucceeded({
         bookingId,
         paymentIntentId,
-      }).catch((markErr) =>
+      }).catch((markErr) => {
         logger.error(
           { err: markErr, bookingId, paymentIntentId },
           "Failed to mark duplicate-capture refund recovery succeeded; the cron will replay the frozen plan idempotently"
-        )
-      );
+        );
+        return null;
+      });
+
+      // #2008 — record the admin-only history event EXACTLY ONCE, gated on this
+      // call being the one that flipped the operation to SUCCEEDED (count > 0).
+      // If the mark was lost or the cron already closed the operation, this
+      // path records nothing and the cron-replay path owns the event, so the
+      // inline and cron paths never double-record. Post-commit, base client.
+      if (markResult && markResult.count > 0) {
+        await recordDuplicateCaptureRefundEvent({
+          bookingId,
+          amountCents: plannedRefundCents,
+          duplicatePaymentIntentId: paymentIntentId,
+          settledPaymentIntentId: settledPaymentIntentId ?? null,
+        });
+      }
 
       // Alert the admins even on success: an automatic refund of a duplicate
       // charge is an anomaly worth eyes, and the alert is the operator's cue

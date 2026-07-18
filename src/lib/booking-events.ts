@@ -21,6 +21,11 @@
 import { BookingEventType, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
+import {
+  DUPLICATE_CAPTURE_REFUND_EVENT_KIND,
+  DUPLICATE_CAPTURE_REFUND_EVENT_REASON,
+  type DuplicateCaptureRefundEventSnapshot,
+} from "@/lib/duplicate-capture-refund-event";
 
 /** Frozen cancellation facts stored on a CANCELLED event. */
 export interface CancellationEventSnapshot {
@@ -90,4 +95,50 @@ export async function recordBookingEvent(
       "Failed to record booking event"
     );
   }
+}
+
+/**
+ * Record the #1992 duplicate-capture auto-refund as a durable, admin-only
+ * BookingEvent (#2008).
+ *
+ * Stored as a REFUNDED event carrying the `duplicate_capture_refund`
+ * discriminator snapshot so it is EXCLUDED from the shared member/admin
+ * narrative (`isDuplicateCaptureRefundEvent`) — it never masquerades as a later
+ * cancellation's settlement clause — while the admin booking-history timeline
+ * renders it with honest copy. The booking stays PAID and its settlement money
+ * is untouched; `actorMemberId` is null because the refund is system-initiated.
+ *
+ * Call AFTER the recovery operation's terminal SUCCEEDED transition has been
+ * confirmed (the transition is the exactly-once guard across the inline and
+ * cron-replay paths), and on the base client — like every recordBookingEvent
+ * call, a failed write is logged and swallowed, never rolled into a payment
+ * transaction.
+ */
+export async function recordDuplicateCaptureRefundEvent(
+  input: {
+    bookingId: string;
+    amountCents: number;
+    duplicatePaymentIntentId: string;
+    settledPaymentIntentId: string | null;
+  },
+  db: BookingEventClient = prisma
+): Promise<void> {
+  const snapshot: DuplicateCaptureRefundEventSnapshot = {
+    kind: DUPLICATE_CAPTURE_REFUND_EVENT_KIND,
+    duplicatePaymentIntentId: input.duplicatePaymentIntentId,
+    settledPaymentIntentId: input.settledPaymentIntentId,
+    refundedAmountCents: input.amountCents,
+  };
+  await recordBookingEvent(
+    {
+      bookingId: input.bookingId,
+      type: BookingEventType.REFUNDED,
+      // System-initiated auto-refund: no member drove this transition.
+      actorMemberId: null,
+      amountCents: input.amountCents,
+      reason: DUPLICATE_CAPTURE_REFUND_EVENT_REASON,
+      snapshot: snapshot as unknown as Prisma.InputJsonValue,
+    },
+    db
+  );
 }

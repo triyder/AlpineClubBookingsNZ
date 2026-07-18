@@ -33,6 +33,7 @@ const {
   mockQueueSupersededAdditionalIntentCancellations,
   mockAttachIntentToWaitingOps,
   mockExecuteGroupSettlementRefundPlan,
+  mockRecordDuplicateCaptureRefundEvent,
 } = vi.hoisted(() => ({
   mockPaymentRecoveryFindMany: vi.fn(),
   mockPaymentRecoveryFindUnique: vi.fn(),
@@ -67,6 +68,7 @@ const {
   mockExecuteGroupSettlementRefundPlan: vi
     .fn()
     .mockResolvedValue({ outcome: "refunded", mirroredChildren: 1 }),
+  mockRecordDuplicateCaptureRefundEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -139,6 +141,11 @@ vi.mock("@/lib/payment-transactions", () => ({
 vi.mock("@/lib/email", () => ({
   sendAdminPaymentFailureAlert: (...args: unknown[]) =>
     mockSendAdminPaymentFailureAlert(...args),
+}));
+
+vi.mock("@/lib/booking-events", () => ({
+  recordDuplicateCaptureRefundEvent: (...args: unknown[]) =>
+    mockRecordDuplicateCaptureRefundEvent(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -1805,6 +1812,90 @@ describe("payment recovery worker", () => {
           }),
         }),
       );
+    });
+  });
+
+  describe("#1992 duplicate-capture refund recovery replay (#2008)", () => {
+    function makeDuplicateCaptureOp() {
+      return makeOperation({
+        id: "recovery-dup",
+        type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+        status: PaymentRecoveryOperationStatus.PENDING,
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+        // The op's paymentIntentId is the FIRST captured intent, not necessarily
+        // the duplicate; the duplicate is the suffix of the idempotency key.
+        paymentIntentId: "pi_settled",
+        idempotencyKey: "duplicate_capture_booking-1_pi_dup",
+        stripeKeyPrefix: "duplicate_capture_refund_booking-1_pi_dup",
+        amountCents: 5000,
+        allocationPlan: [{ paymentTransactionId: "txn-dup", amountCents: 5000 }],
+      });
+    }
+
+    it("records the admin-only history event EXACTLY ONCE on a successful cron replay, keyed off the terminal SUCCEEDED transition", async () => {
+      const dupOp = makeDuplicateCaptureOp();
+      mockPaymentRecoveryFindMany.mockImplementation(
+        (args?: { where?: { attempts?: { gte?: number } } }) => {
+          if (args?.where?.attempts && "gte" in args.where.attempts) {
+            return Promise.resolve([]);
+          }
+          return Promise.resolve([dupOp]);
+        },
+      );
+      mockPaymentRecoveryFindUnique.mockResolvedValue(dupOp);
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      // Replays the frozen slice under the shared duplicate_capture_refund prefix.
+      expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          idempotencyKeyPrefix: "duplicate_capture_refund_booking-1_pi_dup",
+          allocation: [
+            { paymentTransactionId: "txn-dup", amountCents: 5000 },
+          ],
+        }),
+      );
+      // The event lands exactly once, with the duplicate intent parsed from the
+      // key and a null settling intent (not persisted on the operation).
+      expect(mockRecordDuplicateCaptureRefundEvent).toHaveBeenCalledTimes(1);
+      expect(mockRecordDuplicateCaptureRefundEvent).toHaveBeenCalledWith({
+        bookingId: "booking-1",
+        amountCents: 5000,
+        duplicatePaymentIntentId: "pi_dup",
+        settledPaymentIntentId: null,
+      });
+    });
+
+    it("does NOT record the event when the terminal transition finds the operation already SUCCEEDED (count 0)", async () => {
+      const dupOp = makeDuplicateCaptureOp();
+      mockPaymentRecoveryFindMany.mockImplementation(
+        (args?: { where?: { attempts?: { gte?: number } } }) => {
+          if (args?.where?.attempts && "gte" in args.where.attempts) {
+            return Promise.resolve([]);
+          }
+          return Promise.resolve([dupOp]);
+        },
+      );
+      mockPaymentRecoveryFindUnique.mockResolvedValue(dupOp);
+      // The claim updateMany (status IN [PENDING,FAILED]) still flips, but the
+      // duplicate-capture terminal transition (status: { not: SUCCEEDED }) finds
+      // the row already SUCCEEDED — the inline path won the race and recorded it.
+      mockPaymentRecoveryUpdateMany.mockImplementation(
+        (args: { where?: { status?: unknown; id?: string } }) => {
+          const status = args.where?.status;
+          if (status && typeof status === "object" && "not" in status) {
+            return Promise.resolve({ count: 0 });
+          }
+          return Promise.resolve({ count: args.where?.id ? 1 : 0 });
+        },
+      );
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      expect(mockRecordDuplicateCaptureRefundEvent).not.toHaveBeenCalled();
     });
   });
 });

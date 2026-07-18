@@ -5,6 +5,7 @@ import {
   type NarrativeBooking,
   type NarrativeEvent,
 } from "@/lib/booking-narrative";
+import { DUPLICATE_CAPTURE_REFUND_EVENT_KIND } from "@/lib/duplicate-capture-refund-event";
 
 const CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z");
@@ -197,6 +198,54 @@ describe("resolveBookingNarrative", () => {
     expect(result.message).toBe(
       "You cancelled this booking on 5 May 2026 after paying $120.00 on 2 May 2026. Under the cancellation policy in effect at the time, $90.00 was refunded on 6 May 2026 and $30.00 was retained. No further payment is required."
     );
+  });
+
+  it("EXCLUDES a #1992 duplicate-capture auto-refund from a later cancellation's settlement (#2008)", () => {
+    // A duplicate card capture was auto-refunded (a REFUNDED event carrying the
+    // duplicate_capture_refund discriminator), then the member later cancelled
+    // under a no-refund policy. The cancellation narrative must describe the
+    // no-refund cancellation from the CANCELLED snapshot and NEVER pick up the
+    // duplicate-capture refund as this cancellation's settlement clause.
+    const result = resolveBookingNarrative({
+      booking: booking({ status: "CANCELLED" }),
+      events: [
+        event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", {
+          amountCents: 12000,
+        }),
+        // The #1992 duplicate-capture auto-refund of a second, distinct capture.
+        event(BookingEventType.REFUNDED, "2026-05-03T00:00:00.000Z", {
+          amountCents: 5000,
+          snapshot: {
+            kind: DUPLICATE_CAPTURE_REFUND_EVENT_KIND,
+            duplicatePaymentIntentId: "pi_link_dup",
+            settledPaymentIntentId: "pi_auto_charge",
+            refundedAmountCents: 5000,
+          },
+        }),
+        event(BookingEventType.CANCELLED, "2026-05-05T00:00:00.000Z", {
+          amountCents: 12000,
+          snapshot: {
+            policySummary:
+              "Cancelled inside the no-refund window under the policy in effect at the time.",
+            refundMethod: "card",
+            refundPercentage: 0,
+            paidAmountCents: 12000,
+            settledAmountCents: 0,
+            retainedAmountCents: 12000,
+            changeFeeCents: 0,
+          },
+        }),
+      ],
+    });
+
+    expect(result.state).toBe("cancelled_post_payment");
+    expect(result.message).toBe(
+      "You cancelled this booking on 5 May 2026 after paying $120.00 on 2 May 2026. Under the cancellation policy in effect at the time, no refund was due and the full $120.00 was retained. No further payment is required."
+    );
+    // The duplicate-capture refund amount/date never leaks into the narrative.
+    expect(result.message).not.toContain("$50.00");
+    expect(result.message).not.toContain("3 May 2026");
+    expect(result.message).not.toContain("was refunded");
   });
 
   it("describes a credit refund as account credit rather than a card refund", () => {
