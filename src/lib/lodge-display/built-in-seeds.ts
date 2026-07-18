@@ -405,7 +405,7 @@ const NIGHTS_AHEAD_LAYOUT: BuiltInLayoutSeed = {
   key: "nights-ahead",
   name: "Nights ahead",
   description:
-    "The coming nights at a glance — room-level night columns (rooms shown when bed allocation is on) over a committee-notice band that appears only when a notice is set.",
+    "The next three nights at a glance — room-level night columns (rooms shown when bed allocation is on) over a committee-notice band that appears only when a notice is set.",
   bodyHtml: NIGHTS_AHEAD_BODY,
   defaultCss: NIGHTS_AHEAD_CSS,
   areas: [
@@ -413,14 +413,14 @@ const NIGHTS_AHEAD_LAYOUT: BuiltInLayoutSeed = {
       key: "planner",
       description: "The coming nights, one column each.",
       kind: "static",
-      // Ask for the module's own ceiling (NIGHT_COLUMNS_MAX_DAYS = 5). Note this
-      // is aspirational today: the display-state device window is 3 days by
-      // default, so a stock device currently renders 3 night columns regardless.
-      // Widening that window is a tracked follow-up; until then the board is
-      // named "Nights ahead" (not "Week ahead") to stay honest about the count.
+      // A permanent 3-night board: `days` matches NIGHT_COLUMNS_MAX_DAYS = 3,
+      // which in turn matches the fixed 3-day display-device data window
+      // (issue #2056 Option C). Bookings beyond three nights are never fetched,
+      // so asking for more would render fewer columns than promised — hence the
+      // name "Nights ahead" over the next three nights, never "Week ahead".
       defaultContent: {
         module: "night-columns",
-        options: { days: 5, "show-rooms": true },
+        options: { days: 3, "show-rooms": true },
       },
     },
     {
@@ -438,7 +438,7 @@ const NIGHTS_AHEAD_TEMPLATE: BuiltInTemplateSeed = {
   name: "Nights ahead",
   layoutKey: "nights-ahead",
   slotContent: {
-    planner: { module: "night-columns", options: { days: 5, "show-rooms": true } },
+    planner: { module: "night-columns", options: { days: 3, "show-rooms": true } },
     notice: { module: "notice-board" },
   },
   cssOverrides: "",

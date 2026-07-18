@@ -131,7 +131,7 @@ coverage of the module catalogue: they are the first built-in use of
 | **Whole lodge** | occupancy-grid · welcome · notice-board | A rotating statement: the whole-lodge blockout when the lodge is booked out, a welcome panel, and a committee notice when one is set. |
 | **Singles house** | singles-board · notice-board | The by-booking singles board, rotating with a committee notice when one is set. |
 | **Room by room** | room-cards · arrivals-board | Tonight's rooms as cards (who sleeps where) with a live arrivals side rail. Room cards need bed allocation. |
-| **Nights ahead** | night-columns · notice-board | The coming nights at a glance — room-level night columns (rooms shown when bed allocation is on) over a committee-notice band that appears only when a notice is set. |
+| **Nights ahead** | night-columns · notice-board | The next three nights at a glance — room-level night columns (rooms shown when bed allocation is on) over a committee-notice band that appears only when a notice is set. |
 | **Lodge operations** | status-board · chores-board · notice-board | The roomless tonight status board (arriving / staying / leaving) with a chores and notice rail; the chores card hides itself when the Chores module is off, so the rail keeps its shape. |
 | **Welcome kiosk** | welcome · lodge-rules · notice-board | Maximum-privacy greeter: a welcome hero over a rotator cycling the house rules and (when set) the committee notice. **Shows no guest roster or arrivals names** — only the whole-lodge group label, reduced to the lodge's privacy setting; safe for the most public spot in the lodge. |
 

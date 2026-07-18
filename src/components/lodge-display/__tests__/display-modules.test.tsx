@@ -12,7 +12,11 @@ import { OccupancyGrid } from "@/components/lodge-display/modules/occupancy-grid
 import { SinglesBoard } from "@/components/lodge-display/modules/singles-board";
 import { WelcomePanel } from "@/components/lodge-display/modules/welcome-panel";
 import { DISPLAY_MODULE_COMPONENTS } from "@/components/lodge-display/modules";
-import { intOption } from "@/components/lodge-display/modules/module-options";
+import {
+  intOption,
+  NIGHT_COLUMNS_DEFAULT_DAYS,
+  NIGHT_COLUMNS_MAX_DAYS,
+} from "@/components/lodge-display/modules/module-options";
 
 // Issue #30 (LTV-005): the booking/occupancy display modules — pure functions
 // of the privacy-reduced DisplayState. Fixtures mirror the payload the
@@ -383,5 +387,16 @@ describe("module map and options (AC6/AC7)", () => {
     expect(intOption({ days: "4" }, "days", 3, { min: 1, max: 7 })).toBe(4);
     expect(intOption({ days: 99 }, "days", 3, { min: 1, max: 7 })).toBe(7);
     expect(intOption({ days: "banana" }, "days", 3, { min: 1, max: 7 })).toBe(3);
+  });
+
+  it("night-columns is a permanent 3-night board (matches the fixed device window, #2056)", () => {
+    // Option C: the board ceiling matches the 3-day display-device data window,
+    // so a template promising more nights honestly renders three, never more.
+    expect(NIGHT_COLUMNS_DEFAULT_DAYS).toBe(3);
+    expect(NIGHT_COLUMNS_MAX_DAYS).toBe(3);
+    const bounds = { min: 1, max: NIGHT_COLUMNS_MAX_DAYS };
+    expect(intOption({ days: 7 }, "days", NIGHT_COLUMNS_DEFAULT_DAYS, bounds)).toBe(3);
+    expect(intOption({ days: "5" }, "days", NIGHT_COLUMNS_DEFAULT_DAYS, bounds)).toBe(3);
+    expect(intOption({ days: 2 }, "days", NIGHT_COLUMNS_DEFAULT_DAYS, bounds)).toBe(2);
   });
 });
