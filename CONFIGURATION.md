@@ -17,16 +17,37 @@ example and edit it:
 cp config/club.example.json config/club.json
 ```
 
-You can also run:
+Copying the example is optional. Under the DB-first model the club's live
+configuration lives in the **database**, and `config/club.json` is only an
+optional seed/fallback (see "DB-first identity" below). The primary way to
+configure a club is the admin UI at `/admin/setup` and its linked editors
+(identity, lodges/capacity, seasons/rates, email, Stripe, Xero).
+
+You can also run the setup wizard once the database is migrated and seeded:
 
 ```bash
 npm run setup:wizard
 ```
 
-The wizard writes `config/club.json` only. It does not write `.env` files and
-does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
+The wizard now **writes the club's configuration to the database**, not to a
+file — it upserts the same settings rows the admin editors write:
 
-`config/club.json` is validated by `src/config/schema.ts`.
+- club name / short name → `ClubIdentitySettings`
+- club/booking name, email from-name, support and contact email, public URL →
+  `EmailMessageSetting`
+- total bunk/bed capacity → `LodgeSettings.capacity`
+- age-tier labels, ages, and subscription rules → `AgeTierSetting` (the four
+  fixed slots INFANT/CHILD/YOUTH/ADULT; per-tier nightly **rates** are set at
+  `/admin/seasons`, not by the wizard)
+
+It writes no `config/club.json`, no `.env` file, and stores no API keys, OAuth
+secrets, SMTP secrets, or bearer tokens. If the database is not yet reachable
+(pre-migration), the wizard writes nothing and instead points you at
+`/admin/setup` to complete configuration after the deploy. Re-running the wizard
+against an already-configured database prompts for confirmation before it
+overwrites existing values (it is an interactive operator tool).
+
+`config/club.json`, when present, is validated by `src/config/schema.ts`.
 
 ### Boot-safe config loading
 
@@ -150,7 +171,11 @@ The now-dead `NEXT_PUBLIC_CONTACT_EMAIL` build arg was deleted at the same time.
 `CONTACT_EMAIL` env var must set the DB `contactEmail` under Admin > Email
 Messages; if left unset it falls back to `club.json`'s `contactEmail`, then to
 the support address, per the precedence above (via the boot self-heal chain),
-so removing the env var causes no hard break.
+so removing the env var causes no hard break. As a safety net, if any of the
+removed vars (`EMAIL_FROM_NAME`, `SUPPORT_EMAIL`, `CONTACT_EMAIL`,
+`NEXT_PUBLIC_CONTACT_EMAIL`) is still set at boot, the server logs a single
+warning naming it (scope `ignored-email-env`) so an operator knows the value is
+ignored and identity is admin-managed.
 
 Split-booking confirmations depend on the `{{provisionalGuestsNote}}` token in
 the **booking-confirmed** body (Admin > Email Messages): it renders the
@@ -172,7 +197,7 @@ silently lose the "held provisionally / charged later" explanation.
 | `socialLinks.facebook`                             | no       | Facebook URL used by public pages/footer. Must be an http(s) URL, like `publicUrl`. DB-first: admin-editable as **Facebook URL** under Club Identity (`ClubIdentitySettings.facebookUrl`); this file value is the seed/fallback. |
 | `beds[].id`                                        | yes      | Stable bed or lodge identifier.                                                                                  |
 | `beds[].name`                                      | yes      | User-facing bed/lodge name.                                                                                      |
-| `beds[].capacity`                                  | yes      | Positive integer fallback/import capacity.                                                                       |
+| `beds[].capacity`                                  | yes      | Positive integer. Seed-template/import capacity + the value the boot self-heal backfills into the default lodge (not read at runtime, #1982). |
 | `beds[].type`                                      | yes      | One of `dormitory`, `private`, or `shared`.                                                                      |
 | `ageTiers[].id`                                    | yes      | One of `INFANT`, `CHILD`, `YOUTH`, or `ADULT`. (`NOT_APPLICABLE` is the fixed organisation/school tier — server-managed, never configured here.) |
 | `ageTiers[].label`                                 | yes      | User-facing age-tier label.                                                                                      |
@@ -234,9 +259,16 @@ active bed count from that configurator — unless a per-lodge capacity is set
 below that count, which caps it (the lower of the two applies, so a lodge may
 have more beds than it is allowed to sleep). If the module is disabled, or the
 module is enabled but no active beds exist yet, the system falls back to the
-per-lodge capacity, else the `beds[].capacity` total in `config/club.json`. Use
-the Rooms & Beds import action to seed the configurator from `config/club.json`
-during transition. See `docs/CAPACITY_MODEL.md` for the full resolution table.
+per-lodge `LodgeSettings.capacity`; if that is also unset the lodge resolves to
+**0** (unbookable) and the setup-readiness Club Config check warns.
+
+Since #1982 the DB is the **sole runtime source** of booking capacity —
+`beds[].capacity` in `config/club.json` is **not** read at runtime. Instead the
+default lodge's `LodgeSettings.capacity` is backfilled from the `config/club.json`
+bed total by the boot-time config self-heal (see `DEPLOYMENT.md`), and
+`config/club.json` remains a **seed template**: use the Rooms & Beds import
+action to seed the configurator from it. See `docs/CAPACITY_MODEL.md` for the
+full resolution table.
 
 Keep all money values in integer cents.
 
@@ -760,10 +792,17 @@ Run this before bootstrapping a new install:
 npm run setup:check
 ```
 
-The check validates `config/club.json`, environment variable presence/format,
-module capability flags, and first-install readiness. Database-backed checks,
-including Admin Modules activation, are reported inside the admin setup wizard
-after migrations and seed data run.
+The check validates environment variable presence/format, module capability
+flags, and first-install readiness. It reads club configuration **DB-first**: it
+attempts a database snapshot and reports the club-config, age-tier, admin,
+booking, and integration steps from real database state. When the database is
+reachable, an absent `config/club.json` is normal — the club-config step is
+satisfied by the persisted identity (`ClubIdentitySettings` /
+`EmailMessageSetting`), not by a file. A **malformed** primary `config/club.json`
+still surfaces loudly as **blocked**. When the database is not reachable
+(pre-migration), the DB-backed steps are reported as "not checked" and the
+club-config step is a warning that points at `/admin/setup` rather than a hard
+block.
 
 After signing in as an administrator, open `/admin/setup` to review:
 

@@ -146,6 +146,46 @@ describe("scalePeopleCount", () => {
 });
 
 // ---------------------------------------------------------------------------
+// allocateChores - capacity threading (#2021 / #1982 residual)
+// ---------------------------------------------------------------------------
+
+describe("allocateChores - capacity divisor threading", () => {
+  // 20 adult guests, one essential chore recommending 1..5 people. At 20 guests
+  // the divisor decides how many are needed: capacity 20 => full (max 5),
+  // capacity 40 => half-scaled (3).
+  const guests = Array.from({ length: 20 }, (_, i) =>
+    makeGuest({ id: `guest-${i}`, bookingId: `booking-${i}` }),
+  );
+  const chore = makeChore({
+    id: "sweep",
+    isEssential: true,
+    recommendedPeopleMin: 1,
+    recommendedPeopleMax: 5,
+    ageRestriction: "ANY",
+    minAge: 0,
+  });
+
+  it("scales people-counts by a passed 40-capacity (not the fixed 20 fallback)", () => {
+    const result = allocateChores([chore], guests, [], { capacity: 40 });
+    // scalePeopleCount(1, 5, 20, 40): ratio 0.5 => round(1 + 4*0.5) = 3
+    expect(result).toHaveLength(3);
+  });
+
+  it("falls back to the fixed constant divisor when no capacity is passed", () => {
+    const result = allocateChores([chore], guests, []);
+    // Default divisor is FALLBACK_LODGE_CAPACITY (20); 20 guests >= 20 => max 5
+    expect(result).toHaveLength(5);
+  });
+
+  it("an explicit 20 capacity matches the fallback path", () => {
+    const passed = allocateChores([chore], guests, [], { capacity: 20 });
+    const fallback = allocateChores([chore], guests, []);
+    expect(passed).toHaveLength(fallback.length);
+    expect(passed).toHaveLength(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // selectChoresForOccupancy
 // ---------------------------------------------------------------------------
 

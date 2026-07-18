@@ -304,6 +304,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     lodge: {
       findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
     },
+    // #1982: default lodge capacity is a self-healed DB override.
+    lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     booking: {
       findUnique: vi.fn().mockResolvedValue(booking),
       update: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) =>

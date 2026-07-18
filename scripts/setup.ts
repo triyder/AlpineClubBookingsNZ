@@ -11,11 +11,22 @@ import { clubConfigSchema, type ClubConfig } from "../src/config/schema";
 // `clubConfig` singleton load. This is the same constant the runtime loader uses
 // as its last-resort default — no duplicate default can drift out of sync.
 import { SAFE_DEFAULT_CONFIG } from "../src/config/safe-default-config";
+import type { AgeTier } from "@prisma/client";
+import { prisma } from "../src/lib/prisma";
 import {
   buildSetupReadiness,
   getSetupRequiredEnvNames,
   renderSetupCheckReport,
+  type SetupDatabaseSnapshot,
 } from "../src/lib/setup-readiness";
+import { getSetupDatabaseSnapshot } from "../src/lib/setup-readiness-db";
+import {
+  applyWizardConfigToDatabase,
+  MAX_LODGE_CAPACITY,
+  readWizardConfigState,
+  type WizardConfigState,
+  type WizardConfigValues,
+} from "../src/lib/setup-wizard-db";
 
 type AgeTierConfig = ClubConfig["ageTiers"][number];
 
@@ -57,11 +68,15 @@ async function askInt(
   rl: ReturnType<typeof createInterface>,
   label: string,
   defaultValue: number,
+  options: { max?: number } = {},
 ) {
   const raw = await ask(rl, label, String(defaultValue));
   const value = Number.parseInt(raw, 10);
   if (!Number.isInteger(value) || value < 0) {
     throw new Error(`${label} must be a non-negative integer`);
+  }
+  if (options.max !== undefined && value > options.max) {
+    throw new Error(`${label} must be no greater than ${options.max}`);
   }
   return value;
 }
@@ -79,19 +94,6 @@ async function askBoolean(
   throw new Error(`${label} must be answered y or n`);
 }
 
-async function askCents(
-  rl: ReturnType<typeof createInterface>,
-  label: string,
-  defaultCents: number,
-) {
-  const raw = await ask(rl, `${label} dollars`, (defaultCents / 100).toFixed(2));
-  const dollars = Number.parseFloat(raw);
-  if (!Number.isFinite(dollars) || dollars < 0) {
-    throw new Error(`${label} must be a non-negative amount`);
-  }
-  return Math.round(dollars * 100);
-}
-
 function sortAgeTiers(tiers: AgeTierConfig[]) {
   const order = new Map([
     ["INFANT", 0],
@@ -104,13 +106,43 @@ function sortAgeTiers(tiers: AgeTierConfig[]) {
   });
 }
 
+// On the overwrite path, prefer the CURRENT DB age-tier values over the
+// config-file defaults so an operator who keeps the defaults preserves prior
+// admin edits (label / age boundaries / subscription rule). Cold install (no DB
+// rows) keeps the config/SAFE_DEFAULT tiers unchanged. Rates and other fields
+// the wizard never collects ride along from the config defaults.
+function mergeAgeTierDefaults(
+  configDefaults: AgeTierConfig[],
+  dbTiers: WizardConfigState["current"]["ageTiers"],
+): AgeTierConfig[] {
+  if (dbTiers.length === 0) return configDefaults;
+  const byTier = new Map(dbTiers.map((tier) => [String(tier.tier), tier]));
+  return configDefaults.map((tier) => {
+    const dbTier = byTier.get(tier.id);
+    if (!dbTier) return tier;
+    return {
+      ...tier,
+      label: dbTier.label || tier.label,
+      minAge: dbTier.minAge,
+      maxAge: dbTier.maxAge,
+      subscriptionRequiredForBooking: dbTier.subscriptionRequiredForBooking,
+    };
+  });
+}
+
+// The wizard collects the AgeTierSetting-editable fields only — label, minimum
+// age, and whether the tier needs a paid subscription to book. The four slots
+// are fixed (INFANT/CHILD/YOUTH/ADULT). Per-tier nightly RATES are NOT collected
+// here: they live in the seasons/rates tables and are set at /admin/seasons.
+// Default nightly rates ride along unchanged purely so the collected config
+// still validates against clubConfigSchema before it is mapped to DB writes.
 async function collectAgeTiers(
   rl: ReturnType<typeof createInterface>,
   defaults: AgeTierConfig[],
 ) {
   const keepDefaults = await askBoolean(
     rl,
-    "Use the existing four age tiers and rate defaults",
+    "Use the existing four age tiers (labels, ages, subscription rules)",
     true,
   );
   if (keepDefaults) return sortAgeTiers(defaults);
@@ -131,32 +163,6 @@ async function collectAgeTiers(
       minAge,
       maxAge: tier.maxAge,
       subscriptionRequiredForBooking,
-      nightlyRates: {
-        winter: {
-          memberCents: await askCents(
-            rl,
-            `${tier.id} winter member nightly rate`,
-            tier.nightlyRates.winter.memberCents,
-          ),
-          nonMemberCents: await askCents(
-            rl,
-            `${tier.id} winter non-member nightly rate`,
-            tier.nightlyRates.winter.nonMemberCents,
-          ),
-        },
-        summer: {
-          memberCents: await askCents(
-            rl,
-            `${tier.id} summer member nightly rate`,
-            tier.nightlyRates.summer.memberCents,
-          ),
-          nonMemberCents: await askCents(
-            rl,
-            `${tier.id} summer non-member nightly rate`,
-            tier.nightlyRates.summer.nonMemberCents,
-          ),
-        },
-      },
     });
   }
 
@@ -172,28 +178,76 @@ async function runWizard() {
 
   try {
     console.log("AlpineClubBookingsNZ setup wizard");
-    console.log("This writes config/club.json only. Secrets stay in environment variables.\n");
+    console.log(
+      "This writes the club's configuration to the DATABASE (identity, capacity,\n" +
+        "and age tiers). It writes no files and stores no secrets — set secrets in\n" +
+        "environment variables and manage rates/seasons at /admin/setup.\n",
+    );
 
-    const name = await ask(rl, "Club name", defaults.name);
-    const shortName = await ask(rl, "Short name", defaults.shortName ?? "");
-    const supportEmail = await ask(rl, "Support email", defaults.supportEmail);
+    // Probe the DB first. A thrown error means it is unreachable or not yet
+    // migrated (pre-deploy) — never write; guide the operator to /admin/setup.
+    // Probing before the prompts lets the overwrite path pre-fill prompt
+    // defaults from the CURRENT DB values, so an operator who accepts the
+    // defaults preserves prior admin edits (W2c). A cold install leaves these
+    // null and the prompts fall back to config/SAFE_DEFAULT values.
+    let state: WizardConfigState;
+    try {
+      state = await readWizardConfigState();
+    } catch {
+      console.log(
+        "\nCould not reach the database, so nothing was written.\n" +
+          "The setup wizard now writes configuration to the database, not to a file.\n" +
+          "Complete the deploy first:\n" +
+          "- Set env values manually; do not commit secrets.\n" +
+          "- Run npm run db:migrate && npm run db:seed.\n" +
+          "- Then sign in as the seeded admin and finish setup at /admin/setup\n" +
+          "  (or re-run npm run setup:wizard once the database is reachable).",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const current = state.current;
+
+    const name = await ask(rl, "Club name", current.name ?? defaults.name);
+    const shortName = await ask(
+      rl,
+      "Short name",
+      current.shortName ?? defaults.shortName ?? "",
+    );
+    const supportEmail = await ask(
+      rl,
+      "Support email",
+      current.supportEmail ?? defaults.supportEmail,
+    );
     const contactEmail = await ask(
       rl,
       "Bookings/contact email",
-      defaults.contactEmail ?? defaults.supportEmail,
+      current.contactEmail ?? defaults.contactEmail ?? defaults.supportEmail,
     );
-    const publicUrl = (await ask(rl, "Public URL without trailing slash", defaults.publicUrl)).replace(/\/+$/, "");
+    const publicUrl = (
+      await ask(
+        rl,
+        "Public URL without trailing slash",
+        current.publicUrl ?? defaults.publicUrl,
+      )
+    ).replace(/\/+$/, "");
     const emailFromName = await ask(
       rl,
       "Email sender display name",
-      defaults.emailFromName || `${name} - Online Booking System`,
+      current.emailFromName ??
+        (defaults.emailFromName || `${name} - Online Booking System`),
     );
     const capacity = await askInt(
       rl,
       "Total bunk/bed capacity",
-      defaults.beds.reduce((total, bed) => total + bed.capacity, 0),
+      current.capacity ??
+        defaults.beds.reduce((total, bed) => total + bed.capacity, 0),
+      { max: MAX_LODGE_CAPACITY },
     );
-    const ageTiers = await collectAgeTiers(rl, defaults.ageTiers);
+    const ageTiers = await collectAgeTiers(
+      rl,
+      mergeAgeTierDefaults(defaults.ageTiers, current.ageTiers),
+    );
 
     const nextConfig: ClubConfig = {
       ...defaults,
@@ -216,7 +270,7 @@ async function runWizard() {
 
     const parsed = clubConfigSchema.safeParse(nextConfig);
     if (!parsed.success) {
-      console.error("Config was not written because validation failed:");
+      console.error("Nothing was written because validation failed:");
       for (const issue of parsed.error.issues) {
         console.error(`- ${issue.path.join(".") || "root"}: ${issue.message}`);
       }
@@ -224,13 +278,68 @@ async function runWizard() {
       return;
     }
 
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    fs.writeFileSync(
-      CLUB_CONFIG_PATH,
-      `${JSON.stringify(parsed.data, null, 2)}\n`,
-      "utf8",
-    );
-    console.log(`\nWrote ${CLUB_CONFIG_PATH}`);
+    // Map the validated config to the DB write shape. Nightly rates carried in
+    // parsed.data.ageTiers are intentionally dropped — they are configured at
+    // /admin/seasons, not stored on AgeTierSetting.
+    const values: WizardConfigValues = {
+      name: parsed.data.name,
+      shortName: parsed.data.shortName ?? null,
+      supportEmail: parsed.data.supportEmail,
+      contactEmail: parsed.data.contactEmail ?? parsed.data.supportEmail,
+      publicUrl: parsed.data.publicUrl,
+      emailFromName: parsed.data.emailFromName,
+      capacity: parsed.data.beds.reduce((total, bed) => total + bed.capacity, 0),
+      ageTiers: parsed.data.ageTiers.map((tier, sortOrder) => ({
+        tier: tier.id as AgeTier,
+        minAge: tier.minAge,
+        maxAge: tier.maxAge,
+        label: tier.label,
+        subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
+        familyGroupRequestCreateMemberAllowed:
+          tier.familyGroupRequestCreateMemberAllowed,
+        sortOrder,
+      })),
+    };
+
+    // Never-overwrite guard, adapted for an interactive operator tool: an
+    // already-configured DB is overwritten only after explicit confirmation.
+    const alreadyConfigured =
+      state.hasClubIdentity ||
+      state.hasEmailSettings ||
+      state.hasLodgeCapacity ||
+      state.ageTierCount > 0;
+    if (alreadyConfigured) {
+      console.log(
+        `\nThe database already holds club configuration${
+          state.existingClubName ? ` for "${state.existingClubName}"` : ""
+        }.`,
+      );
+      const overwrite = await askBoolean(
+        rl,
+        "Overwrite the existing club identity, email/contact settings, capacity, and age tiers with the values above",
+        false,
+      );
+      if (!overwrite) {
+        console.log("Left the existing configuration unchanged. Nothing was written.");
+        return;
+      }
+    }
+
+    // The DB was reachable at the probe above, but it can die between the probe
+    // and this write. Guard the write so that failure surfaces a clear message
+    // and a non-zero exit instead of an unhandled rejection (G1). The writes are
+    // idempotent upserts, so the wizard is safe to re-run.
+    try {
+      await applyWizardConfigToDatabase(values);
+    } catch {
+      console.error(
+        "\nConfiguration write failed; nothing may have been fully applied.\n" +
+          "The wizard is safe to re-run once the database is reachable.",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    console.log("\nWrote club configuration to the database.");
 
     const missingEnv = getSetupRequiredEnvNames().filter((name) => {
       if (name === "AUTH_SECRET or NEXTAUTH_SECRET") {
@@ -247,16 +356,33 @@ async function runWizard() {
 
     console.log("\nNext steps:");
     console.log("- Set env values manually; do not commit secrets.");
-    console.log("- Run npm run db:migrate && npm run db:seed.");
-    console.log("- Log in as the seeded admin and finish /admin/setup and /admin/modules.");
+    console.log(
+      "- Sign in as the seeded admin and open /admin/setup to review readiness,",
+    );
+    console.log(
+      "  and set seasons and nightly rates at /admin/seasons and modules at /admin/modules.",
+    );
   } finally {
     rl.close();
   }
 }
 
-function runCheck() {
+async function runCheck() {
+  // DB-first readiness (#1987, C8): attempt a database snapshot so the club
+  // config, admin, booking, and integration steps reflect real DB state. When
+  // the DB is unreachable (pre-migrate) the snapshot is omitted and those steps
+  // report as "not checked" rather than failing the command.
+  let database: SetupDatabaseSnapshot | undefined;
+  try {
+    database = await getSetupDatabaseSnapshot();
+  } catch {
+    console.log(
+      "Note: the database was not reachable; DB-backed steps are reported as not checked.\n",
+    );
+  }
   const readiness = buildSetupReadiness({
     configDir: CONFIG_DIR,
+    database,
   });
   console.log(renderSetupCheckReport(readiness));
   if (readiness.status === "blocked") {
@@ -266,18 +392,23 @@ function runCheck() {
 
 async function main() {
   const command = process.argv[2] ?? "check";
-  if (command === "check") {
-    runCheck();
-    return;
-  }
-  if (command === "wizard") {
-    await runWizard();
-    return;
-  }
+  try {
+    if (command === "check") {
+      await runCheck();
+      return;
+    }
+    if (command === "wizard") {
+      await runWizard();
+      return;
+    }
 
-  console.error(`Unknown setup command: ${command}`);
-  console.error("Usage: tsx scripts/setup.ts check|wizard");
-  process.exitCode = 1;
+    console.error(`Unknown setup command: ${command}`);
+    console.error("Usage: tsx scripts/setup.ts check|wizard");
+    process.exitCode = 1;
+  } finally {
+    // Both commands may open a database connection; release it so the CLI exits.
+    await prisma.$disconnect().catch(() => {});
+  }
 }
 
 void main();

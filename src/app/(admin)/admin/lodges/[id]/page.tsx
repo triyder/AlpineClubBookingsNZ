@@ -57,7 +57,8 @@ const CAPACITY_SOURCE_LABELS: Record<string, string> = {
   configured_beds: "active configured beds",
   capped_beds: "the capacity set below, capping the bed count",
   capacity_override: "the capacity set below",
-  club_config: "the club's default lodge capacity",
+  // `club_config` was retired in #1982 (the club.json runtime fallback was
+  // removed); a lodge with no beds and no override now resolves to 0.
   unconfigured_lodge: "not configured yet",
 };
 

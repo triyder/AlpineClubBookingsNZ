@@ -31,6 +31,8 @@ vi.mock("@/lib/prisma", () => ({
     lodge: {
       findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
     },
+    // #1982: default lodge capacity is a self-healed DB override.
+    lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     booking: {
       findUnique: vi.fn(),
       findMany: vi.fn(),

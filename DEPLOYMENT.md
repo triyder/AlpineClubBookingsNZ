@@ -165,14 +165,22 @@ From the target host:
 git clone https://github.com/<owner>/AlpineClubBookingsNZ.git AlpineClubBookingsNZ
 cd AlpineClubBookingsNZ
 cp .env.example .env
-cp config/club.example.json config/club.json
 # edit .env with your own values
-# edit config/club.json with your club identity, beds, and rates
 docker compose up -d --build postgres
 docker compose run --rm migrate
 docker compose up -d --build app app_blue app_green caddy
 docker compose ps
 ```
+
+Club identity, capacity, age tiers, seasons, and rates are configured **in the
+database**, not in a file. After the migrate/seed steps, sign in as the seeded
+admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
+seasons/rates, email, Stripe, Xero). Optionally run `npm run setup:wizard`
+against the migrated database to bootstrap the club identity, capacity, and age
+tiers from the CLI — it writes those database settings rows (no `config/club.json`
+is written). `config/club.json` remains an optional seed/fallback only: copy
+`config/club.example.json` to `config/club.json` and edit it if you want to pin
+a boot-time fallback, but it is no longer required.
 
 Create or seed accounts only for the intended environment. The first admin
 from `prisma/seed.ts` is controlled by `SEED_ADMIN_EMAIL` and
@@ -324,19 +332,26 @@ that enabled the setting added a whole **row** or a single **column**. Propertie
 This mechanism — not migration/seed backfill — is what lets later config
 "collapse" changes remove a file/env fallback without stranding an existing
 deployment: the DB is already populated with the club's real value before the
-fallback is dropped. New settings register their own step in
-`SELF_HEAL_STEPS`; the first registered step backfills the club identity
-(`ClubIdentitySettings`), and the age-tier step (#1983) backfills the
-`AgeTierSetting` tiers.
+fallback is dropped. New settings register their own step in `SELF_HEAL_STEPS`.
+Registered steps:
 
-The age-tier step differs from the identity singleton in two ways: its presence
-check is **table-empty** (any existing row means "populated", so admin-edited or
-pruned tiers are never touched), and when the table is empty it writes **one
-create-if-absent row per effective-config tier** (mirroring `prisma/seed.ts`'s
-tier seed). It heals **tiers only** — nightly rates live independently in
-`MembershipTypeSeasonRate` (#1930, E4) and are not self-healed. This lets
-`src/lib/policies/age-tier.ts` read age tiers DB-only at runtime; its hard-coded
-4-tier default is only the last-resort net when the table is still empty.
+- **`club-identity-settings`** — backfills the club identity
+  (`ClubIdentitySettings`) from `config/club.json`.
+- **`club-identity-facebook-url`** (#1984) — column-level backfill of the
+  `facebookUrl` column added after the identity row existed.
+- **`age-tiers`** (#1983) — table-empty presence + one atomic create-if-absent
+  row per effective-config tier (mirroring `prisma/seed.ts`'s tier seed); an
+  admin-edited or pruned tier set is never touched. Heals **tiers only** —
+  nightly rates live independently in `MembershipTypeSeasonRate` (#1930, E4).
+  `src/lib/policies/age-tier.ts` reads age tiers DB-only at runtime; its
+  hard-coded 4-tier default is only the last-resort net for an empty table.
+- **`lodge-capacity`** (#1982) — backfills the default lodge's
+  `LodgeSettings.capacity` from the `config/club.json` bed total (column-level:
+  it fills a null `capacity`, create-if-absent, and never overwrites an
+  admin-set value), gated so it only fires when the lodge would otherwise
+  resolve to capacity 0. This is what keeps a Bed-Allocation-off default lodge
+  from dropping to capacity 0 — and refusing all bookings — after the runtime
+  `club.json` capacity fallback was removed.
 
 For a deliberate two-phase deploy, or to heal a cold database out-of-band
 without a restart, run the same routine manually:
