@@ -67,6 +67,9 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mockBookingFindUnique,
       update: mockBookingUpdate,
     },
+    // #1982: default lodge capacity is a self-healed DB override (the guest-add
+    // route's early getDefaultLodgeCapacity guard reads it off the singleton).
+    lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     bookingGuest: { create: mockBookingGuestCreate, update: mockBookingGuestUpdate },
     bookingModification: { create: mockBookingModCreate },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -290,6 +293,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     lodge: {
       findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
     },
+    // #1982: default lodge capacity is a self-healed DB override.
+    lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     booking: {
       findUnique: vi.fn().mockResolvedValue(booking),
       update: vi.fn().mockImplementation(({ data }) => {

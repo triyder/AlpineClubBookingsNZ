@@ -34,7 +34,7 @@ const ROOMS_PAYLOAD = {
   rooms: [],
   capacity: {
     capacity: 0,
-    source: "club_config" as const,
+    source: "unconfigured_lodge" as const,
     bedAllocationEnabled: false,
     activeBedCount: 0,
     fallbackCapacity: 0,
@@ -253,7 +253,7 @@ function stubStatefulFetch(
           rooms,
           capacity: {
             capacity: 0,
-            source: "club_config" as const,
+            source: "unconfigured_lodge" as const,
             bedAllocationEnabled: false,
             activeBedCount: 0,
             fallbackCapacity: 0,

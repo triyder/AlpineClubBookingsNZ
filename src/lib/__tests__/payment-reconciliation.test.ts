@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   sendAdminPaymentFailureAlert: vi.fn(),
   reconcileBedAllocationsForBooking: vi.fn(),
   lodgeFindFirst: vi.fn(),
+  lodgeSettingsFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -86,6 +87,11 @@ const tx = {
   lodge: {
     findFirst: (...args: unknown[]) => mocks.lodgeFindFirst(...args),
   },
+  // #1982 — the default lodge's capacity is a DB override (self-healed from the
+  // config bed total), not a club.json runtime fallback.
+  lodgeSettings: {
+    findUnique: (...args: unknown[]) => mocks.lodgeSettingsFindUnique(...args),
+  },
   booking: {
     findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
     findMany: (...args: unknown[]) => mocks.bookingFindMany(...args),
@@ -135,6 +141,7 @@ describe("markBookingPaymentSucceeded", () => {
     );
     mocks.executeRaw.mockResolvedValue(undefined);
     mocks.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
+    mocks.lodgeSettingsFindUnique.mockResolvedValue({ capacity: LODGE_CAPACITY });
     mocks.bookingFindUnique.mockResolvedValue(makeStaggeredBooking());
     mocks.paymentUpsert.mockResolvedValue({ id: "payment-1" });
     mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);

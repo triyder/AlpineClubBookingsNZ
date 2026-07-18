@@ -7,11 +7,13 @@ import {
   clubIdentitySelfHealStep,
   defineSelfHealStep,
   isUniqueConstraintError,
+  lodgeCapacitySelfHealStep,
   runConfigSelfHeal,
   SELF_HEAL_STEPS,
   type RegisteredSelfHealStep,
   type SelfHealDb,
 } from "@/lib/config-self-heal";
+import { CLUB_CONFIG_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 // The effective config Facebook link (the test config, club.example.json, sets
 // one). The facebookUrl self-heal step backfills this into the null column.
@@ -666,6 +668,445 @@ describe("ageTierSelfHealStep — config-fallback guard", () => {
   });
 });
 
+function makeLodgeSettingsDb(seedRow?: { capacity: number | null } & Record<string, unknown>) {
+  const rows = new Map<string, Record<string, unknown>>();
+  if (seedRow) rows.set("default", { id: "default", ...seedRow });
+
+  const db = {
+    lodgeSettings: {
+      findUnique: vi.fn(
+        async ({
+          where,
+          select,
+        }: {
+          where: { id: string };
+          select?: Record<string, boolean>;
+        }) => {
+          const row = rows.get(where.id);
+          if (!row) return null;
+          if (select) {
+            return Object.fromEntries(
+              Object.keys(select).map((k) => [k, row[k] ?? null]),
+            );
+          }
+          return row;
+        },
+      ),
+      // Real Prisma semantics: an existing row runs the (no-op `update: {}`)
+      // branch and is left untouched — it does NOT raise P2002. Create-if-absent
+      // only.
+      upsert: vi.fn(
+        async ({
+          where,
+          create,
+        }: {
+          where: { id: string };
+          create: Record<string, unknown>;
+        }) => {
+          if (!rows.has(where.id)) {
+            rows.set(where.id, { ...create });
+          }
+          return { id: where.id };
+        },
+      ),
+      updateMany: vi.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string; capacity: null };
+          data: { capacity: number };
+        }) => {
+          const row = rows.get(where.id);
+          // Atomic guard: only fill when capacity is still null.
+          if (row && where.capacity === null && row.capacity == null) {
+            row.capacity = data.capacity;
+            return { count: 1 };
+          }
+          return { count: 0 };
+        },
+      ),
+    },
+  };
+
+  return { rows, db: db as unknown as SelfHealDb };
+}
+
+describe("lodgeCapacitySelfHealStep — backfills the default lodge capacity (#1982)", () => {
+  it("creates the default LodgeSettings row with the config bed total on a cold DB", async () => {
+    const { rows, db } = makeLodgeSettingsDb();
+
+    const summary = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "primary",
+      steps: [lodgeCapacitySelfHealStep],
+    });
+
+    expect(summary.healed).toBe(1);
+    expect(summary.failed).toBe(0);
+    expect(rows.get("default")).toMatchObject({
+      id: "default",
+      capacity: CLUB_CONFIG_LODGE_CAPACITY,
+    });
+  });
+
+  it("fills a null capacity on an existing row without touching other columns", async () => {
+    const { rows, db } = makeLodgeSettingsDb({
+      capacity: null,
+      hutLeaderLookaheadDays: 21,
+    });
+
+    const summary = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "primary",
+      steps: [lodgeCapacitySelfHealStep],
+    });
+
+    expect(summary.healed).toBe(1);
+    expect(rows.get("default")).toMatchObject({
+      capacity: CLUB_CONFIG_LODGE_CAPACITY,
+      hutLeaderLookaheadDays: 21,
+    });
+    // The row already existed, so no create was attempted destructively.
+  });
+
+  it("never overwrites an admin-set capacity", async () => {
+    const { rows, db } = makeLodgeSettingsDb({ capacity: 7 });
+
+    const summary = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "primary",
+      steps: [lodgeCapacitySelfHealStep],
+    });
+
+    expect(summary.healed).toBe(0);
+    expect(summary.alreadyPresent).toBe(1);
+    expect(rows.get("default")).toMatchObject({ capacity: 7 });
+    // Present column → write path (upsert/updateMany) is never invoked.
+    expect(
+      (db as unknown as { lodgeSettings: { upsert: ReturnType<typeof vi.fn> } })
+        .lodgeSettings.upsert,
+    ).not.toHaveBeenCalled();
+    expect(
+      (db as unknown as { lodgeSettings: { updateMany: ReturnType<typeof vi.fn> } })
+        .lodgeSettings.updateMany,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("is idempotent and double-boot safe (second run already-present, one value)", async () => {
+    const { rows, db } = makeLodgeSettingsDb();
+
+    const first = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "primary",
+      steps: [lodgeCapacitySelfHealStep],
+    });
+    const second = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "primary",
+      steps: [lodgeCapacitySelfHealStep],
+    });
+
+    expect(first.results[0].outcome).toBe("healed");
+    expect(second.results[0].outcome).toBe("already-present");
+    expect(second.failed).toBe(0);
+    expect(rows.get("default")).toMatchObject({ capacity: CLUB_CONFIG_LODGE_CAPACITY });
+  });
+
+  it("is skipped entirely on a non-primary config (provenance guard, no writes)", async () => {
+    const { rows, db } = makeLodgeSettingsDb();
+
+    const summary = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "safe-default",
+      steps: [lodgeCapacitySelfHealStep],
+    });
+
+    expect(summary.skipped).toBe(true);
+    expect(rows.size).toBe(0);
+    expect(
+      (db as unknown as { lodgeSettings: { findUnique: ReturnType<typeof vi.fn> } })
+        .lodgeSettings.findUnique,
+    ).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A fuller LodgeSettings fake that also exposes the delegates
+ * `getDefaultLodgeCapacity` reaches through (clubModuleSettings, lodge,
+ * lodgeBed), so the E1 gate can be exercised end-to-end: the capacity step now
+ * skips healing when the default lodge already resolves > 0 via active beds.
+ */
+function makeCapacityStepDb(opts: {
+  capacity?: number | null;
+  seedRow?: boolean;
+  bedAllocation?: boolean;
+  activeBeds?: number;
+  // When false, no `lodge` delegate → the default lodge id is unresolvable, so
+  // resolveDefaultLodgeIdSafe returns null and a heal creates an UNLINKED row.
+  resolvableLodge?: boolean;
+  defaultLodgeId?: string;
+}) {
+  const {
+    capacity = null,
+    seedRow = false,
+    bedAllocation = false,
+    activeBeds = 0,
+    resolvableLodge = false,
+    defaultLodgeId = "lodge-default",
+  } = opts;
+
+  const rows = new Map<string, Record<string, unknown>>();
+  if (seedRow) rows.set("default", { id: "default", capacity });
+
+  const lodgeSettings = {
+    findUnique: vi.fn(
+      async ({
+        where,
+        select,
+      }: {
+        where: { id: string };
+        select?: Record<string, boolean>;
+      }) => {
+        const row = rows.get(where.id);
+        if (!row) return null;
+        if (select) {
+          return Object.fromEntries(
+            Object.keys(select).map((k) => [k, row[k] ?? null]),
+          );
+        }
+        return row;
+      },
+    ),
+    upsert: vi.fn(
+      async ({
+        where,
+        create,
+      }: {
+        where: { id: string };
+        create: Record<string, unknown>;
+      }) => {
+        if (!rows.has(where.id)) rows.set(where.id, { ...create });
+        return { id: where.id };
+      },
+    ),
+    updateMany: vi.fn(
+      async ({
+        where,
+        data,
+      }: {
+        where: Record<string, unknown> & { id: string };
+        data: Record<string, unknown>;
+      }) => {
+        const row = rows.get(where.id);
+        if (!row) return { count: 0 };
+        // Match every non-id column predicate (null-scoped fills).
+        for (const [key, value] of Object.entries(where)) {
+          if (key === "id") continue;
+          if ((row[key] ?? null) !== value) return { count: 0 };
+        }
+        rows.set(where.id, { ...row, ...data });
+        return { count: 1 };
+      },
+    ),
+  };
+
+  const db = {
+    lodgeSettings,
+    clubModuleSettings: {
+      findUnique: vi.fn(async () => ({ bedAllocation })),
+    },
+    lodgeBed: {
+      count: vi.fn(async () => activeBeds),
+    },
+    ...(resolvableLodge
+      ? {
+          lodge: {
+            findFirst: vi.fn(async () => ({ id: defaultLodgeId })),
+          },
+        }
+      : {}),
+  };
+
+  return { rows, db: db as unknown as SelfHealDb };
+}
+
+describe("lodgeCapacitySelfHealStep — E1 gate (never cap a Bed-Allocation-ON lodge)", () => {
+  it("does NOT write when Bed Allocation is ON with active beds and capacity is null (no silent cap)", async () => {
+    // Default lodge: Bed Allocation ON, active beds, deliberately-null capacity
+    // ("no ceiling — use the bed count"). The pre-fix heal wrote the config bed
+    // total as a capping override, reducing resolution to min(beds, total).
+    const { rows, db } = makeCapacityStepDb({
+      seedRow: true,
+      capacity: null,
+      bedAllocation: true,
+      activeBeds: 8,
+    });
+
+    const summary = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "primary",
+      steps: [lodgeCapacitySelfHealStep],
+    });
+
+    expect(summary.healed).toBe(0);
+    expect(summary.alreadyPresent).toBe(1);
+    // Capacity stays null → resolution stays at the live bed count, uncapped.
+    expect(rows.get("default")).toMatchObject({ capacity: null });
+    expect(
+      (db as unknown as { lodgeSettings: { upsert: ReturnType<typeof vi.fn> } })
+        .lodgeSettings.upsert,
+    ).not.toHaveBeenCalled();
+    expect(
+      (db as unknown as { lodgeSettings: { updateMany: ReturnType<typeof vi.fn> } })
+        .lodgeSettings.updateMany,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("DOES heal when Bed Allocation is OFF and capacity is null (tokoroa outage case)", async () => {
+    const { rows, db } = makeCapacityStepDb({
+      seedRow: true,
+      capacity: null,
+      bedAllocation: false,
+    });
+
+    const summary = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "primary",
+      steps: [lodgeCapacitySelfHealStep],
+    });
+
+    expect(summary.healed).toBe(1);
+    expect(rows.get("default")).toMatchObject({
+      capacity: CLUB_CONFIG_LODGE_CAPACITY,
+    });
+  });
+
+  it("DOES heal when Bed Allocation is ON but there are zero active beds", async () => {
+    const { rows, db } = makeCapacityStepDb({
+      seedRow: true,
+      capacity: null,
+      bedAllocation: true,
+      activeBeds: 0,
+    });
+
+    const summary = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "primary",
+      steps: [lodgeCapacitySelfHealStep],
+    });
+
+    expect(summary.healed).toBe(1);
+    expect(rows.get("default")).toMatchObject({
+      capacity: CLUB_CONFIG_LODGE_CAPACITY,
+    });
+  });
+});
+
+describe("lodgeCapacitySelfHealStep — C1 link healed row to the default lodge", () => {
+  it("links the created row to the default lodge so its capacity cannot leak to other lodges", async () => {
+    // Cold DB, Bed Allocation off, default lodge resolvable → heal + link.
+    const { rows, db } = makeCapacityStepDb({
+      seedRow: false,
+      bedAllocation: false,
+      resolvableLodge: true,
+      defaultLodgeId: "lodge-abc",
+    });
+
+    const summary = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "primary",
+      steps: [lodgeCapacitySelfHealStep],
+    });
+
+    expect(summary.healed).toBe(1);
+    expect(rows.get("default")).toMatchObject({
+      capacity: CLUB_CONFIG_LODGE_CAPACITY,
+      lodgeId: "lodge-abc",
+    });
+  });
+
+  it("leaves the created row UNLINKED (documented residual) when the default lodge is unresolvable", async () => {
+    const { rows, db } = makeCapacityStepDb({
+      seedRow: false,
+      bedAllocation: false,
+      resolvableLodge: false,
+    });
+
+    const summary = await runConfigSelfHeal({
+      db,
+      log: silentLog,
+      provenance: "primary",
+      steps: [lodgeCapacitySelfHealStep],
+    });
+
+    expect(summary.healed).toBe(1);
+    expect(rows.get("default")).toMatchObject({
+      capacity: CLUB_CONFIG_LODGE_CAPACITY,
+      lodgeId: null,
+    });
+  });
+});
+
+describe("lodgeCapacitySelfHealStep — E3 log honesty on a 0-bed config", () => {
+  it("reports already-present (not a phantom 'healed') and writes nothing when the config bed total is 0", async () => {
+    vi.resetModules();
+    vi.doMock("@/config/club", () => ({
+      clubConfig: {
+        name: "No Beds Club",
+        shortName: null,
+        hutLeaderLabel: null,
+        socialLinks: {},
+        beds: [], // 0-bed config → CLUB_CONFIG_LODGE_CAPACITY === 0
+      },
+      clubConfigSource: "primary",
+    }));
+    try {
+      const { lodgeCapacitySelfHealStep: step, runConfigSelfHeal: run } =
+        await import("@/lib/config-self-heal");
+      const { rows, db } = makeLodgeSettingsDb({ capacity: null });
+
+      const summary = await run({
+        db,
+        steps: [step],
+        log: silentLog,
+        provenance: "primary",
+      });
+
+      expect(summary.healed).toBe(0);
+      expect(summary.alreadyPresent).toBe(1);
+      expect(summary.results[0]).toMatchObject({
+        name: "lodge-capacity",
+        outcome: "already-present",
+      });
+      // No write, and capacity stays null (0-bed config has nothing to persist).
+      expect(rows.get("default")).toMatchObject({ capacity: null });
+      const settings = db as unknown as {
+        lodgeSettings: {
+          upsert: ReturnType<typeof vi.fn>;
+          updateMany: ReturnType<typeof vi.fn>;
+        };
+      };
+      expect(settings.lodgeSettings.upsert).not.toHaveBeenCalled();
+      expect(settings.lodgeSettings.updateMany).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("@/config/club");
+      vi.resetModules();
+    }
+  });
+});
+
+
 describe("registry", () => {
   it("registers the identity step first and the facebookUrl step alongside it", () => {
     expect(SELF_HEAL_STEPS[0]).toBe(clubIdentitySelfHealStep);
@@ -677,6 +1118,13 @@ describe("registry", () => {
   it("registers the age-tier step", () => {
     expect(SELF_HEAL_STEPS).toContain(ageTierSelfHealStep);
     expect(ageTierSelfHealStep.name).toBe("age-tier-settings");
+  });
+
+  it("registers the lodge-capacity step and pins the registry size", () => {
+    expect(SELF_HEAL_STEPS).toContain(lodgeCapacitySelfHealStep);
+    expect(lodgeCapacitySelfHealStep.name).toBe("lodge-capacity");
+    // A future step must consciously extend this pin.
+    expect(SELF_HEAL_STEPS).toHaveLength(4);
   });
 
   it("defineSelfHealStep binds currentValue + write into heal", async () => {
@@ -831,6 +1279,9 @@ describe("facebookUrl self-heal step (C5 #1984)", () => {
         shortName: null,
         hutLeaderLabel: null,
         socialLinks: {},
+        // The fresh module import transitively initialises lodge-capacity.ts,
+        // whose module-level bed total reduces over `beds`.
+        beds: [],
       },
       clubConfigSource: "primary",
     }));
