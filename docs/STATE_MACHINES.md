@@ -1248,7 +1248,7 @@ click /login/magic?token=… -> signIn("magic-link") verify provider:
   conditional claim updateMany({id, used:false}) count===1 -> claimed (two concurrent clicks -> at most one session)
   member gate: canLogin && active (else reject); unverified -> EMAIL_NOT_VERIFIED; forcePasswordChange -> refuse, point to Forgot password
   success -> JWT issued with twoFactorVerified=false (2FA member still routed to /login/verify)
-TTL: loadMagicLinkTtlMinutes() default 15 (LoginSecuritySetting.magicLinkTtlMinutes once #2033 lands), clamped 5..60
+TTL: read from LoginSecuritySetting.magicLinkTtlMinutes (#2033) via loadLoginSecuritySettings(), default 15, clamped 5..60
 ```
 
 To verify: enumeration safety (4 no-op cases + zero email), module-off no-op,

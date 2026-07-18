@@ -25,20 +25,9 @@ export function magicLinkTtlMs(minutes: number): number {
   return minutes * 60 * 1000;
 }
 
-/**
- * Resolve the active magic-link TTL in minutes.
- *
- * TODO(#2033): the Login & Security child lands `LoginSecuritySetting`
- * (with `magicLinkTtlMinutes`) and a `loadLoginSecuritySettings()` loader.
- * When this branch rebases onto that merge, replace the body below with:
- *
- *   const settings = await loadLoginSecuritySettings();
- *   return clampMagicLinkTtlMinutes(settings.magicLinkTtlMinutes);
- *
- * That model does NOT exist in this branch's schema (it is owned by #2033), so
- * until then this returns the code default. Keeping the function async now means
- * the one-line swap at rebase time does not ripple through the callers.
- */
-export async function loadMagicLinkTtlMinutes(): Promise<number> {
-  return DEFAULT_MAGIC_LINK_TTL_MINUTES;
-}
+// The active TTL is resolved at the call site from the club's configured
+// `LoginSecuritySetting.magicLinkTtlMinutes` (#2033) via
+// `loadLoginSecuritySettings()`, re-clamped through `clampMagicLinkTtlMinutes`.
+// That loader is prisma-backed and must stay out of this module so the
+// admin card (a client component) can import the constants above without
+// pulling prisma into the browser bundle.

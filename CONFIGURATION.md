@@ -1292,7 +1292,7 @@ cannot be read, optional modules fail closed.
 | Communications | on | Admin bulk email to members. Transactional notifications are unaffected. |
 | Ski-field conditions | on | Live mountain/road status panel, public API routes, and admin cache controls. |
 | Two-factor authentication | off | Requires users to complete authenticator-app, email-code, or recovery-code verification after password login. |
-| Email sign-in link | off | Lets members request a single-use email link to sign in without their password (additive to password login, never a replacement). Only ever works for existing active members with a verified email; the `magic-link-login` link expiry (default 15 minutes, 5–60 range) is set on the Login & Security page. |
+| Email sign-in link | off | Lets members request a single-use email link to sign in without their password (additive to password login, never a replacement). Only ever works for existing active members with a verified email; the `magic-link-login` link expiry defaults to 15 minutes (stored on the Login & Security settings, range 5–60) and is read by the sign-in request flow. |
 | Google Analytics | off | Consent-gated GA4 tracking on public website and public account pages. Requires `NEXT_PUBLIC_GA_MEASUREMENT_ID`; GA scripts load only after a visitor accepts the analytics banner. |
 
 Cron-backed optional module schedules are still registered when
@@ -1321,7 +1321,7 @@ the `security` category.
 | Require a lowercase letter | off | on/off | `a–z` |
 | Require a number | off | on/off | `0–9` |
 | Require a symbol | off | on/off | any non-alphanumeric character |
-| Magic-link TTL (minutes) | 15 | 5–60 | Field only; reserved for the magic-link sign-in work and not read yet. |
+| Magic-link TTL (minutes) | 15 | 5–60 | Read by the magic-link sign-in flow (#2034). Shown on the Login & Security page's Email sign-in link card; editing the value from that page is a planned follow-up, so it is read-only there for now. |
 
 The policy governs only the paths where a member **chooses** a password —
 `/change-password` and the reset/setup-invite redemption at `/reset-password`.
@@ -1370,8 +1370,11 @@ claims the token single-use via a conditional `updateMany` (so two concurrent
 clicks mint at most one session), refuses members with a pending forced password
 change (pointing them at Forgot password, which clears the flag), and never sets
 `twoFactorVerified` — so a 2FA-enabled member is still challenged on
-`/login/verify`. The link expiry defaults to 15 minutes and is configurable
-between 5 and 60 minutes on the Login & Security page.
+`/login/verify`. The link expiry defaults to 15 minutes (supported range 5–60),
+is stored on the `LoginSecuritySetting` singleton, and is read by the request
+route when a link is minted. The Login & Security page's Email sign-in link card
+shows the current expiry; changing it from that page is a planned follow-up, so
+the value is read-only there for now.
 
 Users enroll either an authenticator app (TOTP) or an email one-time code. TOTP
 secrets are encrypted at rest using key material derived from `AUTH_SECRET` (or

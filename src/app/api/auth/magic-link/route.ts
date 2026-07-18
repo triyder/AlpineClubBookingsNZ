@@ -6,7 +6,8 @@ import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { issueActionToken } from "@/lib/action-tokens";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { loadMagicLinkTtlMinutes, magicLinkTtlMs } from "@/lib/magic-link";
+import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
+import { clampMagicLinkTtlMinutes, magicLinkTtlMs } from "@/lib/magic-link";
 
 const magicLinkSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -57,7 +58,12 @@ export async function POST(req: NextRequest) {
     // response, so enabling/disabling the module and account state never leak.
     if (modules.magicLink && member && member.active && member.emailVerified) {
       const { token, tokenHash } = issueActionToken();
-      const ttlMinutes = await loadMagicLinkTtlMinutes();
+      // Honour the club-configured expiry from the Login & Security settings
+      // (#2033 owns the LoginSecuritySetting row; the value is already clamped
+      // to the supported range there — re-clamp defensively). Defaults to 15
+      // minutes when no row is configured.
+      const { policy } = await loadLoginSecuritySettings();
+      const ttlMinutes = clampMagicLinkTtlMinutes(policy.magicLinkTtlMinutes);
       const expiresAt = new Date(Date.now() + magicLinkTtlMs(ttlMinutes));
 
       // Invalidate any existing magic-link tokens for this member so only the

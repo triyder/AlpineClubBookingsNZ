@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   applyRateLimit: vi.fn(),
   sendMagicLinkEmail: vi.fn(),
   loadEffectiveModuleFlags: vi.fn(),
+  loadLoginSecuritySettings: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -26,6 +27,9 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/email", () => ({ sendMagicLinkEmail: h.sendMagicLinkEmail }));
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: h.loadEffectiveModuleFlags,
+}));
+vi.mock("@/lib/login-security-settings", () => ({
+  loadLoginSecuritySettings: h.loadLoginSecuritySettings,
 }));
 vi.mock("@/lib/logger", () => ({
   default: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -55,6 +59,10 @@ beforeEach(() => {
   h.create.mockResolvedValue({ id: "token-1" });
   h.sendMagicLinkEmail.mockResolvedValue(undefined);
   h.loadEffectiveModuleFlags.mockResolvedValue({ magicLink: true });
+  // Default policy: 15-minute TTL (an unconfigured club).
+  h.loadLoginSecuritySettings.mockResolvedValue({
+    policy: { magicLinkTtlMinutes: 15 },
+  });
 });
 
 async function expectSilentNoOp(body: unknown) {
@@ -126,7 +134,7 @@ describe("POST /api/auth/magic-link — happy path", () => {
     expect(createArg.data.memberId).toBe("member-1");
     expect(typeof createArg.data.tokenHash).toBe("string");
     expect(createArg.data.expiresAt).toBeInstanceOf(Date);
-    // Default 15-minute TTL (code default until #2033).
+    // Default 15-minute TTL (an unconfigured club).
     const ttlMs = createArg.data.expiresAt.getTime() - Date.now();
     expect(ttlMs).toBeGreaterThan(14 * 60 * 1000);
     expect(ttlMs).toBeLessThanOrEqual(15 * 60 * 1000 + 1000);
@@ -136,6 +144,34 @@ describe("POST /api/auth/magic-link — happy path", () => {
     const [emailArg, tokenArg] = h.sendMagicLinkEmail.mock.calls[0];
     expect(emailArg).toBe("member@example.com");
     expect(tokenArg).not.toBe(createArg.data.tokenHash);
+  });
+
+  it("honours the club-configured link expiry from LoginSecuritySetting", async () => {
+    h.findFirst.mockResolvedValue(activeVerifiedMember);
+    h.loadLoginSecuritySettings.mockResolvedValue({
+      policy: { magicLinkTtlMinutes: 30 },
+    });
+
+    await POST(req({ email: "member@example.com" }));
+
+    const createArg = h.create.mock.calls[0][0];
+    const ttlMs = createArg.data.expiresAt.getTime() - Date.now();
+    expect(ttlMs).toBeGreaterThan(29 * 60 * 1000);
+    expect(ttlMs).toBeLessThanOrEqual(30 * 60 * 1000 + 1000);
+  });
+
+  it("re-clamps an out-of-range persisted expiry to the supported bound", async () => {
+    h.findFirst.mockResolvedValue(activeVerifiedMember);
+    // A stray value past the 60-minute ceiling must not widen the link lifetime.
+    h.loadLoginSecuritySettings.mockResolvedValue({
+      policy: { magicLinkTtlMinutes: 9999 },
+    });
+
+    await POST(req({ email: "member@example.com" }));
+
+    const createArg = h.create.mock.calls[0][0];
+    const ttlMs = createArg.data.expiresAt.getTime() - Date.now();
+    expect(ttlMs).toBeLessThanOrEqual(60 * 60 * 1000 + 1000);
   });
 });
 

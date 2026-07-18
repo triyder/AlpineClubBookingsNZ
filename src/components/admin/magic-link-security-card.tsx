@@ -24,24 +24,19 @@ import {
 /**
  * Self-contained Login & Security card for email magic-link sign-in (#2034).
  *
+ * Mounted on the Login & Security page (`/admin/security`, #2033), which loads
+ * the club module settings and the configured expiry and passes them in.
+ *
  * The enable/disable TOGGLE is fully wired: it persists the `magicLink` module
  * column through the existing `PUT /api/admin/modules` route (module toggles
  * have no dedicated per-key route — the whole settings object is written), so no
  * new route is introduced here.
  *
- * MOUNTING (post-#2033 rebase): the Login & Security page (`/admin/security`,
- * owned by the sibling child #2033) mounts this with one line, passing the
- * loaded module settings:
- *
- *   <MagicLinkSecurityCard
- *     moduleSettings={moduleSettings}
- *     initialTtlMinutes={loginSecurity.magicLinkTtlMinutes}
- *     onSaveTtlMinutes={saveMagicLinkTtl}
- *   />
- *
- * TODO(#2033): the TTL field persists via `LoginSecuritySetting.magicLinkTtlMinutes`,
- * a model this branch does not own. Pass `onSaveTtlMinutes` from the security
- * page to persist it; without it the field is display-only with a note.
+ * The link-expiry field shows the club's configured value
+ * (`LoginSecuritySetting.magicLinkTtlMinutes`, #2033), which the sign-in request
+ * route reads. Persisting a new value from this page requires an
+ * `onSaveTtlMinutes` handler; without one the field is display-only (a settable
+ * on-page control is a planned follow-up).
  */
 export interface MagicLinkSecurityCardProps {
   moduleSettings: ModuleSettingsValues;
@@ -167,7 +162,8 @@ export function MagicLinkSecurityCard({
             Sign-in links expire between {MAGIC_LINK_TTL_MIN_MINUTES} and{" "}
             {MAGIC_LINK_TTL_MAX_MINUTES} minutes after they are sent (default{" "}
             {DEFAULT_MAGIC_LINK_TTL_MINUTES}).
-            {!onSaveTtlMinutes && " Expiry is configurable once #2033 lands."}
+            {!onSaveTtlMinutes &&
+              " Changing the expiry from this page is a planned follow-up."}
           </p>
         </div>
       </CardContent>
