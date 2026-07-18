@@ -61,9 +61,35 @@ const CAPTURES: Capture[] = [
   { name: "admin-reports", route: "/admin/reports", area: "admin" },
   { name: "admin-setup", route: "/admin/setup", area: "admin" },
   { name: "public-home", route: "/", area: "public", auth: false },
+  // Batch 1 (#2050): bookings & capacity operator guides.
+  { name: "admin-book", route: "/admin/book", area: "admin" },
+  { name: "admin-booking-requests", route: "/admin/booking-requests?tab=approvals", area: "admin" },
+  { name: "admin-booking-requests-changes", route: "/admin/booking-requests?tab=changes", area: "admin" },
+  { name: "admin-booking-requests-public", route: "/admin/booking-requests?tab=public", area: "admin" },
+  { name: "admin-bookings-setup", route: "/admin/bookings-setup", area: "admin" },
+  { name: "admin-booking-messages", route: "/admin/booking-messages", area: "admin" },
+  { name: "admin-booking-policies", route: "/admin/booking-policies", area: "admin" },
+  { name: "admin-booking-policies-cancellation", route: "/admin/booking-policies/cancellation", area: "admin" },
+  { name: "admin-booking-policies-minimum-stay", route: "/admin/booking-policies/minimum-stay", area: "admin" },
+  { name: "admin-booking-policies-group-discount", route: "/admin/booking-policies/group-discount", area: "admin" },
+  { name: "admin-booking-policies-periods", route: "/admin/booking-policies/periods", area: "admin" },
+  { name: "admin-booking-policies-public-requests", route: "/admin/booking-policies/public-requests", area: "admin" },
+  { name: "admin-promo-codes", route: "/admin/promo-codes", area: "admin" },
+  { name: "admin-seasons", route: "/admin/seasons", area: "admin" },
+  { name: "admin-age-tier-settings", route: "/admin/age-tier-settings", area: "admin" },
+  { name: "admin-payments", route: "/admin/payments", area: "admin" },
 ];
 
 const VIEWPORT = { width: 1280, height: 800 } as const;
+
+// The floating "Report issue" widget (src/components/report-issue-widget.tsx)
+// is a fixed-position bug button + dialog that can overlap stat cards and tables
+// in a full-page capture. It is not part of any documented feature, so we hide
+// every element it tags with `data-report-issue-ignore` before shooting. This is
+// a deliberate, documented harness step (#2050) — not a per-guide hack — so every
+// operator screenshot is free of the widget without touching runtime app code.
+const HIDE_OVERLAYS_CSS =
+  '[data-report-issue-ignore="true"] { display: none !important; }';
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://localhost:3001";
 const IMAGES_ROOT = path.resolve(path.join(import.meta.dirname, "..", "..", "docs", "images"));
 
@@ -116,6 +142,23 @@ async function shoot(context: BrowserContext, capture: Capture): Promise<void> {
     if (capture.waitForText) {
       await page.getByText(capture.waitForText).first().waitFor({ state: "visible", timeout: 15_000 });
     }
+    // Many admin pages render their content in a client component that fetches
+    // after hydration, showing a "Loading…" sentinel until the data arrives.
+    // The 'load' event fires before that fetch resolves, so a naive shot would
+    // capture the spinner. Wait for every "Loading" sentinel to disappear (a
+    // detached/hidden element counts as satisfied immediately, so pages that
+    // never show one are unaffected), then let the loaded content paint. The
+    // .catch keeps a genuinely stuck page from aborting the whole run.
+    await page
+      .locator("text=/Loading/i")
+      .first()
+      .waitFor({ state: "hidden", timeout: 15_000 })
+      .catch(() => undefined);
+    await page.waitForTimeout(800);
+    // Hide the floating "Report issue" widget so it never overlaps captured
+    // content (see HIDE_OVERLAYS_CSS). addStyleTag injects into the live page
+    // just before the shot; it does not modify the app source.
+    await page.addStyleTag({ content: HIDE_OVERLAYS_CSS });
     const out = outputPath(capture);
     fs.mkdirSync(path.dirname(out), { recursive: true });
     await page.screenshot({ path: out, fullPage: true });
