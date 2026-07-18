@@ -129,7 +129,7 @@ function dependencyPhrase(
 // (a monogram tile) rather than screenshots — the real board is one click away
 // via the per-template Preview on Admin → Display → Templates.
 
-interface GalleryEntry {
+export interface GalleryEntry {
   name: string;
   delivery: "Built-in" | "Extras bundle";
   templateKey: string;
@@ -164,8 +164,10 @@ function builtInGalleryEntries(): GalleryEntry[] {
 }
 
 // The extras bundle boards — not seeded, so described statically. Kept in step
-// with docs/lobby-display/seeds/README.md and the committed bundle.
-const EXTRAS_GALLERY_ENTRIES: GalleryEntry[] = [
+// with docs/lobby-display/seeds/README.md and the committed bundle. Exported so a
+// test can assert these keys + module lists never drift from the committed bundle
+// (F5) — parse the bundle and compare, so a mismatch fails CI.
+export const EXTRAS_GALLERY_ENTRIES: GalleryEntry[] = [
   {
     name: "Busy weekend (rotating)",
     delivery: "Extras bundle",

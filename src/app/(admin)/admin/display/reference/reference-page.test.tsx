@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, waitFor } from "@testing-library/react";
-import AdminDisplayReferencePage from "./page";
+import { unzipSync, strFromU8 } from "fflate";
+import AdminDisplayReferencePage, { EXTRAS_GALLERY_ENTRIES } from "./page";
 import { listDisplayModules } from "@/lib/lodge-display/module-registry";
 import { listDisplayConditions } from "@/lib/lodge-display/conditions";
 import { listDisplayCssTokens } from "@/lib/lodge-display/css-tokens";
@@ -89,6 +92,49 @@ describe("Display reference page data sources", () => {
     expect(text).toContain("Busy weekend (rotating)");
     expect(text).toContain("Minimal arrivals strip");
     expect(text).toContain("display-template-pack.bundle.zip");
+  });
+
+  it("extras gallery entries do not drift from the committed bundle (issue #2047, F5)", () => {
+    // The extras gallery is described statically (the bundle is not seeded), so it
+    // can silently drift from what the committed zip actually ships. Parse the
+    // bundle here and assert the gallery's keys AND module lists match exactly —
+    // any drift (a renamed key, an added/removed/reordered module) fails CI.
+    const zipPath = path.join(
+      process.cwd(),
+      "docs/lobby-display/seeds/display-template-pack.bundle.zip"
+    );
+    const files = unzipSync(readFileSync(zipPath));
+    const templates = JSON.parse(
+      strFromU8(files["display/templates.json"])
+    ) as Array<{ key: string; slotContent: Record<string, { module?: string }> }>;
+
+    // The modules a template embeds, in slot order, deduped — the SAME derivation
+    // the gallery uses for built-ins (page.tsx builtInModuleNames).
+    const bundleModuleNames = (slotContent: Record<string, { module?: string }>) => {
+      const names: string[] = [];
+      for (const content of Object.values(slotContent)) {
+        if (content?.module && !names.includes(content.module)) names.push(content.module);
+      }
+      return names;
+    };
+    const bundleByKey = new Map(
+      templates.map((t) => [t.key, bundleModuleNames(t.slotContent)])
+    );
+
+    // Same set of keys on both sides (no gallery entry for a missing bundle
+    // template, no bundle template absent from the gallery).
+    expect([...EXTRAS_GALLERY_ENTRIES.map((e) => e.templateKey)].sort()).toEqual(
+      [...bundleByKey.keys()].sort()
+    );
+    // Each gallery entry's module list matches the bundle's, in order.
+    for (const entry of EXTRAS_GALLERY_ENTRIES) {
+      const fromBundle = bundleByKey.get(entry.templateKey);
+      expect(fromBundle, `bundle has no template "${entry.templateKey}"`).toBeDefined();
+      expect(
+        entry.moduleNames,
+        `gallery modules for "${entry.templateKey}" drifted from the bundle`
+      ).toEqual(fromBundle);
+    }
   });
 
   it("shows the live indicator once the status endpoint responds", async () => {
