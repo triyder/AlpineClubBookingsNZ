@@ -17,6 +17,10 @@ import {
   listDisplayCssTokens,
   type DisplayCssToken,
 } from "@/lib/lodge-display/css-tokens";
+import {
+  BUILT_IN_DISPLAY_LAYOUTS,
+  BUILT_IN_DISPLAY_TEMPLATES,
+} from "@/lib/lodge-display/built-in-seeds";
 
 // LTV-034 (#80) — read-only Modules / Conditions / CSS-tokens reference (ADR-003
 // §3, "Navigation & terminology"). Everything on this page is presentation over
@@ -114,6 +118,149 @@ function dependencyPhrase(
     : `uses ${list} — degrades without it`;
 }
 
+// --- Template gallery (issue #2047) ----------------------------------------
+// The pre-built boards, so an admin can see at a glance what each shows before
+// assigning it to a device. Built-in entries are derived from the seeded
+// Layout/Template pairs (built-in-seeds.ts) — module lists come straight from
+// each template's slot content, so a new built-in appears here automatically.
+// The two situational boards ship in the importable extras bundle
+// (docs/lobby-display/seeds/) rather than as seeds, so they are listed
+// statically with a note. Thumbnails are intentionally lightweight placeholders
+// (a monogram tile) rather than screenshots — the real board is one click away
+// via the per-template Preview on Admin → Display → Templates.
+
+interface GalleryEntry {
+  name: string;
+  delivery: "Built-in" | "Extras bundle";
+  templateKey: string;
+  moduleNames: string[];
+  blurb: string;
+}
+
+/** The content modules a built-in template embeds, in slot order. */
+function builtInModuleNames(templateKey: string): string[] {
+  const template = BUILT_IN_DISPLAY_TEMPLATES.find((t) => t.key === templateKey);
+  if (!template) return [];
+  const names: string[] = [];
+  for (const content of Object.values(template.slotContent)) {
+    if ("module" in content && !names.includes(content.module)) {
+      names.push(content.module);
+    }
+  }
+  return names;
+}
+
+function builtInGalleryEntries(): GalleryEntry[] {
+  return BUILT_IN_DISPLAY_TEMPLATES.map((template) => {
+    const layout = BUILT_IN_DISPLAY_LAYOUTS.find((l) => l.key === template.layoutKey);
+    return {
+      name: template.name,
+      delivery: "Built-in" as const,
+      templateKey: template.key,
+      moduleNames: builtInModuleNames(template.key),
+      blurb: layout?.description ?? "",
+    };
+  });
+}
+
+// The extras bundle boards — not seeded, so described statically. Kept in step
+// with docs/lobby-display/seeds/README.md and the committed bundle.
+const EXTRAS_GALLERY_ENTRIES: GalleryEntry[] = [
+  {
+    name: "Busy weekend (rotating)",
+    delivery: "Extras bundle",
+    templateKey: "busy-weekend",
+    moduleNames: ["occupancy-grid", "arrivals-board", "notice-board"],
+    blurb:
+      "A single rotating statement for a packed weekend: the whole-lodge blockout when the lodge is booked out, a tight two-night arrivals board, and a committee notice when one is set.",
+  },
+  {
+    name: "Minimal arrivals strip",
+    delivery: "Extras bundle",
+    templateKey: "arrivals-strip",
+    moduleNames: ["arrivals-board", "welcome"],
+    blurb:
+      "A compact board for a small secondary screen: tonight's arrivals as a single-night strip (lead name + count) above a welcome panel.",
+  },
+];
+
+/** A monogram thumbnail placeholder — the board's initials on a tinted tile. */
+function GalleryThumb({ name }: { name: string }) {
+  const initials = name
+    .replace(/[^a-zA-Z ]/g, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase() ?? "")
+    .join("");
+  return (
+    <div
+      aria-hidden
+      className="bg-muted text-muted-foreground flex h-16 w-24 shrink-0 items-center justify-center rounded-md border font-mono text-lg font-semibold"
+    >
+      {initials}
+    </div>
+  );
+}
+
+function TemplateGallery({
+  moduleLabelByName,
+}: {
+  moduleLabelByName: Map<string, string>;
+}) {
+  const entries = [...builtInGalleryEntries(), ...EXTRAS_GALLERY_ENTRIES];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Template gallery</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-muted-foreground text-sm">
+          The pre-built boards. Built-in boards are seeded into every install and
+          appear on <span className="font-medium">Display → Templates</span> ready
+          to assign; the extras ship in the importable bundle{" "}
+          <InlineCode>display-template-pack.bundle.zip</InlineCode> (Admin → Export
+          &amp; Import Setup). Every board also carries the fixed lodge header and
+          the info footer. Thumbnails are placeholders — open a live{" "}
+          <span className="font-medium">Preview</span> from the Templates page to
+          see the real board.
+        </p>
+        <div className="space-y-3">
+          {entries.map((entry) => (
+            <div
+              key={`${entry.delivery}-${entry.templateKey}`}
+              className="flex gap-4 border-b pb-3 last:border-b-0 last:pb-0"
+            >
+              <GalleryThumb name={entry.name} />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{entry.name}</span>
+                  <Badge
+                    variant={entry.delivery === "Built-in" ? "secondary" : "outline"}
+                  >
+                    {entry.delivery}
+                  </Badge>
+                </div>
+                {entry.blurb && (
+                  <p className="text-muted-foreground text-sm">{entry.blurb}</p>
+                )}
+                <div className="flex flex-wrap items-center gap-1.5 text-sm">
+                  <span className="text-muted-foreground">Modules:</span>
+                  {entry.moduleNames.map((name) => (
+                    <InlineCode key={name}>
+                      {moduleLabelByName.get(name) ?? name}
+                    </InlineCode>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AdminDisplayReferencePage() {
   const modules = listDisplayModules();
   const conditions = listDisplayConditions();
@@ -179,6 +326,8 @@ export default function AdminDisplayReferencePage() {
   const paletteTokens = cssTokens.filter((t) => t.family === "display");
   const brandTokens = cssTokens.filter((t) => t.family === "brand");
 
+  const moduleLabelByName = new Map(modules.map((m) => [m.name, m.label]));
+
   return (
     <div className="space-y-6 p-6">
       <div>
@@ -190,6 +339,9 @@ export default function AdminDisplayReferencePage() {
           Read-only — nothing here changes any setting.
         </p>
       </div>
+
+      {/* Template gallery (issue #2047) ------------------------------------ */}
+      <TemplateGallery moduleLabelByName={moduleLabelByName} />
 
       {/* Modules ------------------------------------------------------------ */}
       <Card>

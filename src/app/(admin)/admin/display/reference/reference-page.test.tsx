@@ -6,6 +6,7 @@ import AdminDisplayReferencePage from "./page";
 import { listDisplayModules } from "@/lib/lodge-display/module-registry";
 import { listDisplayConditions } from "@/lib/lodge-display/conditions";
 import { listDisplayCssTokens } from "@/lib/lodge-display/css-tokens";
+import { BUILT_IN_DISPLAY_TEMPLATES } from "@/lib/lodge-display/built-in-seeds";
 
 // LTV-034 (#80): the reference page is read-only presentation over three
 // client-safe registries. This is the light cross-registry sweep (mirroring the
@@ -66,6 +67,28 @@ describe("Display reference page data sources", () => {
     for (const token of listDisplayCssTokens()) {
       expect(text, `css token "${token.name}" missing`).toContain(token.name);
     }
+  });
+
+  it("lists every built-in board and both extras-bundle boards in the gallery (issue #2047)", async () => {
+    const { container } = render(<AdminDisplayReferencePage />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const text = container.textContent ?? "";
+
+    // Section heading + the delivery-channel badges.
+    expect(text).toContain("Template gallery");
+    expect(text).toContain("Built-in");
+    expect(text).toContain("Extras bundle");
+    // Every seeded built-in template name appears (derived from the seeds, so a
+    // new built-in surfaces here without hand-editing this test).
+    for (const template of BUILT_IN_DISPLAY_TEMPLATES) {
+      expect(text, `built-in "${template.name}" missing from gallery`).toContain(
+        template.name
+      );
+    }
+    // The two extras (documented statically, guarded by the bundle test).
+    expect(text).toContain("Busy weekend (rotating)");
+    expect(text).toContain("Minimal arrivals strip");
+    expect(text).toContain("display-template-pack.bundle.zip");
   });
 
   it("shows the live indicator once the status endpoint responds", async () => {
