@@ -213,10 +213,7 @@ export default function MemberMergePage({
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
       <div className="mb-4">
-        <BackLink
-          href={`/admin/members/${masterId}`}
-          label="Back to member"
-        />
+        <BackLink href={`/admin/members/${masterId}`} label="Member" />
       </div>
 
       <h1 className="text-xl font-semibold text-gray-900">Merge duplicate member</h1>

@@ -31,7 +31,7 @@ export default async function XeroRecordActivityPage({
   return (
     <div className="space-y-6">
       <div className="space-y-3">
-        <BackLink href={backHref} label={data.backLink?.label ?? "Back to Xero"} />
+        <BackLink href={backHref} label={data.backLink?.label ?? "Xero"} />
         <div className="space-y-1">
           <p className="text-sm font-medium text-slate-500">Xero record activity</p>
           <h1 className="text-3xl font-bold text-slate-900">{data.rootRecord.label}</h1>

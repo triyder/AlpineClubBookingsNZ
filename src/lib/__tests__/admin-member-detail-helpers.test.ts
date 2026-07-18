@@ -29,16 +29,16 @@ import {
 describe("admin-member-detail-helpers", () => {
   describe("getMemberDetailBackLabel", () => {
     it("returns context-specific label for known return paths", () => {
-      expect(getMemberDetailBackLabel("/admin/bookings")).toBe("Back to Bookings")
-      expect(getMemberDetailBackLabel("/admin/payments/123")).toBe("Back to Payments")
-      expect(getMemberDetailBackLabel("/admin/subscriptions")).toBe("Back to Subscriptions")
-      expect(getMemberDetailBackLabel("/admin/refund-requests")).toBe("Back to Refund Requests")
-      expect(getMemberDetailBackLabel("/admin/xero/health")).toBe("Back to Xero")
+      expect(getMemberDetailBackLabel("/admin/bookings")).toBe("Bookings")
+      expect(getMemberDetailBackLabel("/admin/payments/123")).toBe("Payments")
+      expect(getMemberDetailBackLabel("/admin/subscriptions")).toBe("Subscriptions")
+      expect(getMemberDetailBackLabel("/admin/refund-requests")).toBe("Refund Requests")
+      expect(getMemberDetailBackLabel("/admin/xero/health")).toBe("Xero")
     })
 
     it("defaults to Members for unknown paths", () => {
-      expect(getMemberDetailBackLabel("/admin/something-else")).toBe("Back to Members")
-      expect(getMemberDetailBackLabel("/")).toBe("Back to Members")
+      expect(getMemberDetailBackLabel("/admin/something-else")).toBe("Members")
+      expect(getMemberDetailBackLabel("/")).toBe("Members")
     })
   })
 

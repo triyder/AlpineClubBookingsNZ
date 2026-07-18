@@ -112,15 +112,16 @@ export function isCollapsibleMemberSection(
   return collapsibleMemberSections.includes(value as CollapsibleMemberSection)
 }
 
+// The label names the parent surface the back-link returns to; the shared
+// BackLink prepends the ← affordance, so the label stays a bare parent name
+// (no "Back to " prefix, which would duplicate the arrow — #2046).
 export function getMemberDetailBackLabel(returnTo: string) {
-  if (returnTo.startsWith("/admin/bookings")) return "Back to Bookings"
-  if (returnTo.startsWith("/admin/payments")) return "Back to Payments"
-  if (returnTo.startsWith("/admin/subscriptions"))
-    return "Back to Subscriptions"
-  if (returnTo.startsWith("/admin/refund-requests"))
-    return "Back to Refund Requests"
-  if (returnTo.startsWith("/admin/xero")) return "Back to Xero"
-  return "Back to Members"
+  if (returnTo.startsWith("/admin/bookings")) return "Bookings"
+  if (returnTo.startsWith("/admin/payments")) return "Payments"
+  if (returnTo.startsWith("/admin/subscriptions")) return "Subscriptions"
+  if (returnTo.startsWith("/admin/refund-requests")) return "Refund Requests"
+  if (returnTo.startsWith("/admin/xero")) return "Xero"
+  return "Members"
 }
 
 export function formatAdminName(admin: AdminActor | null | undefined) {

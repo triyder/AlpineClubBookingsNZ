@@ -178,7 +178,7 @@ describe("getXeroRecordActivity", () => {
     });
     expect(result?.backLink).toEqual({
       href: "/admin/bookings",
-      label: "Back to Bookings",
+      label: "Bookings",
     });
 
     expect(mocks.findManyOperations).toHaveBeenCalledWith(
@@ -223,7 +223,7 @@ describe("getXeroRecordActivity", () => {
     );
     expect(result?.backLink).toEqual({
       href: "/admin/members/mem_1",
-      label: "Back to Riley Chen",
+      label: "Riley Chen",
     });
   });
 });
