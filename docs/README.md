@@ -13,12 +13,38 @@ what is and is not yet documented per admin area.
 
 | You are… | Start here |
 | --- | --- |
+| **Using** the club as a member or guest | [Members and guests](#members-and-guests) |
 | **Adopting / forking** the platform for your club | [New Adopters](#new-adopters) |
 | **Operating** a live club day to day | [Operators](#operators) |
 | **Developing** / changing the code | [Developers](#developers) |
 | An **automated agent** (Claude Code, Codex) | [Agents](#agents) |
 
 ---
+
+## Members and guests
+
+Using the club: members signing in to book a stay, and guests staying without a
+login.
+
+**Start here:** the [Member & Guest Guide](user-guide/README.md) — plain-English,
+step-by-step guides for the public and member-facing side of the app (the
+website, sign-in, your dashboard, the booking wizard, your profile). The
+journeys:
+
+- [Joining the club](user-guide/joining-the-club.md) — apply, get nominated,
+  approved, and sign in for the first time.
+- [Booking a stay](user-guide/booking-a-stay.md) — the booking wizard, member and
+  non-member guests, and the Members First vs First Paid, First In hold policies.
+- [Paying for your stay](user-guide/paying-for-your-stay.md) — card, internet
+  banking, account credit, and split charges.
+- [Managing your family & household](user-guide/managing-your-family.md) — family
+  groups, dependents, and partners.
+- [Managing your account](user-guide/your-account.md) — profile, email/password,
+  two-factor, sign-in methods, notifications, and privacy/deletion.
+- [The waitlist & offers](user-guide/waitlist-and-offers.md) — join a full night
+  and accept an offer.
+- [Changing or cancelling a booking](user-guide/changing-or-cancelling-a-booking.md)
+  — changes, cancellations, refunds, and credit.
 
 ## New Adopters
 

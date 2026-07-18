@@ -34,7 +34,9 @@ a `GAP`, replace it with a relative link to that file (e.g.
   the guide lands.
 - **Batch** — which #2050 delivery batch (1–4) this admin area belongs to; see
   [Delivery batches](#delivery-batches-2050) below. (Batch 5, member-facing
-  journeys, is the public/member surface and has no admin rows here.)
+  journeys, is the public/member surface and has no admin rows here — it has
+  **shipped** as the member/guest guides under
+  [`user-guide/`](user-guide/README.md).)
 
 ## Matrix
 
@@ -123,7 +125,9 @@ a `GAP`, replace it with a relative link to that file (e.g.
 - **Every** area needs a task-focused operator guide (with screenshots). That is
   the #2050 deliverable and this file is its checklist — batches land as
   separate PRs and flip their rows from GAP to guide links as they merge (the
-  per-row status above is authoritative; batches 1–2 have shipped).
+  per-row status above is authoritative; batches 1–2 and 4 have shipped, and
+  batch 5's member/guest journey guides have shipped under
+  [`user-guide/`](user-guide/README.md)).
 
 ### Notes vs the ~20 gaps the initial audit named
 
@@ -223,6 +227,37 @@ feature-gated surfaces; the guides document the reality:
 - **`access-roles` and `config-transfer` are Full-Admin-only** sidebar entries;
   their guides say so.
 
+### Batch 5 route realities (#2050)
+
+Batch 5 (member-facing journeys) is the public/member surface, so it has **no
+`/admin/*` rows** in the matrix above and is not tracked per-row here. It ships
+as the [Member & Guest Guide](user-guide/README.md) under `docs/user-guide/`
+(audience **Member/Guest**, not Operator), scoped from
+[`UX_FLOW_MAP.md`](UX_FLOW_MAP.md) and the public route tree. Route realities the
+guides document:
+
+- **Two guest paths need no login.** The sign-in page (`/login`) links to
+  *Request a booking without an account* (the public quote flow,
+  `/booking-requests/respond/[token]`) and *Request a school group booking*
+  (`/school-bookings/confirm/[token]`). The [Booking a stay](user-guide/booking-a-stay.md)
+  guide covers both as the guest journey; operators handle them via
+  [Booking Requests](guides/booking-requests.md).
+- **The booking wizard is a client-side flow.** `/book` renders four steps
+  (Select Dates → Add Guests → Review & Confirm → Pay); only the landing (Select
+  Dates) is a capturable URL, so the guests/review/pay steps are documented in
+  prose per the STYLE_GUIDE screenshot-density rule.
+- **Alternative sign-in methods are module-gated.** *Email me a sign-in link*
+  (`/login/magic`) and *Continue with Google* appear on `/login` only when the
+  club enables those modules and (for Google) configures OAuth; the demo seed
+  leaves them off, so the login capture shows password sign-in only and the
+  [account guide](user-guide/your-account.md) describes them in prose.
+- **Member captures use a member persona.** The member-authenticated pages
+  (`/dashboard`, `/profile`, `/bookings`, `/book`) are captured as the seeded
+  complete-profile member (WAITLISTER / Wanda) via a `persona: "member"` context
+  added to the shared harness; public pages (`/login`, `/join/apply`) capture
+  without auth. Member-surface images live under `docs/images/public/` with a
+  `member-` prefix, alongside the anonymous `public-` shots.
+
 ## Delivery batches (#2050)
 
 The operator-guide programme ships in **five batches**. Every admin row above
@@ -237,7 +272,7 @@ a batch's worklist directly from this file (filter the table by batch). Batches
 | **2** | Membership & applications | Members, applications, family/committee, membership lifecycle & cancellations, and membership billing (fees, subscriptions, refunds, Xero, internet banking). | 20 |
 | **3** | Lodge operations | Physical-lodge day-to-day: rooms/beds inventory, chores, roster, work parties, hut leaders, lodge kiosk/instructions, and multi-lodge management. | 8 |
 | **4** | Comms & content | Outbound comms (email/notifications), public content & appearance, and the platform/support admin surfaces (access roles, audit, security, health, modules, integrations, setup, config-transfer, dashboard). | 26 |
-| **5** | Member-facing journeys | The public and member-facing routes (`/`, booking flow, member dashboard, applications, self-service) — **not** admin areas, so not enumerated in the matrix above. Scope this batch from `UX_FLOW_MAP.md` and the public route tree, not from this table. | — |
+| **5** | Member-facing journeys | The public and member-facing routes (`/`, booking flow, member dashboard, applications, self-service) — **not** admin areas, so not enumerated in the matrix above. Scoped from `UX_FLOW_MAP.md` and the public route tree. **Shipped** as the [Member & Guest Guide](user-guide/README.md). | — |
 
 To pull one batch's admin worklist, take every row whose **Batch** equals that
 number. Batch sizes: **1 → 15**, **2 → 20**, **3 → 8**, **4 → 26** (total 69).
