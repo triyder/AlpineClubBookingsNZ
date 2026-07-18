@@ -98,4 +98,48 @@ describe("buildBookingHistoryItems", () => {
     expect(items[0].title).toBe("Payment recorded");
     expect(items[0].occurredAt.toISOString()).toBe("2026-04-08T14:00:00.000Z");
   });
+
+  it("renders a #1992 duplicate-capture auto-refund with honest copy when supplied (admin view, #2008)", () => {
+    const items = buildBookingHistoryItems({
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [],
+      refundRequests: [],
+      auditLogs: [],
+      duplicateCaptureRefunds: [
+        {
+          id: "event-dup-1",
+          occurredAt: new Date("2026-04-05T12:00:00Z"),
+          amountCents: 5000,
+          duplicatePaymentIntentId: "pi_link_dup",
+        },
+      ],
+    });
+
+    const dup = items.find(
+      (item) => item.title === "Duplicate capture auto-refunded"
+    );
+    expect(dup).toBeDefined();
+    expect(dup?.id).toBe("duplicate-capture-refund-event-dup-1");
+    expect(dup?.category).toBe("Payment");
+    expect(dup?.tone).toBe("warning");
+    expect(dup?.amountDisplay).toBe("$50.00");
+    expect(dup?.detail).toContain("settlement is unaffected");
+    expect(dup?.detail).toContain("pi_link_dup");
+  });
+
+  it("omits duplicate-capture entries entirely when none are supplied (member view sees nothing new, #2008)", () => {
+    const items = buildBookingHistoryItems({
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [],
+      refundRequests: [],
+      auditLogs: [],
+    });
+
+    expect(
+      items.some((item) => item.title === "Duplicate capture auto-refunded")
+    ).toBe(false);
+    expect(items.map((item) => item.title)).toEqual(["Booking created"]);
+  });
 });

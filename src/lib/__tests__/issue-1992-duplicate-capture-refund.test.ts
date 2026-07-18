@@ -53,6 +53,7 @@ const mocks = vi.hoisted(() => ({
   sendAdminDuplicateCaptureRefundAlert: vi.fn(),
   reconcileBedAllocationsForBooking: vi.fn(),
   recordBookingEvent: vi.fn(),
+  recordDuplicateCaptureRefundEvent: vi.fn(),
   lodgeFindFirst: vi.fn(),
 }));
 
@@ -111,6 +112,8 @@ vi.mock("@/lib/bed-allocation-lifecycle", () => ({
 
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: (...args: unknown[]) => mocks.recordBookingEvent(...args),
+  recordDuplicateCaptureRefundEvent: (...args: unknown[]) =>
+    mocks.recordDuplicateCaptureRefundEvent(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -317,6 +320,7 @@ beforeEach(() => {
   mocks.sendAdminPaymentFailureAlert.mockResolvedValue(undefined);
   mocks.sendAdminDuplicateCaptureRefundAlert.mockResolvedValue(undefined);
   mocks.recordBookingEvent.mockResolvedValue(undefined);
+  mocks.recordDuplicateCaptureRefundEvent.mockResolvedValue(undefined);
   mocks.refundPaymentTransactions.mockResolvedValue({ refunds: [] });
   mocks.enqueueDuplicateCaptureRefundRecovery.mockResolvedValue({
     id: "dup-op-1",
@@ -428,10 +432,43 @@ describe("#1992 duplicate-capture auto-refund", () => {
     );
     expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
 
-    // The booking's status/settlement is untouched: no PAID/CANCELLED claim,
-    // no booking event that could later masquerade as a cancellation refund.
+    // The booking's status/settlement is untouched: no PAID/CANCELLED claim.
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+
+    // #2008 — the durable, admin-only history event is recorded EXACTLY ONCE on
+    // the inline-success path (the mark flipped the operation to SUCCEEDED,
+    // count 1). It is a REFUNDED event carrying the duplicate_capture_refund
+    // discriminator (recordDuplicateCaptureRefundEvent), NOT a plain
+    // recordBookingEvent that could masquerade as a cancellation's refund.
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.recordDuplicateCaptureRefundEvent).toHaveBeenCalledTimes(1);
+    expect(mocks.recordDuplicateCaptureRefundEvent).toHaveBeenCalledWith({
+      bookingId: "booking-1",
+      amountCents: 10000,
+      duplicatePaymentIntentId: DUPLICATE_PI,
+      settledPaymentIntentId: SETTLED_PI,
+    });
+  });
+
+  it("does NOT record the admin history event when the inline mark did not flip the operation (count 0 — the cron already closed it)", async () => {
+    // A lost inline close raced the cron: the refund succeeded but the mark
+    // reports count 0 because the operation is already SUCCEEDED. The inline
+    // path must NOT record the event (the cron-replay path owns it), so the two
+    // paths never double-record.
+    primeDuplicateCaptureLedger();
+    mocks.markDuplicateCaptureRefundRecoverySucceeded.mockResolvedValue({
+      count: 0,
+    });
+
+    const result = await markBookingPaymentSucceeded({
+      bookingId: "booking-1",
+      paymentIntentId: DUPLICATE_PI,
+      amountCents: 10000,
+      paymentMethodId: "pm_1",
+    });
+
+    expect(result.outcome).toBe("duplicate_capture_refunded");
+    expect(mocks.recordDuplicateCaptureRefundEvent).not.toHaveBeenCalled();
   });
 
   it("refunds exactly the duplicate's captured amount, not the booking price", async () => {
@@ -479,6 +516,9 @@ describe("#1992 duplicate-capture auto-refund", () => {
     expect(
       mocks.markDuplicateCaptureRefundRecoverySucceeded
     ).not.toHaveBeenCalled();
+    // #2008 — no history event on the failed inline path: the operation is
+    // still PENDING and the cron-replay path will record it on success.
+    expect(mocks.recordDuplicateCaptureRefundEvent).not.toHaveBeenCalled();
     expect(
       mocks.recordDuplicateCaptureRefundRecoveryInlineError
     ).toHaveBeenCalledWith(
