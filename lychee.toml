@@ -1,0 +1,29 @@
+# lychee link-checker config (issue #2049).
+#
+# Used by `.github/workflows/docs-link-check.yml`. The workflow runs lychee with
+# `--offline`, so only local file links are verified — deterministic, no network
+# flakiness. This file scopes what lychee walks and which links it ignores.
+
+# Never descend into dependencies, build output, or test artifacts. (These are
+# also gitignored, which lychee respects, but list them so a non-ignored
+# checkout still skips them.)
+exclude_path = [
+  "node_modules",
+  ".next",
+  "test-results",
+  "playwright-report",
+  "coverage",
+]
+
+# Ignore link targets that are not real navigable files, even in offline mode:
+# in-repo template placeholders and example hosts occasionally appear in docs.
+exclude = [
+  # Local placeholder hosts used in configuration/deployment examples.
+  "^https?://localhost",
+  "^https?://127\\.0\\.0\\.1",
+  "^https?://example\\.(com|org|test)",
+]
+
+# Anchors/fragments are checked against the target file's headings where lychee
+# can parse them; keep this on so a renamed heading surfaces as a broken anchor.
+include_fragments = true

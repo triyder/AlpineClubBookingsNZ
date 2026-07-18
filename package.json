@@ -47,6 +47,8 @@
     "setup:check": "tsx scripts/setup.ts check",
     "setup:wizard": "tsx scripts/setup.ts wizard",
     "review:staging:a11y": "bash scripts/run-staging-accessibility-checks.sh",
+    "docs:linkcheck": "node scripts/check-doc-links.mjs",
+    "docs:screenshots": "tsx scripts/capture-screenshots.ts",
     "db:generate": "prisma generate",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:seed:demo": "npx tsx prisma/demo-seed.ts",
