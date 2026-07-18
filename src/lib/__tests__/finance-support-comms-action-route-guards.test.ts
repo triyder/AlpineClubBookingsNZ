@@ -31,6 +31,9 @@ import {
   GET as commsGet,
   POST as commsPost,
 } from "@/app/api/admin/communications/send/route";
+import { POST as xeroLinkPost } from "@/app/api/admin/members/[id]/xero-link/route";
+import { POST as xeroPushPost } from "@/app/api/admin/members/[id]/xero-push/route";
+import { POST as xeroUnlinkPost } from "@/app/api/admin/members/[id]/xero-unlink/route";
 
 const FINANCE_EDIT = { area: "finance", level: "edit" } as const;
 const SUPPORT_VIEW = { area: "support", level: "view" } as const;
@@ -159,6 +162,33 @@ describe("finance/support/comms action route guards (#1997)", () => {
     expect(res.status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: MEMBERSHIP_EDIT,
+    });
+  });
+
+  // The members/[id]/xero-(link|push|unlink) routes are mapped to the finance
+  // area by SPECIAL_ROUTE_AREA_PATTERNS, so their explicit permission is
+  // finance:edit (pin-neutral).
+  it("member xero-link POST requires finance:edit", async () => {
+    const res = await xeroLinkPost(req("POST"), idParams);
+    expect(res.status).toBe(403);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: FINANCE_EDIT,
+    });
+  });
+
+  it("member xero-push POST requires finance:edit", async () => {
+    const res = await xeroPushPost(req("POST"), idParams);
+    expect(res.status).toBe(403);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: FINANCE_EDIT,
+    });
+  });
+
+  it("member xero-unlink POST requires finance:edit", async () => {
+    const res = await xeroUnlinkPost(req("POST"), idParams);
+    expect(res.status).toBe(403);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: FINANCE_EDIT,
     });
   });
 });

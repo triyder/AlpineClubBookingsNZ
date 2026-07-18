@@ -25,6 +25,12 @@ import {
 import { POST as refreshPost } from "@/app/api/admin/member-applications/[id]/nominations/refresh/route";
 import { POST as replacePost } from "@/app/api/admin/member-applications/[id]/nominators/[slot]/replace/route";
 import { POST as participantPost } from "@/app/api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]/route";
+import {
+  GET as familySuggestionsGet,
+  POST as familySuggestionsPost,
+} from "@/app/api/admin/family-suggestions/route";
+import { POST as familySuggestionsHidePost } from "@/app/api/admin/family-suggestions/hide/route";
+import { POST as familySuggestionsResetPost } from "@/app/api/admin/family-suggestions/reset/route";
 
 const MEMBERSHIP_EDIT = { area: "membership", level: "edit" } as const;
 const MEMBERSHIP_VIEW = { area: "membership", level: "view" } as const;
@@ -107,6 +113,38 @@ describe("membership action route guards (#1997)", () => {
     const res = await participantPost(req("POST"), {
       params: Promise.resolve({ requestId: "r1", participantId: "p1" }),
     });
+    expect(res.status).toBe(403);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: MEMBERSHIP_EDIT,
+    });
+  });
+
+  it("family-suggestions GET requires membership:view", async () => {
+    const res = await familySuggestionsGet();
+    expect(res.status).toBe(403);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: MEMBERSHIP_VIEW,
+    });
+  });
+
+  it("family-suggestions POST (create group) requires membership:edit", async () => {
+    const res = await familySuggestionsPost(req("POST"));
+    expect(res.status).toBe(403);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: MEMBERSHIP_EDIT,
+    });
+  });
+
+  it("family-suggestions hide POST requires membership:edit", async () => {
+    const res = await familySuggestionsHidePost(req("POST"));
+    expect(res.status).toBe(403);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: MEMBERSHIP_EDIT,
+    });
+  });
+
+  it("family-suggestions reset POST requires membership:edit", async () => {
+    const res = await familySuggestionsResetPost();
     expect(res.status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: MEMBERSHIP_EDIT,

@@ -9,6 +9,11 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { AdminDataTable } from "@/components/admin/admin-data-table"
 import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import {
   TableBody,
   TableCell,
   TableHead,
@@ -42,6 +47,10 @@ interface SuggestionsData {
 }
 
 export default function FamilySuggestionsPage() {
+  // Create-group / hide / reset-hidden all POST membership-area
+  // family-suggestions routes; a view-only membership admin browses the
+  // suggestions but cannot act (#1997).
+  const canEdit = useAdminAreaEditAccess("membership")
   const [data, setData] = useState<SuggestionsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -78,6 +87,7 @@ export default function FamilySuggestionsPage() {
   }, [fetchSuggestions])
 
   async function handleCreate(suggestion: Suggestion) {
+    if (!canEdit) return
     const name = editNames[suggestion.signature] ?? suggestion.suggestedName
     const memberIds = suggestion.members.map((m) => m.id)
 
@@ -99,6 +109,7 @@ export default function FamilySuggestionsPage() {
   }
 
   async function handleHide(suggestion: Suggestion) {
+    if (!canEdit) return
     const memberIds = suggestion.members.map((m) => m.id)
 
     setHiding(suggestion.signature)
@@ -123,7 +134,7 @@ export default function FamilySuggestionsPage() {
   }
 
   async function handleResetHidden() {
-    if (!data?.hiddenCount) return
+    if (!canEdit || !data?.hiddenCount) return
     const confirmed = await confirm({
       title: "Reset hidden family suggestions?",
       description:
@@ -166,19 +177,27 @@ export default function FamilySuggestionsPage() {
         description="Review suggested family groups based on shared emails and last names among ungrouped members."
         actions={
           <>
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               onClick={handleResetHidden}
               disabled={loading || resetting || !data?.hiddenCount}
               variant="outline"
             >
               {resetting ? "Resetting..." : `Reset hidden (${data?.hiddenCount ?? 0})`}
-            </Button>
+            </ViewOnlyActionButton>
             <Button onClick={fetchSuggestions} disabled={loading} variant="outline">
               {loading ? "Loading..." : "Refresh"}
             </Button>
           </>
         }
       />
+
+      {!canEdit && (
+        <AdminViewOnlyNotice>
+          Your admin role can view family group suggestions but cannot create,
+          hide, or reset them.
+        </AdminViewOnlyNotice>
+      )}
 
       {error && (
         <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">
@@ -267,21 +286,23 @@ export default function FamilySuggestionsPage() {
                   >
                     Skip
                   </Button>
-                  <Button
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     size="sm"
                     variant="outline"
                     onClick={() => handleHide(suggestion)}
                     disabled={hiding !== null}
                   >
                     {hiding === suggestion.signature ? "Hiding..." : "Permanently Hide"}
-                  </Button>
-                  <Button
+                  </ViewOnlyActionButton>
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     size="sm"
                     onClick={() => handleCreate(suggestion)}
                     disabled={creating !== null}
                   >
                     {creating === (editNames[suggestion.signature] ?? suggestion.suggestedName) ? "Creating..." : "Create Group"}
-                  </Button>
+                  </ViewOnlyActionButton>
                 </div>
               </div>
               <CardDescription>{suggestion.reason}</CardDescription>

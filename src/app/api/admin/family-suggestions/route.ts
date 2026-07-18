@@ -14,7 +14,9 @@ import logger from "@/lib/logger";
  * Returns suggested family groups based on ungrouped member analysis.
  */
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   try {
     const result = await suggestFamilyGroups();
@@ -38,7 +40,9 @@ const createGroupSchema = z.object({
  * Create a family group from a suggestion.
  */
 export async function POST(req: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: unknown;

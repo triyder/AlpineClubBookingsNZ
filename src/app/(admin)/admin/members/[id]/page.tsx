@@ -547,6 +547,8 @@ export default function MemberDetailPage({
         xeroConnected={xeroConnected}
         xeroPushing={xeroPushing}
         xeroUnlinking={xeroUnlinking}
+        canEditMembership={canEditMembership}
+        canEditFinance={canEditFinance}
         onOpenDependentDialog={openDependentDialog}
         onOpenLinkXero={openLinkXero}
         onOpenCreateXero={openCreateXero}

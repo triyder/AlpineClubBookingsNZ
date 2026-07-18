@@ -17,7 +17,9 @@ const hideSuggestionSchema = z.object({
  * Globally hide a suggested family group by its server-canonical member-id set.
  */
 export async function POST(req: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: unknown;

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,6 +32,13 @@ interface MemberDetailHeaderProps {
   xeroConnected: boolean | null;
   xeroPushing: boolean;
   xeroUnlinking: boolean;
+  /** Add Dependent writes the membership-area members route (#1997). */
+  canEditMembership?: boolean;
+  /**
+   * The Xero link/push/unlink actions write members/[id]/xero-* routes, which
+   * the route-area matrix maps to the finance area (#1997).
+   */
+  canEditFinance?: boolean;
   onOpenDependentDialog: () => void;
   onOpenLinkXero: () => void;
   onOpenCreateXero: () => void;
@@ -47,6 +55,8 @@ export function MemberDetailHeader({
   xeroConnected,
   xeroPushing,
   xeroUnlinking,
+  canEditMembership = true,
+  canEditFinance = true,
   onOpenDependentDialog,
   onOpenLinkXero,
   onOpenCreateXero,
@@ -129,10 +139,15 @@ export function MemberDetailHeader({
         </div>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
           {isAdultMember && !memberIsArchived && (
-            <Button variant="outline" size="sm" onClick={onOpenDependentDialog}>
+            <ViewOnlyActionButton
+              canEdit={canEditMembership}
+              variant="outline"
+              size="sm"
+              onClick={onOpenDependentDialog}
+            >
               <Plus className="h-4 w-4 mr-1" />
               Add Dependent
-            </Button>
+            </ViewOnlyActionButton>
           )}
           {/* Xero actions render only once the connection status resolves to
               true: everyday actions stay visible, rare ones live in the
@@ -163,13 +178,16 @@ export function MemberDetailHeader({
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={onOpenLinkXero}>
+                    <DropdownMenuItem
+                      onClick={onOpenLinkXero}
+                      disabled={!canEditFinance}
+                    >
                       <Link2 className="h-4 w-4 mr-1" />
                       Change Xero Link
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={onUnlinkXero}
-                      disabled={xeroUnlinking}
+                      disabled={xeroUnlinking || !canEditFinance}
                     >
                       {xeroUnlinking ? "Unlinking..." : "Unlink Xero Contact"}
                     </DropdownMenuItem>
@@ -178,10 +196,15 @@ export function MemberDetailHeader({
               </>
             ) : (
               <>
-                <Button variant="outline" size="sm" onClick={onOpenLinkXero}>
+                <ViewOnlyActionButton
+                  canEdit={canEditFinance}
+                  variant="outline"
+                  size="sm"
+                  onClick={onOpenLinkXero}
+                >
                   <Link2 className="h-4 w-4 mr-1" />
                   Link to Xero
-                </Button>
+                </ViewOnlyActionButton>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -195,7 +218,7 @@ export function MemberDetailHeader({
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
                       onClick={onOpenCreateXero}
-                      disabled={xeroPushing}
+                      disabled={xeroPushing || !canEditFinance}
                     >
                       <Plus className="h-4 w-4 mr-1" />
                       {xeroPushing ? "Creating..." : "Create in Xero"}

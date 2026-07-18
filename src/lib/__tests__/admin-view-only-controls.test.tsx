@@ -142,6 +142,7 @@ import MembershipCancellationsPage from "@/app/(admin)/admin/membership-cancella
 // #1997 admin action-button surfaces (support / communications lane).
 import AdminIssueReportsPage from "@/app/(admin)/admin/issue-reports/page";
 import CommunicationsPage from "@/app/(admin)/admin/communications/page";
+import FamilySuggestionsPage from "@/app/(admin)/admin/family-suggestions/page";
 // #1997 member-detail action cards (membership / finance lane).
 import { MemberDeletionCard } from "@/app/(admin)/admin/members/[id]/_components/member-deletion-card";
 import { MemberCreditCard } from "@/app/(admin)/admin/members/[id]/_components/member-credit-card";
@@ -152,6 +153,7 @@ import { MemberLodgeAccessCard } from "@/app/(admin)/admin/members/[id]/_compone
 import { MemberPartnerLinkCard } from "@/app/(admin)/admin/members/[id]/_components/member-partner-link-card";
 import { MemberSeasonalMembershipCard } from "@/app/(admin)/admin/members/[id]/_components/member-seasonal-membership-card";
 import { MemberCommitteeAssignmentsCard } from "@/app/(admin)/admin/members/[id]/_components/member-committee-assignments-card";
+import { MemberDetailHeader } from "@/app/(admin)/admin/members/[id]/_components/member-detail-header";
 import { MemberContactGroup } from "@/app/(admin)/admin/members/[id]/_components/member-contact-group";
 import type { MemberGroupEditState } from "@/app/(admin)/admin/members/[id]/_hooks/use-member-group-edit";
 import type { MemberContactEditForm } from "@/lib/admin-member-edit-groups";
@@ -3073,5 +3075,123 @@ describe("MemberContactGroup view-only gating (#1997, membership)", () => {
       />,
     );
     expect(screen.getByRole("button", { name: /^Edit$/i })).toBeEnabled();
+  });
+});
+
+describe("MemberDetailHeader view-only gating (#1997, membership + finance)", () => {
+  beforeEach(() => {
+    sessionMatrix = null;
+    // The header resolves access-role labels via a fetch that falls back when
+    // unavailable; stub it so the render-only cases never hit an unstubbed URL.
+    stubFetchRoutes({ "/api/admin/access-roles": { options: [] } });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  // xeroContactId=null with a live Xero connection renders the "Link to Xero"
+  // button-style action directly, so both the membership action (Add Dependent)
+  // and a finance action are visible affordances that can be asserted without
+  // opening a Radix dropdown.
+  const headerProps = {
+    member: {
+      id: "m1",
+      firstName: "Pat",
+      lastName: "Kea",
+      email: "pat@example.test",
+      accessRoles: [],
+      active: true,
+      cancelledAt: null,
+      archivedAt: null,
+      forcePasswordChange: false,
+      xeroContactId: null,
+    },
+    backHref: "/admin/members",
+    backLabel: "Back",
+    isAdultMember: true,
+    memberIsArchived: false,
+    pendingDeleteRequest: undefined,
+    xeroConnected: true,
+    xeroPushing: false,
+    xeroUnlinking: false,
+    onOpenDependentDialog: vi.fn(),
+    onOpenLinkXero: vi.fn(),
+    onOpenCreateXero: vi.fn(),
+    onUnlinkXero: vi.fn(),
+  } as unknown as ComponentProps<typeof MemberDetailHeader>;
+
+  it("gates the two areas independently: membership edit + finance view", () => {
+    sessionMatrix = matrix("view", { membership: "edit", finance: "view" });
+    render(
+      <MemberDetailHeader
+        {...headerProps}
+        canEditMembership={true}
+        canEditFinance={false}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /Add Dependent/i }),
+    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Link to Xero/i })).toBeDisabled();
+  });
+
+  it("gates the two areas independently: membership view + finance edit", () => {
+    sessionMatrix = matrix("view", { membership: "view", finance: "edit" });
+    render(
+      <MemberDetailHeader
+        {...headerProps}
+        canEditMembership={false}
+        canEditFinance={true}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /Add Dependent/i }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Link to Xero/i })).toBeEnabled();
+  });
+});
+
+describe("FamilySuggestionsPage view-only gating (#1997, membership)", () => {
+  beforeEach(() => {
+    sessionMatrix = null;
+    stubFetchRoutes({
+      "/api/admin/family-suggestions": {
+        suggestions: [],
+        ungroupedCount: 0,
+        totalMembers: 0,
+        hiddenCount: 1,
+      },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("shows the notice and disables Reset hidden for a membership:view admin", async () => {
+    sessionMatrix = matrix("view", { membership: "view" });
+    render(<FamilySuggestionsPage />);
+    expect(
+      await screen.findByText(
+        /can view family group suggestions but cannot create, hide, or reset/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Reset hidden/i }),
+    ).toBeDisabled();
+  });
+
+  it("hides the notice and enables Reset hidden for a membership:edit admin", async () => {
+    sessionMatrix = matrix("view", { membership: "edit" });
+    render(<FamilySuggestionsPage />);
+    expect(
+      await screen.findByRole("button", { name: /Reset hidden/i }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByText(
+        /can view family group suggestions but cannot create, hide, or reset/i,
+      ),
+    ).not.toBeInTheDocument();
   });
 });
