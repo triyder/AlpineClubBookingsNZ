@@ -80,6 +80,48 @@ seasons, promos, and booking money):
   state.
 - [Reports](guides/reports.md) — occupancy, revenue, and member analytics.
 
+**Membership & applications guides** (batch 2 — members, applications,
+family/committee, the membership lifecycle, and membership billing):
+
+- [Members](guides/members.md) — the member directory, search, CSV import,
+  roles, seasonal membership, and merge.
+- [Member Applications](guides/member-applications.md) — the join/nomination
+  review queue and how approval maps people to member records.
+- [Member Fields](guides/member-fields.md) — which extra profile fields are
+  collected from members and applicants.
+- [Membership Types](guides/membership-types.md) — seasonal membership
+  categories, their booking and subscription policy, and roll-forward.
+- [Membership & Members setup](guides/membership-setup.md) — the setup hub for
+  types, fields, and subscription lockout.
+- [Subscription Lockout](guides/subscription-lockout.md) — the unpaid-subscription
+  booking lockout, financial year, and Xero paid-detection.
+- [Cancellation Requests](guides/membership-cancellations.md) — the membership
+  cancellation and archive review queue, plus the cancellation copy/Xero
+  settings.
+- [Committee](guides/committee.md) — committee roles, assignments, and the
+  public contact routing.
+- [Family Groups](guides/family-groups.md) — households, the billing member, and
+  the family-link request queue.
+- [Family Suggestions](guides/family-suggestions.md) — auto-detected family
+  groupings to confirm or dismiss.
+- [Induction](guides/induction.md) — the induction register, sign-offs, and
+  induction settings.
+- [Deletion Requests](guides/deletion-requests.md) — member self-service
+  deletions and admin-initiated hard-delete review (two-admin rule).
+- [Lockers](guides/lockers.md) — locker inventory and member allocation
+  (lodge-scoped).
+- [Fees](guides/fees.md) — the consolidated hut, joining, and annual fee console
+  and family billing. (Also covers the `fee-configuration` route, which
+  redirects here.)
+- [Subscriptions](guides/subscriptions.md) — annual membership-fee billing,
+  family billing mode, and manual mark-paid.
+- [Refunds & Credits](guides/refund-requests.md) — the refund-appeal and
+  credit-approval review queue.
+- [Internet Banking](guides/internet-banking.md) — bed holds and lead-time rules
+  for Xero-invoiced bank-transfer payments.
+- [Xero Sync](guides/xero.md) — the Xero connection, sync, reconciliation
+  ledger, and records browser.
+
 Until the remaining batches land, use the reference docs below for other areas.
 
 - [`../DEPLOYMENT.md`](../DEPLOYMENT.md) — bootstrap and blue/green deployment

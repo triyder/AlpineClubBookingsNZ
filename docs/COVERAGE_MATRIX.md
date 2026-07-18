@@ -55,36 +55,36 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `bookings` | bookings | `ARCHITECTURE.md` (booking/payment flow), `STATE_MACHINES.md` | [guide](guides/bookings.md) | 1 |
 | `bookings-setup` | bookings | — | [guide](guides/bookings-setup.md) | 1 |
 | `chores` | lodge | — | GAP | 3 |
-| `committee` | membership | `ARCHITECTURE.md` (committee roles/assignments) | GAP | 2 |
+| `committee` | membership | `ARCHITECTURE.md` (committee roles/assignments) | [guide](guides/committee.md) | 2 |
 | `communications` | membership | `src/lib/email-message-registry.ts` | GAP | 4 |
 | `config-transfer` | support | `config-transfer/README.md` (planned feature) | GAP | 4 |
 | `dashboard` | overview | `ARCHITECTURE.md` (Needs Attention / badges) | GAP | 4 |
-| `deletion-requests` | membership | `ARCHITECTURE.md` (member lifecycle delete) | GAP | 2 |
+| `deletion-requests` | membership | `ARCHITECTURE.md` (member lifecycle delete) | [guide](guides/deletion-requests.md) | 2 |
 | `display` | content | `lobby-display/README.md`, `lobby-display/operating.md` | Feature hub (extend in #2050) | 4 |
 | `email-deliverability` | support | `ARCHITECTURE.md` (email), email registry | GAP | 4 |
 | `email-messages` | support | `src/lib/email-message-registry.ts` | GAP | 4 |
-| `family-groups` | membership | `ARCHITECTURE.md` (family groups / billing) | GAP | 2 |
-| `family-suggestions` | membership | `ARCHITECTURE.md` (hidden family suggestions) | GAP | 2 |
-| `fee-configuration` | finance | `AUTHORITATIVE_FEES.md` | GAP | 2 |
-| `fees` | finance | `AUTHORITATIVE_FEES.md` | GAP | 2 |
+| `family-groups` | membership | `ARCHITECTURE.md` (family groups / billing) | [guide](guides/family-groups.md) | 2 |
+| `family-suggestions` | membership | `ARCHITECTURE.md` (hidden family suggestions) | [guide](guides/family-suggestions.md) | 2 |
+| `fee-configuration` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) (redirect → Fees) | 2 |
+| `fees` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) | 2 |
 | `health` | support | — | GAP | 4 |
 | `hut-leaders` | lodge | `ARCHITECTURE.md` (hut-leader auto-assign cron) | GAP | 3 |
 | `image-manager` | content | — | GAP | 4 |
-| `induction` | membership | — | GAP | 2 |
+| `induction` | membership | — | [guide](guides/induction.md) | 2 |
 | `integrations` | support | `CONFIGURATION.md`, `DEPLOYMENT.md` | GAP | 4 |
-| `internet-banking` | finance | `ARCHITECTURE.md` (Internet Banking), `xero/ARCHITECTURE.md` | GAP | 2 |
+| `internet-banking` | finance | `ARCHITECTURE.md` (Internet Banking), `xero/ARCHITECTURE.md` | [guide](guides/internet-banking.md) | 2 |
 | `issue-reports` | support | `ARCHITECTURE.md` (issue reports / stuck states) | GAP | 4 |
-| `lockers` | membership | — | GAP | 2 |
+| `lockers` | membership | — | [guide](guides/lockers.md) | 2 |
 | `lodge` | lodge | `ARCHITECTURE.md` (lodge kiosk / operations) | GAP | 3 |
 | `lodge-instructions` | lodge | `src/lib/token-catalogue.ts`, `PUBLIC_PAGE_CONTENT_TOKENS.md` | GAP | 3 |
 | `lodges` | lodge | `multi-lodge/README.md`, `multi-lodge/feature-overview.md` | Feature hub (extend in #2050) | 3 |
-| `member-applications` | membership | `ARCHITECTURE.md` (membership application / nominations) | GAP | 2 |
-| `member-fields` | membership | — | GAP | 2 |
-| `members` | membership | `ARCHITECTURE.md` (members, CSV import, roles) | GAP | 2 |
-| `membership-cancellation` | membership | `CANCELLATIONS.md` | GAP | 2 |
-| `membership-cancellations` | membership | `CANCELLATIONS.md`, `ARCHITECTURE.md` (cancellation review queue) | GAP | 2 |
-| `membership-setup` | membership | `ARCHITECTURE.md` (membership types) | GAP | 2 |
-| `membership-types` | membership | `ARCHITECTURE.md` (seasonal membership types) | GAP | 2 |
+| `member-applications` | membership | `ARCHITECTURE.md` (membership application / nominations) | [guide](guides/member-applications.md) | 2 |
+| `member-fields` | membership | — | [guide](guides/member-fields.md) | 2 |
+| `members` | membership | `ARCHITECTURE.md` (members, CSV import, roles) | [guide](guides/members.md) | 2 |
+| `membership-cancellation` | membership | `CANCELLATIONS.md` | [guide](guides/membership-cancellations.md) (settings folded in) | 2 |
+| `membership-cancellations` | membership | `CANCELLATIONS.md`, `ARCHITECTURE.md` (cancellation review queue) | [guide](guides/membership-cancellations.md) | 2 |
+| `membership-setup` | membership | `ARCHITECTURE.md` (membership types) | [guide](guides/membership-setup.md) | 2 |
+| `membership-types` | membership | `ARCHITECTURE.md` (seasonal membership types) | [guide](guides/membership-types.md) | 2 |
 | `modules` | support | `CONFIGURATION.md` (module flags) | GAP | 4 |
 | `mountain-conditions` | content | — | GAP | 4 |
 | `notification-recipients` | support | `ARCHITECTURE.md` (email / notifications) | GAP | 4 |
@@ -93,7 +93,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `page-content` | content | `PUBLIC_PAGE_CONTENT_TOKENS.md` | GAP | 4 |
 | `payments` | finance | `ARCHITECTURE.md` (Stripe), `finance-dashboard/README.md` | [guide](guides/payments.md) | 1 |
 | `promo-codes` | bookings | `ARCHITECTURE.md` (promo codes / redemptions) | [guide](guides/promo-codes.md) | 1 |
-| `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery) | GAP | 2 |
+| `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery) | [guide](guides/refund-requests.md) | 2 |
 | `reports` | finance | `finance-dashboard/README.md` | [guide](guides/reports.md) | 1 |
 | `rooms-beds` | lodge | `CAPACITY_MODEL.md`, `ARCHITECTURE.md` (bed inventory) | GAP | 3 |
 | `roster` | lodge | `ARCHITECTURE.md` (roster/chores) | GAP | 3 |
@@ -104,11 +104,11 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `site-content` | content | `PUBLIC_PAGE_CONTENT_TOKENS.md` | GAP | 4 |
 | `site-style` | content | — | GAP | 4 |
 | `stuck-states` | support | `ARCHITECTURE.md` (stuck-state dashboard) | GAP | 4 |
-| `subscription-lockout` | finance | `ARCHITECTURE.md` (subscription lockout) | GAP | 2 |
-| `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | GAP | 2 |
+| `subscription-lockout` | finance | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
+| `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | [guide](guides/subscriptions.md) | 2 |
 | `waitlist` | bookings | `ARCHITECTURE.md` (waitlist), `E2E_PLAYWRIGHT.md` | [guide](guides/waitlist.md) | 1 |
 | `work-parties` | lodge | — | GAP | 3 |
-| `xero` | finance | `xero/ARCHITECTURE.md`, `XERO_MEMBER_GROUPING_RUNBOOK.md` | GAP | 2 |
+| `xero` | finance | `xero/ARCHITECTURE.md`, `XERO_MEMBER_GROUPING_RUNBOOK.md` | [guide](guides/xero.md) | 2 |
 
 ## Summary
 
@@ -150,6 +150,32 @@ guide with the redirect noted. `seasons` has **no direct sidebar entry** (ADR-00
 [Seasons](guides/seasons.md) guide documents that navigation. `booking-messages`
 is edited under the **support** permission area (via Notifications & Email /
 Bookings Setup), not bookings, even though it belongs to the bookings cluster.
+
+### Batch 2 route realities (#2050)
+
+Two batch-2 areas are **folded** into a sibling guide rather than given their own
+page, matching the batch-1 pattern:
+
+- `fee-configuration` is a pure `redirect()` to `/admin/fees`, so its row links to
+  the [Fees](guides/fees.md) guide (redirect noted).
+- `membership-cancellation` (singular) is a small **settings** panel (cancellation
+  copy + Xero handling) reached from **Notifications & Email**, distinct from the
+  `membership-cancellations` (plural) review queue. To avoid a confusing
+  near-identical filename, its settings are documented as a section inside the
+  [Cancellation Requests](guides/membership-cancellations.md) guide, and its row
+  links there.
+
+Several batch-2 areas have **no direct sidebar entry** and are reached through a
+hub (their guides say so and open with the hub nav path, not route-first):
+`membership-types`, `member-fields`, and `subscription-lockout` are reached from
+the **Membership & Members** hub (`/admin/membership-setup`); `lockers` is
+lodge-scoped (ADR-005) and reached from the lodge configuration hub's **Lockers**
+card. `fees` sits under both **bookings** and **finance**: its admission is OR
+(bookings *or* finance view), and it self-gates editing per section (hut fees need
+bookings edit; joining/annual/family fees need finance edit). The `subscription-lockout`
+page's own route is **support**, but it embeds membership, finance, and (read-only)
+bookings settings — the Batch column tracks the finance grouping used for #2050
+delivery.
 
 ## Delivery batches (#2050)
 
