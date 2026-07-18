@@ -228,25 +228,43 @@ after migrations, base seed, and the C2 self-heal — the app applies that bundl
 **iff the database is empty of non-seed configuration**, through this same
 validated pipeline (`src/lib/config-transfer/bootstrap-import.ts`).
 
-- **Empty-target only, fail closed.** "Empty of non-seed configuration" means the
-  pristine post-seed state with no operator/admin footprint: no prior config
-  import (interactive or bootstrap), no bookings, no non-system members, and the
-  setup wizard never finished. Any of those present → the import is **refused**
-  and nothing is written. A malformed/tampered/oversized bundle, an unreadable
-  path, or any apply failure also refuses; boot always continues. (A plain
-  "the plan has no updates" check is deliberately NOT used — the base seed
-  pre-creates the config rows the bundle touches, so a legitimate bootstrap
-  always shows updates; see ADR-003 "Empty-target definition".)
+- **Empty-target only, fail closed.** "Empty of non-seed configuration" means
+  the pristine post-seed state with **no operator footprint** — six signals,
+  ALL of which must be absent: no prior config import (interactive or
+  bootstrap), no bookings, no non-system members, the setup wizard never
+  finished, the setup wizard never even driven (no completed/skipped steps),
+  and no audit-log row with a member actor (which catches direct-admin-editor
+  configuration). Any of those present → the import is **refused** and nothing
+  is written. A malformed/tampered/oversized bundle, an unreadable path, a
+  probe error, or any apply failure also refuses; boot always continues. (A
+  plain "the plan has no updates" check is deliberately NOT used — the base
+  seed pre-creates the config rows the bundle touches, so a legitimate
+  bootstrap always shows updates; see ADR-003 "Empty-target definition".)
+- **Race-safe.** The emptiness probe is re-run INSIDE the apply advisory lock
+  before anything is written, and the idempotence marker commits in the same
+  transaction as the config writes — so concurrent replica boots apply exactly
+  once (the losers log a calm INFO refusal; see `DEPLOYMENT.md` "Expected
+  logs").
+- **Rename abort (reachable).** The seed creates key-weak defaults (induction
+  template, example chore templates); a bundle whose source renamed them
+  produces rename candidates that need a human, so the bootstrap aborts
+  (`refused-invalid`, nothing written) and enumerates the entities in the log.
+  Fallback: import the bundle interactively via Admin → Setup & Configuration →
+  Export & Import and resolve the renames there.
 - **Not gated on config provenance.** The bundle is the config source in a DR
   restore where `config/club.json` may be absent, so — unlike the self-heal —
   this import runs regardless of `clubConfigSource`.
-- **Pre-apply backup waived (only here).** An empty database has nothing to
-  protect; every other ADR-002 safeguard (validation, allowlist, DMMF
-  type-checks, single-flight lock, fingerprint drift refusal, atomic upsert-only
+- **Pre-apply backup waived (only here, type-enforced).** An empty database has
+  nothing to protect; the waiver requires a branded proof object only the
+  positive empty-target probe can mint, so no other caller compiles. Every
+  other ADR-002 safeguard (validation, allowlist, DMMF type-checks,
+  single-flight lock, fingerprint drift refusal, atomic upsert-only
   transaction, audit) still applies.
 - **Audited + idempotent.** A success writes a `configuration.bootstrap_imported`
-  audit row (system/deploy actor, bundle sha256, outcome); a second boot with the
-  same variable set sees that marker and refuses calmly.
+  audit row in the apply transaction (system/deploy actor, bundle sha256,
+  outcome; shown as "System" in the admin audit log); a second boot with the
+  same variable set sees that marker and refuses calmly without touching the
+  bundle file.
 
 Operator runbook and expected logs: `DEPLOYMENT.md` → "Config Bundle Auto-Import
 On Boot (DR / clone)".

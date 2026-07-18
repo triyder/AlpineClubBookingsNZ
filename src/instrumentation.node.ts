@@ -70,16 +70,20 @@ export async function register() {
 
     // #1988 (C9): boot-time config-bundle auto-import (ADR-003, DR / clone).
     // Runs AFTER the self-heal. When CONFIG_BUNDLE_IMPORT_PATH names a readable
-    // bundle AND the database is empty of non-seed configuration, it applies the
-    // bundle non-interactively through the same validated import pipeline the
-    // admin route uses (untrusted-input validation, allowlist, DMMF type-checks,
-    // atomic upsert-only transaction, audit). It fails CLOSED — a non-empty
-    // target, a malformed bundle, or any I/O/apply failure refuses and writes
-    // nothing. Best-effort: `runConfigBootstrapImport` never throws, and this
-    // outer try/catch additionally guards the dynamic imports so a bootstrap
-    // bundle can never block or fail startup. A successful apply re-warms the
-    // identity/email caches primed earlier this boot so the imported values take
-    // effect immediately.
+    // bundle AND the database is empty of non-seed configuration (the six
+    // "no operator footprint" signals — see bootstrap-import.ts), it applies
+    // the bundle non-interactively through the same validated import pipeline
+    // the admin route uses (untrusted-input validation, allowlist, DMMF
+    // type-checks, atomic upsert-only transaction, audit). It fails CLOSED — a
+    // non-empty target, a malformed/oversized bundle, or any I/O/apply failure
+    // refuses and writes nothing; the emptiness probe is re-run inside the
+    // apply advisory lock, so on a multi-replica boot exactly one replica
+    // applies and the others log a calm INFO refusal. Best-effort:
+    // `runConfigBootstrapImport` never throws, and this outer try/catch
+    // additionally guards the dynamic imports so a bootstrap bundle can never
+    // block or fail startup. A successful apply re-warms the identity/email
+    // caches primed earlier this boot so the imported values take effect
+    // immediately.
     try {
       const { prisma } = await import("./lib/prisma");
       const { runConfigBootstrapImport } = await import(

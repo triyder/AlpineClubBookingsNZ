@@ -377,33 +377,85 @@ deploy env + bundle file  →  prisma migrate deploy  →  base seed  →  boot 
 
 - Export the source club's bundle from **Admin → Setup & Configuration →
   Export & Import** (tick the categories to carry; door codes are opt-in).
-- Copy the `.zip` to a path the app container can read (e.g. a mounted
-  `config/` volume) and set `CONFIG_BUNDLE_IMPORT_PATH=/abs/path/to/bundle.zip`
-  in the environment. The variable is unset by default; leaving it unset is a
-  silent no-op.
+- The app containers run with a **read-only root filesystem** and, out of the
+  box, mount only the `image_uploads` volume — there is no pre-existing
+  `config/` mount. Bind-mount a host directory containing the bundle into the
+  app services (read-only), and add the env var to the shared
+  `x-app-environment` anchor so **all** replicas (`app`, `app_blue`,
+  `app_green`) see the same file and the same setting:
+
+  ```yaml
+  # docker-compose.yml (or an override file)
+  x-app-environment: &app-environment
+    # ... existing entries ...
+    CONFIG_BUNDLE_IMPORT_PATH: ${CONFIG_BUNDLE_IMPORT_PATH:-}
+
+  x-app-service: &app-service
+    # ... existing entries ...
+    volumes:
+      - image_uploads:/app/public/images
+      - ./config-bundle:/app/config-bundle:ro   # bundle drop directory
+  ```
+
+  Then on the host:
+
+  ```bash
+  mkdir -p config-bundle
+  cp /path/to/club-bundle.zip config-bundle/
+  echo 'CONFIG_BUNDLE_IMPORT_PATH=/app/config-bundle/club-bundle.zip' >> .env
+  docker compose up -d
+  ```
+
+  The path is the **in-container** path (`/app/config-bundle/club-bundle.zip`
+  in this example). Because every replica boots the import step, the file must
+  be readable by all of them — a shared bind mount on the `x-app-service`
+  anchor guarantees that; the in-lock re-check (below) guarantees only one
+  replica actually applies. The variable is unset by default; leaving it unset
+  is a silent no-op.
 - The file is **operator-controlled deployment configuration** but its bytes are
   treated as **untrusted** — full structural validation, resource caps, the
   secret/auth/member-coupling allowlist, and per-field Prisma-DMMF type checks
   all apply (a bundle can never carry secrets, auth material, members, or
-  transactional data).
+  transactional data). The file is also `stat`ed before it is read: an
+  oversized (> 50 MB bundle cap) or non-regular file is refused without being
+  loaded into memory.
 
 ### The empty-target guarantee (fail closed)
 
 The import applies **only when the database is empty of non-seed configuration**
-— the pristine post-seed state with no operator/admin footprint:
+— the pristine post-seed state with **no operator footprint**, defined as the
+absence of ALL SIX of these signals:
 
-- no config bundle has ever been imported (interactive or bootstrap),
-- no bookings exist,
-- no members exist beyond the seeded system accounts (admin + lodge kiosk), and
-- the setup wizard was never marked finished.
+1. no config bundle has ever been imported (interactive or bootstrap),
+2. no bookings exist,
+3. no members exist beyond the seeded system accounts (admin + lodge kiosk),
+4. the setup wizard was never marked finished,
+5. the setup wizard was never even started — no completed or skipped wizard
+   steps (a club configured through `/admin/setup` without pressing "finish"
+   is still configured), and
+6. no audit-log row has a member actor (every admin configuration edit —
+   direct editors included — audits with the admin's member id; only
+   `system:`-prefixed synthetic actors and actor-less system rows are ignored).
 
 If **any** of those is present, the import is **refused and nothing is written**
-— a file dropped on disk can never overwrite a live or already-configured club.
-A malformed / tampered / oversized bundle, an unreadable `CONFIG_BUNDLE_IMPORT_PATH`,
-or any apply failure also refuses and leaves the database untouched. The apply
-runs in a single atomic transaction, so a mid-apply failure rolls back
-completely — there is no partial import. **Boot always continues**; a bootstrap
-bundle can never block or crash startup.
+— a file dropped on disk can never overwrite a live or already-configured club,
+whether it was configured by imports, bookings, members, the wizard, or direct
+admin edits. A malformed / tampered / oversized bundle, an unreadable
+`CONFIG_BUNDLE_IMPORT_PATH`, a probe query error, or any apply failure also
+refuses and leaves the database untouched. The apply runs in a single atomic
+transaction — with the emptiness probe **re-run inside the import lock** before
+anything is written, and the idempotence marker committed in the same
+transaction — so a mid-apply failure rolls back completely and two concurrent
+boots can never double-apply. **Boot always continues**; a bootstrap bundle can
+never block or crash startup.
+
+One refusal deserves a special note: the seed creates key-weak defaults (the
+default induction template, the example chore templates), so a bundle whose
+source club **renamed** those defaults produces rename candidates that need a
+human decision, and the bootstrap aborts with `refused-invalid` (nothing
+written) — see the rename-abort log below. The fallback is the interactive
+import (**Admin → Setup & Configuration → Export & Import**), where the renames
+are resolved by hand.
 
 Unlike the self-heal, this import is **not** gated on config provenance: the
 bundle is the config source in a DR restore where `config/club.json` may be
@@ -413,23 +465,46 @@ nothing to protect); every other safeguard applies.
 
 ### Expected logs (`scope: "config-bootstrap-import"`)
 
-- **Applied** (fresh empty target):
+- **Applied** (fresh empty target — exactly ONE replica logs this):
   `Config bundle auto-imported on boot: created N, updated M, unchanged K.`
-  A `configuration.bootstrap_imported` audit row is written (system/deploy
-  actor, bundle sha256, outcome).
-- **Steady state** (second boot with the variable still set, INFO — expected,
+  A `configuration.bootstrap_imported` audit row is written in the same
+  transaction (system/deploy actor, bundle sha256, outcome); the admin audit
+  log shows the actor as "System".
+- **Multi-replica first boot** (INFO — expected, not an error): the compose
+  stack boots `app`, `app_blue`, and `app_green` near-simultaneously; every
+  replica probes, one wins the import lock and applies, and each **losing
+  replica** logs
+  `Config bundle auto-import refused: another writer configured the target
+  while this import was being prepared (…). On a multi-replica boot this is the
+  expected outcome for every replica that did not win the race. Nothing was
+  written by this replica; boot continues.`
+  (A replica that boots after the winner committed logs the steady-state
+  refusal below instead. Either way: one "auto-imported" line total, calm INFO
+  everywhere else.)
+- **Steady state** (later boots with the variable still set, INFO — expected,
   not an error): `Config bundle auto-import refused: a config bundle was already
   auto-imported on a prior boot; the target is configured (steady state).`
+  Steady-state boots do **zero file I/O** — the probe refuses before the bundle
+  file is even statted.
 - **Non-empty target** (WARN):
-  `Config bundle auto-import refused: target already has … ; …`
-- **Bad bundle / path** (ERROR or WARN): a validation-error, human-resolution,
-  unreadable-path, or apply-failure message — always ending "Nothing was
-  written; boot continues."
+  `Config bundle auto-import refused: target already has … ; …` (or the
+  wizard/member-actor variants of the six signals above).
+- **Rename abort** (ERROR, `refused-invalid` — see the note above):
+  `Config bundle auto-import refused: N row(s) need an interactive rename
+  decision, which cannot be made non-interactively: induction-template "…", … .
+  This can happen when the source club renamed seed-created defaults (e.g. the
+  induction template or example chore templates). Import the bundle through
+  Admin → Setup & Configuration → Export & Import instead, and resolve the
+  renames there. Nothing was written.`
+- **Bad bundle / path** (ERROR or WARN): a validation-error, oversized-file,
+  unreadable-path, or apply-failure message — always stating that nothing was
+  written and boot continues.
 
-Because a successful import writes the `configuration.bootstrap_imported` marker,
-the step is **idempotent**: leaving `CONFIG_BUNDLE_IMPORT_PATH` set across
-restarts simply logs the calm steady-state refusal on every subsequent boot. You
-may unset it once the site is up.
+Because a successful import commits the `configuration.bootstrap_imported`
+marker atomically with the config writes, the step is **idempotent and
+race-safe**: leaving `CONFIG_BUNDLE_IMPORT_PATH` set across restarts simply
+logs the calm steady-state refusal (with no file I/O) on every subsequent boot.
+You may unset it once the site is up.
 
 ## Staging
 

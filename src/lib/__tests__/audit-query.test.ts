@@ -3,6 +3,7 @@ import { parseAdminAuditLogQuery } from "@/lib/audit-admin-query";
 import {
   buildAuditDrilldownLinks,
   buildAuditMemberScopeWhere,
+  getAuditTimelinePage,
   inferAuditCategoryFromAction,
 } from "@/lib/audit-query";
 
@@ -143,6 +144,68 @@ describe("audit query helpers", () => {
         }),
       ]),
     );
+  });
+
+  it("renders synthetic system: actors as System, not Unknown member", async () => {
+    // The boot-time config bootstrap (#1988) audits with the synthetic actor
+    // id "system:config-bootstrap", which is not a Member row. The admin
+    // timeline must label it "System"; a genuinely dangling member id keeps
+    // the "Unknown member" fallback.
+    const baseLog = {
+      id: "log-1",
+      targetId: null,
+      details: null,
+      ipAddress: null,
+      createdAt: new Date("2026-07-18T00:00:00.000Z"),
+      actorMemberId: null,
+      subjectMemberId: null,
+      entityType: null,
+      entityId: null,
+      category: "system",
+      severity: "critical",
+      outcome: "success",
+      summary: "Auto-imported configuration bundle on boot",
+      metadata: null,
+      requestId: null,
+      userAgent: null,
+      retentionClass: null,
+    };
+    const logs = [
+      {
+        ...baseLog,
+        id: "log-1",
+        action: "configuration.bootstrap_imported",
+        memberId: "system:config-bootstrap",
+      },
+      {
+        ...baseLog,
+        id: "log-2",
+        action: "member.updated",
+        memberId: "member-deleted-long-ago",
+      },
+    ];
+    const db = {
+      auditLog: {
+        findMany: async () => logs,
+        count: async () => logs.length,
+      },
+      member: {
+        findMany: async () => [],
+      },
+    };
+
+    const page = await getAuditTimelinePage({
+      db: db as never,
+      where: {},
+      page: 1,
+      pageSize: 10,
+      category: "all",
+      audience: "admin",
+    });
+
+    expect(page.data[0].actorDisplayName).toBe("System");
+    expect(page.data[0].actor).toBeNull();
+    expect(page.data[1].actorDisplayName).toBe("Unknown member");
   });
 
   it("rejects invalid admin audit filter values", () => {

@@ -96,26 +96,66 @@ DB, which the empty-target guard prevents.
   planner's allowlist + DMMF type-checks) → `applyConfigImport` (single-flight
   advisory lock, in-lock re-plan, fingerprint-drift refusal, atomic upsert-only
   transaction, audit). The only deviation is the pre-apply backup (below).
-- **Empty-target definition — precise.** The base seed (`prisma/seed.ts`) is
-  create-if-missing and pre-populates the config singletons/keyed rows this
-  importer touches, so a faithful club bundle applied to a freshly-seeded DB
-  necessarily produces UPDATEs against seed placeholders. "Zero updates in the
-  plan" is therefore NOT a usable empty-target signal on this codebase — it would
-  refuse every legitimate bootstrap. Emptiness is instead defined as the absence
-  of any operator/admin footprint beyond the pristine post-seed state, probed
-  positively (`assessBootstrapReadiness`) over signals the seed leaves untouched:
-  (1) no config bundle ever imported — no `configuration.imported` (interactive)
-  or `configuration.bootstrap_imported` (this feature) audit row; (2) no
-  bookings; (3) no non-system members (any `Member` whose role is not the seeded
-  ADMIN/LODGE); (4) the setup wizard was never marked finished
-  (`SetupProgress.completedAt` null). ALL four must hold to apply. This is
-  strictly safer than an update-count check because it also refuses a
-  manually-configured club whose bundle keys collide with seed keys.
-- **Fail closed.** A non-empty target, a plan with validation errors, a plan
-  step needing an interactive rename decision (impossible on a truly empty
-  target, but guarded anyway), an unreadable path, and any I/O or apply failure
-  all REFUSE and leave the DB untouched (the apply transaction is atomic). Boot
-  always continues — the function never throws.
+- **Empty-target definition — precise ("no operator footprint", six signals).**
+  The base seed (`prisma/seed.ts`) is create-if-missing and pre-populates the
+  config singletons/keyed rows this importer touches, so a faithful club bundle
+  applied to a freshly-seeded DB necessarily produces UPDATEs against seed
+  placeholders. "Zero updates in the plan" is therefore NOT a usable
+  empty-target signal on this codebase — it would refuse every legitimate
+  bootstrap. Emptiness is instead defined as the absence of ANY operator
+  footprint beyond the pristine post-seed state, probed positively
+  (`assessBootstrapReadiness`) over state the seed never creates (the seed
+  writes no `AuditLog` rows and no `SetupProgress` row; its only members are
+  the ADMIN/LODGE system accounts):
+  (1) no config bundle ever imported — no `configuration.imported`
+  (interactive) or `configuration.bootstrap_imported` (this feature) audit row;
+  (2) no bookings; (3) no non-system members (any `Member` whose role is not
+  the seeded ADMIN/LODGE); (4) the setup wizard was never marked finished
+  (`SetupProgress.completedAt` null); (5) the setup wizard was never even
+  DRIVEN — no `SetupProgress` row has any completed or skipped step ids (step
+  completes/skips leave `completedAt` null, so signal 4 alone would miss a club
+  configured via `/admin/setup` without pressing "finish"); (6) no audit-log
+  row has a MEMBER actor — no row whose `memberId` or `actorMemberId` is set
+  to anything other than a `system:`-prefixed synthetic actor (admin
+  configuration edits through the direct editors all audit with the admin's
+  member id, so this catches a hand-configured club that has none of the other
+  footprints). ALL six must be absent to apply. This is strictly safer than an
+  update-count check because it also refuses a manually-configured club whose
+  bundle keys collide with seed keys.
+- **Fail closed.** A non-empty target, a probe query error, a plan with
+  validation errors, a plan step needing an interactive rename decision (see
+  the next bullet — this is reachable), an unreadable/oversized/non-regular
+  bundle file, and any I/O or apply failure all REFUSE and leave the DB
+  untouched (the apply transaction is atomic). Boot always continues — the
+  function never throws.
+- **Non-interactive rename abort — reachable on a post-seed target.** The seed
+  creates key-weak rows (the default induction template, the example chore
+  templates), so a bundle whose SOURCE club renamed those defaults produces
+  rename candidates against a faithfully-seeded target, and the whole import
+  aborts (`refused-invalid`, nothing written). This fail-closed abort is
+  deliberate — auto-tolerating "seed-looking" rows would require inferring
+  seed-ness and risks silently orphaning real data. The abort log enumerates
+  the affected entities (e.g. `induction-template "Alpine Club Induction/2"`)
+  and the documented fallback is the interactive import (Admin → Setup &
+  Configuration → Export & Import), where a human resolves the renames.
+- **Concurrency — probe re-run under the apply lock; marker is transactional.**
+  The boot probe races concurrent writers (multi-replica blue/green boots, or
+  an interactive import at the same instant). The SAME probe is therefore
+  re-run INSIDE the apply transaction, immediately after the
+  `pg_advisory_xact_lock` single-flight lock and before any write; if it finds
+  the target configured, the transaction rolls back and the refusal is logged
+  at INFO — the healthy expected outcome for every replica that lost the race.
+  The `configuration.bootstrap_imported` marker is written on the SAME
+  transaction as the config writes, so the import and its idempotence marker
+  commit or roll back atomically: at most one bootstrap apply can ever commit,
+  and a committed apply is always marked. (The pipeline's secondary
+  `configuration.imported` audit row is still written post-commit, as on the
+  interactive path.)
+- **Backup waiver is type-enforced.** `applyConfigImport`'s skip variant is an
+  object carrying a nominal `BootstrapEmptyTargetProof` that only a positive
+  `assessBootstrapReadiness` probe can mint (the class is unexported, with a
+  `#`-private brand); a bare string does not compile, so no other caller —
+  including the interactive route — can waive the ADR-002 pre-apply backup.
 - **Provenance guard deliberately NOT applied.** Unlike the self-heal, the
   bootstrap import is not gated on `clubConfigSource === "primary"`: the BUNDLE
   is the config source in the DR scenario, and `config/club.json` is often absent
@@ -132,21 +172,29 @@ DB, which the empty-target guard prevents.
   bundle's authoritative values over them; if it skipped (safe-default DR), this
   importer creates them. On the next boot the self-heal sees the rows present
   (skips) and this importer sees the `configuration.bootstrap_imported` marker
-  (refuses): exactly one write.
+  (refuses). "At most one bootstrap apply ever commits" is a transactional
+  guarantee (in-lock re-check + in-transaction marker, above), not merely a
+  next-boot convention.
 - **Write mode.** `overwrite`, so the bundle fully defines each record and a
   fresh install faithfully reproduces the source club (merge would leave seed
   placeholders showing through blanked source fields).
-- **Pre-apply backup waived — only here.** `applyConfigImport` accepts
-  `preApplyBackup: "skip-empty-bootstrap"`, used exclusively by this path: an
-  empty database has no prior configuration to protect. Every other ADR-002
-  safeguard applies. The bypass is unreachable from the interactive route.
-- **Audit shape.** On success the pipeline writes its standard
-  `configuration.imported` row (actor = the synthetic system id
-  `system:config-bootstrap`, backup recorded as skipped-for-bootstrap), and the
-  bootstrap wrapper writes a dedicated `configuration.bootstrap_imported` row
-  (system actor, `severity: critical`, `outcome: success`, metadata: bundle
-  sha256, provenance, mode, categories, totals, door-code slugs written). That
-  marker is what the emptiness probe keys on for idempotence. Refusals (non-empty
+- **Pre-apply backup waived — only here.** `applyConfigImport` accepts a
+  `preApplyBackup` object of kind `"skip-empty-bootstrap"`, used exclusively by
+  this path: an empty database has no prior configuration to protect. Every
+  other ADR-002 safeguard applies. The bypass is unreachable from the
+  interactive route — and uncompilable from anywhere else, because the object
+  requires the nominal `BootstrapEmptyTargetProof` (see "Backup waiver is
+  type-enforced" above).
+- **Audit shape.** On success the bootstrap writes a dedicated
+  `configuration.bootstrap_imported` row INSIDE the apply transaction (system
+  actor `system:config-bootstrap`, `severity: critical`, `outcome: success`,
+  metadata: bundle sha256, provenance, mode, categories, totals, door-code
+  slugs written) — that marker is what the emptiness probe keys on for
+  idempotence, and it commits atomically with the config writes. The pipeline
+  additionally writes its standard `configuration.imported` row after the
+  transaction commits (same system actor, backup recorded as
+  skipped-for-bootstrap), exactly as on the interactive path. The admin audit
+  UI renders `system:`-prefixed actors as "System". Refusals (non-empty
   target) and failures are logged, not audited, to avoid an audit row on every
   boot while the env var stays set.
 - **Idempotence.** A second boot with the same env var against the now-populated
