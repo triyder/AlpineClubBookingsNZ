@@ -22,13 +22,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 type AgeTierRow = {
   tier: AgeTier;
@@ -126,6 +119,35 @@ export default function AgeTierSettingsPage() {
         setting.tier === tier ? { ...setting, [field]: value } : setting
       )
     );
+    setSuccess(false);
+    setError(null);
+  }
+
+  // Remove a tier (issue #2009 — a club may run a SUBSET of the four built-in
+  // tiers). ADULT is the unbounded terminal tier and can never be removed. After
+  // dropping a tier the boundaries re-tile automatically on save (each tier's
+  // maxAge is derived from the next tier's minAge), and we coerce the youngest
+  // remaining tier to start at age 0 so the saved set still covers 0 → ∞. The PUT
+  // route makes the final call: if a live member or upcoming booking guest is
+  // still classified into the removed tier it fails closed with a clear message.
+  function handleRemoveTier(tier: string) {
+    if (tier === "ADULT") return;
+    setSettings((prev) => {
+      const remaining = prev
+        .filter((setting) => setting.tier !== tier)
+        .sort((a, b) => a.sortOrder - b.sortOrder)
+        .map((setting, index) => ({ ...setting, sortOrder: index }));
+      if (remaining.length > 0) {
+        remaining[0] = { ...remaining[0], minAge: 0 };
+      }
+      return remaining;
+    });
+    setSuccess(false);
+    setError(null);
+  }
+
+  function handleRestoreDefaults() {
+    setSettings(normalizeAgeTierRows(DEFAULT_SETTINGS));
     setSuccess(false);
     setError(null);
   }
@@ -246,10 +268,22 @@ export default function AgeTierSettingsPage() {
                     </p>
                     <p className="text-sm text-muted-foreground">{setting.label}</p>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Ages {setting.minAge}
-                    {isLastTier ? "+" : `-${maxAgeDisplay}`}
-                  </p>
+                  <div className="flex items-center gap-3">
+                    <p className="text-xs text-muted-foreground">
+                      Ages {setting.minAge}
+                      {isLastTier ? "+" : `-${maxAgeDisplay}`}
+                    </p>
+                    {editing && setting.tier !== "ADULT" ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleRemoveTier(setting.tier)}
+                      >
+                        Remove
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-[minmax(12rem,1.25fr)_minmax(7rem,0.55fr)_minmax(7rem,0.55fr)_minmax(15rem,1.65fr)]">
@@ -364,13 +398,23 @@ export default function AgeTierSettingsPage() {
           ) : null}
 
           {editing ? (
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               <Button onClick={handleSave} disabled={saving}>
                 {saving ? "Saving..." : "Save Changes"}
               </Button>
               <Button variant="outline" onClick={handleCancel} disabled={saving}>
                 Cancel
               </Button>
+              {settings.length < DEFAULT_SETTINGS.length ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleRestoreDefaults}
+                  disabled={saving}
+                >
+                  Restore default tiers
+                </Button>
+              ) : null}
             </div>
           ) : null}
         </CardContent>

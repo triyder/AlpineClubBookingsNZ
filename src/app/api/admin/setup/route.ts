@@ -92,8 +92,12 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
   // that type × those dates hard-throw at pricing time. Archived types are
   // skipped — they only price history. The tier-aware coverage rule lives in
   // computeMembershipTypeRateGaps (setup-readiness.ts).
-  const [memberRateTypes, currentAndFutureSeasons, existingTypeSeasonRates] =
-    await Promise.all([
+  const [
+    memberRateTypes,
+    currentAndFutureSeasons,
+    existingTypeSeasonRates,
+    configuredAgeTiers,
+  ] = await Promise.all([
       prisma.membershipType.findMany({
         where: { isActive: true, bookingBehavior: "MEMBER_RATE" },
         select: { id: true, name: true, ageGroupsApply: true },
@@ -105,11 +109,20 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
       prisma.membershipTypeSeasonRate.findMany({
         select: { seasonId: true, membershipTypeId: true, ageTier: true },
       }),
+      // The club's actual configured age tiers (#2009). A club may run a SUBSET
+      // (e.g. CHILD + ADULT only), and only its present tiers are ever priced —
+      // so the rate-gap check must demand rate rows for THOSE tiers, not the full
+      // built-in four, or a valid subset club is falsely told it is missing
+      // INFANT/YOUTH rates. Empty (unconfigured) → let the check use its default.
+      prisma.ageTierSetting.findMany({ select: { tier: true } }),
     ]);
+  const bookableAgeTiers = configuredAgeTiers.map((row) => row.tier);
   const membershipTypeRateGaps = computeMembershipTypeRateGaps({
     types: memberRateTypes,
     seasons: currentAndFutureSeasons,
     rateRows: existingTypeSeasonRates,
+    bookableAgeTiers:
+      bookableAgeTiers.length > 0 ? bookableAgeTiers : undefined,
   });
 
   return {

@@ -704,15 +704,21 @@ function buildAgeTierCheck(
     );
   }
 
-  // The DB is the sole runtime source of age tiers (#1983). Age tiers are
-  // seeded / self-healed to the DB/seed contract, so the "expected" count comes
-  // from that contract (AGE_TIER_DEFAULTS), not `config/club.json` — the file may
-  // be absent once ageTiers[] is demoted to a seed-only input. When a primary
-  // config is present its tier count still refines the expectation for forks
-  // that configure a non-default number of tiers.
-  const expected = club.config?.ageTiers.length ?? AGE_TIER_DEFAULTS.length;
+  // The DB is the sole runtime source of age tiers (#1983) and the admin save
+  // route (#2009) guarantees any persisted set is a complete, valid tiling of
+  // 0 → ∞ with ADULT as the terminal tier — including a deliberate SUBSET (e.g.
+  // CHILD + ADULT). So "configured" is simply "≥1 row exists": once the club has
+  // saved its tiers, whatever count it chose is complete by construction, and we
+  // must NOT nag a valid 2-tier club for having fewer rows than the 4-tier
+  // default. Pre-config (no rows yet) we fall back to the config/seed contract
+  // count purely as an "expected" hint for the operator. When a primary config is
+  // present its tier count refines that hint for forks that seed a non-default
+  // number of tiers.
   const actual = db?.ageTierSettingCount ?? 0;
-  const complete = expected > 0 && actual >= expected;
+  const configured = actual >= 1;
+  const configExpected = club.config?.ageTiers.length ?? AGE_TIER_DEFAULTS.length;
+  const expected = configured ? actual : configExpected;
+  const complete = configured;
   return applyProgress(
     {
       id: "age-tiers",

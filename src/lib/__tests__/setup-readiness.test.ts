@@ -225,6 +225,65 @@ describe("setup-readiness", () => {
     expect(ageCheck?.details).toContain("Database age-tier settings: 4");
   });
 
+  it("treats a valid 2-tier SUBSET club as complete, not a warning (#2009)", () => {
+    // A club running only CHILD + ADULT saves 2 rows. The DB is authoritative and
+    // the save route guarantees the set is a complete valid tiling, so the age
+    // step must report complete with the DB's own count — NOT nag it for having
+    // fewer than the 4-tier default, even though club.json still lists 4 tiers.
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(), // validClubConfig has 4 ageTiers
+      database: { ...completeDatabase, ageTierSettingCount: 2 },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const bookingCategory = readiness.categories.find((c) => c.id === "booking");
+    const ageCheck = bookingCategory?.checks.find((c) => c.id === "age-tiers");
+    expect(ageCheck?.status).toBe("complete");
+    expect(ageCheck?.details).toContain("Expected age tiers: 2");
+    expect(ageCheck?.details).toContain("Database age-tier settings: 2");
+  });
+
+  it("still warns when the age-tier table is empty (pre-config) (#2009)", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: { ...completeDatabase, ageTierSettingCount: 0 },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+    const bookingCategory = readiness.categories.find((c) => c.id === "booking");
+    const ageCheck = bookingCategory?.checks.find((c) => c.id === "age-tiers");
+    expect(ageCheck?.status).toBe("warning");
+    // Pre-config falls back to the config/seed contract count as the hint.
+    expect(ageCheck?.details).toContain("Expected age tiers: 4");
+  });
+
+  it("scopes rate-gap coverage to the club's configured tier subset (#2009)", async () => {
+    const { computeMembershipTypeRateGaps } = await import("@/lib/setup-readiness");
+    const types = [{ id: "type-full", name: "Full Member", ageGroupsApply: true }];
+    const seasons = [{ id: "s-1", name: "Winter 2026" }];
+    // A CHILD + ADULT club that has priced BOTH its present tiers has no gap,
+    // even though INFANT and YOUTH have no rows (no guest ever classifies into
+    // them). Without the subset scoping this would falsely report a gap.
+    const rateRows = [
+      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "CHILD" },
+      { seasonId: "s-1", membershipTypeId: "type-full", ageTier: "ADULT" },
+    ];
+    expect(
+      computeMembershipTypeRateGaps({
+        types,
+        seasons,
+        rateRows,
+        bookableAgeTiers: ["CHILD", "ADULT"],
+      }),
+    ).toEqual([]);
+    // With the default full-four set it WOULD flag the absent tiers, proving the
+    // scoping is what suppresses the false positive.
+    expect(
+      computeMembershipTypeRateGaps({ types, seasons, rateRows }),
+    ).toEqual(["Full Member — Winter 2026 (missing INFANT, YOUTH)"]);
+  });
+
   it("computes tier-aware membership-type rate gaps (#1930, E4 review F7)", async () => {
     const { computeMembershipTypeRateGaps } = await import("@/lib/setup-readiness");
     const types = [
