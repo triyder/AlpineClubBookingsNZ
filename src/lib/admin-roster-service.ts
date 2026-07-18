@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
 import { allocateChores, ChoreTemplateInput, GuestInput, ChoreHistoryEntry } from "@/lib/chore-allocator"
+import { getLodgeCapacity, FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity"
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests"
 import { sendChoreRosterEmail, shouldSendChoreRoster } from "@/lib/email"
 import { createGuestChoreToken } from "@/lib/guest-chore-token"
@@ -150,11 +151,31 @@ async function buildSuggestedAllocations(
     }
   }
 
+  // #2021 (#1982/#2013 residual): scale per-chore people-counts by this lodge's
+  // real resolved sleeping capacity (lodge-scoped), not the fixed display
+  // constant. Resolved within the roster transaction so it sees the same client;
+  // if the capacity read fails or resolves to a non-positive value, keep the
+  // constant fallback (allocateChores' own default) so housekeeping never breaks.
+  let capacity = FALLBACK_LODGE_CAPACITY
+  try {
+    const resolved = await getLodgeCapacity(
+      lodgeId,
+      tx as unknown as Parameters<typeof getLodgeCapacity>[1],
+    )
+    if (resolved > 0) capacity = resolved
+  } catch (err) {
+    logger.warn(
+      { err, lodgeId },
+      "Falling back to default lodge capacity for chore people-count scaling",
+    )
+  }
+
   const options: {
     includeNonEssential?: boolean
     choreLastRosteredDates?: Map<string, Date>
     currentDate?: Date
-  } = { choreLastRosteredDates, currentDate: date }
+    capacity?: number
+  } = { choreLastRosteredDates, currentDate: date, capacity }
 
   if (includeNonEssential !== undefined) {
     options.includeNonEssential = includeNonEssential

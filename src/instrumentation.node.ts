@@ -67,6 +67,26 @@ export async function register() {
         "Boot-time config self-heal did not run (non-fatal)",
       );
     }
+
+    // #2021 (residual of #1986 / #2015): the email-identity env vars removed in
+    // #1986 (EMAIL_FROM_NAME / SUPPORT_EMAIL / CONTACT_EMAIL /
+    // NEXT_PUBLIC_CONTACT_EMAIL) are no longer read. If a deployment still sets
+    // one, warn ONCE at boot that its value is ignored and email identity is
+    // admin-managed (Admin → Email Messages). Best-effort: its own try/catch,
+    // greppable scope, and it can never block or fail startup.
+    try {
+      const { getIgnoredEmailEnvWarning } = await import("./lib/ignored-email-env");
+      const ignoredEmailEnv = getIgnoredEmailEnvWarning(process.env);
+      if (ignoredEmailEnv) {
+        const { default: logger } = await import("./lib/logger");
+        logger.warn(
+          { scope: "ignored-email-env", vars: ignoredEmailEnv.vars },
+          ignoredEmailEnv.message,
+        );
+      }
+    } catch {
+      // Ignore — a boot-time advisory warning must never block startup.
+    }
   }
 
   if (process.env.NEXT_RUNTIME === "edge") {

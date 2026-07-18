@@ -253,6 +253,11 @@ export function allocateChores(
     highOccupancyThreshold?: number;
     choreLastRosteredDates?: Map<string, Date>;
     currentDate?: Date;
+    // #2021 (#1982/#2013 residual): the lodge's resolved sleeping capacity, used
+    // as the divisor when scaling per-chore people-counts to occupancy. When
+    // omitted, scalePeopleCount falls back to the fixed display constant
+    // (FALLBACK_LODGE_CAPACITY), preserving the pre-#2021 behaviour.
+    capacity?: number;
   } = {}
 ): ChoreAllocation[] {
   if (guests.length === 0 || chores.length === 0) {
@@ -301,7 +306,8 @@ export function allocateChores(
     const needed = scalePeopleCount(
       chore.recommendedPeopleMin,
       chore.recommendedPeopleMax,
-      guests.length
+      guests.length,
+      options.capacity
     );
 
     // Find eligible guests for this chore (age + time-of-day routing)
