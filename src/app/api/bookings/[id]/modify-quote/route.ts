@@ -905,7 +905,13 @@ export async function POST(
     try {
       shared = await resolvePartnerSharedCapacity({
         lodgeId: bookingLodgeId,
-        rangeStart: inProgressPlan && editableFrom ? editableFrom : newCheckIn,
+        // #2029: capacityRangeStart (not editableFrom) so the preview checks a
+        // check-out-day extension's new night — keeping quote and apply in
+        // lockstep; equals editableFrom for mid-stay / last-night edits.
+        rangeStart:
+          inProgressPlan && editableFrom
+            ? inProgressPlan.capacityRangeStart
+            : newCheckIn,
         rangeEnd: newCheckOut,
         proposedRanges:
           inProgressPlan && editableFrom
@@ -937,7 +943,8 @@ export async function POST(
       inProgressPlan && editableFrom
         ? await checkCapacityForGuestRanges(
             bookingLodgeId,
-            editableFrom,
+            // #2029: capacityRangeStart, not editableFrom — see above.
+            inProgressPlan.capacityRangeStart,
             newCheckOut,
             inProgressPlan.capacityGuestRanges,
             bookingId

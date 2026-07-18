@@ -162,3 +162,47 @@ describe("buildInProgressGuestRangePlan — #2029 check-out-day extension pricin
     expect(plan.proposedExistingGuests[0].futureDeltaCents).toBe(2 * RATE);
   });
 });
+
+describe("buildInProgressGuestRangePlan — #2029 capacity ranges", () => {
+  it("covers the check-out-day night in the +1 capacity range and window start", () => {
+    const plan = buildInProgressGuestRangePlan(
+      planInput({ editableFrom: "2026-08-25", newCheckOut: "2026-08-25" }),
+    );
+
+    expect(plan.capacityRangeStart).toEqual(D("2026-08-24"));
+    expect(plan.capacityGuestRanges).toEqual([
+      { stayStart: D("2026-08-24"), stayEnd: D("2026-08-25"), memberId: "m-g1" },
+    ]);
+  });
+
+  it("covers both new nights in a +2 capacity range", () => {
+    const plan = buildInProgressGuestRangePlan(
+      planInput({ editableFrom: "2026-08-25", newCheckOut: "2026-08-26" }),
+    );
+
+    expect(plan.capacityRangeStart).toEqual(D("2026-08-24"));
+    expect(plan.capacityGuestRanges).toEqual([
+      { stayStart: D("2026-08-24"), stayEnd: D("2026-08-26"), memberId: "m-g1" },
+    ]);
+  });
+
+  it("leaves the capacity window at editableFrom for a mid-stay extension (unchanged)", () => {
+    const plan = buildInProgressGuestRangePlan(
+      planInput({ editableFrom: "2026-08-22", newCheckOut: "2026-08-26" }),
+    );
+
+    expect(plan.capacityRangeStart).toEqual(D("2026-08-22"));
+    expect(plan.capacityGuestRanges[0].stayStart).toEqual(D("2026-08-22"));
+  });
+
+  it("anchors a future-dated partial-range guest's capacity range at their arrival, not earlier (#713)", () => {
+    const plan = buildInProgressGuestRangePlan(
+      planInput({ editableFrom: "2026-08-21", newCheckOut: "2026-08-26" }, [
+        guest("2026-08-22", "2026-08-24", 2 * RATE),
+      ]),
+    );
+
+    // The guest arrives 08-22, so their checked range never starts before then.
+    expect(plan.capacityGuestRanges[0].stayStart).toEqual(D("2026-08-22"));
+  });
+});

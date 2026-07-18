@@ -820,7 +820,13 @@ export async function calculateModifiedPricing(
     // #1668 overbook path stays a deliberately separate, unflagged action.
     const shared = await resolvePartnerSharedCapacity({
       lodgeId: pricingLodgeId,
-      rangeStart: inProgressPlan && editableFrom ? editableFrom : newCheckIn,
+      // #2029: use the plan's capacityRangeStart (not editableFrom) so a
+      // check-out-day extension's newly-occupied night is inside the checked
+      // window; it equals editableFrom for every mid-stay / last-night edit.
+      rangeStart:
+        inProgressPlan && editableFrom
+          ? inProgressPlan.capacityRangeStart
+          : newCheckIn,
       rangeEnd: newCheckOut,
       proposedRanges:
         inProgressPlan && editableFrom
@@ -846,7 +852,9 @@ export async function calculateModifiedPricing(
       inProgressPlan && editableFrom
         ? await checkCapacityForGuestRanges(
             pricingLodgeId,
-            editableFrom,
+            // #2029: capacityRangeStart, not editableFrom — see the
+            // partner-shared branch above; unchanged for mid-stay edits.
+            inProgressPlan.capacityRangeStart,
             newCheckOut,
             inProgressPlan.capacityGuestRanges,
             bookingId,
