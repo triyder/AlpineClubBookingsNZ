@@ -89,7 +89,7 @@ function json(body: unknown) {
 
 async function openBuiltIn() {
   render(<AdminDisplayTemplatesPage />);
-  const editButton = await screen.findByRole("button", { name: "Edit" });
+  const editButton = await screen.findByRole("button", { name: "Edit (Advanced)" });
   fireEvent.click(editButton);
   await screen.findByText("This is a built-in template.");
 }
@@ -129,7 +129,7 @@ describe("AdminDisplayTemplatesPage — built-in guard", () => {
     const { calls } = installFetch();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<AdminDisplayTemplatesPage />);
-    const editButton = await screen.findByRole("button", { name: "Edit" });
+    const editButton = await screen.findByRole("button", { name: "Edit (Advanced)" });
     fireEvent.click(editButton);
     await screen.findByText("This is a built-in template.");
 
@@ -149,7 +149,7 @@ describe("AdminDisplayTemplatesPage — built-in guard", () => {
     const { calls } = installFetch();
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<AdminDisplayTemplatesPage />);
-    const editButton = await screen.findByRole("button", { name: "Edit" });
+    const editButton = await screen.findByRole("button", { name: "Edit (Advanced)" });
     fireEvent.click(editButton);
     await screen.findByText("This is a built-in template.");
 
