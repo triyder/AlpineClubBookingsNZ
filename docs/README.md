@@ -166,6 +166,6 @@ Larger subsystems keep their own hub. Each links back to this page.
 
 ## Release notes
 
-Per-release notes and communication drafts live in
-[`releases/`](releases/v0.11.0.md) (start with the most recent,
-`releases/v0.11.0.md`).
+Per-release notes and the owner-review communication drafts are indexed in
+[`releases/README.md`](releases/README.md) (newest first — currently
+[`releases/v0.12.0.md`](releases/v0.12.0.md)).
