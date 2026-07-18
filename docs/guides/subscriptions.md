@@ -12,7 +12,8 @@ payments. Find it at **Admin → Members → Subscriptions** (`/admin/subscripti
 Subscriptions is a **finance** permission area: finance view to read status and
 previews, finance **edit** to change settings, confirm billing, retry Xero
 delivery, or mark a member paid. All amounts are integer cents; the season year
-runs April–March.
+runs April–March by default (it follows the financial year-end month, which is
+configurable — see [Subscription lockout](subscription-lockout.md)).
 
 ## When you'd use it
 

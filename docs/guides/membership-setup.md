@@ -55,6 +55,7 @@ for your current permissions."
 | --- | --- | --- |
 | "No setup pages are available for your current permissions" | A module hides all three destinations | Enable the relevant modules under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | A card opens read-only | Your admin role has membership view but not edit | Ask a full admin for membership edit access |
+| The Subscription Lockout card bounces you back | Opening that page needs **support**-area view access (the card shows regardless) | Ask for support view access — see [Subscription lockout](subscription-lockout.md) |
 
 ## Related links
 

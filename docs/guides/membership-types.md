@@ -57,8 +57,8 @@ change.
    not required, or Subscription required based on age tier). Tick every **allowed
    age tier**.
 4. Click **Save changes** (or **Create type**). On a successful edit-save the
-   editor closes automatically. If you close with the header **✕**, Escape, or an
-   outside click while you have unsaved edits, a **Discard unsaved changes?**
+   editor closes automatically. If you close with the header **✕** or Escape
+   while you have unsaved edits, a **Discard unsaved changes?**
    prompt appears — choose **Discard changes** or **Keep editing**. While a save
    is in flight the close controls are disabled so nothing races the auto-close.
 

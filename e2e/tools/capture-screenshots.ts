@@ -105,6 +105,7 @@ const CAPTURES: Capture[] = [
   { name: "admin-internet-banking", route: "/admin/internet-banking", area: "admin" },
   { name: "admin-xero", route: "/admin/xero", area: "admin" },
   { name: "admin-xero-setup", route: "/admin/xero/setup", area: "admin" },
+  { name: "admin-xero-member-grouping", route: "/admin/xero/member-grouping", area: "admin" },
 ];
 
 const VIEWPORT = { width: 1280, height: 800 } as const;

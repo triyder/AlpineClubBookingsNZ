@@ -120,8 +120,10 @@ a `GAP`, replace it with a relative link to that file (e.g.
   `image-manager`, `induction`, `lockers`, `member-fields`,
   `mountain-conditions`, `site-style`, `work-parties`, and the thin
   `*-setup`/config surfaces. These are the highest-value operator-guide targets.
-- **Every** area needs a task-focused operator guide (with screenshots) — none
-  exist yet. That is the #2050 deliverable; this file is its checklist.
+- **Every** area needs a task-focused operator guide (with screenshots). That is
+  the #2050 deliverable and this file is its checklist — batches land as
+  separate PRs and flip their rows from GAP to guide links as they merge (the
+  per-row status above is authoritative; batches 1–2 have shipped).
 
 ### Notes vs the ~20 gaps the initial audit named
 
@@ -165,12 +167,15 @@ page, matching the batch-1 pattern:
   [Cancellation Requests](guides/membership-cancellations.md) guide, and its row
   links there.
 
-Several batch-2 areas have **no direct sidebar entry** and are reached through a
-hub (their guides say so and open with the hub nav path, not route-first):
-`membership-types`, `member-fields`, and `subscription-lockout` are reached from
-the **Membership & Members** hub (`/admin/membership-setup`); `lockers` is
-lodge-scoped (ADR-005) and reached from the lodge configuration hub's **Lockers**
-card. `fees` sits under both **bookings** and **finance**: its admission is OR
+Several batch-2 areas have **no direct sidebar entry**: `membership-types`,
+`member-fields`, and `subscription-lockout` are reached from the **Membership &
+Members** hub (`/admin/membership-setup`) and their guides open with the hub nav
+path; `lockers` is lodge-scoped (ADR-005), reached from the lodge configuration
+hub's **Lockers** card, and its guide correctly opens route-first (the
+`seasons.md` precedent — there is no clean `Admin → X` path without first
+picking a lodge). Note also that `subscription-lockout`'s page admission is
+gated to the **support** area even though its settings span membership/finance/
+bookings — the guide documents this. `fees` sits under both **bookings** and **finance**: its admission is OR
 (bookings *or* finance view), and it self-gates editing per section (hut fees need
 bookings edit; joining/annual/family fees need finance edit). The `subscription-lockout`
 page's own route is **support**, but it embeds membership, finance, and (read-only)
