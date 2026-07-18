@@ -77,6 +77,8 @@ choose your password. Follow it, set your password, and you are taken to sign in
 3. You land on your **Dashboard**, your home base for bookings and account
    details — see [Booking a stay](booking-a-stay.md) to make your first booking.
 
+   ![Member dashboard showing a welcome header and cards including Upcoming Bookings, Next Stay with a lodge-occupancy meter, Account Credit, Payment Owed, and Recent Bookings](../images/public/member-dashboard.png)
+
 ## What to expect
 
 | Step | What to expect |

@@ -38,7 +38,10 @@ every page in this folder reads the same way. Each guide uses this order:
 4. **What it costs / what to expect** — the member-facing equivalent of a
    settings table: what you pay (always shown in **dollars**, formatted from the
    integer cents the club stores), what the policy actually does, and the timing
-   you should expect. A table where there are figures or options to compare.
+   you should expect. A table where there are figures or options to compare. The
+   heading is **"What it costs / what to expect"** on guides whose section covers
+   money figures (the booking and paying guides), and plain **"What to expect"**
+   on guides that do not.
 5. **Troubleshooting** — symptom → why it happens → what you can do yourself,
    and when to contact the club office instead.
 6. **Related links** — back to this index and the [documentation
@@ -48,6 +51,10 @@ every page in this folder reads the same way. Each guide uses this order:
 Conventions carried through every guide, matching the domain rules in
 [`DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md):
 
+- **Audience** label under the title lists who the guide is for. `Audience:
+  Member, Guest` is the default order; `Guest, Member` is used when the journey
+  starts as a guest (as [Joining the club](joining-the-club.md) does, before a
+  login exists).
 - **Money** is always shown in dollars (e.g. `$90.00`). The club stores every
   amount in integer cents; the app formats it to dollars everywhere you see it.
 - **Dates** are NZ date-only **lodge nights**. A stay from check-in to check-out

@@ -65,15 +65,17 @@ full booking state machine is in
 
 Step 3, **Review & Confirm**, shows your nights, your party, and the quote in
 dollars before you commit. What happens to any **non-member guests** depends on
-the club's hold policy for your stay:
+which of two booking policies your club runs. Operators call these policies
+*First Paid, First In* and *Members First*, but you will **not** see those names
+anywhere in the wizard — you only see their effect:
 
-- **First Paid, First In** (or when your stay is already inside the club's hold
-  window): your whole party — members and non-members alike — is booked together
-  and goes straight to normal payment. The submit button reads **Continue to
-  Payment** when money is due.
-- **Members First** (when your stay is far enough out that an enabled Members
-  First hold will actually be created): your **member** places are booked and
-  charged now, while your **non-member** guests are held **provisionally** — no
+- **When First Paid, First In applies** (or when your stay is already inside the
+  club's hold window): your whole party — members and non-members alike — is
+  booked together and goes straight to normal payment. The submit button reads
+  **Continue to Payment** when money is due.
+- **When Members First applies** (your stay is far enough out that an enabled
+  Members First hold will actually be created): your **member** places are booked
+  and charged now, while your **non-member** guests are held **provisionally** — no
   bed is reserved for them yet. The review step spells this out (a "provisional
   guests" note): which guests are provisional, that today's charge covers only
   the member places, the separate guest-portion amount, and that it is "because
@@ -159,7 +161,7 @@ and [`DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md#booking-dates-and-capacity)
 | "You already have a booking for these nights" | A member cannot double-book the same night | Open the existing booking from **My Bookings** and [change it](changing-or-cancelling-a-booking.md) instead |
 | The stay is blocked by a minimum-stay rule | That period has a minimum number of nights | Extend your stay to meet the minimum |
 | You paid but the booking still says "Payment required" | The card step was closed before payment finished | Open the booking and use its **Complete Payment** card |
-| Your non-member guests show as provisional | A Members First hold applies to your stay | This is expected — their bed is charged/confirmed around the hold deadline; see [Paying](paying-for-your-stay.md#split-charges-for-non-member-guests) |
+| Your non-member guests show as provisional | Your club runs the *Members First* policy (a name you never see in the wizard) and a hold applies to your stay | This is expected — their bed is charged/confirmed around the hold deadline; see [Paying](paying-for-your-stay.md#split-charges-for-non-member-guests) |
 
 ## Related links
 
