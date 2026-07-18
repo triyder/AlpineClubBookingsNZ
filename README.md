@@ -107,7 +107,8 @@ recommended reading paths.
 5. After sign-in, use **Admin > Modules** to set club-level activation for
    optional modules. Kiosk, chores, finance dashboard, waitlist, Xero, bed
    allocation, multiple lodges, Internet Banking payments, address autocomplete,
-   two-factor authentication, and Google Analytics default off until an admin enables
+   two-factor authentication, email sign-in link (passwordless magic link, additive
+   to password login), and Google Analytics default off until an admin enables
    them. General-purpose modules default on and can be disabled there.
 6. Use **Admin > Login & Security** (`/admin/security`) to set the club password
    policy: minimum length (8–64, default 12) and optional required character

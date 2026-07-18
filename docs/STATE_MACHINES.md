@@ -1232,6 +1232,31 @@ consumption, protected route-group layout redirects, API guard rejection,
 email-code expiry, TOTP skew window, recovery code single-use consumption, and
 lockout reset after successful verification.
 
+## Magic-Link Sign-In Lifecycle
+
+Passwordless email sign-in (issue #2034, epic #2030). Additive to password
+login, module-gated (`magicLink`, default off), and never an email-verification
+bypass. The token is a single-use, SHA-256-hashed `MagicLinkToken` (the same
+primitive as password reset).
+
+```text
+member requests link (POST /api/auth/magic-link) -> ALWAYS {success:true} (enumeration-safe)
+  module off, unknown, canLogin=false, inactive, or unverified -> silent no-op, zero email
+  module on + active + verified -> old tokens deleted, one fresh token minted, link emailed (magic-link-login, sensitive-log redacted)
+click /login/magic?token=… -> signIn("magic-link") verify provider:
+  bad format / missing / used / expired token -> rejected (generic failure)
+  conditional claim updateMany({id, used:false}) count===1 -> claimed (two concurrent clicks -> at most one session)
+  member gate: canLogin && active (else reject); unverified -> EMAIL_NOT_VERIFIED; forcePasswordChange -> refuse, point to Forgot password
+  success -> JWT issued with twoFactorVerified=false (2FA member still routed to /login/verify)
+TTL: read from LoginSecuritySetting.magicLinkTtlMinutes (#2033) via loadLoginSecuritySettings(), default 15, clamped 5..60
+```
+
+To verify: enumeration safety (4 no-op cases + zero email), module-off no-op,
+the conditional-claim single-use race, expired/tampered rejection, the
+archived/dependent and forcePasswordChange refusals, the unverified block, that
+the emailed link's HTML never persists in `EmailLog`, and that a 2FA-enrolled
+member still lands on `/login/verify`.
+
 ## Analytics Consent Lifecycle
 
 Client-side state machine for the GA4 consent banner (issue #975). The module

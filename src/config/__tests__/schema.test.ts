@@ -232,6 +232,7 @@ describe("featureFlagsSchema", () => {
         communications: false,
         skifieldConditions: true,
         twoFactor: false,
+        magicLink: false,
         analytics: false,
         lobbyDisplay: false,
       }),

@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader } from "@/co
 import { WebsiteLogo } from "@/components/website-logo";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MagicLinkRequestForm } from "./magic-link-request-form";
 
 // The login query params (verified / verifyError / emailChanged / callbackUrl)
 // are read on the server and passed in as props. Reading them here via
@@ -24,12 +25,14 @@ export function LoginForm({
   emailChanged,
   redirectTo,
   authBounceRef,
+  magicLinkEnabled = false,
 }: {
   verified: boolean;
   verifyError?: string;
   emailChanged: boolean;
   redirectTo: string;
   authBounceRef?: string;
+  magicLinkEnabled?: boolean;
 }) {
   const club = useClubIdentity();
   const [email, setEmail] = useState("");
@@ -279,6 +282,12 @@ export function LoginForm({
           </p>
         </CardFooter>
       </form>
+
+      {magicLinkEnabled && (
+        <CardContent>
+          <MagicLinkRequestForm />
+        </CardContent>
+      )}
     </Card>
   );
 }

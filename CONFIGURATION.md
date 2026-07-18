@@ -1292,6 +1292,7 @@ cannot be read, optional modules fail closed.
 | Communications | on | Admin bulk email to members. Transactional notifications are unaffected. |
 | Ski-field conditions | on | Live mountain/road status panel, public API routes, and admin cache controls. |
 | Two-factor authentication | off | Requires users to complete authenticator-app, email-code, or recovery-code verification after password login. |
+| Email sign-in link | off | Lets members request a single-use email link to sign in without their password (additive to password login, never a replacement). Only ever works for existing active members with a verified email; the `magic-link-login` link expiry defaults to 15 minutes (stored on the Login & Security settings, range 5–60) and is read by the sign-in request flow. |
 | Google Analytics | off | Consent-gated GA4 tracking on public website and public account pages. Requires `NEXT_PUBLIC_GA_MEASUREMENT_ID`; GA scripts load only after a visitor accepts the analytics banner. |
 
 Cron-backed optional module schedules are still registered when
@@ -1320,7 +1321,7 @@ the `security` category.
 | Require a lowercase letter | off | on/off | `a–z` |
 | Require a number | off | on/off | `0–9` |
 | Require a symbol | off | on/off | any non-alphanumeric character |
-| Magic-link TTL (minutes) | 15 | 5–60 | Field only; reserved for the magic-link sign-in work and not read yet. |
+| Magic-link TTL (minutes) | 15 | 5–60 | Read by the magic-link sign-in flow (#2034). Shown on the Login & Security page's Email sign-in link card; editing the value from that page is a planned follow-up, so it is read-only there for now. |
 
 The policy governs only the paths where a member **chooses** a password —
 `/change-password` and the reset/setup-invite redemption at `/reset-password`.
@@ -1353,6 +1354,27 @@ The member Profile page shows its Two-factor authentication security card only
 when the module is enabled or the member is already enrolled. If the club later
 turns the module off, enrolled members still see their enabled state and recovery
 code controls, while non-enrolled members do not see an enrollment prompt.
+
+The Email sign-in link (magic link) Admin Modules toggle is additive to password
+login and defaults off. When enabled, `/login` shows an "Email me a sign-in link"
+option that posts to `POST /api/auth/magic-link`. That endpoint is
+enumeration-safe (it always returns `{success:true}` and gives an identical
+confirmation) and mints a single-use, SHA-256-hashed token (`MagicLinkToken`)
+ONLY for an existing active member whose email is verified — deliberately
+stricter than forgot-password, so a magic link is never an email-verification
+bypass. The link (`/login/magic?token=…`) is emailed through the club's own SES
+pipeline as the `magic-link-login` template, whose rendered HTML is never
+persisted in `EmailLog` (sensitive-log redaction). Clicking it signs in through a
+second Auth.js Credentials provider that replicates every password-login gate,
+claims the token single-use via a conditional `updateMany` (so two concurrent
+clicks mint at most one session), refuses members with a pending forced password
+change (pointing them at Forgot password, which clears the flag), and never sets
+`twoFactorVerified` — so a 2FA-enabled member is still challenged on
+`/login/verify`. The link expiry defaults to 15 minutes (supported range 5–60),
+is stored on the `LoginSecuritySetting` singleton, and is read by the request
+route when a link is minted. The Login & Security page's Email sign-in link card
+shows the current expiry; changing it from that page is a planned follow-up, so
+the value is read-only there for now.
 
 Users enroll either an authenticator app (TOTP) or an email one-time code. TOTP
 secrets are encrypted at rest using key material derived from `AUTH_SECRET` (or

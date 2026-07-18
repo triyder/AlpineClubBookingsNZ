@@ -33,6 +33,10 @@ vi.mock("@/lib/auth", () => ({
   auth: vi.fn(async () => null),
 }));
 
+vi.mock("@/lib/public-layout-config", () => ({
+  getCachedEffectiveModuleFlags: () => Promise.resolve({ magicLink: false }),
+}));
+
 vi.mock("@/components/club-identity-provider", () => ({
   useClubIdentity: () => ({ name: "Test Alpine Club" }),
 }));

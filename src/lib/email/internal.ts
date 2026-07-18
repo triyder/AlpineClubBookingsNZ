@@ -33,6 +33,10 @@ const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
   "password-reset",
   "admin-password-reset",
   "member-setup-invite",
+  // #2034: the rendered HTML embeds a single-use /login/magic?token=<token>
+  // sign-in link, so it must never persist at rest in EmailLog or the retry
+  // table.
+  "magic-link-login",
   "email-verification",
   "email-change-verification",
   "two-factor-code",

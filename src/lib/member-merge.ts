@@ -114,6 +114,7 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
 
   // --- Auth identity / ephemeral tokens (cascade with loser) ---
   spec("PasswordResetToken", "member", "memberId", "cascade"),
+  spec("MagicLinkToken", "member", "memberId", "cascade"),
   spec("EmailVerificationToken", "member", "memberId", "cascade"),
   spec("EmailChangeToken", "member", "memberId", "cascade"),
   spec("TwoFactorEmailCode", "member", "memberId", "cascade"),

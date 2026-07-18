@@ -1,16 +1,25 @@
 import type { Metadata } from "next";
+import { MagicLinkSecurityCard } from "@/components/admin/magic-link-security-card";
 import { PasswordPolicyCard } from "@/components/admin/security/password-policy-card";
+import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
+import { loadClubModuleSettings } from "@/lib/module-settings";
 
 // Login & Security admin page (epic #2030, child #2033). Scaffolds the page and
-// hosts the password-policy card today. The sibling issues add self-contained
-// magic-link (#2034) and Google sign-in (#2035) cards below with no churn here.
+// hosts the password-policy card and the magic-link sign-in card (#2034). The
+// remaining sibling (Google sign-in, #2035) adds a self-contained card below
+// with no churn here.
 // Route access is governed by the `support` admin area (see admin-permissions.ts).
 
 export const metadata: Metadata = {
   title: "Login & Security",
 };
 
-export default function AdminSecurityPage() {
+export default async function AdminSecurityPage() {
+  const [{ settings: moduleSettings }, loginSecurity] = await Promise.all([
+    loadClubModuleSettings(),
+    loadLoginSecuritySettings(),
+  ]);
+
   return (
     <div className="space-y-8">
       <div>
@@ -23,6 +32,10 @@ export default function AdminSecurityPage() {
 
       <div className="grid gap-6">
         <PasswordPolicyCard />
+        <MagicLinkSecurityCard
+          moduleSettings={moduleSettings}
+          initialTtlMinutes={loginSecurity.policy.magicLinkTtlMinutes}
+        />
       </div>
     </div>
   );

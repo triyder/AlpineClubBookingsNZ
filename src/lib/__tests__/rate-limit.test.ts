@@ -320,6 +320,9 @@ describe("degraded-mode policy for auth-sensitive limiters (#1142)", () => {
       "register",
       "membershipApplication",
       "forgotPassword",
+      // Magic-link sign-in request (#2034): credential-adjacent public form,
+      // mirrors forgotPassword's degraded-mode budget hardening.
+      "magicLinkRequest",
       "resetPassword",
       "lodgePinLogin",
       "twoFactorVerify",

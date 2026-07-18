@@ -19,9 +19,18 @@ import {
 import { MEMBER_ACCESS_ROLE_SELECT } from "./access-role-definitions";
 import { loadEffectiveModuleFlags } from "./module-settings";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
+import { hashActionToken, isActionTokenFormat } from "./action-tokens";
 
 class EmailNotVerifiedError extends CredentialsSignin {
   code = "EMAIL_NOT_VERIFIED";
+}
+
+// A magic link must never trap a member who has a pending forced password
+// change: the /change-password flow requires the current password, and only the
+// password-reset flow clears `forcePasswordChange`. So passwordless sign-in
+// refuses these members and points them at "Forgot password" (#2034).
+class MagicLinkPasswordChangeRequiredError extends CredentialsSignin {
+  code = "PASSWORD_CHANGE_REQUIRED";
 }
 
 // bcrypt hash of a random throwaway value. Compared against when no member
@@ -155,6 +164,109 @@ export const authConfig = {
         // Block unverified members from creating a session
         if (!member.emailVerified) {
           throw new EmailNotVerifiedError();
+        }
+
+        try {
+          await prisma.member.update({
+            where: { id: member.id },
+            data: { lastLoginAt: new Date() },
+          });
+        } catch (error) {
+          logger.warn(
+            { err: error, memberId: member.id },
+            "Failed to update member last login timestamp"
+          );
+        }
+
+        return {
+          id: member.id,
+          email: member.email,
+          name: `${member.firstName} ${member.lastName}`,
+          role: member.role,
+          forcePasswordChange: member.forcePasswordChange,
+          isEmailVerified: member.emailVerified,
+          twoFactorEnabled: member.twoFactorEnabled,
+          twoFactorMethod: member.twoFactorMethod,
+        };
+      },
+    }),
+    // Passwordless magic-link sign-in (#2034). Additive to the password
+    // provider above and returns the EXACT same user shape, so the unchanged
+    // jwt/session callbacks stamp role, the admin-permission matrix, and the
+    // 2FA claims identically — a 2FA-enabled member still lands on
+    // /login/verify. This provider NEVER sets twoFactorVerified.
+    Credentials({
+      id: "magic-link",
+      name: "magic-link",
+      credentials: {
+        token: { label: "Token", type: "text" },
+      },
+      async authorize(credentials) {
+        const rawToken = credentials?.token;
+        if (typeof rawToken !== "string" || !isActionTokenFormat(rawToken)) {
+          return null;
+        }
+
+        // Verify-side kill-switch: a fresh (never cached) module read, matching
+        // the request endpoint's own fresh-read posture, so disabling the
+        // magicLink module immediately stops outstanding links being redeemed
+        // rather than leaving them live for up to the full TTL. Placed BEFORE
+        // the single-use token claim on purpose: a temporary disable must not
+        // burn an unredeemed link — re-enabling the module lets the same link
+        // still work within its TTL, which is what an admin toggling expects.
+        const modules = await loadEffectiveModuleFlags();
+        if (!modules.magicLink) {
+          return null;
+        }
+
+        const tokenHash = hashActionToken(rawToken.trim());
+        const tokenRow = await prisma.magicLinkToken.findUnique({
+          where: { tokenHash },
+        });
+
+        // Reject missing, already-used, or expired tokens.
+        if (
+          !tokenRow ||
+          tokenRow.used ||
+          tokenRow.expiresAt.getTime() <= Date.now()
+        ) {
+          return null;
+        }
+
+        // Single-use via a conditional claim: only the update that flips
+        // used:false -> used:true wins, so two concurrent clicks of the same
+        // link mint at most one session (planning-review finding — a plain
+        // $transaction wrapper does NOT stop the race; the WHERE used:false
+        // guard does). count !== 1 means another request already claimed it.
+        const claim = await prisma.magicLinkToken.updateMany({
+          where: { id: tokenRow.id, used: false },
+          data: { used: true },
+        });
+        if (claim.count !== 1) {
+          return null;
+        }
+
+        // Same gate as password login: only canLogin members, and only while
+        // active. Archived/dependent members cannot mint a session even with a
+        // valid, freshly-claimed token row.
+        const member = await prisma.member.findFirst({
+          where: { id: tokenRow.memberId, canLogin: true },
+        });
+        if (!member || !member.active) {
+          return null;
+        }
+
+        // Block unverified members — magic link must never be an
+        // email-verification bypass (owner decision, #2030).
+        if (!member.emailVerified) {
+          throw new EmailNotVerifiedError();
+        }
+
+        // Refuse while a forced password change is pending: signing in here
+        // would strand the member on /change-password (which needs the current
+        // password). Point them at Forgot password, which clears the flag.
+        if (member.forcePasswordChange) {
+          throw new MagicLinkPasswordChangeRequiredError();
         }
 
         try {
