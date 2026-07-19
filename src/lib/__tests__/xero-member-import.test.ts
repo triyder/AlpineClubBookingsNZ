@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => ({
   computeAgeTier: vi.fn(async () => "YOUTH"),
   buildStructuredAuditLogCreateArgs: vi.fn((event: unknown) => ({ data: event })),
   getXeroSyncCursor: vi.fn(async () => ({ lastSuccessfulSyncAt: new Date("2026-04-01T00:00:00Z") })),
-  parseXeroCompanyNumberDate: vi.fn(() => null),
+  parseXeroCompanyNumberDate: vi.fn((): Date | null => null),
   getSeasonalMembershipChangePreview: vi.fn(),
   saveSeasonalMembershipAssignment: vi.fn(),
 }));
@@ -472,7 +472,13 @@ describe("Xero member import — membership types (#2108)", () => {
     );
 
     expect(mocks.prisma.auditLog.create).toHaveBeenCalledTimes(1);
-    const auditEvent = mocks.buildStructuredAuditLogCreateArgs.mock.calls[0][0];
+    const auditEvent = mocks.buildStructuredAuditLogCreateArgs.mock
+      .calls[0][0] as {
+      action: string;
+      severity: string;
+      actor: { memberId: string };
+      metadata: { seasonYear: number; membershipTypeIds: string[] };
+    };
     expect(auditEvent).toMatchObject({
       action: XERO_MEMBER_IMPORT_MEMBERSHIP_TYPES_ACTION,
       severity: "important",
