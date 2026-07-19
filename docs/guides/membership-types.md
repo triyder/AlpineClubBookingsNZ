@@ -55,7 +55,10 @@ change.
 3. Choose the **Booking behavior** (Member rate, Non-member rate, or Block
    booking) and **Subscription behavior** (Subscription required, Subscription
    not required, or Subscription required based on age tier). Tick every **allowed
-   age tier**.
+   age tier**. New types start with the four age tiers (Infant, Child, Youth,
+   Adult) ticked. For organisation or school types that have no age, tick **N/A
+   (no age)** instead — you can leave it as the only ticked option, but at least
+   one box must stay ticked.
 4. Click **Save changes** (or **Create type**). On a successful edit-save the
    editor closes automatically. If you close with the header **✕** or Escape
    while you have unsaved edits, a **Discard unsaved changes?**
@@ -89,7 +92,7 @@ change.
 | Public description | Public-facing blurb | — | Max 4000 chars |
 | Booking behavior | How members of this type are priced | Member rate | Member rate / Non-member rate / Block booking |
 | Subscription behavior | Whether an annual subscription is required | Subscription required | Required / Not required / Based on age tier |
-| Allowed age tiers | Which age tiers this type can be assigned to | — | At least one required |
+| Allowed age tiers | Which age tiers this type can be assigned to | Infant, Child, Youth, Adult (new types) | At least one required; includes **N/A (no age)** for age-exempt organisation/school types |
 | Order (up/down) | Display order of the type list | — | Saved immediately |
 | From season / To season | Roll-forward source and target seasons | current / current+1 | Integer year; must differ |
 
