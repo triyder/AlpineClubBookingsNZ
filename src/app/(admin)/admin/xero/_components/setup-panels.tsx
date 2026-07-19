@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -10,7 +10,23 @@ import { Separator } from "@/components/ui/separator"
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups"
 import { fetchJson, postJson } from "./api"
 import { SectionCard, type ToggleSection } from "./shared"
-import type { ContactGroup, DuplicateGroup, DuplicateResult, GroupMapping, SyncResult } from "./types"
+import type {
+  ContactGroup,
+  DuplicateGroup,
+  DuplicateResult,
+  GroupMapping,
+  ImportMembershipTypeOption,
+  ImportMode,
+  SyncResult,
+} from "./types"
+
+// Client mirror of `membershipTypeAgeExemption` (#2106): a type is age-exempt
+// FORCED when its only allowed tier is N/A — every member on it becomes N/A, so
+// the import derives the tier and no tier select is needed.
+function isForcedAgeExemptType(type: ImportMembershipTypeOption | undefined): boolean {
+  if (!type) return false
+  return type.allowedAgeTiers.length === 1 && type.allowedAgeTiers[0] === "NOT_APPLICABLE"
+}
 
 export function SetupPanels({
   connected,
@@ -40,6 +56,8 @@ export function SetupPanels({
   const { confirm, confirmDialog } = useConfirm()
   const [contactGroups, setContactGroups] = useState<ContactGroup[]>([])
   const [groupMappings, setGroupMappings] = useState<GroupMapping[]>([])
+  const [importMode, setImportMode] = useState<ImportMode>("ageTiers")
+  const [membershipTypes, setMembershipTypes] = useState<ImportMembershipTypeOption[]>([])
   const [loadingGroups, setLoadingGroups] = useState(false)
   const [refreshingGroups, setRefreshingGroups] = useState(false)
   const [sendInvites, setSendInvites] = useState(false)
@@ -91,18 +109,85 @@ export function SetupPanels({
     if (connected && open && contactGroups.length === 0 && !loadingGroups && !refreshingGroups) void loadContactGroups()
   }, [connected, contactGroups.length, loadContactGroups, loadingGroups, open, refreshingGroups])
 
+  // #2108: load active membership types (for the type selects) once the section
+  // is open. Only active types are offered — the import rejects inactive ones.
+  useEffect(() => {
+    if (!connected || !open || membershipTypes.length > 0) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const data = await fetchJson<{ membershipTypes: ImportMembershipTypeOption[] }>(
+          "/api/admin/membership-types",
+          undefined,
+          "Failed to load membership types",
+        )
+        if (!cancelled) setMembershipTypes(data.membershipTypes.filter((type) => type.isActive))
+      } catch {
+        // Non-fatal: the age-tier mode still works without membership types.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [connected, open, membershipTypes.length])
+
   useEffect(() => {
     if (!connected) {
       setContactGroups([])
       setGroupMappings([])
+      setMembershipTypes([])
+      setImportMode("ageTiers")
       setDuplicates(null)
     }
   }, [connected])
 
+  const membershipTypeById = useMemo(
+    () => new Map(membershipTypes.map((type) => [type.id, type])),
+    [membershipTypes],
+  )
+
+  // #2108: a group is fully mapped (eligible for import) when it has the
+  // selection the current mode requires.
+  const isGroupMapped = useCallback(
+    (mapping: GroupMapping): boolean => {
+      if (importMode === "ageTiers") return mapping.ageTier !== "SKIP"
+      const type = mapping.membershipTypeId ? membershipTypeById.get(mapping.membershipTypeId) : undefined
+      if (importMode === "membershipTypes") return Boolean(type)
+      // both: a type is required; a bookable tier is required only when the type
+      // is not age-exempt FORCED (a FORCED type derives N/A).
+      if (!type) return false
+      return isForcedAgeExemptType(type) || mapping.ageTier !== "SKIP"
+    },
+    [importMode, membershipTypeById],
+  )
+
+  // #2108: build the wire payload for one mapped group in the current mode.
+  const buildMappingPayload = useCallback(
+    (mapping: GroupMapping) => {
+      if (importMode === "ageTiers") {
+        return { groupId: mapping.groupId, groupName: mapping.groupName, ageTier: mapping.ageTier }
+      }
+      const type = mapping.membershipTypeId ? membershipTypeById.get(mapping.membershipTypeId) : undefined
+      const base = {
+        groupId: mapping.groupId,
+        groupName: mapping.groupName,
+        membershipTypeId: mapping.membershipTypeId,
+      }
+      if (importMode === "membershipTypes") return base
+      // both: attach the explicit tier only when a real tier is picked and the
+      // type is not FORCED (a FORCED type derives N/A — never send a tier).
+      if (!isForcedAgeExemptType(type) && mapping.ageTier !== "SKIP") {
+        return { ...base, ageTier: mapping.ageTier }
+      }
+      return base
+    },
+    [importMode, membershipTypeById],
+  )
+
   const importMembers = async () => {
-    const selectedMappings = groupMappings.filter((mapping) => mapping.ageTier !== "SKIP")
+    const selectedMappings = groupMappings.filter(isGroupMapped)
     if (selectedMappings.length === 0) {
-      setError("Please select at least one group to import")
+      setError("Please fully map at least one group to import")
       return
     }
     const groupNames = selectedMappings.map((mapping) => mapping.groupName).join(", ")
@@ -118,7 +203,11 @@ export function SetupPanels({
     try {
       const data = await postJson<SyncResult>(
         "/api/admin/xero/import-members",
-        { groupMappings: selectedMappings, sendInvites, repairMissingContactCache },
+        {
+          groupMappings: selectedMappings.map(buildMappingPayload),
+          sendInvites,
+          repairMissingContactCache,
+        },
         "Import failed"
       )
       setSyncResult(data)
@@ -185,6 +274,11 @@ export function SetupPanels({
     setGroupMappings((prev) => prev.map((mapping) => (mapping.groupId === groupId ? { ...mapping, ageTier } : mapping)))
   }
 
+  const updateGroupMembershipType = (groupId: string, value: string) => {
+    const membershipTypeId = value === "NONE" ? undefined : value
+    setGroupMappings((prev) => prev.map((mapping) => (mapping.groupId === groupId ? { ...mapping, membershipTypeId } : mapping)))
+  }
+
   return (
     <SectionCard
       id="xero-section-setup"
@@ -199,7 +293,7 @@ export function SetupPanels({
         <div className="space-y-4">
           <div className="space-y-1">
             <h3 className="text-sm font-semibold">Import Members from Xero</h3>
-            <p className="text-sm text-muted-foreground">Import members from Xero contact groups into {bookingsName} and map each group to an age tier.</p>
+            <p className="text-sm text-muted-foreground">Import members from Xero contact groups into {bookingsName}. Map each group to an age tier, a membership type, or both.</p>
           </div>
           {contactGroups.length === 0 ? (
             <Button onClick={() => void loadContactGroups({ fallbackToRefreshIfEmpty: true, repairMissingContactCache: true })} disabled={loadingGroups}>
@@ -207,32 +301,68 @@ export function SetupPanels({
             </Button>
           ) : (
             <>
-              <div className="flex justify-end">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="importMode" className="text-sm">Map groups to</Label>
+                  <div className="w-56">
+                    <Select value={importMode} onValueChange={(value) => setImportMode(value as ImportMode)}>
+                      <SelectTrigger id="importMode"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ageTiers">Age tiers</SelectItem>
+                        <SelectItem value="membershipTypes">Membership types</SelectItem>
+                        <SelectItem value="both">Membership types + age tiers</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
                 <Button variant="outline" onClick={() => void loadContactGroups({ refreshFromXero: true, repairMissingContactCache: true })} disabled={refreshingGroups}>
                   {refreshingGroups ? "Refreshing Groups..." : "Refresh Contact Groups from Xero"}
                 </Button>
               </div>
+              {importMode !== "ageTiers" && membershipTypes.length === 0 ? (
+                <p className="text-sm text-warning">No active membership types are available. Create a membership type before importing into types.</p>
+              ) : null}
               <div className="space-y-3">
                 {contactGroups.map((group) => {
                   const mapping = groupMappings.find((candidate) => candidate.groupId === group.id)
+                  const selectedType = mapping?.membershipTypeId ? membershipTypeById.get(mapping.membershipTypeId) : undefined
+                  const forcedType = isForcedAgeExemptType(selectedType)
+                  const showTypeSelect = importMode !== "ageTiers"
+                  const showTierSelect = importMode === "ageTiers" || (importMode === "both" && !forcedType)
                   return (
-                    <div key={group.id} className="flex items-center gap-4 rounded-md border p-3">
-                      <div className="flex-1">
+                    <div key={group.id} className="flex flex-wrap items-center gap-4 rounded-md border p-3">
+                      <div className="min-w-40 flex-1">
                         <p className="text-sm font-medium">{group.name}</p>
                         <p className="text-xs text-muted-foreground">{group.contactCount} contact{group.contactCount !== 1 ? "s" : ""}</p>
+                        {forcedType ? <p className="text-xs text-info">Members will be age-exempt (N/A)</p> : null}
                       </div>
-                      <div className="w-40">
-                        <Select value={mapping?.ageTier || "SKIP"} onValueChange={(value) => updateGroupMapping(group.id, value as GroupMapping["ageTier"])}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="SKIP">Skip</SelectItem>
-                            <SelectItem value="INFANT">Infant</SelectItem>
-                            <SelectItem value="CHILD">Child</SelectItem>
-                            <SelectItem value="YOUTH">Youth</SelectItem>
-                            <SelectItem value="ADULT">Adult</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+                      {showTypeSelect ? (
+                        <div className="w-52">
+                          <Select value={mapping?.membershipTypeId ?? "NONE"} onValueChange={(value) => updateGroupMembershipType(group.id, value)}>
+                            <SelectTrigger aria-label={`Membership type for ${group.name}`}><SelectValue placeholder="Select type" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="NONE">Skip</SelectItem>
+                              {membershipTypes.map((type) => (
+                                <SelectItem key={type.id} value={type.id}>{type.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
+                      {showTierSelect ? (
+                        <div className="w-40">
+                          <Select value={mapping?.ageTier || "SKIP"} onValueChange={(value) => updateGroupMapping(group.id, value as GroupMapping["ageTier"])}>
+                            <SelectTrigger aria-label={`Age tier for ${group.name}`}><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="SKIP">Skip</SelectItem>
+                              <SelectItem value="INFANT">Infant</SelectItem>
+                              <SelectItem value="CHILD">Child</SelectItem>
+                              <SelectItem value="YOUTH">Youth</SelectItem>
+                              <SelectItem value="ADULT">Adult</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
                     </div>
                   )
                 })}
@@ -246,7 +376,7 @@ export function SetupPanels({
                 <Label htmlFor="repairMissingContactCache" className="text-sm">Repair missing contact snapshots during import</Label>
               </div>
               <div className="flex gap-2">
-                <Button onClick={() => void importMembers()} disabled={syncing !== null || groupMappings.every((mapping) => mapping.ageTier === "SKIP")}>
+                <Button onClick={() => void importMembers()} disabled={syncing !== null || !groupMappings.some(isGroupMapped)}>
                   {syncing === "import" ? "Importing..." : "Import Members"}
                 </Button>
                 <Button variant="outline" onClick={() => { setContactGroups([]); setGroupMappings([]) }}>Reset</Button>

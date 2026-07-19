@@ -68,6 +68,21 @@ export interface SyncResult {
     xeroContactId: string
     group: string
   }>
+  // #2108: membership-type import results.
+  assignmentsCreated?: number
+  keptExistingAssignments?: Array<{
+    memberId: string
+    name: string
+    group: string
+    existingMembershipTypeId: string
+    attemptedMembershipTypeId: string
+  }>
+  droppedDuplicates?: Array<{
+    name: string
+    xeroContactId: string
+    group: string
+    keptGroup: string
+  }>
   skippedExisting?: number
   skippedNoEmail?: number
   skippedNoEmailDetails?: Array<{ name: string; xeroContactId: string }>
@@ -107,10 +122,26 @@ export interface ContactGroup {
   contactCount: number
 }
 
+// Import mode (#2108): mirrors the member-grouping vocabulary. "ageTiers" is
+// today's behaviour (map each group to an age tier); "membershipTypes" maps to a
+// membership type; "both" maps to a type and a bookable tier.
+export type ImportMode = "ageTiers" | "membershipTypes" | "both"
+
 export interface GroupMapping {
   groupId: string
   groupName: string
   ageTier: AgeTier | "SKIP"
+  // #2108: set in "membershipTypes" / "both" modes.
+  membershipTypeId?: string
+}
+
+// A single active membership type, as returned by GET /api/admin/membership-types
+// (the subset the import UI needs).
+export interface ImportMembershipTypeOption {
+  id: string
+  name: string
+  isActive: boolean
+  allowedAgeTiers: AgeTier[]
 }
 
 interface DuplicateContact {
