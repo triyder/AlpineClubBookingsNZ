@@ -443,10 +443,17 @@ to any page they can access. Its index is derived at runtime by
 `getAdminFeatureSearchIndex`, which **reuses** `getVisibleAdminNavSections` and
 de-duplicates by href — so the palette applies exactly the sidebar's four
 visibility rules (module flag, `fullAdminOnly`, `orAccess`, permission matrix)
-plus the hut-leader relabel, and can never surface an href the sidebar would
-hide. There is no second registry to drift: `navSections` remains the single
-source of truth, optionally enriched with a per-entry `keywords` field that only
-widens palette matching.
+plus the hut-leader relabel, and can never surface an href the admin is not
+permitted to open. The index is a deliberate **superset** of what the sidebar
+renders at any given moment, not a mirror of it: the two queue-driven "Needs
+Attention" deep links (Unpaid Finished Stays / Unpaid Stay Additions) stay
+searchable as always-accessible, pre-filtered views even when their queue is
+empty, whereas the sidebar reveals them only while their queue is non-empty. As
+defence in depth, `getAdminFeatureSearchIndex` fails **closed** — a missing
+permission matrix yields an empty index — even though `getVisibleAdminNavSections`
+keeps its pre-existing fail-open contract. There is no second registry to drift:
+`navSections` remains the single source of truth, optionally enriched with a
+per-entry `keywords` field that only widens palette matching.
 
 `src/lib/token-catalogue.ts` is the client-safe single source of truth for the
 `{{token}}` placeholders supported in admin HTML content (page bodies and lodge

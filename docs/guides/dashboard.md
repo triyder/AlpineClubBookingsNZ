@@ -48,9 +48,14 @@ don't have to remember which section hides a feature.
 - Start typing a page name — or a related word, such as "accounting" for Xero
   Sync or "permissions" for Access Roles — then use the **arrow keys** to move,
   **Enter** to open the highlighted page, and **Escape** to close.
-- The palette only ever lists pages **you** can open: it uses exactly the same
-  visibility rules as the sidebar, so a page you aren't permitted to see never
-  appears here.
+- The palette only ever lists pages **you** can open: it applies exactly the
+  same permission rules as the sidebar, so a page you aren't permitted to see
+  never appears here.
+- It lists every page the sidebar *could* show you, which is slightly more than
+  the sidebar shows at any one moment. The two attention shortcuts — **Unpaid
+  Finished Stays** and **Unpaid Stay Additions** — stay searchable as
+  pre-filtered views even when nothing is currently owing, whereas the sidebar
+  only surfaces them while their queue has something in it.
 
 ## Settings reference
 
