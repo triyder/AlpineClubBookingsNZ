@@ -148,8 +148,10 @@ const CAPTURES: Capture[] = [
   // leaves OFF (schema default false) — the route 404s, so no image is
   // committed and the Integrations guide describes the screen in prose, exactly
   // like the Xero guides (batch 2). The `display` (lobby-display) hub is gated
-  // by the `lobbyDisplay` flag (also OFF by default) and keeps its own feature
-  // hub docs (docs/lobby-display/), so it is not re-captured here.
+  // by the `lobbyDisplay` flag (also OFF by default); batch 4 left it to its
+  // feature hub docs, but batch 3 (below) now captures the hub + sub-pages for
+  // the epic-sequenced lodge display guide, enabling the module on the capture
+  // stack first.
   //
   // Batch 5 (#2050): member-facing journey guides (docs/user-guide/). These are
   // the PUBLIC and MEMBER surfaces, not /admin/*. Public pages capture without
@@ -165,6 +167,45 @@ const CAPTURES: Capture[] = [
   { name: "member-profile", route: "/profile", area: "public", persona: "member" },
   { name: "member-bookings", route: "/bookings", area: "public", persona: "member" },
   { name: "member-book", route: "/book", area: "public", persona: "member" },
+  // Batch 3 (#2050): lodge-operations operator guides — physical-lodge day-to-day.
+  // The lodge-ops sidebar section (hut leaders, roster, lodge kiosk, work parties,
+  // lodge instructions), the lodge-scoped chores + rooms/beds inventory, and
+  // multi-lodge management (the Lodges list). chores + roster are gated by the
+  // `chores` flag, the lodge kiosk by `kiosk`, and rooms/beds by `bedAllocation` —
+  // all three enabled by the E2E prepare step (e2e/setup/enable-e2e-modules.ts);
+  // work-parties (`workParties`) and hut-leaders (`hutLeaders`) default ON in the
+  // seed, so all seven capture normally.
+  { name: "admin-chores", route: "/admin/chores", area: "admin" },
+  { name: "admin-roster", route: "/admin/roster", area: "admin" },
+  { name: "admin-hut-leaders", route: "/admin/hut-leaders", area: "admin" },
+  { name: "admin-work-parties", route: "/admin/work-parties", area: "admin" },
+  { name: "admin-lodge", route: "/admin/lodge", area: "admin" },
+  { name: "admin-lodge-instructions", route: "/admin/lodge-instructions", area: "admin" },
+  { name: "admin-lodges", route: "/admin/lodges", area: "admin" },
+  { name: "admin-rooms-beds", route: "/admin/rooms-beds", area: "admin" },
+  // Batch 3 (#2050): the Lobby Display hub and its sub-pages. Gated by the
+  // `lobbyDisplay` flag, which the demo seed leaves OFF (schema default) — the
+  // E2E prepare step does NOT enable it. Turn Lobby Display ON via Admin → Setup
+  // → Modules on the ephemeral capture stack (only) before capturing these, as
+  // the display guide documents.
+  //
+  // The committed images were re-captured at batch-3 finalisation against a
+  // capture stack rebuilt from this branch (which carries #2047 + #2048):
+  //   - `admin-display` (the hub) shows the FIVE-card hub — Devices, **Visual
+  //     builder** (#2048), Layouts (Advanced), Templates, and Reference — matching
+  //     the five-card hub the display guide documents.
+  //   - `admin-display-templates` shows the FULL SEVEN built-ins from the #2047
+  //     template pack: Everyday board, Whole lodge, Singles house, Room by room,
+  //     Nights ahead, Lodge operations, and Welcome kiosk (each with a Builder
+  //     entry into the #2048 visual builder).
+  // The visual builder page itself ships its own docs and is not part of this
+  // batch-3 manifest.
+  { name: "admin-display", route: "/admin/display", area: "admin" },
+  { name: "admin-display-devices", route: "/admin/display/devices", area: "admin" },
+  { name: "admin-display-layouts", route: "/admin/display/layouts", area: "admin" },
+  { name: "admin-display-templates", route: "/admin/display/templates", area: "admin" },
+  { name: "admin-display-reference", route: "/admin/display/reference", area: "admin" },
+  { name: "admin-display-preview", route: "/admin/display/preview", area: "admin" },
 ];
 
 const VIEWPORT = { width: 1280, height: 800 } as const;

@@ -7,11 +7,12 @@ This matrix enumerates **every admin route area** under
 that exists today and whether a dedicated **operator guide** (per the skeleton
 in [`STYLE_GUIDE.md`](STYLE_GUIDE.md)) exists yet.
 
-It is the authoritative workplan input for the operator-guide programme (issue
-#2050). "Reference coverage" means architecture/runbook prose that describes the
-behaviour; it is **not** the same as a task-focused operator guide with
-screenshots. Almost every area therefore shows an operator-guide **GAP** today —
-that is expected: #2049 lays the foundation and #2050 fills the gaps.
+It was the authoritative workplan input for the operator-guide programme (issue
+#2050), and is now its maintenance checklist. "Reference coverage" means
+architecture/runbook prose that describes the behaviour; it is **not** the same as
+a task-focused operator guide with screenshots. #2049 laid the foundation and
+#2050 filled every gap, so each admin row now links a guide (no `GAP` remains) —
+keep the links current as areas change.
 
 The area list is generated from the actual route directories (69 areas,
 excluding `__tests__`), so it is exhaustive and will not silently miss a
@@ -56,13 +57,13 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `booking-requests` | bookings | `ARCHITECTURE.md` (public booking requests) | [guide](guides/booking-requests.md) | 1 |
 | `bookings` | bookings | `ARCHITECTURE.md` (booking/payment flow), `STATE_MACHINES.md` | [guide](guides/bookings.md) | 1 |
 | `bookings-setup` | bookings | — | [guide](guides/bookings-setup.md) | 1 |
-| `chores` | lodge | — | GAP | 3 |
+| `chores` | lodge | — | [guide](guides/chores.md) | 3 |
 | `committee` | membership | `ARCHITECTURE.md` (committee roles/assignments) | [guide](guides/committee.md) | 2 |
 | `communications` | membership | `src/lib/email-message-registry.ts` | [guide](guides/communications.md) | 4 |
 | `config-transfer` | support | `config-transfer/README.md` (planned feature) | [guide](guides/config-transfer.md) | 4 |
 | `dashboard` | overview | `ARCHITECTURE.md` (Needs Attention / badges) | [guide](guides/dashboard.md) | 4 |
 | `deletion-requests` | membership | `ARCHITECTURE.md` (member lifecycle delete) | [guide](guides/deletion-requests.md) | 2 |
-| `display` | content | `lobby-display/README.md`, `lobby-display/operating.md` | [Feature hub](lobby-display/README.md) ([operating](lobby-display/operating.md)) | 4 |
+| `display` | content | `lobby-display/README.md`, `lobby-display/operating.md` | [guide](guides/display.md) (+ [feature hub](lobby-display/README.md), [operating](lobby-display/operating.md)) | 4 |
 | `email-deliverability` | support | `ARCHITECTURE.md` (email), email registry | [guide](guides/email-deliverability.md) | 4 |
 | `email-messages` | support | `src/lib/email-message-registry.ts` | [guide](guides/email-messages.md) | 4 |
 | `family-groups` | membership | `ARCHITECTURE.md` (family groups / billing) | [guide](guides/family-groups.md) | 2 |
@@ -70,16 +71,16 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `fee-configuration` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) (redirect → Fees) | 2 |
 | `fees` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) | 2 |
 | `health` | support | — | [guide](guides/health.md) | 4 |
-| `hut-leaders` | lodge | `ARCHITECTURE.md` (hut-leader auto-assign cron) | GAP | 3 |
+| `hut-leaders` | lodge | `ARCHITECTURE.md` (hut-leader auto-assign cron) | [guide](guides/hut-leaders.md) | 3 |
 | `image-manager` | content | — | [guide](guides/image-manager.md) | 4 |
 | `induction` | membership | — | [guide](guides/induction.md) | 2 |
 | `integrations` | support | `CONFIGURATION.md`, `DEPLOYMENT.md` | [guide](guides/integrations.md) | 4 |
 | `internet-banking` | finance | `ARCHITECTURE.md` (Internet Banking), `xero/ARCHITECTURE.md` | [guide](guides/internet-banking.md) | 2 |
 | `issue-reports` | support | `ARCHITECTURE.md` (issue reports / stuck states) | [guide](guides/issue-reports.md) | 4 |
 | `lockers` | membership | — | [guide](guides/lockers.md) | 2 |
-| `lodge` | lodge | `ARCHITECTURE.md` (lodge kiosk / operations) | GAP | 3 |
-| `lodge-instructions` | lodge | `src/lib/token-catalogue.ts`, `PUBLIC_PAGE_CONTENT_TOKENS.md` | GAP | 3 |
-| `lodges` | lodge | `multi-lodge/README.md`, `multi-lodge/feature-overview.md` | Feature hub (extend in #2050) | 3 |
+| `lodge` | lodge | `ARCHITECTURE.md` (lodge kiosk / operations) | [guide](guides/lodge.md) | 3 |
+| `lodge-instructions` | lodge | `src/lib/token-catalogue.ts`, `PUBLIC_PAGE_CONTENT_TOKENS.md` | [guide](guides/lodge-instructions.md) | 3 |
+| `lodges` | lodge | `multi-lodge/README.md`, `multi-lodge/feature-overview.md` | [guide](guides/lodges.md) (+ [feature hub](multi-lodge/README.md)) | 3 |
 | `member-applications` | membership | `ARCHITECTURE.md` (membership application / nominations) | [guide](guides/member-applications.md) | 2 |
 | `member-fields` | membership | — | [guide](guides/member-fields.md) | 2 |
 | `members` | membership | `ARCHITECTURE.md` (members, CSV import, roles) | [guide](guides/members.md) | 2 |
@@ -97,8 +98,8 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `promo-codes` | bookings | `ARCHITECTURE.md` (promo codes / redemptions) | [guide](guides/promo-codes.md) | 1 |
 | `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery) | [guide](guides/refund-requests.md) | 2 |
 | `reports` | finance | `finance-dashboard/README.md` | [guide](guides/reports.md) | 1 |
-| `rooms-beds` | lodge | `CAPACITY_MODEL.md`, `ARCHITECTURE.md` (bed inventory) | GAP | 3 |
-| `roster` | lodge | `ARCHITECTURE.md` (roster/chores) | GAP | 3 |
+| `rooms-beds` | lodge | `CAPACITY_MODEL.md`, `ARCHITECTURE.md` (bed inventory) | [guide](guides/rooms-beds.md) | 3 |
+| `roster` | lodge | `ARCHITECTURE.md` (roster/chores) | [guide](guides/roster.md) | 3 |
 | `seasons` | bookings | `ARCHITECTURE.md` (seasons / season rates) | [guide](guides/seasons.md) | 1 |
 | `security` | support | `SECURITY.md`, `docs/SECURITY.md` | [guide](guides/security.md) | 4 |
 | `setup` | support | `CONFIGURATION.md`, `IMPLEMENTATION_GUIDE.md` | [guide](guides/setup.md) | 4 |
@@ -109,7 +110,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `subscription-lockout` | finance | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
 | `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | [guide](guides/subscriptions.md) | 2 |
 | `waitlist` | bookings | `ARCHITECTURE.md` (waitlist), `E2E_PLAYWRIGHT.md` | [guide](guides/waitlist.md) | 1 |
-| `work-parties` | lodge | — | GAP | 3 |
+| `work-parties` | lodge | — | [guide](guides/work-parties.md) | 3 |
 | `xero` | finance | `xero/ARCHITECTURE.md`, `XERO_MEMBER_GROUPING_RUNBOOK.md` | [guide](guides/xero.md) | 2 |
 
 ## Summary
@@ -122,12 +123,14 @@ a `GAP`, replace it with a relative link to that file (e.g.
   `image-manager`, `induction`, `lockers`, `member-fields`,
   `mountain-conditions`, `site-style`, `work-parties`, and the thin
   `*-setup`/config surfaces. These are the highest-value operator-guide targets.
-- **Every** area needs a task-focused operator guide (with screenshots). That is
-  the #2050 deliverable and this file is its checklist — batches land as
-  separate PRs and flip their rows from GAP to guide links as they merge (the
-  per-row status above is authoritative; batches 1–2 and 4 have shipped, and
-  batch 5's member/guest journey guides have shipped under
-  [`user-guide/`](user-guide/README.md)).
+- **Every** area now has a task-focused operator guide (with screenshots). That
+  was the #2050 deliverable, and it is complete: every admin row above links a
+  guide (no `GAP` remains), batches 1–4 have all shipped, and batch 5's
+  member/guest journey guides have shipped under
+  [`user-guide/`](user-guide/README.md). This file is now the **maintenance
+  checklist** — keep the guides current as areas change (the docs-lockstep rule
+  in `AGENTS.md`), and add a row here in the same PR whenever a new admin area
+  lands.
 
 ### Notes vs the ~20 gaps the initial audit named
 
@@ -185,6 +188,58 @@ bookings edit; joining/annual/family fees need finance edit). The `subscription-
 page's own route is **support**, but it embeds membership, finance, and (read-only)
 bookings settings — the Batch column tracks the finance grouping used for #2050
 delivery.
+
+### Batch 3 route realities (#2050)
+
+Batch 3 (lodge operations) mixes direct sidebar pages, lodge-scoped hub-card
+pages, and a feature-gated display cluster; the guides document the reality:
+
+- **The Lodge Operations sidebar section owns five pages** with direct sidebar
+  entries, so their guides open with the canonical line: `hut-leaders`, `roster`,
+  `lodge` (**Lodge Kiosk**), `work-parties`, and `lodge-instructions`
+  (**Admin → Lodge Operations → …**).
+- **`chores` has no sidebar entry, and opens route-first** (the
+  `lockers`/`seasons`/`rooms-beds` lodge-scoped precedent). It is lodge-scoped
+  (ADR-005) with no clean `Admin → X` click path — there is no direct sidebar
+  entry — so its guide leads with `/admin/chores` and then gives the lodge
+  configuration hub's **Chores** card as the way in (`Admin → Setup &
+  Configuration → Lodges → a lodge → Chores`).
+- **`rooms-beds` opens route-first** (the `lockers`/`seasons` lodge-scoped
+  precedent): it is reached from the lodge hub's **Rooms & Beds** card and from
+  **Bookings Setup**. Note the permission split — the page sits in the **Lodge**
+  nav area, but its data flows through the bed-allocation APIs, which enforce the
+  **bookings** area, so editing rooms/beds needs **bookings edit** (a `#1548`
+  precedent the guide calls out), not lodge edit.
+- **`lodges` gets its own operator guide *and* keeps the multi-lodge feature
+  hub.** The guide covers the properties list, identity fields, deactivation
+  pre-flight, and the per-lodge configuration hub; it extends, not duplicates, the
+  [multi-lodge hub](multi-lodge/README.md).
+- **Module gating on the capture stack.** `chores`/`roster` (`chores`), the lodge
+  kiosk (`kiosk`), and `rooms-beds` (`bedAllocation`) default **off** in the
+  schema but are turned **on** by the E2E prepare step
+  (`e2e/setup/enable-e2e-modules.ts`), so they capture on the seeded stack;
+  `work-parties` (`workParties`) and `hut-leaders` (`hutLeaders`) default **on**.
+- **The lobby display guide is epic-sequenced into batch 3** (its matrix row
+  stays under batch 4 by permission grouping). The `lobbyDisplay` module is **off
+  by default**, so `/admin/display` 404s in the seed; the capture stack had the
+  module **enabled** to shoot the hub plus **Devices**, **Layouts**,
+  **Templates**, **Reference**, and the template **preview**. On current `main`
+  the hub is a **five-card** hub — Devices, **Visual builder** (#2048),
+  Layouts (Advanced), Templates, Reference — and the guide documents the Visual
+  builder card at hub level (the no-HTML authoring path most operators should
+  use), deferring the full builder walk-through to the `lobby-display/` feature
+  hub rather than duplicating it. Because the committed `admin-display` capture
+  predates the builder card (and `admin-display-templates` predates the #2047
+  pack), both need re-capture at batch-3 finalisation once the stack is rebuilt
+  from a `main` carrying #2047 + #2048 (see the harness comment).
+- **Display template pack correction (#2047).** At capture time the stack's
+  template gallery showed the original three built-ins (**Everyday board**,
+  **Whole lodge**, **Singles house**); the #2047 pack (**Room by room**, **Nights
+  ahead**, **Lodge operations**, **Welcome kiosk**) was not yet seeded on it. The
+  display guide therefore describes the gallery **mechanic** and defers the full
+  built-in catalogue to the [lobby-display feature hub](lobby-display/README.md),
+  so it stays correct once the pack's templates are re-seeded and the
+  `admin-display-templates` capture is refreshed.
 
 ### Batch 4 route realities (#2050)
 
