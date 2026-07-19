@@ -145,21 +145,44 @@ export function getInitialLifecycleStatus(searchParams: URLSearchParams) {
   return "";
 }
 
+/**
+ * Client mirror of the server create gate (#2089,
+ * `getMissingFieldsForXeroContactCreate` in `@/lib/xero-contacts`). Xero's
+ * contact-create API needs only a unique name; we additionally require email
+ * (Xero uses it for invoice delivery and contact matching). Phone, date of
+ * birth, joined date, and both addresses are OPTIONAL. This must stay in
+ * lockstep with the server helper's required set — a parity test asserts it.
+ */
 export function getMissingFieldsForXeroCreate(form: MemberForm): string[] {
   const missing: string[] = [];
 
   if (!form.firstName.trim()) missing.push("First Name");
   if (!form.lastName.trim()) missing.push("Last Name");
   if (!form.email.trim()) missing.push("Email");
+
+  return missing;
+}
+
+/**
+ * Blank OPTIONAL profile fields for the D-A2 info note (#2089). Create always
+ * works; when any of these are blank we surface a small informational note so
+ * the admin knows the Xero contact is being created without them. Date of birth
+ * and joined date are never sent to Xero on create (they live on the member
+ * record only), but an incomplete profile is still worth flagging here. Labels
+ * are lower-case so they read naturally inside the note sentence.
+ */
+export function getBlankOptionalXeroFields(form: MemberForm): string[] {
+  const blank: string[] = [];
+
   if (
     !form.phoneCountryCode.trim() ||
     !form.phoneAreaCode.trim() ||
     !form.phoneNumber.trim()
   ) {
-    missing.push("Phone");
+    blank.push("phone");
   }
-  if (!form.dateOfBirth) missing.push("Date of Birth");
-  if (!form.joinedDate) missing.push("Joined Date");
+  if (!form.dateOfBirth) blank.push("date of birth");
+  if (!form.joinedDate) blank.push("joined date");
   if (
     !form.streetAddressLine1.trim() ||
     !form.streetCity.trim() ||
@@ -167,7 +190,7 @@ export function getMissingFieldsForXeroCreate(form: MemberForm): string[] {
     !form.streetPostalCode.trim() ||
     !form.streetCountry.trim()
   ) {
-    missing.push("Physical Address");
+    blank.push("physical address");
   }
   if (
     !form.postalAddressLine1.trim() ||
@@ -176,8 +199,8 @@ export function getMissingFieldsForXeroCreate(form: MemberForm): string[] {
     !form.postalPostalCode.trim() ||
     !form.postalCountry.trim()
   ) {
-    missing.push("Postal Address");
+    blank.push("postal address");
   }
 
-  return missing;
+  return blank;
 }
