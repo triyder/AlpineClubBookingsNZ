@@ -976,13 +976,9 @@ export async function importMembersFromXeroGroups(
           previewResult.body as { preview: { previewToken: string } }
         ).preview.previewToken;
 
-        // TODO(#2107-rebase): #2107 adds `skipXeroContactGroupSync` to the save
-        // path. After it merges and this branch rebases, thread
-        // `skipXeroContactGroupSync: true` here and add ONE batched
-        // `reconcileMembersXeroContactGroups(affectedMemberIds, ...)` after this
-        // loop (before the summary audit) to replace the per-member Xero
-        // contact-group sync fan-out. Until then the per-member fan-out inside
-        // `saveSeasonalMembershipAssignment` is the accepted interim posture.
+        // Per-member Xero contact-group sync is suppressed here (#2107's flag);
+        // ONE batched reconcile of all affected members runs after this loop,
+        // before the summary audit, replacing the per-member fan-out.
         const saveResult = await saveSeasonalMembershipAssignment({
           memberId,
           seasonYear,
@@ -991,6 +987,7 @@ export async function importMembersFromXeroGroups(
           reason: `Xero import: group ${context.group}`,
           previewToken,
           source: "IMPORT",
+          skipXeroContactGroupSync: true,
           request: options.request,
         });
         if (saveResult.init?.status && saveResult.init.status >= 400) {
@@ -1045,9 +1042,22 @@ export async function importMembersFromXeroGroups(
     }
   }
 
-  // #2108: one summary audit row for a membership-type import. No synchronous
-  // whole-group Xero resync — the save path already reconciles per matched
-  // member, and new members reconcile through the periodic/mismatch tooling.
+  // #2108 + #2107: per-member sync was suppressed in the save loop above, so
+  // reconcile every affected member's Xero contact group ONCE here — a bounded,
+  // best-effort, daily-limit-aware batch (never throws). New members reconcile
+  // through the periodic/mismatch tooling as before.
+  if (affectedMemberIds.length > 0 && adminMemberId) {
+    // Lazily loaded for the same import-cycle reason as the seasonal module.
+    const { reconcileMembersXeroContactGroups } = await import(
+      "@/lib/xero-contact-groups"
+    );
+    await reconcileMembersXeroContactGroups(affectedMemberIds, {
+      createdByMemberId: adminMemberId,
+      reason: "xero_member_import_membership_types",
+    });
+  }
+
+  // #2108: one summary audit row for a membership-type import.
   if (hasTypeMappings && adminMemberId) {
     await prisma.auditLog.create(
       buildStructuredAuditLogCreateArgs({

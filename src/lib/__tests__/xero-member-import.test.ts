@@ -29,6 +29,10 @@ const mocks = vi.hoisted(() => ({
   parseXeroCompanyNumberDate: vi.fn((): Date | null => null),
   getSeasonalMembershipChangePreview: vi.fn(),
   saveSeasonalMembershipAssignment: vi.fn(),
+  reconcileMembersXeroContactGroups: vi.fn(async () => ({
+    processed: 1,
+    haltedByDailyLimit: false,
+  })),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
@@ -61,6 +65,9 @@ vi.mock("@/lib/xero-sync-cursors", () => ({
 vi.mock("@/lib/seasonal-membership-assignments", () => ({
   getSeasonalMembershipChangePreview: mocks.getSeasonalMembershipChangePreview,
   saveSeasonalMembershipAssignment: mocks.saveSeasonalMembershipAssignment,
+}));
+vi.mock("@/lib/xero-contact-groups", () => ({
+  reconcileMembersXeroContactGroups: mocks.reconcileMembersXeroContactGroups,
 }));
 vi.mock("bcryptjs", () => ({ hash: vi.fn(async () => "placeholder-hash") }));
 
@@ -275,6 +282,17 @@ describe("Xero member import — membership types (#2108)", () => {
         adminMemberId: ADMIN_ID,
         reason: "Xero import: group School",
         previewToken: "preview-token",
+        // #2107 adoption: per-member Xero group sync suppressed; one batched
+        // reconcile runs after the loop instead.
+        skipXeroContactGroupSync: true,
+      }),
+    );
+    expect(mocks.reconcileMembersXeroContactGroups).toHaveBeenCalledTimes(1);
+    expect(mocks.reconcileMembersXeroContactGroups).toHaveBeenCalledWith(
+      ["member_existing"],
+      expect.objectContaining({
+        createdByMemberId: ADMIN_ID,
+        reason: "xero_member_import_membership_types",
       }),
     );
   });
