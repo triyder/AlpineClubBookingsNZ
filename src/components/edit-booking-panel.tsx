@@ -1252,9 +1252,10 @@ export function EditBookingPanel({
           ) : null}
           {isInProgressEdit ? (
             <p className="mt-2 text-sm text-amber-800">
-              Self-service edits for this in-progress stay can only affect
-              nights from {minEditableDate} onward. NZ today and earlier stay
-              locked for admin review.
+              Your stay has started, so the check-in date stays fixed — extend
+              your check-out night by night from {minEditableDate} onward. NZ
+              today and earlier stay locked for admin review, and minimum-stay
+              rules apply to your whole stay, not just the added nights.
             </p>
           ) : null}
         </CardContent>

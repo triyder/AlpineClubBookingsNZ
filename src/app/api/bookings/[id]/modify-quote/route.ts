@@ -812,9 +812,18 @@ export async function POST(
     }
   }
 
-  // Minimum stay policy validation (skip for admins)
+  // Minimum stay policy validation (skip for admins). #2124: an in-progress
+  // extension keeps its original (past) check-in fixed — for in-progress edits
+  // `newCheckIn` is the booking's stored check-in (see the isInProgressEdit
+  // branch above), so validating `[newCheckIn, newCheckOut]` evaluates the
+  // policy over the WHOLE contiguous stay (the already-valid original plus the
+  // added nights), never the added nights in isolation. A genuine
+  // night-by-night extension therefore passes even across a weekend
+  // minimum-stay rule (the whole stay is at least as long as the already-valid
+  // original), while a genuinely-short whole stay is still reported. Pre-stay
+  // (future) edits are unchanged: `newCheckIn` is the requested check-in.
   let minimumStayViolations: { policyName: string; triggerDay: string; minimumNights: number; actualNights: number }[] = [];
-  if (!isAdmin && !isInProgressEdit) {
+  if (!isAdmin) {
     const { validateMinimumStay } = await import("@/lib/booking-policies");
     const stayResult = await validateMinimumStay(newCheckIn, newCheckOut, bookingLodgeId);
     minimumStayViolations = stayResult.violations;
