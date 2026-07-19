@@ -39,6 +39,7 @@ vi.mock("@/lib/xero", () => ({
   syncContactsFromXero: mocks.syncContactsFromXero,
   importMembersFromXeroGroups: mocks.importMembersFromXeroGroups,
   XeroDailyLimitError: class XeroDailyLimitError extends Error {},
+  XeroMemberImportValidationError: class XeroMemberImportValidationError extends Error {},
 }));
 vi.mock("@/lib/xero-api-errors", () => ({
   getXeroApiErrorInfo: vi.fn((error: unknown, fallback: string) => ({
@@ -145,7 +146,9 @@ describe("Phase 4 Xero admin routes", () => {
     expect(mocks.importMembersFromXeroGroups).toHaveBeenCalledWith(
       [{ groupId: "group_1", groupName: "Adults", ageTier: "ADULT" }],
       false,
-      { allowLiveXeroFetch: true }
+      // #2108: the route now also threads the acting admin id and audit request
+      // context through the options object.
+      expect.objectContaining({ allowLiveXeroFetch: true, adminMemberId: "admin_1" })
     );
   });
 

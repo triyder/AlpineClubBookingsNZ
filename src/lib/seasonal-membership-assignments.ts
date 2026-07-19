@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "crypto";
 import type {
   AgeTier,
   BookingStatus,
+  MembershipAssignmentSource,
   MembershipTypeBookingBehavior,
   MembershipTypeSubscriptionBehavior,
   Prisma,
@@ -692,6 +693,9 @@ export async function saveSeasonalMembershipAssignment(params: {
   adminMemberId: string;
   reason: string;
   previewToken: string;
+  // #2108: attribution for the assignment write. Defaults to ADMIN so existing
+  // callers are unchanged; the Xero member import passes IMPORT.
+  source?: MembershipAssignmentSource;
   request?: StructuredAuditEvent["request"];
   db?: typeof prisma;
   // #2107: the bulk wrapper suppresses the per-member synchronous Xero
@@ -701,6 +705,7 @@ export async function saveSeasonalMembershipAssignment(params: {
   skipXeroContactGroupSync?: boolean;
 }): Promise<JsonRouteResult> {
   const reason = params.reason.trim();
+  const source: MembershipAssignmentSource = params.source ?? "ADMIN";
   if (!reason) {
     return jsonResult({ error: "Admin reason is required" }, { status: 400 });
   }
@@ -805,6 +810,7 @@ export async function saveSeasonalMembershipAssignment(params: {
           membershipTypeId: params.membershipTypeId,
           applyFrom: nextApplyFromDate,
           assignedByMemberId: params.adminMemberId,
+          source,
         },
         create: {
           memberId: params.memberId,
@@ -812,6 +818,7 @@ export async function saveSeasonalMembershipAssignment(params: {
           membershipTypeId: params.membershipTypeId,
           applyFrom: nextApplyFromDate,
           assignedByMemberId: params.adminMemberId,
+          source,
         },
         include: assignmentInclude,
       })) as SeasonalAssignmentWithType;

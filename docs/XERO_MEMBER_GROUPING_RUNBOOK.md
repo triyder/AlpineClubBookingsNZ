@@ -129,6 +129,54 @@ scheduled maintenance window.
    group. Members left in a now-unreferenced group are not touched by the
    system; remove them in Xero manually if desired.
 
+## Member import — mapping modes (#2108)
+
+`/admin/xero` → **Setup Tools** → **Import Members from Xero** creates local
+members from cached Xero contact groups. Each group is mapped in one of three
+modes (choose with the **Map groups to** selector):
+
+- **Age tiers** (default, unchanged behaviour) — map each group to a bookable
+  age tier (Infant/Child/Youth/Adult). No membership type is written.
+- **Membership types** — map each group to an active membership type. The
+  member's age tier is derived: an age-exempt **FORCED** type (its only allowed
+  tier is N/A) forces `NOT_APPLICABLE`; otherwise the tier comes from the Xero
+  date-of-birth, falling back to `ADULT`.
+- **Membership types + age tiers** — map each group to a type AND a bookable
+  tier. A FORCED type still derives N/A (the tier select is hidden and the row
+  shows a "members will be age-exempt (N/A)" hint); otherwise the picked tier is
+  written and the type is assigned.
+
+Rules and guarantees:
+
+- The API never accepts an explicit `NOT_APPLICABLE` tier — N/A is only ever
+  derived from an age-exempt type.
+- A type mapping requires **membership edit** access in addition to the finance
+  access the import already needs; a finance-only admin is rejected.
+- All selected types must exist and be **active**, or the whole import is
+  rejected (nothing is written) with the offending type(s) listed.
+- Assignments are written for the **current season** with source `IMPORT` and
+  the contact group name as the source detail.
+- **The import never overwrites an existing assignment.** A matched-existing
+  member who already holds a current-season assignment is left untouched and
+  reported in the result. To change such a member's type, use the bulk-assign /
+  membership tooling — not a re-import.
+- Newly-created members get their assignment in a batch; matched-existing
+  members without an assignment go through the hardened save path, so an
+  age-exempt type correctly flips them to N/A (and sweeps any future
+  shared-double placements) with a per-member audit record.
+- A contact that appears in two mapped groups is imported once — the first
+  mapped group in the list wins, and the dropped duplicate is reported.
+- If two **different** contacts link to the **same** local member with
+  conflicting type mappings, the first mapping wins and the loser is reported as
+  a member collision (never silently applied).
+- The results panel surfaces the assignment count, any kept-existing assignments
+  (with the member and both membership-type names, and a bulk-tool remediation
+  hint for a different-type keep), dropped duplicate contacts, and member
+  collisions — each list bounded with a "+N more" overflow.
+- The import writes one summary audit row and does **not** synchronously resync
+  Xero contact groups; imported members reconcile through the periodic/mismatch
+  tooling described above.
+
 ## Notes & guardrails
 
 - **Mode/rule changes never auto-resync.** Switching the mode, or adding,

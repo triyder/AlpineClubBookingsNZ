@@ -115,7 +115,11 @@ export {
 
 export { syncContactsFromXero } from "./xero-bulk-contact-sync";
 
-export { importMembersFromXeroGroups } from "./xero-member-import";
+export {
+  importMembersFromXeroGroups,
+  XeroMemberImportValidationError,
+  type XeroImportGroupMapping,
+} from "./xero-member-import";
 
 export {
   findDuplicateContacts,

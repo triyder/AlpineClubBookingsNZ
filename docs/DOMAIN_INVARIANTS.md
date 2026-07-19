@@ -1939,9 +1939,12 @@ two independent forces resolved by one shared helper
 (`resolveEnforcedAgeTier`, `src/lib/age-tier-enforcement.ts`) applied at each of
 the enumerated `Member.ageTier` write sites: admin member edit, self-service
 profile, delegated family details, seasonal-assignment save, roll-forward into
-the current season, and bulk set-role. (The Xero member-import creates are a
-separate write path handled by #2108, not this helper.) Precedence, highest
-first:
+the current season, and bulk set-role. (The Xero member-import is a separate
+write path (#2108): for NEWLY-created members it sets the tier directly — a
+FORCED type forces N/A, else the explicit mapped tier, else the DOB-derived
+tier, else ADULT — and for matched-EXISTING members it routes through the
+seasonal-assignment save above, so this same helper applies.) Precedence,
+highest first:
 
 1. **Org force.** Organisation-type members (the `ORG` access role or the legacy
    `SCHOOL` role) always carry `NOT_APPLICABLE`, on every create/update.
@@ -1999,6 +2002,22 @@ Configuration and lifecycle guards:
   membership; a failed chunk is logged and skipped (the enforcement sites
   self-heal). The reconcile phase writes one critical summary audit row with the
   reconciled/swept counts and a bounded per-member before/after sample (#2106).
+- The Xero member-import (#2108) only ever CREATES current-season assignments,
+  never modifies an existing one. That never-overwrite invariant is enforced by a
+  PRE-READ skip, not by the save path: when a mapped group carries a
+  `membershipTypeId`, a matched-EXISTING member who already holds a current-season
+  assignment is filtered out and reported before any write (remediation is the
+  bulk-assign tool). A matched-existing member WITHOUT a current-season assignment
+  is routed through `saveSeasonalMembershipAssignment` (`source` `IMPORT`;
+  existence check, age-exemption force, shared-double sweep, per-member audit; the
+  preview-token staleness 409 is a race backstop). The newly-created members'
+  `createMany` batch — never the save path — is what is exempt from the
+  change-preview gate; it writes an `IMPORT`-source assignment with
+  `skipDuplicates`. A membership-type mapping additionally requires
+  `membership:edit` on top of the route's inferred `finance:edit` — a
+  finance-only admin cannot open the assignment write path. The import writes
+  one `important` summary audit row and never triggers a synchronous whole-group
+  Xero resync.
 
 `NOT_APPLICABLE` never has an `AgeTierSetting` row: it has no age range, is
 displayed as "N/A", and is excluded from every age-based automation — the season

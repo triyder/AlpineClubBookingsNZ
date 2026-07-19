@@ -5,6 +5,28 @@
  * by xero-bulk-contact-sync and xero-contact-groups) and creates local
  * `Member` rows for contacts in each mapped group. Falls back to a live
  * Xero fetch only when the caller opts in via `allowLiveXeroFetch`.
+ *
+ * #2108: each group mapping may additionally carry a `membershipTypeId`. When
+ * it does, the import writes a current-season `SeasonalMembershipAssignment`
+ * for the contact (source `IMPORT`, sourceDetail = group name). Newly-created
+ * members are batched via `createMany`; matched-EXISTING members are routed
+ * through `saveSeasonalMembershipAssignment` so the age-exemption force,
+ * shared-double sweep, and per-member audit apply.
+ *
+ * Never-overwrite invariant: an existing current-season assignment is NEVER
+ * replaced (remediation is the bulk-assign tool). That is enforced by the
+ * PRE-READ skip below — matched-existing members who already hold a
+ * current-season assignment are filtered out and reported before any save runs
+ * (the preview token-staleness 409 in `saveSeasonalMembershipAssignment` is a
+ * backstop for a race). The save path itself upserts by design, so it must only
+ * ever be reached for members with no current-season assignment.
+ *
+ * Scale tradeoff: matched-existing members are assigned in a sequential loop,
+ * one `saveSeasonalMembershipAssignment` call each (preview + save + per-member
+ * Xero contact-group sync fan-out). For a very large tenant importing thousands
+ * of already-linked members this is O(n) round-trips; it is the accepted interim
+ * posture (see the #2107-rebase TODO at the save call site for the batched
+ * reconcile that supersedes the per-member fan-out).
  */
 
 import { randomBytes } from "crypto";
@@ -14,6 +36,16 @@ import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import { sendPasswordResetEmail } from "./email";
 import { issueActionToken } from "./action-tokens";
+import { getSeasonYear } from "@/lib/utils";
+import { computeAgeTier } from "@/lib/age-tier";
+import {
+  membershipTypeAgeExemption,
+  type MembershipTypeAgeExemption,
+} from "@/lib/membership-types";
+import {
+  buildStructuredAuditLogCreateArgs,
+  type StructuredAuditEvent,
+} from "@/lib/audit";
 import {
   getAuthenticatedXeroClient,
   XeroDailyLimitError,
@@ -35,8 +67,32 @@ import {
 // it directly so the two flows can never drift.
 const CONTACT_SYNC_CURSOR_RESOURCE = "CONTACT_SYNC";
 
+// #2108: bounds for the single summary audit row so it never carries an
+// unbounded blob (a large import could touch thousands of members).
+const AUDIT_MEMBER_ID_LIMIT = 200;
+const AUDIT_LIST_LIMIT = 50;
+
+// test seam — the one summary audit row a membership-type import writes.
+export const XERO_MEMBER_IMPORT_MEMBERSHIP_TYPES_ACTION =
+  "admin.xero.member_import_membership_types";
+
 interface ImportMembersFromXeroGroupsOptions {
   allowLiveXeroFetch?: boolean;
+  // #2108: the acting admin — required when any mapping carries a
+  // membershipTypeId (assignments record `assignedByMemberId`, and the
+  // matched-existing save path needs an actor for its audit rows).
+  adminMemberId?: string;
+  request?: StructuredAuditEvent["request"];
+}
+
+// #2108: a mapping may now carry an age tier (person tiers only — N/A is never
+// submitted, it is only derived from an age-exempt type) and/or a membership
+// type. The route enforces "at least one of tier/type" per mapping.
+export interface XeroImportGroupMapping {
+  groupId: string;
+  groupName: string;
+  ageTier?: AgeTier | null;
+  membershipTypeId?: string | null;
 }
 
 interface ImportedXeroMemberDetail {
@@ -62,13 +118,88 @@ interface SkippedXeroContactDetail {
   reason?: string;
 }
 
+// #2108: a matched-EXISTING member who already held a current-season assignment
+// the import must not overwrite (a different type is remediated via the bulk
+// assign tool, never silently changed here). `sameType` distinguishes a harmless
+// "already on this type" keep from a genuine "kept a DIFFERENT type" keep so the
+// UI can label them apart. The membership-type NAMES are resolved server-side so
+// the panel never has to render raw ids.
+interface KeptExistingAssignmentDetail {
+  memberId: string;
+  name: string;
+  group: string;
+  existingMembershipTypeId: string;
+  attemptedMembershipTypeId: string;
+  existingMembershipTypeName: string | null;
+  attemptedMembershipTypeName: string | null;
+  sameType: boolean;
+}
+
+// #2108 (L3): two DIFFERENT Xero contacts that link to the SAME local member but
+// carry different membership-type mappings. The first matched contact's mapping
+// wins deterministically (payload order); the loser is reported here rather than
+// silently dropped.
+interface MemberCollisionDetail {
+  memberId: string;
+  name: string;
+  keptGroup: string;
+  keptMembershipTypeId: string | null;
+  droppedGroup: string;
+  droppedMembershipTypeId: string | null;
+}
+
+// #2108: a contact that appeared in more than one mapped group. The first
+// mapping in payload order wins deterministically; later occurrences are
+// dropped and reported.
+interface DroppedDuplicateDetail {
+  name: string;
+  xeroContactId: string;
+  group: string;
+  keptGroup: string;
+}
+
 interface CachedGroupContactRef {
   contactId: string;
   contactName: string | null;
 }
 
+// #2108: thrown when a mapping references a membership type that does not exist
+// or is not active. The route maps it to a 422 listing the offenders.
+export class XeroMemberImportValidationError extends Error {
+  readonly offenders: Array<{ membershipTypeId: string; reason: string }>;
+  constructor(
+    offenders: Array<{ membershipTypeId: string; reason: string }>,
+  ) {
+    super("One or more membership types are invalid for import");
+    this.name = "XeroMemberImportValidationError";
+    this.offenders = offenders;
+  }
+}
+
+// #2108: resolve the age tier stored on a NEWLY-created member. A FORCED
+// (only-N/A) type wins unconditionally — it mirrors the org force and keeps new
+// members consistent with matched-existing members (who are forced to N/A by
+// saveSeasonalMembershipAssignment). Otherwise an explicit mapped person tier
+// wins, else the DOB-derived tier, else ADULT.
+async function resolveNewMemberAgeTier(params: {
+  mappedTier: AgeTier | null | undefined;
+  typeExemption: MembershipTypeAgeExemption | null | undefined;
+  dateOfBirth: Date | null;
+}): Promise<AgeTier> {
+  if (params.typeExemption === "FORCED") {
+    return "NOT_APPLICABLE";
+  }
+  if (params.mappedTier) {
+    return params.mappedTier;
+  }
+  if (params.dateOfBirth) {
+    return computeAgeTier(params.dateOfBirth);
+  }
+  return "ADULT";
+}
+
 export async function importMembersFromXeroGroups(
-  groupMappings: Array<{ groupId: string; groupName: string; ageTier: AgeTier }>,
+  groupMappings: XeroImportGroupMapping[],
   sendInvites: boolean,
   options: ImportMembersFromXeroGroupsOptions = {}
 ): Promise<{
@@ -83,6 +214,10 @@ export async function importMembersFromXeroGroups(
   createdMembers: ImportedXeroMemberDetail[];
   createdDependents: ImportedXeroDependentDetail[];
   linkedExistingDetails: LinkedXeroMemberDetail[];
+  assignmentsCreated: number;
+  keptExistingAssignments: KeptExistingAssignmentDetail[];
+  droppedDuplicates: DroppedDuplicateDetail[];
+  memberCollisions: MemberCollisionDetail[];
   errors: number;
   errorDetails: Array<{ member: string; error: string }>;
   groupsProcessed: string[];
@@ -101,6 +236,111 @@ export async function importMembersFromXeroGroups(
   let errors = 0;
   const errorDetails: Array<{ member: string; error: string }> = [];
   const groupsProcessed: string[] = [];
+
+  // #2108 accumulators.
+  const seasonYear = getSeasonYear();
+  const adminMemberId = options.adminMemberId;
+  const uniqueMembershipTypeIds = Array.from(
+    new Set(
+      groupMappings
+        .map((mapping) => mapping.membershipTypeId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const hasTypeMappings = uniqueMembershipTypeIds.length > 0;
+  // membershipTypeId -> exemption (only for active, existing types).
+  const typeExemptionById = new Map<string, MembershipTypeAgeExemption>();
+  // Assignment rows for NEWLY-created members, flushed via createMany at the end.
+  const newMemberAssignments: Array<{
+    memberId: string;
+    seasonYear: number;
+    membershipTypeId: string;
+    source: "IMPORT";
+    sourceDetail: string;
+    assignedByMemberId: string | null;
+  }> = [];
+  // memberId -> mapping context for a matched-EXISTING member (first match wins).
+  const matchedExistingByMemberId = new Map<
+    string,
+    { name: string; group: string; membershipTypeId: string | null }
+  >();
+  const keptExistingAssignments: KeptExistingAssignmentDetail[] = [];
+  const droppedDuplicates: DroppedDuplicateDetail[] = [];
+  const memberCollisions: MemberCollisionDetail[] = [];
+  const affectedMemberIds: string[] = [];
+  let assignmentsCreated = 0;
+
+  // #2108 (L3): register a matched-EXISTING member's mapping context. The first
+  // matched contact for a member wins (payload order). If a LATER contact links
+  // to the same member with a DIFFERENT membership type, the loser is reported
+  // as a member collision instead of being silently dropped.
+  const registerMatchedExisting = (
+    memberId: string,
+    name: string,
+    group: string,
+    membershipTypeId: string | null,
+  ) => {
+    const existing = matchedExistingByMemberId.get(memberId);
+    if (!existing) {
+      matchedExistingByMemberId.set(memberId, { name, group, membershipTypeId });
+      return;
+    }
+    if (
+      membershipTypeId &&
+      existing.membershipTypeId &&
+      membershipTypeId !== existing.membershipTypeId
+    ) {
+      memberCollisions.push({
+        memberId,
+        name,
+        keptGroup: existing.group,
+        keptMembershipTypeId: existing.membershipTypeId,
+        droppedGroup: group,
+        droppedMembershipTypeId: membershipTypeId,
+      });
+    }
+  };
+
+  // #2108: resolve every referenced membership type up-front. Any that is
+  // missing or inactive fails the whole import with a 422 listing offenders —
+  // no partial write.
+  if (hasTypeMappings) {
+    if (!adminMemberId) {
+      throw new Error(
+        "adminMemberId is required to import members into membership types",
+      );
+    }
+    const types = await prisma.membershipType.findMany({
+      where: { id: { in: uniqueMembershipTypeIds } },
+      select: {
+        id: true,
+        isActive: true,
+        allowedAgeTiers: { select: { ageTier: true } },
+      },
+    });
+    const typeById = new Map(types.map((type) => [type.id, type]));
+    const offenders: Array<{ membershipTypeId: string; reason: string }> = [];
+    for (const membershipTypeId of uniqueMembershipTypeIds) {
+      const type = typeById.get(membershipTypeId);
+      if (!type) {
+        offenders.push({ membershipTypeId, reason: "not_found" });
+        continue;
+      }
+      if (!type.isActive) {
+        offenders.push({ membershipTypeId, reason: "inactive" });
+        continue;
+      }
+      typeExemptionById.set(
+        membershipTypeId,
+        membershipTypeAgeExemption(
+          type.allowedAgeTiers.map((tier) => tier.ageTier),
+        ),
+      );
+    }
+    if (offenders.length > 0) {
+      throw new XeroMemberImportValidationError(offenders);
+    }
+  }
 
   // Hash a random UUID — unguessable placeholder password
   const placeholderHash = await hash(randomBytes(32).toString("hex"), 13);
@@ -223,8 +463,15 @@ export async function importMembersFromXeroGroups(
     }
   }
 
+  // #2108: a contact may sit in two mapped groups; the first mapping in payload
+  // order wins (deterministic). Track the winning group per contact.
+  const winningGroupByContactId = new Map<string, string>();
+
   for (const mapping of groupMappings) {
     const groupContacts = contactsByGroup.get(mapping.groupId) ?? [];
+    const typeExemption = mapping.membershipTypeId
+      ? typeExemptionById.get(mapping.membershipTypeId) ?? null
+      : null;
     groupsProcessed.push(mapping.groupName);
     logger.info(
       {
@@ -238,6 +485,22 @@ export async function importMembersFromXeroGroups(
     );
 
     for (const groupContact of groupContacts) {
+      // #2108: drop a contact already handled by an earlier mapping.
+      const winningGroup = winningGroupByContactId.get(groupContact.contactId);
+      if (winningGroup !== undefined) {
+        droppedDuplicates.push({
+          name:
+            groupContact.contactName ??
+            contactNamesById.get(groupContact.contactId) ??
+            groupContact.contactId,
+          xeroContactId: groupContact.contactId,
+          group: mapping.groupName,
+          keptGroup: winningGroup,
+        });
+        continue;
+      }
+      winningGroupByContactId.set(groupContact.contactId, mapping.groupName);
+
       const contact = cachedContactsById.get(groupContact.contactId);
       if (!contact) {
         errors++;
@@ -283,6 +546,13 @@ export async function importMembersFromXeroGroups(
         });
         if (alreadyLinked) {
           skippedExisting++;
+          // #2108: a matched-EXISTING member — a candidate for a type assignment.
+          registerMatchedExisting(
+            alreadyLinked.id,
+            `${alreadyLinked.firstName} ${alreadyLinked.lastName}`,
+            mapping.groupName,
+            mapping.membershipTypeId ?? null,
+          );
           continue;
         }
 
@@ -305,6 +575,13 @@ export async function importMembersFromXeroGroups(
 
           if (isSamePerson) {
             skippedExisting++;
+            // #2108: matched-EXISTING member.
+            registerMatchedExisting(
+              existingPrimary.id,
+              `${existingPrimary.firstName} ${existingPrimary.lastName}`,
+              mapping.groupName,
+              mapping.membershipTypeId ?? null,
+            );
             const updates: Record<string, unknown> = {};
 
             if (!existingPrimary.xeroContactId) {
@@ -381,6 +658,13 @@ export async function importMembersFromXeroGroups(
           });
           if (existingFamilyMember) {
             skippedExisting++;
+            // #2108: matched-EXISTING member.
+            registerMatchedExisting(
+              existingFamilyMember.id,
+              `${existingFamilyMember.firstName} ${existingFamilyMember.lastName}`,
+              mapping.groupName,
+              mapping.membershipTypeId ?? null,
+            );
             if (!existingFamilyMember.xeroContactId) {
               await prisma.member.update({
                 where: { id: existingFamilyMember.id },
@@ -416,7 +700,11 @@ export async function importMembersFromXeroGroups(
               firstName: depFirstName,
               lastName: depLastName,
               passwordHash: placeholderHash,
-              ageTier: mapping.ageTier,
+              ageTier: await resolveNewMemberAgeTier({
+                mappedTier: mapping.ageTier,
+                typeExemption,
+                dateOfBirth: depDob,
+              }),
               dateOfBirth: depDob,
               xeroContactId: contact.contactId,
               phoneCountryCode: contact.phoneCountryCode,
@@ -440,6 +728,19 @@ export async function importMembersFromXeroGroups(
               inheritEmailFromId: existingPrimary.id,
             },
           });
+
+          // #2108: batch the new dependent's current-season assignment.
+          if (mapping.membershipTypeId) {
+            newMemberAssignments.push({
+              memberId: newFamilyMember.id,
+              seasonYear,
+              membershipTypeId: mapping.membershipTypeId,
+              source: "IMPORT",
+              sourceDetail: mapping.groupName,
+              assignedByMemberId: adminMemberId ?? null,
+            });
+            affectedMemberIds.push(newFamilyMember.id);
+          }
 
           const existingGroup = await prisma.familyGroupMember.findFirst({
             where: { memberId: existingPrimary.id },
@@ -507,7 +808,11 @@ export async function importMembersFromXeroGroups(
             firstName,
             lastName,
             passwordHash: placeholderHash,
-            ageTier: mapping.ageTier,
+            ageTier: await resolveNewMemberAgeTier({
+              mappedTier: mapping.ageTier,
+              typeExemption,
+              dateOfBirth,
+            }),
             dateOfBirth,
             xeroContactId: contact.contactId,
             phoneCountryCode: contact.phoneCountryCode,
@@ -529,6 +834,19 @@ export async function importMembersFromXeroGroups(
             emailVerified: true,
           },
         });
+
+        // #2108: batch the new member's current-season assignment.
+        if (mapping.membershipTypeId) {
+          newMemberAssignments.push({
+            memberId: member.id,
+            seasonYear,
+            membershipTypeId: mapping.membershipTypeId,
+            source: "IMPORT",
+            sourceDetail: mapping.groupName,
+            assignedByMemberId: adminMemberId ?? null,
+          });
+          affectedMemberIds.push(member.id);
+        }
 
         created++;
         createdMembers.push({
@@ -579,6 +897,214 @@ export async function importMembersFromXeroGroups(
     }
   }
 
+  // #2108: flush the newly-created members' assignments in one batch — new rows
+  // have no prior tier/assignment state, so createMany(skipDuplicates) is safe.
+  if (newMemberAssignments.length > 0) {
+    const result = await prisma.seasonalMembershipAssignment.createMany({
+      data: newMemberAssignments,
+      skipDuplicates: true,
+    });
+    assignmentsCreated += result.count;
+  }
+
+  // #2108: assign matched-EXISTING members through the hardened save path so the
+  // age-exemption force, shared-double sweep, and per-member audit apply. An
+  // existing current-season assignment is NEVER overwritten (that is a
+  // deliberate remediation for the bulk-assign tool), so we pre-read them and
+  // skip — reporting the members we left untouched.
+  const matchedTypeCandidates = [...matchedExistingByMemberId.entries()].filter(
+    ([, context]) => context.membershipTypeId !== null,
+  );
+  if (matchedTypeCandidates.length > 0 && adminMemberId) {
+    const candidateMemberIds = matchedTypeCandidates.map(([memberId]) => memberId);
+    const existingAssignments =
+      await prisma.seasonalMembershipAssignment.findMany({
+        where: { seasonYear, memberId: { in: candidateMemberIds } },
+        select: { memberId: true, membershipTypeId: true },
+      });
+    const existingAssignmentByMemberId = new Map(
+      existingAssignments.map((assignment) => [
+        assignment.memberId,
+        assignment,
+      ]),
+    );
+
+    // Lazily loaded to keep the seasonal module (and its Xero/email graph) out
+    // of the tier-only import path and off the module import cycle.
+    const { getSeasonalMembershipChangePreview, saveSeasonalMembershipAssignment } =
+      await import("@/lib/seasonal-membership-assignments");
+
+    for (const [memberId, context] of matchedTypeCandidates) {
+      const membershipTypeId = context.membershipTypeId;
+      if (!membershipTypeId) continue;
+
+      const existing = existingAssignmentByMemberId.get(memberId);
+      if (existing) {
+        // Never overwrite — record the member we kept. `sameType` marks a
+        // harmless "already on this type" keep so the UI does not report it as a
+        // DIFFERENT-type keep that needs remediation. Names are filled in below.
+        keptExistingAssignments.push({
+          memberId,
+          name: context.name,
+          group: context.group,
+          existingMembershipTypeId: existing.membershipTypeId,
+          attemptedMembershipTypeId: membershipTypeId,
+          existingMembershipTypeName: null,
+          attemptedMembershipTypeName: null,
+          sameType: existing.membershipTypeId === membershipTypeId,
+        });
+        continue;
+      }
+
+      try {
+        const previewResult = await getSeasonalMembershipChangePreview({
+          memberId,
+          seasonYear,
+          membershipTypeId,
+        });
+        if (previewResult.init?.status && previewResult.init.status >= 400) {
+          errors++;
+          errorDetails.push({
+            member: context.name,
+            error:
+              (previewResult.body as { error?: string } | undefined)?.error ??
+              "Failed to preview membership type assignment",
+          });
+          continue;
+        }
+        const previewToken = (
+          previewResult.body as { preview: { previewToken: string } }
+        ).preview.previewToken;
+
+        // Per-member Xero contact-group sync is suppressed here (#2107's flag);
+        // ONE batched reconcile of all affected members runs after this loop,
+        // before the summary audit, replacing the per-member fan-out.
+        const saveResult = await saveSeasonalMembershipAssignment({
+          memberId,
+          seasonYear,
+          membershipTypeId,
+          adminMemberId,
+          reason: `Xero import: group ${context.group}`,
+          previewToken,
+          source: "IMPORT",
+          skipXeroContactGroupSync: true,
+          request: options.request,
+        });
+        if (saveResult.init?.status && saveResult.init.status >= 400) {
+          errors++;
+          errorDetails.push({
+            member: context.name,
+            error:
+              (saveResult.body as { error?: string } | undefined)?.error ??
+              "Failed to save membership type assignment",
+          });
+          continue;
+        }
+        assignmentsCreated++;
+        affectedMemberIds.push(memberId);
+      } catch (assignErr) {
+        logger.error(
+          { err: assignErr, memberId, membershipTypeId },
+          "Failed to assign membership type to matched member during import",
+        );
+        errors++;
+        errorDetails.push({
+          member: context.name,
+          error: parseXeroError(assignErr),
+        });
+      }
+    }
+  }
+
+  // #2108 (HIGH-1): resolve the membership-type NAMES for kept-existing rows so
+  // the results panel can render human-readable names, never raw ids. Covers the
+  // attempted types (in `uniqueMembershipTypeIds`) AND each member's existing
+  // type, which may be a type the import never referenced.
+  if (keptExistingAssignments.length > 0) {
+    const nameIds = Array.from(
+      new Set(
+        keptExistingAssignments.flatMap((kept) => [
+          kept.existingMembershipTypeId,
+          kept.attemptedMembershipTypeId,
+        ]),
+      ),
+    );
+    const namedTypes = await prisma.membershipType.findMany({
+      where: { id: { in: nameIds } },
+      select: { id: true, name: true },
+    });
+    const nameById = new Map(namedTypes.map((type) => [type.id, type.name]));
+    for (const kept of keptExistingAssignments) {
+      kept.existingMembershipTypeName =
+        nameById.get(kept.existingMembershipTypeId) ?? null;
+      kept.attemptedMembershipTypeName =
+        nameById.get(kept.attemptedMembershipTypeId) ?? null;
+    }
+  }
+
+  // #2108 + #2107: per-member sync was suppressed in the save loop above, so
+  // reconcile every affected member's Xero contact group ONCE here — a bounded,
+  // best-effort, daily-limit-aware batch (never throws). New members reconcile
+  // through the periodic/mismatch tooling as before.
+  if (affectedMemberIds.length > 0 && adminMemberId) {
+    // Lazily loaded for the same import-cycle reason as the seasonal module.
+    const { reconcileMembersXeroContactGroups } = await import(
+      "@/lib/xero-contact-groups"
+    );
+    await reconcileMembersXeroContactGroups(affectedMemberIds, {
+      createdByMemberId: adminMemberId,
+      reason: "xero_member_import_membership_types",
+    });
+  }
+
+  // #2108: one summary audit row for a membership-type import.
+  if (hasTypeMappings && adminMemberId) {
+    await prisma.auditLog.create(
+      buildStructuredAuditLogCreateArgs({
+        action: XERO_MEMBER_IMPORT_MEMBERSHIP_TYPES_ACTION,
+        actor: { memberId: adminMemberId },
+        entity: {
+          type: "SeasonalMembershipAssignment",
+          id: `xero-import:${seasonYear}`,
+        },
+        category: "admin",
+        severity: "important",
+        outcome: "success",
+        summary: "Xero member import assigned membership types",
+        metadata: {
+          seasonYear,
+          membershipTypeIds: uniqueMembershipTypeIds,
+          perGroup: groupMappings.map((mapping) => ({
+            group: mapping.groupName,
+            membershipTypeId: mapping.membershipTypeId ?? null,
+            ageTier: mapping.ageTier ?? null,
+          })),
+          counts: {
+            created,
+            createdAsDependent,
+            skippedExisting,
+            linkedExisting,
+            assignmentsCreated,
+            keptExistingAssignments: keptExistingAssignments.length,
+            droppedDuplicates: droppedDuplicates.length,
+            memberCollisions: memberCollisions.length,
+            errors,
+          },
+          affectedMemberIds: affectedMemberIds.slice(0, AUDIT_MEMBER_ID_LIMIT),
+          affectedMemberIdsTruncated:
+            affectedMemberIds.length > AUDIT_MEMBER_ID_LIMIT,
+          keptExistingAssignments: keptExistingAssignments.slice(
+            0,
+            AUDIT_LIST_LIMIT,
+          ),
+          droppedDuplicates: droppedDuplicates.slice(0, AUDIT_LIST_LIMIT),
+          memberCollisions: memberCollisions.slice(0, AUDIT_LIST_LIMIT),
+        },
+        request: options.request,
+      }),
+    );
+  }
+
   return {
     created,
     createdAsDependent,
@@ -591,6 +1117,10 @@ export async function importMembersFromXeroGroups(
     createdMembers,
     createdDependents,
     linkedExistingDetails,
+    assignmentsCreated,
+    keptExistingAssignments,
+    droppedDuplicates,
+    memberCollisions,
     errors,
     errorDetails,
     groupsProcessed,
