@@ -17,21 +17,32 @@ import {
   Users,
   CalendarRange,
   BookOpen,
+  BedDouble,
   Tag,
   ClipboardList,
   ArrowRight,
   DollarSign,
-  CalendarCheck,
+  UserCheck,
   AlertTriangle,
   UserX,
   Trash2,
 } from "lucide-react";
+import { auth } from "@/lib/auth";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import {
+  canViewAdminHrefWithMatrix,
+  emptyAdminPermissionMatrix,
+  getAdminPermissionMatrix,
+} from "@/lib/admin-permissions";
 import { formatDollarsDisplay } from "@/lib/finance-format";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { CLUB_HUT_LEADER_LABEL, CLUB_NAME } from "@/config/club-identity";
-import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
+import {
+  ACTIVE_BOOKING_STATUSES,
+  UPCOMING_CHECK_IN_BOOKING_STATUSES,
+} from "@/lib/booking-status";
 import {
   addDaysDateOnly,
   endOfDateOnlyForTimeZone,
@@ -39,6 +50,8 @@ import {
   getTodayDateOnly,
   startOfDateOnlyForTimeZone,
 } from "@/lib/date-only";
+import { countRosterNightsNeedingChores } from "@/lib/roster-status";
+import { countGuestsAwaitingBed } from "@/lib/admin-bed-allocation";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 import {
   buildUnpaidFinishedStaysHref,
@@ -79,6 +92,8 @@ async function getStats() {
     pendingBookingReviews,
     pendingBookingChangeRequests,
     unassignedHutLeaderDates,
+    rosterNightsNeedingChores,
+    bedGuestsAwaiting,
   ] = await Promise.all([
     prisma.member.count(),
     prisma.member.count({ where: { active: true } }),
@@ -94,9 +109,14 @@ async function getStats() {
         createdAt: { gte: startOfMonth, lte: endOfMonth },
       },
     }),
+    // Bookings officer card headline (#2091): check-ins in the next 7 days.
+    // Uses UPCOMING_CHECK_IN_BOOKING_STATUSES (not the wider
+    // ACTIVE_BOOKING_STATUSES) so the count equals the list the card deep links
+    // to — /admin/bookings?upcoming=7 applies the same status set — rather than
+    // over-counting AWAITING_REVIEW bookings the list hides.
     prisma.booking.count({
       where: {
-        status: { in: [...ACTIVE_BOOKING_STATUSES] },
+        status: { in: [...UPCOMING_CHECK_IN_BOOKING_STATUSES] },
         deletedAt: null,
         checkIn: { gte: today, lte: sevenDaysFromNow },
       },
@@ -163,6 +183,22 @@ async function getStats() {
       where: { status: "REQUESTED" },
     }),
     getUnassignedHutLeaderDates(),
+    // Roster Assignment officer card (#2091, D-E2): nights in the next 7 days
+    // that still need a chore roster. Window-scoped to the roster surface's own
+    // needs-roster semantics (nights with ≥1 staying guest and no chore
+    // assignment, per src/lib/roster-status.ts computeRosterDayStatuses), so the
+    // headline reconciles with what the officer sees — a per-night count that
+    // neither drops a stay rostered on only some of its nights nor inflates on
+    // guestless bookings. Cheap: bounded 7-day window.
+    countRosterNightsNeedingChores({ from: today, to: sevenDaysFromNow }),
+    // Bed Allocation officer card (#2091, D-E2): guests in the next 7 days with a
+    // bed-night still awaiting allocation. Window-scoped mirror of the bed
+    // board's own unallocatedGuestNights set (src/lib/admin-bed-allocation.ts):
+    // per-guest-night diff with the board's guest-existence rule and whole-lodge
+    // holds excluded (ADR-001), so a partially-allocated booking still counts its
+    // pending guests exactly as the board's buckets do. Cheap: bounded 7-day
+    // window matching the board's landing window.
+    countGuestsAwaitingBed({ from: today, to: sevenDaysFromNow }),
   ]);
 
   const revenueThisMonth = revenueResult._sum.amountCents ?? 0;
@@ -191,12 +227,70 @@ async function getStats() {
     pendingBookingChangeRequests,
     pendingMembershipReviews:
       pendingMembershipCancellations + pendingMemberArchives,
+    rosterNightsNeedingChores,
+    bedGuestsAwaiting,
   };
 }
 
 
+// Officer key cards are permission-gated via the shared admin matrix (#2091,
+// D-E3): a card is hidden — never disabled — when the actor cannot open its
+// target page. The matrix is resolved server-side exactly as the admin layout
+// does (definition-backed roles cannot be resolved client-side).
+async function getPermissionMatrix() {
+  const session = await auth();
+  const actor = session?.user
+    ? await prisma.member.findUnique({
+        where: { id: session.user.id },
+        select: {
+          id: true,
+          canLogin: true,
+          accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
+        },
+      })
+    : null;
+  return actor ? getAdminPermissionMatrix(actor) : emptyAdminPermissionMatrix();
+}
+
 export default async function AdminDashboardPage() {
-  const stats = await getStats();
+  // Resolve the stats batch and the actor's permission matrix concurrently —
+  // the auth() + member lookup no longer waits on the stats round-trip (#2091).
+  const [stats, permissionMatrix] = await Promise.all([
+    getStats(),
+    getPermissionMatrix(),
+  ]);
+
+  const canViewBookings = canViewAdminHrefWithMatrix(
+    permissionMatrix,
+    "/admin/bookings",
+  );
+  const canViewHutLeaders = canViewAdminHrefWithMatrix(
+    permissionMatrix,
+    "/admin/hut-leaders",
+  );
+  const canViewRoster = canViewAdminHrefWithMatrix(
+    permissionMatrix,
+    "/admin/roster",
+  );
+  const canViewBedAllocation = canViewAdminHrefWithMatrix(
+    permissionMatrix,
+    "/admin/bed-allocation",
+  );
+  const canViewMembers = canViewAdminHrefWithMatrix(
+    permissionMatrix,
+    "/admin/members",
+  );
+  const canViewPayments = canViewAdminHrefWithMatrix(
+    permissionMatrix,
+    "/admin/payments",
+  );
+  const showOfficerRow =
+    canViewBookings ||
+    canViewHutLeaders ||
+    canViewRoster ||
+    canViewBedAllocation;
+  const showSecondaryRow = canViewMembers || canViewPayments;
+
   const hasPendingAdminReviews =
     stats.pendingRefundAppeals > 0 || stats.pendingCreditApprovals > 0;
   const pendingReviewSummary = [
@@ -382,95 +476,153 @@ export default async function AdminDashboardPage() {
         </Link>
       )}
 
-      {/* Summary stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Link href="/admin/members" className="group">
-          <Card className="hover:shadow-md transition-shadow cursor-pointer">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Members</CardTitle>
-              <Users className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{stats.activeMembers}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                active, of {stats.totalMembers} total ({stats.inactiveMembers}{" "}
-                inactive)
-              </p>
-            </CardContent>
-          </Card>
-        </Link>
+      {/* Bookings-officer key cards (#2091, D-E1/D-E2): the four surfaces a
+          bookings officer works every day, each headlining an actionable
+          "work to do" count. Permission-gated (D-E3) so an officer only sees
+          the cards whose target page they can open. */}
+      {showOfficerRow && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {canViewBookings && (
+            <Link href="/admin/bookings?upcoming=7" className="group">
+              <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Bookings</CardTitle>
+                  <BookOpen className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">
+                    {stats.upcomingCheckIns}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    checking in within 7 days · {stats.activeBookings} active of{" "}
+                    {stats.totalBookings} all-time
+                  </p>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
 
-        <Link href="/admin/bookings" className="group">
-          <Card className="hover:shadow-md transition-shadow cursor-pointer">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                Total Bookings
-              </CardTitle>
-              <BookOpen className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{stats.totalBookings}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                All-time bookings
-              </p>
-            </CardContent>
-          </Card>
-        </Link>
+          {canViewHutLeaders && (
+            <Link href="/admin/hut-leaders" className="group">
+              <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">
+                    {CLUB_HUT_LEADER_LABEL} Assignment
+                  </CardTitle>
+                  <UserCheck className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">
+                    {stats.unassignedDatesWithBookings.length}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    upcoming night
+                    {stats.unassignedDatesWithBookings.length === 1
+                      ? ""
+                      : "s"}{" "}
+                    with bookings but no{" "}
+                    {CLUB_HUT_LEADER_LABEL.toLowerCase()} assigned
+                  </p>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
 
-        <Link href="/admin/bookings?status=PAYMENT_PENDING,CONFIRMED,PAID,PENDING" className="group">
-          <Card className="hover:shadow-md transition-shadow cursor-pointer">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                Active Bookings
-              </CardTitle>
-              <CalendarCheck className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{stats.activeBookings}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Payment pending + paid + holds
-              </p>
-            </CardContent>
-          </Card>
-        </Link>
+          {canViewRoster && (
+            <Link href="/admin/roster" className="group">
+              <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">
+                    Roster Assignment
+                  </CardTitle>
+                  <ClipboardList className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">
+                    {stats.rosterNightsNeedingChores}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    night
+                    {stats.rosterNightsNeedingChores === 1 ? "" : "s"} in the
+                    next 7 days with no chores assigned
+                  </p>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
 
-        <Link href="/admin/payments" className="group">
-          <Card className="hover:shadow-md transition-shadow cursor-pointer">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                Revenue This Month
-              </CardTitle>
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">
-                {formatDollarsDisplay(stats.revenueThisMonth)}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                From succeeded payments
-              </p>
-            </CardContent>
-          </Card>
-        </Link>
+          {canViewBedAllocation && (
+            <Link href="/admin/bed-allocation" className="group">
+              <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">
+                    Bed Allocation
+                  </CardTitle>
+                  <BedDouble className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">
+                    {stats.bedGuestsAwaiting}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    guest
+                    {stats.bedGuestsAwaiting === 1 ? "" : "s"} in the next 7 days
+                    awaiting a bed
+                  </p>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
+        </div>
+      )}
 
-        <Link href="/admin/bookings?upcoming=7" className="group">
-          <Card className="hover:shadow-md transition-shadow cursor-pointer">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                Upcoming Check-ins
-              </CardTitle>
-              <CalendarRange className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{stats.upcomingCheckIns}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Next 7 days
-              </p>
-            </CardContent>
-          </Card>
-        </Link>
+      {/* Slim secondary row (#2091, D-E1): committee-level glance metrics kept
+          in a visually lighter row beneath the officer cards. */}
+      {showSecondaryRow && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {canViewMembers && (
+            <Link href="/admin/members" className="group">
+              <Card className="border-slate-200 bg-slate-50/60 hover:shadow-sm transition-shadow cursor-pointer">
+                <CardContent className="flex items-center justify-between gap-3 py-4">
+                  <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                    <Users className="h-4 w-4 text-muted-foreground" />
+                    Members
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xl font-semibold text-slate-900">
+                      {stats.activeMembers}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      active of {stats.totalMembers} total
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
 
-      </div>
+          {canViewPayments && (
+            <Link href="/admin/payments" className="group">
+              <Card className="border-slate-200 bg-slate-50/60 hover:shadow-sm transition-shadow cursor-pointer">
+                <CardContent className="flex items-center justify-between gap-3 py-4">
+                  <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                    <DollarSign className="h-4 w-4 text-muted-foreground" />
+                    Revenue This Month
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xl font-semibold text-slate-900">
+                      {formatDollarsDisplay(stats.revenueThisMonth)}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      from succeeded payments
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
+        </div>
+      )}
 
       {/* Recent Bookings */}
       <div>

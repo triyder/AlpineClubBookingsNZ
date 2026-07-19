@@ -1148,7 +1148,7 @@ function overlapsDateRange(
 
 function clampGuestToRange(
   guest: { stayStart: Date; stayEnd: Date },
-  range: BedAllocationDateRange,
+  range: { from: Date; to: Date },
 ) {
   return {
     stayStart: guest.stayStart > range.from ? guest.stayStart : range.from,
@@ -1757,6 +1757,102 @@ export async function getBedAllocationDashboard(input: {
     warnings: buildBedAllocationWarnings({ allocations: serializedAllocations }),
     focusedBooking,
   };
+}
+
+/**
+ * Count the distinct guests with at least one bed-night still awaiting
+ * allocation inside a bounded window — the "work to do" headline for the admin
+ * dashboard's Bed Allocation officer card (#2091). This is a window-scoped
+ * mirror of `getBedAllocationDashboard`'s `unallocatedGuestNights` construction
+ * (the board's own awaiting-allocation set), kept cheap by the bounded window
+ * (the dashboard passes today..+7, the board's own landing window):
+ *   - loads only BED_ALLOCATABLE_BOOKING_STATUSES bookings with ≥1 guest
+ *     overlapping the window (`loadBookingRecords`'s guest-existence rule), and
+ *   - excludes whole-lodge holds up front (a held lodge implicitly occupies
+ *     every bed and needs no per-bed placement — ADR-001/#120 — so the board
+ *     drops its guests from the awaiting-allocation set entirely), then
+ *   - treats a guest-night as awaiting when no BedAllocation row exists for that
+ *     (guest, night), counting each guest ONCE if any of their window nights is
+ *     unallocated (the board renders one bucket card per such guest).
+ *
+ * Because the diff is at guest-night granularity, a booking with guest A placed
+ * and guest B pending still contributes B here — exactly the guest the board
+ * lists in its bucket — instead of the whole booking dropping out the moment one
+ * guest is allocated. Club-wide (no lodge scope) for the dashboard.
+ */
+export async function countGuestsAwaitingBed(input: {
+  from: Date;
+  to: Date;
+  lodgeId?: string;
+  db?: BedAllocationDb;
+}): Promise<number> {
+  const db = input.db ?? prisma;
+  const { from, to } = input;
+
+  const [bookings, allocations] = await Promise.all([
+    db.booking.findMany({
+      where: {
+        deletedAt: null,
+        status: { in: [...BED_ALLOCATABLE_BOOKING_STATUSES] },
+        wholeLodgeHold: false,
+        checkIn: { lt: to },
+        checkOut: { gt: from },
+        guests: {
+          some: {
+            stayStart: { lt: to },
+            stayEnd: { gt: from },
+          },
+        },
+        ...(input.lodgeId ? lodgeNullTolerantScope(input.lodgeId) : {}),
+      },
+      select: {
+        id: true,
+        guests: {
+          where: {
+            stayStart: { lt: to },
+            stayEnd: { gt: from },
+          },
+          select: {
+            id: true,
+            stayStart: true,
+            stayEnd: true,
+          },
+        },
+      },
+    }),
+    db.bedAllocation.findMany({
+      where: {
+        stayDate: { gte: from, lt: to },
+        ...(input.lodgeId ? { room: lodgeNullTolerantScope(input.lodgeId) } : {}),
+      },
+      select: {
+        bookingGuestId: true,
+        stayDate: true,
+      },
+    }),
+  ]);
+
+  const allocatedGuestNights = new Set(
+    allocations.map((allocation) =>
+      guestNightKey(allocation.bookingGuestId, formatDateOnly(allocation.stayDate)),
+    ),
+  );
+
+  const awaitingGuestIds = new Set<string>();
+  for (const booking of bookings) {
+    for (const guest of booking.guests) {
+      const clamped = clampGuestToRange(guest, { from, to });
+      for (const date of eachDateOnlyInRange(clamped.stayStart, clamped.stayEnd)) {
+        if (!allocatedGuestNights.has(guestNightKey(guest.id, formatDateOnly(date)))) {
+          awaitingGuestIds.add(guest.id);
+          // One unallocated night makes the guest awaiting; count them once.
+          break;
+        }
+      }
+    }
+  }
+
+  return awaitingGuestIds.size;
 }
 
 export async function runAutoBedAllocation(input: {

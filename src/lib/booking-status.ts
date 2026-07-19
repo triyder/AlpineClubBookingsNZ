@@ -68,6 +68,21 @@ export const ACTIVE_BOOKING_STATUSES = [
   BookingStatus.AWAITING_REVIEW,
 ] as const;
 
+// The status set the admin bookings list shows for its `?upcoming=N` view — see
+// `buildBookingWhere` in admin-bookings-service.ts, which applies exactly these
+// statuses when no explicit `status` filter is supplied. Deliberately EXCLUDES
+// AWAITING_REVIEW (a booking still under admin review is not yet a confirmed
+// upcoming check-in). The admin dashboard's "Bookings" officer card reuses this
+// constant for its headline count so the card number matches the list it deep
+// links to (`/admin/bookings?upcoming=7`) instead of over-counting via the wider
+// ACTIVE_BOOKING_STATUSES.
+export const UPCOMING_CHECK_IN_BOOKING_STATUSES = [
+  BookingStatus.PAYMENT_PENDING,
+  BookingStatus.CONFIRMED,
+  BookingStatus.PAID,
+  BookingStatus.PENDING,
+] as const;
+
 // A member's existing "real stay" for the cross-lodge duplicate-stay guard
 // (ADR-004, #1587): everything that is not cancelled/bumped and not a waitlist
 // placeholder. This includes PAYMENT_PENDING (a real pending stay awaiting
