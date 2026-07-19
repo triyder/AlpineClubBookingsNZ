@@ -1,6 +1,7 @@
 # Lobby TV Display
 
 > Part of the [documentation hub](../README.md).
+> Operator guide: [`../guides/display.md`](../guides/display.md).
 
 **A live, self-updating lodge noticeboard — the whiteboard that keeps itself current.**
 

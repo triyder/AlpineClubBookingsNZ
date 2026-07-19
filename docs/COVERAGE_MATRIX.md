@@ -7,11 +7,12 @@ This matrix enumerates **every admin route area** under
 that exists today and whether a dedicated **operator guide** (per the skeleton
 in [`STYLE_GUIDE.md`](STYLE_GUIDE.md)) exists yet.
 
-It is the authoritative workplan input for the operator-guide programme (issue
-#2050). "Reference coverage" means architecture/runbook prose that describes the
-behaviour; it is **not** the same as a task-focused operator guide with
-screenshots. Almost every area therefore shows an operator-guide **GAP** today —
-that is expected: #2049 lays the foundation and #2050 fills the gaps.
+It was the authoritative workplan input for the operator-guide programme (issue
+#2050), and is now its maintenance checklist. "Reference coverage" means
+architecture/runbook prose that describes the behaviour; it is **not** the same as
+a task-focused operator guide with screenshots. #2049 laid the foundation and
+#2050 filled every gap, so each admin row now links a guide (no `GAP` remains) —
+keep the links current as areas change.
 
 The area list is generated from the actual route directories (69 areas,
 excluding `__tests__`), so it is exhaustive and will not silently miss a
@@ -122,12 +123,14 @@ a `GAP`, replace it with a relative link to that file (e.g.
   `image-manager`, `induction`, `lockers`, `member-fields`,
   `mountain-conditions`, `site-style`, `work-parties`, and the thin
   `*-setup`/config surfaces. These are the highest-value operator-guide targets.
-- **Every** area needs a task-focused operator guide (with screenshots). That is
-  the #2050 deliverable and this file is its checklist — batches land as
-  separate PRs and flip their rows from GAP to guide links as they merge (the
-  per-row status above is authoritative; batches 1–2 and 4 have shipped, and
-  batch 5's member/guest journey guides have shipped under
-  [`user-guide/`](user-guide/README.md)).
+- **Every** area now has a task-focused operator guide (with screenshots). That
+  was the #2050 deliverable, and it is complete: every admin row above links a
+  guide (no `GAP` remains), batches 1–4 have all shipped, and batch 5's
+  member/guest journey guides have shipped under
+  [`user-guide/`](user-guide/README.md). This file is now the **maintenance
+  checklist** — keep the guides current as areas change (the docs-lockstep rule
+  in `AGENTS.md`), and add a row here in the same PR whenever a new admin area
+  lands.
 
 ### Notes vs the ~20 gaps the initial audit named
 
@@ -195,10 +198,12 @@ pages, and a feature-gated display cluster; the guides document the reality:
   entries, so their guides open with the canonical line: `hut-leaders`, `roster`,
   `lodge` (**Lodge Kiosk**), `work-parties`, and `lodge-instructions`
   (**Admin → Lodge Operations → …**).
-- **`chores` has no sidebar entry.** It is lodge-scoped (ADR-005), reached from
-  the lodge configuration hub's **Chores** card, so its guide opens
-  **hub-path-first** (`Admin → Setup & Configuration → Lodges → a lodge →
-  Chores`).
+- **`chores` has no sidebar entry, and opens route-first** (the
+  `lockers`/`seasons`/`rooms-beds` lodge-scoped precedent). It is lodge-scoped
+  (ADR-005) with no clean `Admin → X` click path — there is no direct sidebar
+  entry — so its guide leads with `/admin/chores` and then gives the lodge
+  configuration hub's **Chores** card as the way in (`Admin → Setup &
+  Configuration → Lodges → a lodge → Chores`).
 - **`rooms-beds` opens route-first** (the `lockers`/`seasons` lodge-scoped
   precedent): it is reached from the lodge hub's **Rooms & Beds** card and from
   **Bookings Setup**. Note the permission split — the page sits in the **Lodge**
@@ -218,9 +223,15 @@ pages, and a feature-gated display cluster; the guides document the reality:
   stays under batch 4 by permission grouping). The `lobbyDisplay` module is **off
   by default**, so `/admin/display` 404s in the seed; the capture stack had the
   module **enabled** to shoot the hub plus **Devices**, **Layouts**,
-  **Templates**, **Reference**, and the template **preview**. The visual builder
-  (#2048) is **not** documented here — that PR carries its own docs — and the
-  guide cross-links the `lobby-display/` feature hub rather than duplicating it.
+  **Templates**, **Reference**, and the template **preview**. On current `main`
+  the hub is a **five-card** hub — Devices, **Visual builder** (#2048),
+  Layouts (Advanced), Templates, Reference — and the guide documents the Visual
+  builder card at hub level (the no-HTML authoring path most operators should
+  use), deferring the full builder walk-through to the `lobby-display/` feature
+  hub rather than duplicating it. Because the committed `admin-display` capture
+  predates the builder card (and `admin-display-templates` predates the #2047
+  pack), both need re-capture at batch-3 finalisation once the stack is rebuilt
+  from a `main` carrying #2047 + #2048 (see the harness comment).
 - **Display template pack correction (#2047).** At capture time the stack's
   template gallery showed the original three built-ins (**Everyday board**,
   **Whole lodge**, **Singles house**); the #2047 pack (**Room by room**, **Nights

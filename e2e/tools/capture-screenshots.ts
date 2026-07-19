@@ -187,10 +187,19 @@ const CAPTURES: Capture[] = [
   // `lobbyDisplay` flag, which the demo seed leaves OFF (schema default) — the
   // E2E prepare step does NOT enable it. Turn Lobby Display ON via Admin → Setup
   // → Modules on the ephemeral capture stack (only) before capturing these, as
-  // the display guide documents. The Templates capture shows the #2047 built-in
-  // gallery (Everyday board, Whole lodge, Singles house + Room by room, Nights
-  // ahead, Lodge operations, Welcome kiosk). The visual builder (#2048) is not
-  // captured here — it ships with its own docs.
+  // the display guide documents.
+  //
+  // RE-CAPTURE AT BATCH-3 FINALISATION (the committed images predate #2047/#2048):
+  //   - `admin-display-templates` currently shows only the ORIGINAL THREE built-ins
+  //     (Everyday board, Whole lodge, Singles house) — the #2047 template pack
+  //     (Room by room, Nights ahead, Lodge operations, Welcome kiosk) had not been
+  //     seeded on the stack these were shot against.
+  //   - `admin-display` (the hub) currently shows the FOUR-card hub — it predates
+  //     the #2048 **Visual builder** card, so it does not yet show the five-card hub
+  //     the display guide documents.
+  // Both must be re-captured once the capture stack is rebuilt from a `main` that
+  // contains #2047 (template pack) AND #2048 (visual builder). The visual builder
+  // page itself ships its own docs and is not part of this batch-3 manifest.
   { name: "admin-display", route: "/admin/display", area: "admin" },
   { name: "admin-display-devices", route: "/admin/display/devices", area: "admin" },
   { name: "admin-display-layouts", route: "/admin/display/layouts", area: "admin" },

@@ -73,10 +73,10 @@ Running a live club: admins, treasurers, and committee members.
 **Start here:** [`../DEPLOYMENT.md`](../DEPLOYMENT.md) for bootstrap and
 blue/green deployment, then the runbook for whatever you are doing.
 
-Per-area, task-focused **operator guides** (with screenshots) are being produced
-under issue #2050 on the foundation this hub establishes. See
-[`COVERAGE_MATRIX.md`](COVERAGE_MATRIX.md) for the per-admin-area status; the
-guides that have landed are linked below.
+Per-area, task-focused **operator guides** (with screenshots) were produced under
+issue #2050 on the foundation this hub establishes, and now cover every admin
+area. See [`COVERAGE_MATRIX.md`](COVERAGE_MATRIX.md) for the per-admin-area
+index; every guide is linked below.
 
 **Bookings & capacity guides** (batch 1 — the booking lifecycle, capacity/beds,
 seasons, promos, and booking money):
@@ -221,7 +221,10 @@ The lobby TV display also keeps its own [feature hub](lobby-display/README.md)
 (with the [operating guide](lobby-display/operating.md)) for the deeper design;
 it is an optional module, off by default.
 
-Until the remaining batches land, use the reference docs below for other areas.
+The operator guides now cover every admin area (all five #2050 batches have
+shipped); the reference docs below remain the deep-detail layer beneath them —
+reach for a guide for the task-focused walkthrough, and these for the underlying
+policy, runbook, and architecture detail.
 
 - [`../DEPLOYMENT.md`](../DEPLOYMENT.md) — bootstrap and blue/green deployment
   reference (repository root).
