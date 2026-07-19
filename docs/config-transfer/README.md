@@ -132,14 +132,18 @@ deeper reference for what each category contains and the import safety model.
     natural key `membershipTypeKey × ageTier × effectiveFrom` (a blank `ageTier`
     is a flat-fee type's single NULL-tier window, e.g. the built-in Family type).
   - `membership-fees/annual-fees.csv` —
-    `membershipTypeKey, effectiveFrom, effectiveTo, amountCents, billingBasis,
-    prorationRule`; natural key `membershipTypeKey × effectiveFrom` (a blank
-    `prorationRule` defaults to `NONE`).
+    `membershipTypeKey, ageTier, effectiveFrom, effectiveTo, amountCents,
+    billingBasis, prorationRule`; natural key
+    `membershipTypeKey × ageTier × effectiveFrom` (#2067; a blank `ageTier` is
+    the flat, whole-type fee, and a blank `prorationRule` defaults to `NONE`). A
+    `PER_FAMILY` fee must be flat — a per-family row with a non-blank `ageTier`
+    is a blocking row error. A pre-#2067 bundle without the column imports every
+    row as flat.
   - `membership-fees/annual-fee-components.csv` —
-    `membershipTypeKey, effectiveFrom, label, amountCents, prorate,
+    `membershipTypeKey, ageTier, effectiveFrom, label, amountCents, prorate,
     xeroAccountCode, xeroItemCode, sortOrder`; natural key
-    `(parent fee = membershipTypeKey × effectiveFrom) × label`. Each row is one
-    Xero invoice line.
+    `(parent fee = membershipTypeKey × ageTier × effectiveFrom) × label`. Each
+    row is one Xero invoice line.
 
   Referenced membership types must already exist on the target (matched by
   `key`) — membership types themselves are not transferred (they are managed on

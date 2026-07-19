@@ -1093,9 +1093,23 @@ model MembershipType {
   @@index([sortOrder])
 }
 
+// Annual membership fee schedule keyed by membership type x optional age tier
+// (#2067). Mirrors JoiningFee's Flat-vs-per-tier shape: an age-keyed type may
+// carry one row per tier, while the flat NULL-ageTier row is the whole-type
+// fallback (a member of any tier resolves it when no per-tier row matches, and
+// NOT_APPLICABLE members resolve it directly). A companion raw-SQL partial
+// unique index (WHERE "ageTier" IS NULL) enforces one flat window per (type,
+// effectiveFrom) and lives in the migration + prisma/partial-unique-indexes.tsv.
+// PER_FAMILY fees stay flat-only (a raw-SQL CHECK forbids ageTier IS NOT NULL
+// for PER_FAMILY), and two partial GiST EXCLUDE constraints (one over flat rows,
+// one over per-tier rows — an enum->text cast is only STABLE, so a single
+// COALESCE-based EXCLUDE is illegal) keep windows non-overlapping per (type,
+// tier) while letting flat-vs-tier and cross-tier windows coexist — all raw SQL,
+// not modelled here.
 model MembershipAnnualFee {
   id               String                       @id @default(cuid())
   membershipTypeId String
+  ageTier          AgeTier?
   amountCents      Int
   billingBasis     MembershipFeeBillingBasis
   prorationRule    MembershipFeeProrationRule   @default(NONE)
@@ -1107,8 +1121,8 @@ model MembershipAnnualFee {
   membershipType MembershipType                 @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
   components     MembershipAnnualFeeComponent[]
 
-  @@unique([membershipTypeId, effectiveFrom])
-  @@index([membershipTypeId, effectiveFrom, effectiveTo], map: "MembershipAnnualFee_effective_lookup_idx")
+  @@unique([membershipTypeId, ageTier, effectiveFrom])
+  @@index([membershipTypeId, ageTier, effectiveFrom, effectiveTo], map: "MembershipAnnualFee_effective_lookup_idx")
 }
 
 // Named components of an annual membership fee (#1932, E6, item 9). Each becomes

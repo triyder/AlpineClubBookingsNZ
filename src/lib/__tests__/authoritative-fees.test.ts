@@ -76,13 +76,18 @@ describe("authoritative fee schedules", () => {
     expect(mocks.accountMappingFindUnique).not.toHaveBeenCalled();
   });
 
-  it("resolves a membership fee on inclusive effective boundaries", async () => {
+  it("resolves the flat NULL-tier membership fee on inclusive effective boundaries", async () => {
     const asOf = new Date("2026-07-13T00:00:00.000Z");
     mocks.membershipAnnualFeeFindFirst.mockResolvedValue({ id: "mf-1", amountCents: 10000 });
-    await expect(getEffectiveMembershipAnnualFee("full", asOf)).resolves.toMatchObject({ id: "mf-1" });
+    await expect(getEffectiveMembershipAnnualFee({ membershipTypeId: "full", ageTier: null }, asOf))
+      .resolves.toMatchObject({ id: "mf-1" });
+    // A null tier reads the flat NULL-tier row directly (byte-identical to the
+    // pre-#2067 single-query behaviour for every all-flat config).
+    expect(mocks.membershipAnnualFeeFindFirst).toHaveBeenCalledTimes(1);
     expect(mocks.membershipAnnualFeeFindFirst).toHaveBeenCalledWith({
       where: {
         membershipTypeId: "full",
+        ageTier: null,
         effectiveFrom: { lte: asOf },
         OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
       },
@@ -90,6 +95,50 @@ describe("authoritative fee schedules", () => {
       // Components are the invoice lines (#1932, E6), resolved in stable order.
       include: { components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
     });
+  });
+
+  it("prefers the exact age-tier annual fee row over the flat row (#2067)", async () => {
+    const asOf = new Date("2026-07-13T00:00:00.000Z");
+    mocks.membershipAnnualFeeFindFirst.mockResolvedValueOnce({ id: "mf-adult", amountCents: 15000 });
+    await expect(getEffectiveMembershipAnnualFee({ membershipTypeId: "full", ageTier: "ADULT" }, asOf))
+      .resolves.toMatchObject({ id: "mf-adult" });
+    // Exact-tier hit means the flat fallback query never runs.
+    expect(mocks.membershipAnnualFeeFindFirst).toHaveBeenCalledTimes(1);
+    expect(mocks.membershipAnnualFeeFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ membershipTypeId: "full", ageTier: "ADULT" }),
+    }));
+  });
+
+  it("falls back to the flat annual fee row when the tier has none (#2067)", async () => {
+    const asOf = new Date("2026-07-13T00:00:00.000Z");
+    mocks.membershipAnnualFeeFindFirst
+      .mockResolvedValueOnce(null) // no YOUTH row
+      .mockResolvedValueOnce({ id: "mf-flat", amountCents: 12000 }); // flat fallback
+    await expect(getEffectiveMembershipAnnualFee({ membershipTypeId: "full", ageTier: "YOUTH" }, asOf))
+      .resolves.toMatchObject({ id: "mf-flat" });
+    expect(mocks.membershipAnnualFeeFindFirst).toHaveBeenCalledTimes(2);
+    expect(mocks.membershipAnnualFeeFindFirst).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ membershipTypeId: "full", ageTier: null }),
+    }));
+  });
+
+  it("resolves NOT_APPLICABLE annual fee directly to the flat row, skipping any tier lookup (#2067)", async () => {
+    const asOf = new Date("2026-07-13T00:00:00.000Z");
+    mocks.membershipAnnualFeeFindFirst.mockResolvedValueOnce({ id: "mf-flat", amountCents: 9000 });
+    await expect(getEffectiveMembershipAnnualFee({ membershipTypeId: "school", ageTier: "NOT_APPLICABLE" }, asOf))
+      .resolves.toMatchObject({ id: "mf-flat" });
+    // Only the flat lookup runs (no NOT_APPLICABLE tier rows are ever offered).
+    expect(mocks.membershipAnnualFeeFindFirst).toHaveBeenCalledTimes(1);
+    expect(mocks.membershipAnnualFeeFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ membershipTypeId: "school", ageTier: null }),
+    }));
+  });
+
+  it("returns null when neither a tier row nor a flat annual fee row exists (#2067)", async () => {
+    mocks.membershipAnnualFeeFindFirst.mockResolvedValue(null);
+    await expect(getEffectiveMembershipAnnualFee({ membershipTypeId: "full", ageTier: "ADULT" }))
+      .resolves.toBeNull();
+    expect(mocks.membershipAnnualFeeFindFirst).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to the flat NULL-tier row (Family type), then to NONE", async () => {

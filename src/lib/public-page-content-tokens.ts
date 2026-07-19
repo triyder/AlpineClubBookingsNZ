@@ -252,10 +252,14 @@ function tierForLabel(
 export type PublicAnnualFeeOptions = { typeKey?: string; components?: boolean };
 
 /**
- * Public annual membership fees. By default one "Annual membership fees" group
- * lists the current total per publicly-listed type; `components` opts into the
- * E6 per-component breakdown (one group per type). NO_INVOICE schedules and
- * types with no current fee are omitted. Gated by the dedicated annualFees
+ * Public annual membership fees (#2067 per-tier). By default one "Annual
+ * membership fees" group lists the current total per publicly-listed type ×
+ * age tier as "Type — TierLabel" rows; a flat (NULL-tier) fee, or any fee on a
+ * type whose `ageGroupsApply` is false, collapses to a plain "Type" row
+ * (mirroring loadPublicJoiningFees). `components` opts into the E6 per-component
+ * breakdown (one group per type × tier). Rows are deduped to the current
+ * (latest effectiveFrom) fee per tier; a tier whose current fee is NO_INVOICE,
+ * and types with no current fee, are omitted. Gated by the dedicated annualFees
  * double-opt-in (D-R4). Unknown/unlisted `typeKey` → empty state.
  */
 export async function loadPublicAnnualFees(
@@ -263,48 +267,84 @@ export async function loadPublicAnnualFees(
 ): Promise<PublicFeeGroup[]> {
   if (!(await isPublicContentEnabled("annualFees"))) return [];
   const today = getTodayDateOnly();
-  const types = await prisma.membershipType.findMany({
-    where: { isActive: true, publiclyListed: true },
-    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-    select: {
-      key: true,
-      name: true,
-      annualFees: {
-        where: activeWindow(today),
-        orderBy: { effectiveFrom: "desc" },
-        take: 1,
-        select: {
-          amountCents: true,
-          billingBasis: true,
-          components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }], select: { label: true, amountCents: true } },
+  const [types, tiers] = await Promise.all([
+    prisma.membershipType.findMany({
+      where: { isActive: true, publiclyListed: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: {
+        key: true,
+        name: true,
+        ageGroupsApply: true,
+        annualFees: {
+          where: activeWindow(today),
+          orderBy: { effectiveFrom: "desc" },
+          select: {
+            ageTier: true,
+            amountCents: true,
+            billingBasis: true,
+            components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }], select: { label: true, amountCents: true } },
+          },
         },
       },
-    },
-  });
-  const listed = (options.typeKey
+    }),
+    loadAgeTierLabels(),
+  ]);
+  const listed = options.typeKey
     ? types.filter((type) => type.key.toLowerCase() === options.typeKey!.toLowerCase())
-    : types
-  ).map((type) => ({ name: type.name, fee: type.annualFees[0] }))
-    .filter((type): type is { name: string; fee: NonNullable<typeof type.fee> } =>
-      type.fee != null && type.fee.billingBasis !== "NO_INVOICE");
+    : types;
   if (listed.length === 0) return [];
 
+  // Current fee per (type, tier): rows are effectiveFrom desc, so the first seen
+  // per tier is current. A flat (non-age) type keys on the null tier. A tier
+  // whose current fee is NO_INVOICE is omitted (marked seen, then skipped) so an
+  // older invoiceable row never resurfaces.
+  type Cell = {
+    typeName: string;
+    tier: string | null;
+    amountCents: number;
+    components: Array<{ label: string; amountCents: number }>;
+  };
+  const cells: Cell[] = [];
+  for (const type of listed) {
+    const typeCells: Cell[] = [];
+    const seen = new Set<string>();
+    for (const row of type.annualFees) {
+      const dedupeKey = row.ageTier ?? "FLAT";
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      if (row.billingBasis === "NO_INVOICE") continue;
+      typeCells.push({
+        typeName: type.name,
+        tier: type.ageGroupsApply ? row.ageTier : null,
+        amountCents: row.amountCents,
+        components: row.components,
+      });
+    }
+    // Age order within the type; a flat/collapsed (null) row sorts last.
+    typeCells.sort((a, b) => ageSort(tiers, a.tier) - ageSort(tiers, b.tier));
+    cells.push(...typeCells);
+  }
+  if (cells.length === 0) return [];
+
+  const rowLabel = (cell: Cell) =>
+    cell.tier === null ? cell.typeName : `${cell.typeName} — ${ageLabel(tiers, cell.tier)}`;
+
   if (options.components) {
-    // One group per type; rows are the fee's invoice-line components.
-    return listed
-      .map((type) => ({
-        heading: type.name,
-        rows: (type.fee.components.length > 0
-          ? type.fee.components.map((component) => ({ label: component.label, fee: money(component.amountCents) }))
-          : [{ label: "Annual membership fee", fee: money(type.fee.amountCents) }]),
+    // One group per type × tier; rows are the fee's invoice-line components.
+    return cells
+      .map((cell) => ({
+        heading: rowLabel(cell),
+        rows: (cell.components.length > 0
+          ? cell.components.map((component) => ({ label: component.label, fee: money(component.amountCents) }))
+          : [{ label: "Annual membership fee", fee: money(cell.amountCents) }]),
       }))
       .filter((group) => group.rows.length > 0);
   }
 
-  // Default: a single group of type → total rows.
+  // Default: a single group of "Type — TierLabel" → total rows.
   return [{
     heading: "Annual membership fees",
-    rows: listed.map((type) => ({ label: type.name, fee: money(type.fee.amountCents) })),
+    rows: cells.map((cell) => ({ label: rowLabel(cell), fee: money(cell.amountCents) })),
   }];
 }
 

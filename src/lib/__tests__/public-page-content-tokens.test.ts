@@ -143,6 +143,58 @@ describe("public PageContent token view models", () => {
     ]);
   });
 
+  it("lists per-age-tier annual fees as 'Type — Tier' rows in age order (#2067)", async () => {
+    mocks.ageTiers.mockResolvedValue([
+      { tier: "YOUTH", label: "Youth", sortOrder: 1 },
+      { tier: "ADULT", label: "Adult", sortOrder: 2 },
+    ]);
+    mocks.membershipTypes.mockResolvedValue([
+      { key: "FULL", name: "Full", ageGroupsApply: true, annualFees: [
+        { ageTier: "ADULT", amountCents: 15000, billingBasis: "PER_MEMBER", components: [] },
+        { ageTier: "YOUTH", amountCents: 8000, billingBasis: "PER_MEMBER", components: [] },
+      ] },
+    ]);
+    await expect(loadPublicAnnualFees()).resolves.toEqual([
+      { heading: "Annual membership fees", rows: [
+        { label: "Full — Youth", fee: { amountCents: 8000, label: "$80.00" } },
+        { label: "Full — Adult", fee: { amountCents: 15000, label: "$150.00" } },
+      ] },
+    ]);
+  });
+
+  it("collapses per-tier rows to a plain type row when ageGroupsApply is false (#2067)", async () => {
+    mocks.ageTiers.mockResolvedValue([{ tier: "ADULT", label: "Adult", sortOrder: 2 }]);
+    mocks.membershipTypes.mockResolvedValue([
+      { key: "ORG", name: "Org", ageGroupsApply: false, annualFees: [
+        { ageTier: "ADULT", amountCents: 20000, billingBasis: "PER_MEMBER", components: [] },
+      ] },
+    ]);
+    await expect(loadPublicAnnualFees()).resolves.toEqual([
+      { heading: "Annual membership fees", rows: [{ label: "Org", fee: { amountCents: 20000, label: "$200.00" } }] },
+    ]);
+  });
+
+  it("dedupes to the current fee per tier and omits a tier whose current fee is no-invoice (#2067)", async () => {
+    mocks.ageTiers.mockResolvedValue([
+      { tier: "YOUTH", label: "Youth", sortOrder: 1 },
+      { tier: "ADULT", label: "Adult", sortOrder: 2 },
+    ]);
+    mocks.membershipTypes.mockResolvedValue([
+      { key: "FULL", name: "Full", ageGroupsApply: true, annualFees: [
+        // effectiveFrom desc: first per tier is current.
+        { ageTier: "ADULT", amountCents: 0, billingBasis: "NO_INVOICE", components: [] }, // current ADULT is no-invoice -> omit
+        { ageTier: "ADULT", amountCents: 12000, billingBasis: "PER_MEMBER", components: [] }, // older ADULT must not resurface
+        { ageTier: "YOUTH", amountCents: 8000, billingBasis: "PER_MEMBER", components: [] },
+        { ageTier: "YOUTH", amountCents: 7000, billingBasis: "PER_MEMBER", components: [] }, // older YOUTH deduped away
+      ] },
+    ]);
+    await expect(loadPublicAnnualFees()).resolves.toEqual([
+      { heading: "Annual membership fees", rows: [
+        { label: "Full — Youth", fee: { amountCents: 8000, label: "$80.00" } },
+      ] },
+    ]);
+  });
+
   it("groups public hut fees per season with member/non-member rows in age order (#1933)", async () => {
     mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
     mocks.seasons.mockResolvedValue([{ lodgeId: "l1", name: "Winter", startDate: new Date("2026-06-01"), endDate: new Date("2026-10-01"), rates: [

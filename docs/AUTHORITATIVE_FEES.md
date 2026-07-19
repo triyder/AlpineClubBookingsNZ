@@ -32,6 +32,24 @@ untouched. A `NULL` snapshot (pre-refactor booking) resolves at read time as
 > NULL-tier row). The legacy category-keyed `EntranceFee` table is retained
 > unused and dropped by the deferred contract issue (E13).
 >
+> **Annual fees are keyed the same way (#2067).** `MembershipAnnualFee` now
+> carries the identical Flat-vs-per-tier shape: an optional `ageTier`, with the
+> exact-tier row winning and the flat NULL-tier row as the fallback (a member of
+> any tier, and every `NOT_APPLICABLE` member, resolves the flat row when no
+> per-tier row matches). Uniqueness and overlap are per (type, tier): a raw-SQL
+> partial unique index enforces one flat window per (type, effectiveFrom) and a
+> pair of partial GiST EXCLUDE constraints (one over flat rows, one over per-tier
+> rows) keeps windows non-overlapping within each tier (and flat-vs-flat) while
+> letting flat-vs-tier and cross-tier windows coexist. Two partial constraints —
+> not one COALESCE(`ageTier`::text,'') EXCLUDE — because an enum→text cast is only
+> STABLE and Postgres forbids non-IMMUTABLE functions in an index/EXCLUDE
+> expression. `PER_FAMILY` annual fees are **flat-only** — a per-family fee
+> bills a family once regardless of age, so a per-tier per-family row is refused
+> at the API (409), by a DB CHECK, and at config-transfer plan time; a flat
+> per-family window may also not overlap per-tier per-member windows for the
+> same type. Existing all-flat schedules keep resolving byte-identically (every
+> pre-#2067 row is a flat NULL-tier row; no backfill).
+>
 > **Family is strictly type-driven (behaviour change, E5).** The old composition
 > heuristic (an adult in a household of ≥2 adults + a dependent resolved the
 > family fee) is **removed**: only members assigned the **Family** membership
@@ -77,10 +95,12 @@ invalidate public routes.
    Every migrated and newly created type is hidden by default.
 2. A Finance editor opens **Admin > Fees** (Joining Fees and Annual Membership
    Fees sections) and adds an
-   inclusive effective-date range. Annual-fee ranges for the same type, and
-   joining-fee ranges for the same type × age tier, cannot overlap. NZD amounts
-   are stored as GST-inclusive integer cents. Joining fees are set per
-   membership type and age tier (or a flat "all ages" row for the Family type).
+   inclusive effective-date range. Annual-fee and joining-fee ranges for the same
+   type × age tier cannot overlap (different tiers may share a window). NZD
+   amounts are stored as GST-inclusive integer cents. Both joining fees and
+   annual fees are set per membership type and age tier, or as a flat "all ages"
+   row (the fallback resolved when a member's tier has no explicit row, and the
+   only shape allowed for a `PER_FAMILY` annual fee — see below).
 3. For `PER_FAMILY` fees, choose one active member of every membered family as
    billing member. Login holder and family admin are never inferred. Families
    without one are visible exceptions and omitted from invoice generation.
@@ -238,6 +258,10 @@ annual-fee) schedules **first-class** via the `membership-fees` category
 `membershipTypeKey × ageTier × effectiveFrom` (amounts in integer cents), so an
 export→import reproduces the schedule exactly. When a bundle carries that file
 it is authoritative and **supersedes** the legacy fallback below.
+`membership-fees/annual-fees.csv` (and `annual-fee-components.csv`) likewise
+carry an `ageTier` column (#2067) so per-tier annual fees round-trip; a
+pre-#2067 bundle without the column imports every row as flat, and a per-family
+row with a non-blank `ageTier` is a blocking plan-time error.
 
 For **old-format bundles only** (no `joining-fees.csv`), config-transfer still
 accepts old `ENTRANCE_FEE`-labelled item-code bundles (normalised to

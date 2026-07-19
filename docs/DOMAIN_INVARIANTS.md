@@ -17,13 +17,21 @@ Future reviews and issues should cite this file when proposing changes.
 
 - Store and calculate money as integer cents.
 - Annual membership and joining fee authorities store non-negative integer
-  cents in inclusive, non-overlapping effective-date ranges. Annual fees key on
-  membership type; joining fees (`JoiningFee`, #1931) key on membership type ×
-  optional age tier, with the flat NULL-tier row reserved for whole-type
-  (Family) fees. `NO_INVOICE` annual rows are zero cents. The joining fee is
-  strictly type-driven — the Family fee applies only to members assigned the
-  Family type (the composition heuristic is removed). Fee changes affect future
-  resolution only.
+  cents in inclusive, non-overlapping effective-date ranges. Both annual fees
+  (`MembershipAnnualFee`, #2067) and joining fees (`JoiningFee`, #1931) key on
+  membership type × **optional** age tier: a per-tier row wins at resolution,
+  else the flat NULL-tier row is the fallback (a member of any tier, and every
+  `NOT_APPLICABLE` member, resolves the flat row when no per-tier row matches).
+  "Non-overlapping" is per (type, tier): different tiers may share a window, but
+  two windows of the same tier — or two flat windows — may not overlap.
+  `PER_FAMILY` annual fees stay **flat-only** (a per-family fee bills the family
+  once regardless of age): a per-tier per-family row is rejected at the API
+  (409), by a DB CHECK, and at config-transfer plan time, and a flat per-family
+  window may not overlap per-tier per-member windows for the same type.
+  `NO_INVOICE` annual rows are zero cents. The joining fee is strictly
+  type-driven — the Family fee applies only to members assigned the Family type
+  (the composition heuristic is removed). Fee changes affect future resolution
+  only.
 - Do not introduce floating point money arithmetic.
 - Refunds, credits, discounts, Stripe amounts, Xero invoice amounts, and
   membership fees must reconcile back to cent-based ledger records.

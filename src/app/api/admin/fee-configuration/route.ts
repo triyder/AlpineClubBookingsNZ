@@ -47,6 +47,11 @@ const mutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("CREATE_MEMBERSHIP_FEE"),
     membershipTypeId: z.string().min(1),
+    // Per-age-tier annual fees (#2067) reuse the joining-fee tier enum (which
+    // already excludes NOT_APPLICABLE — decision 5). Optional/absent means the
+    // flat NULL-tier row, so a pre-#2067 client that omits it still creates a
+    // flat fee. PER_FAMILY + a tier is rejected below (decision 1).
+    ageTier: joiningFeeAgeTier.optional(),
     billingBasis: z.enum(MEMBERSHIP_FEE_BILLING_BASES),
     prorationRule: z.enum(MEMBERSHIP_FEE_PRORATION_RULES),
     components: z.array(componentInput).max(50).optional(),
@@ -98,11 +103,12 @@ async function reconcileMembershipFeeComponents(args: {
   fee: { id: string };
   existing: { id: string; amountCents: number; billingBasis: MembershipFeeBillingBasis } | null;
   membershipTypeId: string;
+  ageTier: AgeTier | null;
   suppliedComponents?: FeeComponentInput[];
   newAmountCents: number;
   billingBasis: MembershipFeeBillingBasis;
 }) {
-  const { tx, fee, existing, membershipTypeId, suppliedComponents, newAmountCents, billingBasis } = args;
+  const { tx, fee, existing, membershipTypeId, ageTier, suppliedComponents, newAmountCents, billingBasis } = args;
 
   const replaceWith = async (components: FeeComponentInput[]) => {
     validateFeeComponents({ components, amountCents: newAmountCents, billingBasis });
@@ -143,10 +149,12 @@ async function reconcileMembershipFeeComponents(args: {
     await replaceWith(suppliedComponents);
     return;
   }
+  // Scope the predecessor to the SAME age tier (#2067): a new Youth fee copies a
+  // prior Youth fee's component structure, never an Adult or flat fee's.
   const predecessor = billingBasis === "NO_INVOICE"
     ? null
     : await tx.membershipAnnualFee.findFirst({
-        where: { membershipTypeId, id: { not: fee.id } },
+        where: { membershipTypeId, ageTier, id: { not: fee.id } },
         orderBy: { effectiveFrom: "desc" },
         include: { components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
       });
@@ -176,7 +184,7 @@ async function loadConfiguration(canEdit: boolean) {
       select: {
         id: true, key: true, name: true, isActive: true,
         annualFees: {
-          orderBy: [{ effectiveFrom: "desc" }],
+          orderBy: [{ ageTier: "asc" }, { effectiveFrom: "desc" }],
           include: { components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
         },
         joiningFees: { orderBy: [{ ageTier: "asc" }, { effectiveFrom: "desc" }] },
@@ -212,6 +220,7 @@ async function loadConfiguration(canEdit: boolean) {
       ...type,
       annualFees: type.annualFees.map((fee) => ({
         ...serializeFeeSchedule(fee),
+        ageTier: fee.ageTier,
         components: fee.components.map((component) => ({
           id: component.id,
           label: component.label,
@@ -288,23 +297,60 @@ export async function POST(request: Request) {
           : null;
         if (input.action === "UPDATE_MEMBERSHIP_FEE" && !existing) throw new FeeScheduleValidationError("Membership fee not found.", 404);
         const membershipTypeId = input.action === "CREATE_MEMBERSHIP_FEE" ? input.membershipTypeId : existing!.membershipTypeId;
+        // The tier is fixed at create and immutable on edit (joining-fee parity):
+        // an update inherits the row's own tier. A flat fee is the NULL tier.
+        const ageTier: AgeTier | null = input.action === "CREATE_MEMBERSHIP_FEE" ? (input.ageTier ?? null) : existing!.ageTier;
+        // Decision 1 (#2067): per-tier rows are allowed only for PER_MEMBER /
+        // NO_INVOICE bases; a PER_FAMILY fee bills the family once regardless of
+        // age, so it stays flat-only. Enforced here (409), by a DB CHECK, and at
+        // config-transfer plan time.
+        if (input.billingBasis === "PER_FAMILY" && ageTier !== null) {
+          throw new FeeScheduleValidationError(
+            "Per-family fees apply to the whole membership type and cannot be set per age tier. Choose Flat (all ages) for a per-family fee.",
+            409,
+          );
+        }
         if (!await tx.membershipType.findUnique({ where: { id: membershipTypeId }, select: { id: true } })) {
           throw new FeeScheduleValidationError("Membership type not found.", 404);
         }
+        // Keep the TYPE-level lock (not tier-level): it serialises every write for
+        // the type so the same-tier overlap check AND the cross-tier PER_FAMILY-mix
+        // check below both see a consistent snapshot.
         await lockFeeSchedule(tx, "membership", membershipTypeId);
         const overlap = await tx.membershipAnnualFee.findFirst({
-          where: { membershipTypeId, ...scheduleOverlapWhere({ ...dates, excludeId: existing?.id }) }, select: { id: true },
+          where: { membershipTypeId, ageTier, ...scheduleOverlapWhere({ ...dates, excludeId: existing?.id }) }, select: { id: true },
         });
         if (overlap) throw new FeeScheduleValidationError("This membership fee overlaps an existing effective-date range.", 409);
+        // Decision 1 (#2067): a flat PER_FAMILY fee and per-age-tier fees cannot
+        // both be active for one type in overlapping windows — a tiered member
+        // would resolve the per-member tier row while a flat-only member resolves
+        // the per-family row, an ambiguous mix. Block either direction.
+        const mixWhere: Prisma.MembershipAnnualFeeWhereInput | null =
+          ageTier === null && input.billingBasis === "PER_FAMILY"
+            ? { ageTier: { not: null } } // writing flat PER_FAMILY vs any per-tier row
+            : ageTier !== null
+              ? { ageTier: null, billingBasis: "PER_FAMILY" } // writing a per-tier row vs a flat PER_FAMILY row
+              : null;
+        if (mixWhere) {
+          const mix = await tx.membershipAnnualFee.findFirst({
+            where: { membershipTypeId, ...mixWhere, ...scheduleOverlapWhere({ ...dates, excludeId: existing?.id }) },
+            select: { id: true },
+          });
+          if (mix) throw new FeeScheduleValidationError(
+            "A per-family (flat) fee and per-age-tier fees cannot both be active for this membership type in overlapping windows. Use one pricing model per window.",
+            409,
+          );
+        }
         const row = existing
           ? await tx.membershipAnnualFee.update({ where: { id: existing.id }, data: { ...dates, billingBasis: input.billingBasis, prorationRule: input.prorationRule } })
-          : await tx.membershipAnnualFee.create({ data: { membershipTypeId, ...dates, billingBasis: input.billingBasis, prorationRule: input.prorationRule } });
+          : await tx.membershipAnnualFee.create({ data: { membershipTypeId, ageTier, ...dates, billingBasis: input.billingBasis, prorationRule: input.prorationRule } });
         targetId = row.id;
         await reconcileMembershipFeeComponents({
           tx,
           fee: row,
           existing,
           membershipTypeId,
+          ageTier,
           suppliedComponents: input.components,
           newAmountCents: dates.amountCents,
           billingBasis: input.billingBasis,

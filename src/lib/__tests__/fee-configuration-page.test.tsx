@@ -19,7 +19,7 @@ const editableData = {
   familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER",
   membershipTypes: [{
     id: "type-1", key: "FULL", name: "Full", isActive: true,
-    annualFees: [{ id: "fee-1", amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_MEMBER", prorationRule: "NONE" }],
+    annualFees: [{ id: "fee-1", ageTier: null, amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_MEMBER", prorationRule: "NONE" }],
     joiningFees: [{ id: "joining-1", ageTier: "ADULT", amountCents: 5000, effectiveFrom: "2026-01-01", effectiveTo: null }],
   }],
   familyGroups: [{
@@ -132,7 +132,7 @@ describe("fee configuration page", () => {
     expect(screen.queryByRole("button", { name: "Edit family billing" })).toBeNull();
     // No forms, no per-row controls, no billing Select while read-only.
     expect(screen.queryByLabelText("Annual amount (NZD)")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Edit Full fee" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit Full Flat (all ages) fee" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Billing member" })).toBeNull();
     // Saved values still render (fee schedule + billing member as static text).
     expect(screen.getByText("$100.00")).toBeTruthy();
@@ -146,11 +146,29 @@ describe("fee configuration page", () => {
     // Read-only on load: schedule shown, but no form and no pencil.
     expect(screen.getByText("$100.00")).toBeTruthy();
     expect(screen.queryByLabelText("Annual amount (NZD)")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Edit Full fee" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit Full Flat (all ages) fee" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Edit membership fees" }));
     expect(screen.getByLabelText("Annual amount (NZD)")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Edit Full fee" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Add annual fee" })).toBeTruthy();
+  });
+
+  it("offers an age-tier select and sends ageTier null when creating a flat fee (#2067)", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(true, editableData))
+      .mockResolvedValueOnce(response(true, editableData));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+    // The per-tier select (#2067) is present and defaults to Flat (all ages).
+    expect(document.querySelector("#membership-tier")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Annual amount (NZD)"), { target: { value: "150.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add annual fee" }));
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Fee schedule saved"));
+    expect(postBody(fetchMock)).toMatchObject({
+      action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", ageTier: null,
+      amountCents: 15000, billingBasis: "PER_MEMBER",
+    });
   });
 
   it("uses the NZ date and discards membership form edits on cancel with no API call", async () => {
@@ -159,7 +177,7 @@ describe("fee configuration page", () => {
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
     expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe("2026-07-14");
-    fireEvent.click(screen.getByRole("button", { name: "Edit Full fee" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" }));
     expect((screen.getByLabelText("Annual amount (NZD)") as HTMLInputElement).value).toBe("100.00");
     fireEvent.click(screen.getByRole("button", { name: "Close section" }));
     // Close section leaves edit mode; re-entering shows a fresh add form.
@@ -177,7 +195,7 @@ describe("fee configuration page", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit Full fee" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" }));
     fireEvent.click(screen.getByRole("button", { name: "Update annual fee" }));
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Fee schedule saved"));
     // Stays in edit mode after commit, back in add-mode.
@@ -198,7 +216,7 @@ describe("fee configuration page", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit Full fee" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" }));
     fireEvent.click(screen.getByRole("button", { name: "Update annual fee" }));
     expect(await screen.findByText("Overlapping schedule")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Update annual fee" })).toBeTruthy();
@@ -213,11 +231,11 @@ describe("fee configuration page", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
-    fireEvent.click(screen.getByRole("button", { name: "Delete Full fee" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Full Flat (all ages) fee" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete fee" }));
     expect(await screen.findByText("Delete failed")).toBeTruthy();
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getByText(/Full annual fee from 2026-01-01/)).toBeTruthy();
+    expect(screen.getByText(/Full Flat \(all ages\) annual fee from 2026-01-01/)).toBeTruthy();
   });
 
   it("gates the entrance fee form and row controls behind Edit", async () => {

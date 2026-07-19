@@ -334,4 +334,105 @@ describe("fee configuration route", () => {
       billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
     })).status).toBe(200);
   });
+
+  describe("per-age-tier annual fees (#2067)", () => {
+    it("creates a per-age-tier annual fee row", async () => {
+      const response = await post({
+        action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", ageTier: "YOUTH", amountCents: 6000,
+        billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+      });
+      expect(response.status).toBe(200);
+      expect(mocks.membershipFeeCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ membershipTypeId: "type-1", ageTier: "YOUTH", amountCents: 6000 }),
+      });
+    });
+
+    it("defaults a create with no ageTier to the flat NULL-tier row", async () => {
+      await post({
+        action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", amountCents: 12000,
+        billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+      });
+      expect(mocks.membershipFeeCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ ageTier: null }),
+      });
+    });
+
+    it("rejects a per-family fee carrying an age tier with 409 (decision 1)", async () => {
+      const response = await post({
+        action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", ageTier: "ADULT", amountCents: 6000,
+        billingBasis: "PER_FAMILY", prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+      });
+      expect(response.status).toBe(409);
+      expect(mocks.membershipFeeCreate).not.toHaveBeenCalled();
+    });
+
+    it("allows a per-tier fee to coexist with a flat per-member fee", async () => {
+      // same-tier overlap: none; cross-tier mix (flat PER_FAMILY): none; predecessor: none.
+      mocks.membershipFeeFindFirst.mockResolvedValue(null);
+      const response = await post({
+        action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", ageTier: "ADULT", amountCents: 6000,
+        billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+      });
+      expect(response.status).toBe(200);
+      expect(mocks.membershipFeeCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ ageTier: "ADULT" }),
+      });
+    });
+
+    it("rejects a same-tier overlapping window", async () => {
+      mocks.membershipFeeFindFirst.mockResolvedValueOnce({ id: "fee-adult" }); // same-tier overlap hit
+      const response = await post({
+        action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", ageTier: "ADULT", amountCents: 6000,
+        billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+      });
+      expect(response.status).toBe(409);
+      expect(mocks.membershipFeeCreate).not.toHaveBeenCalled();
+    });
+
+    it("blocks a flat per-family window overlapping per-tier fees for the same type", async () => {
+      mocks.membershipFeeFindFirst
+        .mockResolvedValueOnce(null) // same-tier (flat) overlap: none
+        .mockResolvedValueOnce({ id: "fee-youth" }); // cross-tier mix: a per-tier row overlaps
+      const response = await post({
+        action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", amountCents: 20000,
+        billingBasis: "PER_FAMILY", prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+      });
+      expect(response.status).toBe(409);
+      expect(mocks.membershipFeeCreate).not.toHaveBeenCalled();
+    });
+
+    it("blocks a per-tier fee overlapping a flat per-family window", async () => {
+      mocks.membershipFeeFindFirst
+        .mockResolvedValueOnce(null) // same-tier overlap: none
+        .mockResolvedValueOnce({ id: "fee-family" }); // cross-tier mix: a flat PER_FAMILY row overlaps
+      const response = await post({
+        action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", ageTier: "ADULT", amountCents: 6000,
+        billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+      });
+      expect(response.status).toBe(409);
+      expect(mocks.membershipFeeCreate).not.toHaveBeenCalled();
+    });
+
+    it("copies only a same-tier predecessor's components onto a new tier fee", async () => {
+      mocks.membershipFeeFindFirst
+        .mockResolvedValueOnce(null) // same-tier overlap: none
+        .mockResolvedValueOnce(null) // cross-tier mix (flat PER_FAMILY): none
+        .mockResolvedValueOnce({ // same-tier YOUTH predecessor
+          id: "fee-youth-0", amountCents: 6000,
+          components: [{ label: "Youth base", amountCents: 6000, prorate: true, xeroAccountCode: null, xeroItemCode: null, sortOrder: 0 }],
+        });
+      const response = await post({
+        action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", ageTier: "YOUTH", amountCents: 6000,
+        billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2027-07-01", effectiveTo: null,
+      });
+      expect(response.status).toBe(200);
+      // The predecessor lookup is scoped to the SAME tier.
+      expect(mocks.membershipFeeFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ membershipTypeId: "type-1", ageTier: "YOUTH", id: { not: "fee-1" } }),
+      }));
+      expect(mocks.componentCreateMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ label: "Youth base", amountCents: 6000 })],
+      });
+    });
+  });
 });
