@@ -14,6 +14,7 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
 import { adminShiftBookingDates } from "@/lib/booking-date-modification-service";
+import { BookingModifyReviewJustificationRequiredError } from "@/lib/booking-modify-validation";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 import { isBookingEnvelopeInvariantViolation } from "@/lib/booking-envelope-invariants";
 import {
@@ -246,6 +247,17 @@ export async function PUT(
       return NextResponse.json(
         getBookingMemberNightConflictResponse(err.conflicts),
         { status: 409 },
+      );
+    }
+    // #2104: a member modification tripped the no-adult review rule for the
+    // first time without a justification. Echo the machine-readable code (before
+    // the generic ApiError branch — this error extends ApiError) so the edit
+    // panel can reveal the required justification field even when its local
+    // predicate missed the trip.
+    if (err instanceof BookingModifyReviewJustificationRequiredError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code },
+        { status: err.status },
       );
     }
     // Xero lock-date guard (#1697): keep the machine-readable code + lockDate
