@@ -17,6 +17,7 @@ import {
 import {
   callXeroApi,
   getAuthenticatedXeroClient,
+  XeroDailyLimitError,
 } from "./xero-api-client";
 import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import { isXeroConnected } from "@/lib/xero-token-store";
@@ -762,4 +763,76 @@ export async function triggerMemberXeroContactGroupSync(
       "Best-effort Xero contact group sync failed"
     );
   }
+}
+
+export interface BatchXeroContactGroupReconcileResult {
+  /** Members whose managed contact-group membership was reconciled without error. */
+  processed: number;
+  /** Members whose reconcile threw (non-daily-limit) and were skipped. */
+  failed: number;
+  /** True when a Xero daily-API-limit halted the batch before finishing. */
+  haltedByDailyLimit: boolean;
+}
+
+/**
+ * Deferred, batched managed-contact-group reconcile for a set of members whose
+ * effective grouping just changed (e.g. a bulk seasonal-membership-type save,
+ * #2107). Unlike calling {@link triggerMemberXeroContactGroupSync} per member in
+ * the hot path — which checks the Xero connection on every member and interleaves
+ * up to 100 live round-trips with the DB writes — this checks the connection
+ * ONCE and then reconciles only the (already-committed) changed members after the
+ * loop. Best-effort and post-commit: a per-member failure is logged and skipped,
+ * a Xero daily-API-limit halts the batch cleanly (the untouched members
+ * self-heal through the periodic/mismatch Xero tooling), and grouping being
+ * disconnected/disabled is a total no-op. Never throws.
+ */
+export async function reconcileMembersXeroContactGroups(
+  memberIds: string[],
+  options?: { createdByMemberId?: string; reason?: string }
+): Promise<BatchXeroContactGroupReconcileResult> {
+  const result: BatchXeroContactGroupReconcileResult = {
+    processed: 0,
+    failed: 0,
+    haltedByDailyLimit: false,
+  };
+  if (memberIds.length === 0) {
+    return result;
+  }
+
+  try {
+    if (!(await isXeroConnected())) {
+      return result;
+    }
+  } catch (error) {
+    logger.error(
+      { err: error, reason: options?.reason ?? null },
+      "Batched Xero contact group reconcile connection check failed"
+    );
+    return result;
+  }
+
+  for (const memberId of memberIds) {
+    try {
+      await syncManagedXeroContactGroupForMember(memberId, {
+        createdByMemberId: options?.createdByMemberId,
+      });
+      result.processed += 1;
+    } catch (error) {
+      if (error instanceof XeroDailyLimitError) {
+        result.haltedByDailyLimit = true;
+        logger.warn(
+          { memberId, reason: options?.reason ?? null },
+          "Batched Xero contact group reconcile halted by daily API limit"
+        );
+        return result;
+      }
+      result.failed += 1;
+      logger.error(
+        { err: error, memberId, reason: options?.reason ?? null },
+        "Batched Xero contact group reconcile: member failed (continuing)"
+      );
+    }
+  }
+
+  return result;
 }
