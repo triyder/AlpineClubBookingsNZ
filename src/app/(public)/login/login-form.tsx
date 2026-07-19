@@ -41,6 +41,7 @@ export function LoginForm({
   verifyError,
   emailChanged,
   redirectTo,
+  explicitCallbackUrl,
   authBounceRef,
   magicLinkEnabled = false,
   googleLoginEnabled = false,
@@ -50,6 +51,11 @@ export function LoginForm({
   verifyError?: string;
   emailChanged: boolean;
   redirectTo: string;
+  // A genuinely user/deep-link-supplied callbackUrl (#2090). When set it wins
+  // over the landing preference (D-D4); when absent the post-auth resolver
+  // falls back to the member's preference / admin role default. Undefined is
+  // NOT a flow-materialised default — the server only forwards a real one.
+  explicitCallbackUrl?: string;
   authBounceRef?: string;
   magicLinkEnabled?: boolean;
   googleLoginEnabled?: boolean;
@@ -64,7 +70,34 @@ export function LoginForm({
   const [resendLoading, setResendLoading] = useState(false);
   const [resendSuccess, setResendSuccess] = useState(false);
 
-  async function resolveTwoFactorPath() {
+  // Post-auth landing (#2090): the credential form resolves the destination
+  // AFTER sign-in — once the session cookie exists — because it depends on the
+  // member's landing preference and admin role default, neither known at render
+  // time. An explicit deep-link callbackUrl (if any) is forwarded so it can win
+  // per D-D4. Any failure falls back to the pre-auth-sanitised redirectTo.
+  async function resolvePostAuthLanding(): Promise<string> {
+    try {
+      const params = new URLSearchParams();
+      if (explicitCallbackUrl) {
+        params.set("callbackUrl", explicitCallbackUrl);
+      }
+      const query = params.toString();
+      const response = await fetch(
+        `/api/auth/post-login-landing${query ? `?${query}` : ""}`,
+        { credentials: "same-origin" },
+      );
+      if (!response.ok) return redirectTo;
+      const body = (await response.json()) as { path?: string };
+      return typeof body.path === "string" && body.path ? body.path : redirectTo;
+    } catch {
+      return redirectTo;
+    }
+  }
+
+  // The resolved landing becomes the callbackUrl the 2FA detour returns to, so
+  // the preference / role default survives the verify/enroll hop. That
+  // materialised value is never re-read as an explicit callbackUrl (D-D4).
+  async function resolveTwoFactorPath(landing: string) {
     const response = await fetch("/api/auth/2fa/status", {
       credentials: "same-origin",
     });
@@ -84,7 +117,7 @@ export function LoginForm({
       return null;
     }
 
-    const params = new URLSearchParams({ callbackUrl: redirectTo });
+    const params = new URLSearchParams({ callbackUrl: landing });
     return status.enrolled
       ? `/login/verify?${params.toString()}`
       : `/login/enroll?${params.toString()}`;
@@ -120,8 +153,11 @@ export function LoginForm({
         // user to /login with no error — the silent login loop (#1669).
         // A hard load always sends the fresh session cookie and starts the
         // authenticated app from a clean router state. `loading` stays true
-        // so the button cannot be re-submitted while the page unloads.
-        window.location.assign((await resolveTwoFactorPath()) ?? redirectTo);
+        // so the button cannot be re-submitted while the page unloads. Resolve
+        // the landing first; the 2FA detour (if any) returns to it, else
+        // navigate straight there.
+        const landing = await resolvePostAuthLanding();
+        window.location.assign((await resolveTwoFactorPath(landing)) ?? landing);
       }
     } catch {
       setError("Something went wrong. Please try again.");
@@ -319,7 +355,15 @@ export function LoginForm({
               variant="outline"
               className="w-full"
               onClick={() =>
-                void signIn("google", { callbackUrl: redirectTo })
+                // Google resolves the destination server-side: with an explicit
+                // deep link the provider returns straight to it; otherwise it
+                // returns to /login, whose authenticated self-heal resolves the
+                // landing preference / admin role default (#2090). There is no
+                // client post-auth seam on the OAuth round-trip, so /login is
+                // that seam.
+                void signIn("google", {
+                  callbackUrl: explicitCallbackUrl ?? "/login",
+                })
               }
             >
               Continue with Google

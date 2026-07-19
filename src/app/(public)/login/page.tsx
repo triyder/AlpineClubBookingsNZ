@@ -1,6 +1,11 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { isValidAuthBounceRef, resolvePostLoginPath } from "@/lib/auth-redirect";
+import {
+  getExplicitCallbackUrl,
+  isValidAuthBounceRef,
+  resolvePostLoginPath,
+} from "@/lib/auth-redirect";
+import { resolvePostLoginLandingPath } from "@/lib/post-login-landing";
 import { googleCredentialsConfigured } from "@/lib/google-oauth";
 import { getCachedEffectiveModuleFlags } from "@/lib/public-layout-config";
 import { LoginForm } from "./login-form";
@@ -30,7 +35,13 @@ export default async function LoginPage({
   const emailChanged = singleSearchParam(params.emailChanged) === "true";
   const verifyError = singleSearchParam(params.verifyError);
   const oauthError = singleSearchParam(params.error);
-  const redirectTo = resolvePostLoginPath(singleSearchParam(params.callbackUrl));
+  const rawCallbackUrl = singleSearchParam(params.callbackUrl);
+  const redirectTo = resolvePostLoginPath(rawCallbackUrl);
+  // A genuinely user/deep-link-supplied callbackUrl (null when absent/unsafe).
+  // It always wins over the landing preference (D-D4); when absent the client
+  // and the authenticated self-heal below fall back to the preference / role
+  // default. Never treat a flow-materialised default as explicit.
+  const explicitCallbackUrl = getExplicitCallbackUrl(rawCallbackUrl) ?? undefined;
   const refCandidate = singleSearchParam(params.ref);
   const authBounceRef = isValidAuthBounceRef(refCandidate) ? refCandidate : undefined;
 
@@ -43,15 +54,27 @@ export default async function LoginPage({
     if (session.user.forcePasswordChange) {
       redirect("/change-password");
     }
+    // Resolve the landing from the live session so an admin's preference / role
+    // default is honoured on this self-heal path (and, notably, this is where a
+    // Google sign-in with no explicit deep link lands to be resolved). The
+    // resolved landing is materialised into the 2FA detour's callbackUrl — per
+    // D-D4 that materialised value is not re-read as explicit anywhere.
+    const landing = resolvePostLoginLandingPath({
+      explicitCallbackUrl,
+      landingPreference: session.user.postLoginLanding,
+      permissionInput: {
+        adminPermissionMatrix: session.user.adminPermissionMatrix,
+      },
+    });
     if (session.user.twoFactorRequired && !session.user.twoFactorVerified) {
-      const query = new URLSearchParams({ callbackUrl: redirectTo });
+      const query = new URLSearchParams({ callbackUrl: landing });
       redirect(
         session.user.twoFactorEnrolled && session.user.twoFactorMethod
           ? `/login/verify?${query.toString()}`
           : `/login/enroll?${query.toString()}`,
       );
     }
-    redirect(redirectTo);
+    redirect(landing);
   }
 
   // Only needed on the form-render path (an authenticated visitor redirects
@@ -64,6 +87,7 @@ export default async function LoginPage({
       verifyError={verifyError}
       emailChanged={emailChanged}
       redirectTo={redirectTo}
+      explicitCallbackUrl={explicitCallbackUrl}
       authBounceRef={authBounceRef}
       magicLinkEnabled={modules.magicLink}
       googleLoginEnabled={modules.googleLogin && googleCredentialsConfigured()}

@@ -14,15 +14,35 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-// Post-login destination for a magic-link sign-in. The email carries no
-// callbackUrl, so we always land on the default authenticated home; the 2FA
-// funnel below still diverts to /login/verify or /login/enroll when required.
+// Fallback post-login destination for a magic-link sign-in. A magic link never
+// carries a callbackUrl, so there is never an explicit deep link; the landing
+// is resolved post-auth from the member's preference / admin role default
+// (#2090), falling back to this default only if resolution fails.
 const POST_LOGIN_PATH = "/dashboard";
+
+// Post-auth landing (#2090). A magic-link sign-in has no explicit callbackUrl,
+// so the resolver returns the member's preference / admin role default. Any
+// failure falls back to the default authenticated home.
+async function resolvePostAuthLanding(): Promise<string> {
+  try {
+    const response = await fetch("/api/auth/post-login-landing", {
+      credentials: "same-origin",
+    });
+    if (!response.ok) return POST_LOGIN_PATH;
+    const body = (await response.json()) as { path?: string };
+    return typeof body.path === "string" && body.path
+      ? body.path
+      : POST_LOGIN_PATH;
+  } catch {
+    return POST_LOGIN_PATH;
+  }
+}
 
 // Mirror the password login's post-login navigation so a 2FA-enabled member is
 // still challenged after a magic-link sign-in. Returns the 2FA / change-password
-// path, or null to fall through to the default authenticated home.
-async function resolveTwoFactorPath(): Promise<string | null> {
+// path, or null to fall through to the resolved landing. The resolved landing
+// is the callbackUrl the 2FA detour returns to, so the preference survives it.
+async function resolveTwoFactorPath(landing: string): Promise<string | null> {
   const response = await fetch("/api/auth/2fa/status", {
     credentials: "same-origin",
   });
@@ -42,7 +62,7 @@ async function resolveTwoFactorPath(): Promise<string | null> {
     return null;
   }
 
-  const params = new URLSearchParams({ callbackUrl: POST_LOGIN_PATH });
+  const params = new URLSearchParams({ callbackUrl: landing });
   return twoFactorStatus.enrolled
     ? `/login/verify?${params.toString()}`
     : `/login/enroll?${params.toString()}`;
@@ -96,10 +116,12 @@ function MagicSignIn() {
         }
 
         // Signed in. Mirror the password login's post-login navigation so a
-        // 2FA-enabled member is still challenged. Full document navigation
+        // 2FA-enabled member is still challenged, and honour the landing
+        // preference / admin role default (#2090). Full document navigation
         // (never router.push) sends the fresh session cookie and avoids the
         // logged-out RSC cache bounce (#1669).
-        window.location.assign((await resolveTwoFactorPath()) ?? POST_LOGIN_PATH);
+        const landing = await resolvePostAuthLanding();
+        window.location.assign((await resolveTwoFactorPath(landing)) ?? landing);
       } catch {
         setStatus("error");
       }
