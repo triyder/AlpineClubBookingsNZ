@@ -133,6 +133,7 @@ describe("auth session refresh", () => {
         passwordChangedAt: true,
         twoFactorEnabled: true,
         twoFactorMethod: true,
+        postLoginLanding: true,
       },
     });
     expect(refreshedToken).toEqual(
@@ -393,6 +394,7 @@ describe("auth session refresh", () => {
       twoFactorVerified: false,
       twoFactorEnrolled: false,
       twoFactorMethod: null,
+      postLoginLanding: null,
     });
   });
 

@@ -345,7 +345,14 @@ export function memberRelationNamesFromDmmf(
 // Field-merge policy (master's populated scalars win; blanks filled from loser)
 // ---------------------------------------------------------------------------
 
-/** Independent optional scalars filled from the loser only when master is blank. */
+/**
+ * Independent optional scalars filled from the loser only when master is blank.
+ *
+ * `postLoginLanding` (#2090) is intentionally NOT listed: the post-login landing
+ * preference is a per-account UI choice, not shared personal data, so a losing
+ * member's preference is dropped on merge and the master keeps its own (null =
+ * role default). Do not add it here.
+ */
 const FILL_IF_BLANK_FIELDS = [
   "title",
   "gender",

@@ -3,6 +3,7 @@ import {
   AUTH_BOUNCE_REF_PATTERN,
   buildBookingLoginPath,
   buildLoginPath,
+  getExplicitCallbackUrl,
   isValidAuthBounceRef,
   resolvePostLoginPath,
 } from "@/lib/auth-redirect";
@@ -75,6 +76,31 @@ describe("auth redirect helpers", () => {
     expect(buildLoginPath("/nominations/token-1", "AAAA&admin=1")).not.toContain(
       "admin"
     );
+  });
+});
+
+describe("getExplicitCallbackUrl", () => {
+  it("returns a genuinely explicit, safe internal path", () => {
+    expect(getExplicitCallbackUrl("/nominations/token-1")).toBe(
+      "/nominations/token-1",
+    );
+    expect(getExplicitCallbackUrl("/dashboard?tab=bookings")).toBe(
+      "/dashboard?tab=bookings",
+    );
+  });
+
+  it("returns null when absent, unsafe, or external (never a default)", () => {
+    expect(getExplicitCallbackUrl(null)).toBeNull();
+    expect(getExplicitCallbackUrl(undefined)).toBeNull();
+    expect(getExplicitCallbackUrl("")).toBeNull();
+    expect(getExplicitCallbackUrl("https://evil.example")).toBeNull();
+    expect(getExplicitCallbackUrl("//evil.example")).toBeNull();
+    expect(getExplicitCallbackUrl(" /dashboard")).toBeNull();
+  });
+
+  it("returns null for the login page (a flow-materialised detour URL is not explicit)", () => {
+    expect(getExplicitCallbackUrl("/login")).toBeNull();
+    expect(getExplicitCallbackUrl("/login?callbackUrl=%2Fadmin")).toBeNull();
   });
 });
 

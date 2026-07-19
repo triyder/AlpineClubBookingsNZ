@@ -4,6 +4,31 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Post-login landing for admins + per-member preference (#2090).** After
+  sign-in, a member with admin access now lands on their admin area instead of
+  the member dashboard when they have set no preference — precisely
+  `getFirstAccessibleAdminHref(matrix) ?? /dashboard`. This applies to **every**
+  member whose role resolves to an accessible admin page, not just full admins:
+  read-only admins and finance-only viewers are included and now land on their
+  first accessible admin page (e.g. a finance-only viewer lands on
+  `/admin/payments`). An admin whose matrix denies the overview area still lands
+  on their first accessible admin page, and
+  a member with no admin area (or a demoted admin holding a stale preference)
+  still lands safely on `/dashboard`, never a 403 loop. A new typed, nullable
+  `Member.postLoginLanding` column (`MEMBER_DASHBOARD | ADMIN_DASHBOARD`, null =
+  role default) backs a profile **Account Information** toggle shown only to
+  members with an accessible admin page; there is no free-text path stored, so
+  no open-redirect surface. A genuinely user- or deep-link-supplied `callbackUrl`
+  always wins over the preference, but a value the login flow itself materialised
+  (the 2FA detour, a provider return URL) never counts as explicit. Credential,
+  magic-link, and Google sign-in all honour the same resolution, including
+  through the two-factor detour. Migration
+  `20260719150000_add_post_login_landing` is additive/expand-only (a new enum +
+  a nullable column with no default); no existing member changes behaviour on
+  migrate — **the changed admin default is applied entirely by the application
+  redirect resolver**, so on the first login after upgrade every existing admin
+  lands on their admin area. See the `Unreleased` section of `docs/UPGRADING.md`.
+
 ## 0.12.1 - 2026-07-19
 
 - Release classification: patch public reference release. The version is a
