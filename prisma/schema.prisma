@@ -429,6 +429,15 @@ enum ClubThemeFont {
 // Member & Auth
 // ---------------------------------------------------------------------------
 
+// Per-member post-login landing preference (#2090). NULL = follow the role
+// default (members with admin access land on their first accessible admin page,
+// everyone else on /dashboard); an explicit value overrides that default. A
+// typed enum — never a free-text path — so there is no open-redirect surface.
+enum PostLoginLanding {
+  MEMBER_DASHBOARD
+  ADMIN_DASHBOARD
+}
+
 model Member {
   id                      String           @id @default(cuid())
   // Lookup index only in Prisma schema. Login identity uniqueness is enforced
@@ -495,6 +504,11 @@ model Member {
   xeroContactId                       String?            @unique
   active                              Boolean            @default(true)
   canLogin                            Boolean            @default(false) // true for members allowed to authenticate; the DB enforces one canLogin member per email
+  // Post-login landing preference (#2090). NULL = role default (admin access ⇒
+  // first accessible admin page, else /dashboard); an explicit value overrides.
+  // Intentionally excluded from member-merge FILL_IF_BLANK_FIELDS — a losing
+  // member's preference is dropped on merge.
+  postLoginLanding                    PostLoginLanding?
   profileCompletedAt                  DateTime?
   detailsConfirmedAt                  DateTime?
   detailsConfirmedByMemberId          String?
