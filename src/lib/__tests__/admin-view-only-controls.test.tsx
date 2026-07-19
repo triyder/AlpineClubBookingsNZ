@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import type { ComponentProps } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import {
@@ -2938,24 +2938,37 @@ describe("FamilyGroupsPage row-action view-only gating (#2065, membership)", () 
 
   beforeEach(() => {
     sessionMatrix = null;
+    sessionStatus = "authenticated";
     stubFetchRoutes({
       "/api/admin/family-groups/requests": { requests: [] },
       "/api/admin/family-groups/partner-invites": { invites: [] },
       "/api/admin/family-groups": { familyGroups: [SUMMARY] },
     });
   });
-  afterEach(() => {
+  afterEach(async () => {
+    // The shared useSearchParams mock returns a fresh object each render, so the
+    // page's mount effect re-fires and can leave an in-flight fetchData in the
+    // microtask queue. Unmount and drain it while the stub is still active, so
+    // no request lands on the real fetch after the global stub is torn down.
+    cleanup();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    sessionStatus = "authenticated";
   });
 
-  it("disables row Delete but keeps row Edit open for a membership:view admin", async () => {
+  it("disables New Group and row Delete but keeps row Edit open for a membership:view admin", async () => {
     sessionMatrix = matrix("view", { membership: "view" });
     render(<FamilyGroupsPage />);
 
     const del = await screen.findByRole("button", { name: /Delete Kea Family/i });
     expect(del).toBeDisabled();
     expect(del).toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    const newGroup = screen.getByRole("button", { name: /New Group/i });
+    expect(newGroup).toBeDisabled();
+    expect(newGroup).toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
     // Edit opens the (internally edit-gated) editor, so it stays available for
     // read-only browsing — mirroring the members/[id] open-editor trigger.
     expect(
@@ -2963,13 +2976,37 @@ describe("FamilyGroupsPage row-action view-only gating (#2065, membership)", () 
     ).toBeEnabled();
   });
 
-  it("enables row Delete for a membership:edit admin", async () => {
+  it("keeps New Group and row Delete disabled without a read-only reason while the session is resolving", async () => {
+    sessionStatus = "loading";
+    sessionMatrix = matrix("edit", { membership: "edit" });
+    render(<FamilyGroupsPage />);
+
+    const del = await screen.findByRole("button", { name: /Delete Kea Family/i });
+    expect(del).toBeDisabled();
+    expect(del).not.toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    const newGroup = screen.getByRole("button", { name: /New Group/i });
+    expect(newGroup).toBeDisabled();
+    expect(newGroup).not.toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+  });
+
+  it("enables New Group and the create form (and row Delete) for a membership:edit admin", async () => {
     sessionMatrix = matrix("view", { membership: "edit" });
     render(<FamilyGroupsPage />);
 
     expect(
       await screen.findByRole("button", { name: /Delete Kea Family/i }),
     ).toBeEnabled();
+    const newGroup = screen.getByRole("button", { name: /New Group/i });
+    expect(newGroup).toBeEnabled();
+
+    // Opening the create form surfaces a live group-name input, and Create Group
+    // carries no read-only reason (its disabled state is only the empty-member
+    // rule, not edit gating).
+    fireEvent.click(newGroup);
+    expect(await screen.findByLabelText("Group Name")).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: /Create Group/i }),
+    ).not.toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
   });
 });
 
