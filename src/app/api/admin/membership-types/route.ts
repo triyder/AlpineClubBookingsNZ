@@ -144,6 +144,7 @@ export async function POST(request: Request) {
   );
   const configurationError = validateMembershipTypeRuleConfiguration({
     allowedAgeTiers,
+    subscriptionBehavior: parsed.data.subscriptionBehavior,
   });
   if (configurationError) {
     return NextResponse.json({ error: configurationError }, { status: 400 });

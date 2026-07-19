@@ -2,6 +2,7 @@
 
 import type { AgeTier } from "@prisma/client";
 import { useEffect, useState } from "react";
+import type { MembershipTypeAgeExemption } from "@/lib/membership-types";
 
 export type AgeTierOption = {
   tier: AgeTier;
@@ -82,4 +83,33 @@ export function getAgeTierLabel(
     options.find((option) => option.tier === tier)?.label ??
     formatAgeTierName(tier)
   );
+}
+
+// The four real person tiers, always selectable in a member's age-tier picker.
+const AGE_TIER_PERSON_TIERS = [
+  "INFANT",
+  "CHILD",
+  "YOUTH",
+  "ADULT",
+] as const satisfies readonly AgeTier[];
+
+/**
+ * The age tiers a member's age-tier <Select> should offer, given the member's
+ * current-season membership-type age-exemption (#2106).
+ *
+ * The four person tiers are always offered. N/A (NOT_APPLICABLE) is added as a
+ * hand-pickable option ONLY when the type ALLOWS it and we are editing an
+ * existing member — CREATE mode never offers N/A (no assignment exists yet to
+ * carry it), and FORCED / DISALLOWED / null are handled by the caller (a
+ * read-only N/A readout for FORCED, no N/A otherwise).
+ */
+export function ageTierSelectOptions(
+  exemption: MembershipTypeAgeExemption | null | undefined,
+  options?: { isCreate?: boolean }
+): AgeTier[] {
+  const tiers: AgeTier[] = [...AGE_TIER_PERSON_TIERS];
+  if (!options?.isCreate && exemption === "ALLOWED") {
+    tiers.push("NOT_APPLICABLE");
+  }
+  return tiers;
 }

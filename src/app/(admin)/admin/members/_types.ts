@@ -7,6 +7,7 @@ import type {
 import type { XeroSearchResult } from "@/components/admin/xero-suggested-contact-card";
 import type { XeroEntranceFeeInvoiceOptions } from "@/lib/admin-xero-entrance-fee";
 import type { AppAccessRole } from "@/lib/access-roles";
+import type { MembershipTypeAgeExemption } from "@/lib/membership-types";
 import type { AppRole } from "@/lib/member-roles";
 
 type MemberRole = AppRole;
@@ -51,6 +52,9 @@ export interface Member {
     key: string;
     name: string;
     isActive: boolean;
+    // #2106: age-exemption of the current-season type — FORCED (N/A only),
+    // ALLOWED (N/A hand-pickable), or DISALLOWED (no N/A).
+    ageExemption: MembershipTypeAgeExemption;
   } | null;
   createdAt: string;
   joinedDate: string | null;

@@ -198,15 +198,16 @@ export async function resolveLinkedBookingMembers(
     }
   }
 
-  // Guests are people. NOT_APPLICABLE is the organisation/school tier
-  // (#1440): it has no season rate, no age restrictions, and no bed-group
-  // semantics, so linking such an account would silently misprice the
-  // booking. Organisations book through the school-booking flow, where the
-  // attending people are listed as guests instead.
+  // Guests are people with a real age tier. NOT_APPLICABLE is the age-exempt
+  // tier (#1440, #2106): organisations/schools AND any age-exempt human account
+  // (e.g. an admin on an age-exempt membership type) carry it. It has no season
+  // rate, no age restrictions, and no bed-group semantics, so linking such an
+  // account would silently misprice the booking. The attending people are
+  // listed as guests instead.
   for (const member of linkedMemberMap.values()) {
     if (member.ageTier === "NOT_APPLICABLE") {
       throw new BookingGuestValidationError(
-        "Organisation accounts cannot be added as booking guests. Add the people attending instead.",
+        "This account is age-exempt (N/A) and cannot be added as a booking guest. Add the people attending instead.",
         400
       );
     }

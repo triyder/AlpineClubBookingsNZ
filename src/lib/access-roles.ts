@@ -223,6 +223,22 @@ export function resolveAccessRoleTokens(input: AccessRoleInput): string[] {
   return tokens;
 }
 
+/**
+ * Organisation/school classification (#1440, #2106). A member is an
+ * organisation account when it holds the ORG access-role token or carries the
+ * legacy SCHOOL role (whose token collapses to [] once login is disabled, so
+ * the legacy role must be checked directly). Organisation members are always
+ * N/A and sit outside every age-based rule.
+ */
+export function isOrganisationMember(params: {
+  accessRoleTokens: readonly string[];
+  legacyRole: string | null | undefined;
+}): boolean {
+  return (
+    params.accessRoleTokens.includes("ORG") || params.legacyRole === "SCHOOL"
+  );
+}
+
 export function accessRolesFromCompatibilityFields(
   input: Pick<AccessRoleInput, "role" | "financeAccessLevel" | "canLogin">,
 ): AppAccessRole[] {

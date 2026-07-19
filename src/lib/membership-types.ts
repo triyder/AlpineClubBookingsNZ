@@ -137,13 +137,79 @@ export function normalizeMembershipTypeAgeTiers(
   return MEMBERSHIP_TYPE_AGE_TIERS.filter((ageTier) => requested.has(ageTier));
 }
 
+// Age-exemption classification of a membership type, derived purely from its
+// configured `allowedAgeTiers` (#2106). This is the single source that decides
+// whether a member on the type is forced to the no-age N/A tier, may hand-pick
+// it, or may never hold it:
+//   FORCED     — the set is EXACTLY {NOT_APPLICABLE}; every member on the type
+//                carries N/A (mirrors the org/school force, but driven by type).
+//   ALLOWED    — N/A appears alongside one or more real person tiers, so an
+//                admin can hand-pick N/A per member while others keep a real
+//                tier.
+//   DISALLOWED — N/A is absent; no member on the type may hold it.
+// `ageGroupsApply` (a pricing-shape flag) is deliberately NOT consulted.
+export type MembershipTypeAgeExemption = "FORCED" | "ALLOWED" | "DISALLOWED";
+
+export function membershipTypeAgeExemption(
+  allowedAgeTiers: readonly AgeTier[] | null | undefined,
+): MembershipTypeAgeExemption {
+  const tiers = allowedAgeTiers ?? [];
+  const includesNotApplicable = tiers.includes("NOT_APPLICABLE");
+  if (!includesNotApplicable) {
+    return "DISALLOWED";
+  }
+  const includesPersonTier = tiers.some((tier) => tier !== "NOT_APPLICABLE");
+  return includesPersonTier ? "ALLOWED" : "FORCED";
+}
+
 export function validateMembershipTypeRuleConfiguration(params: {
   allowedAgeTiers: readonly AgeTier[];
+  subscriptionBehavior?: MembershipTypeSubscriptionBehavior;
 }): string | null {
   if (params.allowedAgeTiers.length === 0) {
     return "Select at least one allowed age tier.";
   }
+  // Owner decision (#2106): the age-exempt N/A option must never bypass the
+  // subscription lockout on a paying type. N/A members are exempt from every
+  // age-based subscription requirement, so a type that offers N/A (FORCED or
+  // ALLOWED) is only valid when its subscription behaviour is "not required".
+  if (
+    params.subscriptionBehavior !== undefined &&
+    params.allowedAgeTiers.includes("NOT_APPLICABLE") &&
+    params.subscriptionBehavior !== "NOT_REQUIRED"
+  ) {
+    return 'The "N/A (no age)" tier is only allowed on membership types whose subscription behaviour is "not required".';
+  }
   return null;
+}
+
+// Owner decision (#2106): a membership-type edit that would CREATE or DESTROY
+// the FORCED (only-N/A) state is blocked while current/future-season
+// assignments on the type hold an age tier the NEW allowed set does not cover —
+// the same coverage rule the merge route enforces. Becoming FORCED offends
+// every member on a real person tier; leaving FORCED (dropping N/A) offends
+// every member still on N/A. When the FORCED-ness is unchanged this returns an
+// empty list (ordinary allowed-tier edits are out of scope of this guard).
+export function membershipTypeForcedEditOffendingTiers(params: {
+  previousAllowedAgeTiers: readonly AgeTier[];
+  nextAllowedAgeTiers: readonly AgeTier[];
+  affectedMemberAgeTiers: readonly AgeTier[];
+}): AgeTier[] {
+  const previous = membershipTypeAgeExemption(params.previousAllowedAgeTiers);
+  const next = membershipTypeAgeExemption(params.nextAllowedAgeTiers);
+  const createsOrDestroysForced =
+    (previous === "FORCED") !== (next === "FORCED");
+  if (!createsOrDestroysForced) {
+    return [];
+  }
+  const nextAllowed = new Set(params.nextAllowedAgeTiers);
+  const offending = new Set<AgeTier>();
+  for (const ageTier of params.affectedMemberAgeTiers) {
+    if (!nextAllowed.has(ageTier)) {
+      offending.add(ageTier);
+    }
+  }
+  return [...offending];
 }
 
 export async function replaceMembershipTypeRuleConfiguration(

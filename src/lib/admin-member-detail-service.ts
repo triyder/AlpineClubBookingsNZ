@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
@@ -47,12 +48,20 @@ import {
 import { nameField } from "@/lib/zod-helpers";
 import { genderEnum, titleEnum } from "@/lib/member-enums-schema";
 import { ROLE_VALUES } from "@/lib/member-roles";
-import { defaultMembershipTypeKeyForRole } from "@/lib/membership-types";
+import {
+  defaultMembershipTypeKeyForRole,
+  membershipTypeAgeExemption,
+} from "@/lib/membership-types";
+import {
+  loadMemberCurrentSeasonTypeExemption,
+  resolveEnforcedAgeTier,
+} from "@/lib/age-tier-enforcement";
 import {
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
   hasPrivilegedAccess,
   isFullAdmin,
+  isOrganisationMember,
   legacyRoleFromAccessRoles,
   memberHoldsPrivilegedRole,
   normalizeAssignableAccessRoleTokens,
@@ -430,6 +439,8 @@ export async function getAdminMemberDetail(params: {
                 bookingBehavior: true,
                 subscriptionBehavior: true,
                 sortOrder: true,
+                // #2106: drives whether the age-tier picker offers/forces N/A.
+                allowedAgeTiers: { select: { ageTier: true } },
               },
             },
           },
@@ -624,6 +635,21 @@ export async function getAdminMemberDetail(params: {
     })),
     familyGroupMemberships: undefined,
     currentSeasonYear: getSeasonYear(),
+    // #2106: age-exemption of the member's CURRENT-season membership type, so
+    // the edit dialog can force/allow/omit the N/A age tier. null when the
+    // member has no current-season assignment.
+    currentSeasonAgeExemption: (() => {
+      const current = (member.seasonalMembershipAssignments ?? []).find(
+        (assignment) => assignment.seasonYear === getSeasonYear(),
+      );
+      if (!current) return null;
+      return membershipTypeAgeExemption(
+        (
+          (current.membershipType as { allowedAgeTiers?: Array<{ ageTier: AgeTier }> })
+            .allowedAgeTiers ?? []
+        ).map((tier) => tier.ageTier),
+      );
+    })(),
     seasonalMembershipAssignments: (
       member.seasonalMembershipAssignments ?? []
     ).map((assignment) => serializeSeasonalMembershipAssignment(assignment)),
@@ -682,13 +708,17 @@ export async function updateAdminMember(params: {
     request: req,
     data,
   } = params;
-  const [existing, roleDefinitions] = await Promise.all([
-    prisma.member.findUnique({
-      where: { id },
-      include: { accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT } },
-    }),
-    loadAccessRoleDefinitions(prisma),
-  ]);
+  const [existing, roleDefinitions, currentSeasonTypeExemption] =
+    await Promise.all([
+      prisma.member.findUnique({
+        where: { id },
+        include: { accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT } },
+      }),
+      loadAccessRoleDefinitions(prisma),
+      // #2106: the member's current-season membership type decides whether N/A
+      // is forced (FORCED), hand-pickable (ALLOWED) or rejected (DISALLOWED).
+      loadMemberCurrentSeasonTypeExemption(prisma, id, getSeasonYear()),
+    ]);
   if (!existing) {
     return jsonResult({ error: "Member not found" }, { status: 404 });
   }
@@ -1018,63 +1048,73 @@ export async function updateAdminMember(params: {
     updateData.comments = data.comments?.trim() || null;
   }
 
-  // Handle DOB and age tier
+  // Handle DOB. The resulting age tier is resolved by the shared enforcement
+  // helper below (#2106) so org force, a FORCED/ALLOWED/DISALLOWED membership
+  // type, an explicit manual N/A, and DOB-derived restore apply in one order.
+  const dobProvided =
+    data.dateOfBirth !== undefined && data.dateOfBirth !== "";
   if (data.dateOfBirth !== undefined) {
-    if (data.dateOfBirth && data.dateOfBirth !== "") {
-      const dob = new Date(data.dateOfBirth);
+    if (dobProvided) {
+      const dob = new Date(data.dateOfBirth as string);
       if (isNaN(dob.getTime())) {
         return jsonResult({ error: "Invalid date of birth" }, { status: 422 });
       }
       updateData.dateOfBirth = dob;
-      updateData.ageTier = await computeAgeTier(
-        dob,
-        getSeasonStartDate(getSeasonYear()),
-      );
     } else {
       updateData.dateOfBirth = null;
-      // Use explicit ageTier if provided, otherwise keep existing
-      if (data.ageTier) updateData.ageTier = data.ageTier;
     }
-  } else if (data.ageTier !== undefined) {
-    updateData.ageTier = data.ageTier;
   }
 
-  // Organisation-type members have no age (#1440): their tier is always
-  // NOT_APPLICABLE regardless of DOB-computed or submitted values, and no
-  // other member may hold it. Org-type = ORG access role (post-update) or
-  // the legacy SCHOOL compatibility role.
+  // Age-tier enforcement (#2106), generalising the #1440 org block. The member
+  // must hold a real person tier unless org/FORCED-type force N/A or an admin
+  // hand-picks N/A on an ALLOWED type. The person-tier fallback recomputes from
+  // the (new) DOB when the DOB changed OR when un-forcing a previously-N/A
+  // member, and otherwise keeps the current person tier so ordinary contact
+  // edits never bump a tier.
   {
     const tokensAfterUpdate =
       nextAccessRoles ?? resolveAccessRoleTokens(existing);
-    const legacyRoleAfterUpdate = updateData.role ?? existing.role;
-    const isOrganisationMember =
-      tokensAfterUpdate.includes("ORG") || legacyRoleAfterUpdate === "SCHOOL";
-    if (isOrganisationMember) {
-      updateData.ageTier = "NOT_APPLICABLE";
+    const legacyRoleAfterUpdate = (updateData.role ??
+      existing.role) as string;
+    const isOrg = isOrganisationMember({
+      accessRoleTokens: tokensAfterUpdate,
+      legacyRole: legacyRoleAfterUpdate,
+    });
+
+    const restoringFromNotApplicable = existing.ageTier === "NOT_APPLICABLE";
+    let restorePersonTier: AgeTier;
+    if (dobProvided) {
+      restorePersonTier = await computeAgeTier(
+        updateData.dateOfBirth as Date,
+        getSeasonStartDate(getSeasonYear()),
+      );
+    } else if (restoringFromNotApplicable) {
+      restorePersonTier = existing.dateOfBirth
+        ? await computeAgeTier(
+            existing.dateOfBirth,
+            getSeasonStartDate(getSeasonYear()),
+          )
+        : "ADULT";
     } else {
-      if (data.ageTier === "NOT_APPLICABLE") {
-        return jsonResult(
-          {
-            error:
-              "The N/A age tier applies only to organisation and school accounts",
-          },
-          { status: 422 },
-        );
-      }
-      if (
-        existing.ageTier === "NOT_APPLICABLE" &&
-        updateData.ageTier === undefined
-      ) {
-        // Reclassified away from organisation: restore a real tier from the
-        // DOB when there is one, otherwise the schema default.
-        updateData.ageTier = existing.dateOfBirth
-          ? await computeAgeTier(
-              existing.dateOfBirth,
-              getSeasonStartDate(getSeasonYear()),
-            )
-          : "ADULT";
-      }
+      restorePersonTier =
+        existing.ageTier === "NOT_APPLICABLE" ? "ADULT" : existing.ageTier;
     }
+
+    // DOB wins over any echoed ageTier; otherwise the admin's explicit pick
+    // (which may be a manual N/A on an ALLOWED type) is the requested tier.
+    const requestedAgeTier = dobProvided ? undefined : data.ageTier ?? undefined;
+
+    const resolved = resolveEnforcedAgeTier({
+      isOrganisation: isOrg,
+      typeExemption: currentSeasonTypeExemption,
+      requestedAgeTier,
+      currentAgeTier: existing.ageTier,
+      restorePersonTier,
+    });
+    if (!resolved.ok) {
+      return jsonResult({ error: resolved.error }, { status: 422 });
+    }
+    updateData.ageTier = resolved.ageTier;
   }
 
   // #1756: deactivation — or an ADULT → minor/N-A tier correction (the same

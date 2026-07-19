@@ -283,7 +283,12 @@ export default function MemberDetailPage({
   const contactEdit = useMemberGroupEdit<MemberContactEditForm>({
     memberId: id,
     buildForm: () => (member ? buildContactEditForm(member) : null),
-    buildPayload: buildContactPayload,
+    // #2106: thread the current-season age-exemption so an ALLOWED-type manual
+    // N/A pick is actually submitted (buildContactPayload omits N/A otherwise).
+    buildPayload: (form) =>
+      buildContactPayload(form, {
+        ageExemption: member?.currentSeasonAgeExemption ?? null,
+      }),
     successMessage: "Member updated successfully",
     onSaved: refreshMemberAfterSave,
   });

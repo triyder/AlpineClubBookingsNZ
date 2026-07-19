@@ -56,9 +56,17 @@ change.
    booking) and **Subscription behavior** (Subscription required, Subscription
    not required, or Subscription required based on age tier). Tick every **allowed
    age tier**. New types start with the four age tiers (Infant, Child, Youth,
-   Adult) ticked. For organisation or school types that have no age, tick **N/A
-   (no age)** instead — you can leave it as the only ticked option, but at least
-   one box must stay ticked.
+   Adult) ticked. The **N/A (no age)** option makes the type *age-exempt*:
+   - Tick **N/A (no age)** as the **only** option to make the type fully
+     age-exempt — every member assigned to it becomes N/A (like an organisation).
+   - Tick **N/A (no age)** **alongside** person tiers to let admins hand-pick N/A
+     for individual members while others keep a real age tier.
+   - Age-exempt config (N/A ticked in either shape) is only valid when the
+     **Subscription behavior** is **Subscription not required** — N/A must never
+     bypass the subscription lockout on a paying type, so the save is rejected
+     otherwise. At least one box must stay ticked. An edit that would turn N/A-only
+     on or off is blocked while current or future-season members hold an age tier
+     the new selection does not cover — reassign or reclassify those members first.
 4. Click **Save changes** (or **Create type**). On a successful edit-save the
    editor closes automatically. If you close with the header **✕** or Escape
    while you have unsaved edits, a **Discard unsaved changes?**
@@ -92,7 +100,7 @@ change.
 | Public description | Public-facing blurb | — | Max 4000 chars |
 | Booking behavior | How members of this type are priced | Member rate | Member rate / Non-member rate / Block booking |
 | Subscription behavior | Whether an annual subscription is required | Subscription required | Required / Not required / Based on age tier |
-| Allowed age tiers | Which age tiers this type can be assigned to | Infant, Child, Youth, Adult (new types) | At least one required; includes **N/A (no age)** for age-exempt organisation/school types |
+| Allowed age tiers | Which age tiers this type can be assigned to | Infant, Child, Youth, Adult (new types) | At least one required. **N/A (no age)** ticked alone = fully age-exempt (all members N/A); ticked with person tiers = admins may hand-pick N/A per member. Ticking N/A requires **Subscription not required**, and turning N/A-only on/off is blocked while incompatible current/future-season members exist |
 | Order (up/down) | Display order of the type list | — | Saved immediately |
 | From season / To season | Roll-forward source and target seasons | current / current+1 | Integer year; must differ |
 

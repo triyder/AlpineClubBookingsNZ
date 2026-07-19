@@ -10,6 +10,7 @@ import {
   MEMBERSHIP_TYPE_BOOKING_BEHAVIORS,
   MEMBERSHIP_TYPE_AGE_TIERS,
   MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS,
+  membershipTypeForcedEditOffendingTiers,
   normalizeMembershipTypeAgeTiers,
   normalizeMembershipTypeText,
   replaceMembershipTypeRuleConfiguration,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/membership-types";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { getSeasonYear } from "@/lib/utils";
 
 const membershipTypeSelect = {
   id: true,
@@ -186,16 +188,57 @@ export async function PATCH(
   if (parsed.data.sortOrder !== undefined) {
     data.sortOrder = parsed.data.sortOrder;
   }
+  const previousAllowedAgeTiers = existing.allowedAgeTiers.map(
+    (item) => item.ageTier,
+  );
   const allowedAgeTiers =
     parsed.data.allowedAgeTiers === undefined
-      ? existing.allowedAgeTiers.map((item) => item.ageTier)
+      ? previousAllowedAgeTiers
       : normalizeMembershipTypeAgeTiers(parsed.data.allowedAgeTiers);
+  // The subscription behaviour after this edit gates whether N/A may be offered.
+  const effectiveSubscriptionBehavior =
+    parsed.data.subscriptionBehavior ?? existing.subscriptionBehavior;
   const configurationError = validateMembershipTypeRuleConfiguration({
     allowedAgeTiers,
+    subscriptionBehavior: effectiveSubscriptionBehavior,
   });
   if (configurationError) {
     return NextResponse.json({ error: configurationError }, { status: 400 });
   }
+
+  // Owner decision (#2106): block an allowed-tiers edit that would CREATE or
+  // DESTROY the FORCED (only-N/A) state while current/future-season assignments
+  // hold a tier the new set does not cover (mirror of the merge coverage rule).
+  // The admin must reassign or reclassify those members individually first.
+  if (parsed.data.allowedAgeTiers !== undefined) {
+    const affectedAssignments =
+      await prisma.seasonalMembershipAssignment.findMany({
+        where: {
+          membershipTypeId: existing.id,
+          seasonYear: { gte: getSeasonYear() },
+        },
+        select: { member: { select: { ageTier: true } } },
+      });
+    const offendingTiers = membershipTypeForcedEditOffendingTiers({
+      previousAllowedAgeTiers,
+      nextAllowedAgeTiers: allowedAgeTiers,
+      affectedMemberAgeTiers: affectedAssignments.map(
+        (assignment) => assignment.member.ageTier,
+      ),
+    });
+    if (offendingTiers.length > 0) {
+      const offending = offendingTiers
+        .map((tier) => (tier === "NOT_APPLICABLE" ? "N/A" : tier))
+        .join(", ");
+      return NextResponse.json(
+        {
+          error: `This change to the age-exempt (N/A) configuration is blocked: current or future-season members hold age tier(s) ${offending} that the new allowed set does not cover. Reassign or reclassify those members before changing this type's N/A status.`,
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   const relationUpdates = {
     ...(parsed.data.allowedAgeTiers !== undefined ? { allowedAgeTiers } : {}),
   };
