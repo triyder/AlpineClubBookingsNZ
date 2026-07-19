@@ -22,6 +22,9 @@ const DEFAULT_USER: SessionUser = {
   // all-none default matches a plain member. Tests modelling scoped/custom
   // admins should override this rather than accessRoles.
   adminPermissionMatrix: emptyAdminPermissionMatrix(),
+  // #2090: sessions carry the member's post-login landing preference; null =
+  // follow the role default. Tests exercising the landing resolver override it.
+  postLoginLanding: null,
   forcePasswordChange: false,
   isEmailVerified: true,
   twoFactorRequired: false,

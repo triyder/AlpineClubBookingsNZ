@@ -34,7 +34,11 @@ test("first login forces two-factor enrollment and issues recovery codes", async
   const { recoveryCodes } = await enrollTotp(page, enrollee.email);
   expect(recoveryCodes.length).toBe(10);
 
-  await expect(page).toHaveURL(/\/dashboard/);
+  // Bob is seeded financeAccessLevel: "VIEWER" (prisma/demo-seed.ts), so his
+  // admin matrix grants finance=view. Post-login now defaults an admin-access
+  // member to their first accessible admin page (#2090 D-D3), which for a
+  // finance-only member is /admin/payments — not /dashboard.
+  await expect(page).toHaveURL(/\/admin\/payments/);
 });
 
 test("session that has not passed the challenge cannot reach protected pages", async ({
@@ -65,7 +69,9 @@ test("re-login rejects a wrong code and accepts a valid TOTP code", async ({
 
   await page.locator("#two-factor-code").fill(totpCode(stored!.secret));
   await page.getByRole("button", { name: "Verify" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  // Bob (finance VIEWER) defaults to his first accessible admin page (#2090
+  // D-D3): /admin/payments, re-resolved server-side at /login/verify.
+  await expect(page).toHaveURL(/\/admin\/payments/);
 });
 
 test("recovery code completes the challenge and is single-use", async ({
@@ -81,7 +87,9 @@ test("recovery code completes the challenge and is single-use", async ({
   await page.getByRole("button", { name: "Recovery" }).click();
   await page.locator("#two-factor-code").fill(recoveryCode);
   await page.getByRole("button", { name: "Verify" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  // Bob (finance VIEWER) defaults to his first accessible admin page (#2090
+  // D-D3): /admin/payments, re-resolved server-side at /login/verify.
+  await expect(page).toHaveURL(/\/admin\/payments/);
 
   // The same code must not work twice.
   const secondContext = await page.context().browser()!.newContext();
