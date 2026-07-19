@@ -1987,7 +1987,15 @@ Configuration and lifecycle guards:
   applies). A FORCED/org flip that leaves `ADULT` sweeps the member's future
   shared-double placements (#1756). The seasonal-assignment save surfaces the
   old/new age tier in its critical audit record, and binds the resulting tier
-  into the preview's HMAC token so a tier-relevant drift is stale-detected.
+  into the preview's HMAC token so a tier-relevant drift is stale-detected. The
+  same seasonal-assignment save also backs the members-page BULK membership-type
+  change (#2107, `bulkSaveSeasonalMembershipAssignments`): each member is
+  previewed and saved individually with its own HMAC token and its own critical
+  per-member audit row (the run adds one important-severity summary audit), a
+  stale token or a linked-guest block isolates that member as a per-member
+  outcome without aborting the rest, and the up-to-100 per-member Xero
+  contact-group syncs are suppressed in favour of one deferred batched reconcile
+  of the changed members after the loop.
 - Roll-forward into the current season reconciles each copied member's age tier
   AFTER the copy commits, in bounded chunks (one transaction per chunk, each
   re-reading member + type state) so no single transaction spans the whole

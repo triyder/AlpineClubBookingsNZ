@@ -37,7 +37,10 @@ import {
 } from "@/lib/bed-allocation-lifecycle";
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import logger from "@/lib/logger";
-import { triggerMemberXeroContactGroupSync } from "@/lib/xero-contact-groups";
+import {
+  reconcileMembersXeroContactGroups,
+  triggerMemberXeroContactGroupSync,
+} from "@/lib/xero-contact-groups";
 
 // test seam
 export const SEASONAL_MEMBERSHIP_ASSIGNMENT_CHANGED_ACTION =
@@ -48,6 +51,15 @@ export const SEASONAL_MEMBERSHIP_ASSIGNMENTS_ROLLED_FORWARD_ACTION =
 // test seam — the post-copy tier-reconcile summary audit (#2106, MAJOR-4).
 export const SEASONAL_MEMBERSHIP_ROLL_FORWARD_TIERS_RECONCILED_ACTION =
   "admin.membership_type_assignments.roll_forward_tiers_reconciled";
+// test seam — the bulk membership-type change summary audit (#2107). Each member
+// still gets its own critical per-member audit inside saveSeasonalMembershipAssignment;
+// this important-severity row records the aggregate run outcome.
+export const SEASONAL_MEMBERSHIP_BULK_ASSIGNMENT_ACTION =
+  "admin.member.seasonal_membership_type_bulk_changed";
+
+// Bounded member-id sample carried in the bulk summary audit metadata (the route
+// already caps ids at 100, so this never truncates a valid request).
+const BULK_ASSIGNMENT_MEMBER_ID_LIMIT = 100;
 
 // #2106 (MAJOR-3): the post-copy tier reconcile runs in transactions of at most
 // this many members so no single transaction spans the whole membership.
@@ -686,6 +698,11 @@ export async function saveSeasonalMembershipAssignment(params: {
   source?: MembershipAssignmentSource;
   request?: StructuredAuditEvent["request"];
   db?: typeof prisma;
+  // #2107: the bulk wrapper suppresses the per-member synchronous Xero
+  // contact-group sync (up to 100 live round-trips in one request) and performs
+  // ONE deferred batched reconcile after its loop instead. Default false keeps
+  // the single-member save path unchanged.
+  skipXeroContactGroupSync?: boolean;
 }): Promise<JsonRouteResult> {
   const reason = params.reason.trim();
   const source: MembershipAssignmentSource = params.source ?? "ADMIN";
@@ -891,7 +908,7 @@ export async function saveSeasonalMembershipAssignment(params: {
   // the current season's assignment can alter a member's effective grouping —
   // future-season edits are left for their own trigger/bulk run. Non-fatal,
   // idempotent, and a no-op unless grouping is enabled.
-  if (params.seasonYear === getSeasonYear()) {
+  if (params.seasonYear === getSeasonYear() && !params.skipXeroContactGroupSync) {
     await triggerMemberXeroContactGroupSync(params.memberId, {
       createdByMemberId: params.adminMemberId,
       reason: "seasonal_membership_assignment",
@@ -904,6 +921,271 @@ export async function saveSeasonalMembershipAssignment(params: {
     ),
     preview,
     changed: true,
+  });
+}
+
+export type BulkSeasonalMembershipOutcome =
+  | "changed"
+  | "unchanged"
+  | "stale"
+  | "blocked_linked_guests"
+  | "error";
+
+export type BulkSeasonalMembershipMemberResult = {
+  memberId: string;
+  /** Display name so the outcomes view never has to render a raw id. */
+  name: string;
+  outcome: BulkSeasonalMembershipOutcome;
+  /** HTTP-ish status the per-member save returned (undefined ⇒ 200/no-op). */
+  status?: number;
+  /** Error/blocked message surfaced back to the UI so the admin can act. */
+  error?: string;
+  /** The linked-guest block detail when outcome is `blocked_linked_guests`. */
+  linkedGuestBookings?: LinkedGuestBookingSummary;
+};
+
+/**
+ * Telemetry for the single deferred, best-effort Xero contact-group reconcile
+ * that runs after the loop (surfaced to the UI so an admin sees when the
+ * nightly reconcile still has to finish the group sync).
+ */
+export type BulkSeasonalMembershipXeroReconcile = {
+  /** Members whose grouping actually changed and were handed to the reconcile. */
+  attempted: number;
+  /** Members whose Xero group membership was successfully synced in-request. */
+  succeeded: number;
+  /** True when the per-day Xero API budget cut the in-request reconcile short. */
+  haltedByDailyLimit: boolean;
+};
+
+/**
+ * #2107: thin bulk wrapper over {@link saveSeasonalMembershipAssignment}. Applies
+ * the same membership-type change (shared reason, per-member HMAC preview token)
+ * to many members, one call per member, and NEVER lets one member's failure
+ * abort the rest:
+ *
+ * - a stale/missing preview token (409) is isolated as `stale`;
+ * - an N/A-flip blocked by future linked-guest bookings (409) is isolated as
+ *   `blocked_linked_guests`, carrying the block detail for the UI's "Preview
+ *   again"/remove-links affordance;
+ * - any other 4xx/5xx is isolated as `error`;
+ * - a genuine no-op save writes nothing and is `unchanged` (no per-member audit,
+ *   inherited from the single save);
+ * - a real change is `changed` and its member id is collected for the deferred
+ *   Xero reconcile.
+ *
+ * Each member still gets its own CRITICAL per-member audit row inside the single
+ * save; this wrapper adds ONE important-severity summary audit for the run. The
+ * per-member synchronous Xero contact-group sync is SUPPRESSED
+ * (`skipXeroContactGroupSync`); after the loop a single deferred, best-effort
+ * batched reconcile runs for the changed members when the target IS the current
+ * season (grouping resolves at the current season only, matching the single
+ * save).
+ */
+export async function bulkSaveSeasonalMembershipAssignments(params: {
+  ids: string[];
+  seasonYear: number;
+  membershipTypeId: string;
+  applyFrom?: string | null;
+  adminMemberId: string;
+  reason: string;
+  previewTokens: Record<string, string>;
+  request?: StructuredAuditEvent["request"];
+  db?: typeof prisma;
+}): Promise<JsonRouteResult> {
+  const reason = params.reason.trim();
+  if (!reason) {
+    return jsonResult({ error: "Admin reason is required" }, { status: 400 });
+  }
+
+  const db = params.db ?? prisma;
+  const results: BulkSeasonalMembershipMemberResult[] = [];
+  const changedMemberIds: string[] = [];
+
+  // De-duplicate ids so a repeated selection is not double-saved/double-counted.
+  const uniqueIds = Array.from(new Set(params.ids));
+
+  // Load display names up front so every per-member result carries a name and
+  // the outcomes view never has to render a raw id.
+  const memberRecords = await db.member.findMany({
+    where: { id: { in: uniqueIds } },
+    select: { id: true, firstName: true, lastName: true, email: true },
+  });
+  const nameById = new Map(
+    memberRecords.map((member) => [member.id, memberDisplayName(member)]),
+  );
+  const nameFor = (memberId: string) => nameById.get(memberId) ?? memberId;
+
+  for (const memberId of uniqueIds) {
+    const previewToken = params.previewTokens[memberId];
+    if (!previewToken) {
+      // No token for a selected member: its preview is missing/stale. Treat like
+      // a stale token so the UI offers "Preview again" rather than silently
+      // dropping the member.
+      results.push({
+        memberId,
+        name: nameFor(memberId),
+        outcome: "stale",
+        status: 409,
+        error:
+          "Membership type change preview is missing or stale. Preview the change again before saving.",
+      });
+      continue;
+    }
+
+    let saveResult: JsonRouteResult;
+    try {
+      saveResult = await saveSeasonalMembershipAssignment({
+        memberId,
+        seasonYear: params.seasonYear,
+        membershipTypeId: params.membershipTypeId,
+        applyFrom: params.applyFrom ?? null,
+        adminMemberId: params.adminMemberId,
+        reason,
+        previewToken,
+        request: params.request,
+        db,
+        // #2107: suppress the per-member sync; batch-reconcile once after the loop.
+        skipXeroContactGroupSync: true,
+      });
+    } catch (err) {
+      // A THROWN save (DB deadlock, P2025, a partner-share sweep failure) must
+      // never abort the batch: isolate it as this member's `error` outcome and
+      // keep processing the rest. The summary audit + response still happen.
+      logger.error(
+        {
+          err,
+          memberId,
+          seasonYear: params.seasonYear,
+          membershipTypeId: params.membershipTypeId,
+        },
+        "Bulk seasonal membership save threw for a member (isolated, continuing)",
+      );
+      results.push({
+        memberId,
+        name: nameFor(memberId),
+        outcome: "error",
+        error:
+          err instanceof Error
+            ? err.message
+            : "The membership change failed unexpectedly for this member.",
+      });
+      continue;
+    }
+
+    const status = saveResult.init?.status;
+    const body = saveResult.body as {
+      changed?: boolean;
+      error?: string;
+      linkedGuestBookings?: LinkedGuestBookingSummary;
+    };
+
+    if (status && status >= 400) {
+      if (status === 409 && body.linkedGuestBookings) {
+        results.push({
+          memberId,
+          name: nameFor(memberId),
+          outcome: "blocked_linked_guests",
+          status,
+          error: body.error,
+          linkedGuestBookings: body.linkedGuestBookings,
+        });
+      } else if (status === 409) {
+        results.push({
+          memberId,
+          name: nameFor(memberId),
+          outcome: "stale",
+          status,
+          error: body.error,
+        });
+      } else {
+        results.push({
+          memberId,
+          name: nameFor(memberId),
+          outcome: "error",
+          status,
+          error: body.error,
+        });
+      }
+      continue;
+    }
+
+    if (body.changed) {
+      results.push({ memberId, name: nameFor(memberId), outcome: "changed", status });
+      changedMemberIds.push(memberId);
+    } else {
+      results.push({ memberId, name: nameFor(memberId), outcome: "unchanged", status });
+    }
+  }
+
+  const outcomeCounts = results.reduce<Record<BulkSeasonalMembershipOutcome, number>>(
+    (counts, entry) => {
+      counts[entry.outcome] += 1;
+      return counts;
+    },
+    { changed: 0, unchanged: 0, stale: 0, blocked_linked_guests: 0, error: 0 },
+  );
+
+  // One important-severity summary audit for the whole run (the per-member
+  // critical rows live inside each single save).
+  await db.auditLog.create(
+    buildStructuredAuditLogCreateArgs({
+      action: SEASONAL_MEMBERSHIP_BULK_ASSIGNMENT_ACTION,
+      actor: { memberId: params.adminMemberId },
+      entity: {
+        type: "SeasonalMembershipAssignment",
+        id: `bulk:${params.seasonYear}:${params.membershipTypeId}`,
+      },
+      category: "admin",
+      severity: "important",
+      outcome: "success",
+      summary: "Seasonal membership type changed in bulk",
+      metadata: {
+        seasonYear: params.seasonYear,
+        membershipTypeId: params.membershipTypeId,
+        applyFrom: params.applyFrom ?? null,
+        adminReason: reason,
+        requestedCount: uniqueIds.length,
+        outcomeCounts,
+        memberIds: uniqueIds.slice(0, BULK_ASSIGNMENT_MEMBER_ID_LIMIT),
+      },
+      request: params.request,
+    }),
+  );
+
+  // Deferred, batched Xero contact-group reconcile for the members that actually
+  // changed — a single connection check, only current-season changes alter
+  // grouping at "now" (mirrors the single save). Post-commit and best-effort.
+  //
+  // Latency posture (#2107): saves run sequentially and this reconcile runs
+  // in-request as a best-effort pass — deliberately NOT backgrounded. Every
+  // membership change is already committed before we get here, so the reconcile
+  // only reconciles Xero *group* membership: it is safe to re-run, and a client
+  // timeout mid-reconcile cannot lose a committed change (the nightly reconcile
+  // finishes any group sync the daily API budget or a timeout left undone).
+  let xeroReconcile: BulkSeasonalMembershipXeroReconcile | null = null;
+  if (changedMemberIds.length > 0 && params.seasonYear === getSeasonYear()) {
+    const reconcileResult = await reconcileMembersXeroContactGroups(
+      changedMemberIds,
+      {
+        createdByMemberId: params.adminMemberId,
+        reason: "seasonal_membership_assignment_bulk",
+      },
+    );
+    xeroReconcile = {
+      attempted: changedMemberIds.length,
+      succeeded: reconcileResult.processed,
+      haltedByDailyLimit: reconcileResult.haltedByDailyLimit,
+    };
+  }
+
+  return jsonResult({
+    seasonYear: params.seasonYear,
+    membershipTypeId: params.membershipTypeId,
+    requestedCount: uniqueIds.length,
+    outcomeCounts,
+    results,
+    xeroReconcile,
   });
 }
 

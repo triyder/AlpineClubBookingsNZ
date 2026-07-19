@@ -21,6 +21,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { MemberBulkActionBar } from "./_components/member-bulk-action-bar"
 import { MemberBulkDialog } from "./_components/member-bulk-dialog"
+import { MemberBulkMembershipDialog } from "./_components/member-bulk-membership-dialog"
 import { MemberEditorDialog } from "./_components/member-editor-dialog"
 import { MemberFilterToolbar } from "./_components/member-filter-toolbar"
 import { MemberImportDialog } from "./_components/member-import-dialog"
@@ -73,6 +74,7 @@ export default function MembersPage() {
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
   const [bulkAction, setBulkAction] = useState<BulkAction>("")
+  const [membershipDialogOpen, setMembershipDialogOpen] = useState(false)
   const [passwordActionDialogOpen, setPasswordActionDialogOpen] = useState(false)
   const [passwordActionTarget, setPasswordActionTarget] =
     useState<PasswordActionTarget | null>(null)
@@ -203,8 +205,29 @@ export default function MembersPage() {
   )
 
   const openBulkDialog = (action: BulkAction) => {
+    if (action === "set-membership-type") {
+      setMembershipDialogOpen(true)
+      return
+    }
     setBulkAction(action)
     setBulkDialogOpen(true)
+  }
+
+  const memberNames = useMemo(
+    () =>
+      new Map(
+        members.map((member) => [
+          member.id,
+          `${member.firstName} ${member.lastName}`.trim() || member.email,
+        ]),
+      ),
+    [members],
+  )
+
+  const handleMembershipChanged = (changed: number) => {
+    showSuccess(`Changed membership type for ${changed} member(s)`)
+    setSelectedIds(new Set())
+    void fetchMembers()
   }
 
   const handleRefreshXeroGroups = () => {
@@ -383,6 +406,14 @@ export default function MembersPage() {
         selectedIds={selectedIds}
         onOpenChange={setBulkDialogOpen}
         onUpdated={handleBulkUpdated}
+        onError={setError}
+      />
+      <MemberBulkMembershipDialog
+        open={membershipDialogOpen}
+        selectedIds={selectedIds}
+        memberNames={memberNames}
+        onOpenChange={setMembershipDialogOpen}
+        onComplete={handleMembershipChanged}
         onError={setError}
       />
       <MemberPasswordActionDialog

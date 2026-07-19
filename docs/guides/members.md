@@ -72,6 +72,27 @@ cents; dates are NZ date-only.
 1. Select members (editors only) and use the bulk bar to **Deactivate**,
    **Reactivate**, **Change Access** (pick a new access role), or send login
    emails to the selection. Confirm the dialog to apply.
+2. **Set Membership Type** applies one seasonal membership type to the whole
+   selection — handy at season start. Pick the type and season year, then
+   **Preview**: the dialog aggregates how many members will change, how many
+   future bookings/drafts/waitlist records are affected, any age-tier changes,
+   and any members blocked because making them age-exempt (N/A) would strand a
+   linked-guest booking. Existing bookings are **not** repriced — the change only
+   affects future pricing and eligibility. Enter a reason (recorded on each
+   member's audit trail) and confirm. Every member is previewed and saved
+   individually, so a stale preview or a linked-guest block skips just that
+   member and reports it back with a **Preview again** option; the rest still
+   apply. Archived members are excluded and reported. A run is capped at 100
+   members at a time. Membership edit only.
+
+   Because members are saved one after another and each change commits before the
+   next, the request can take a little while for a large selection; the dialog
+   stays open until the run finishes. After the saves, a single best-effort Xero
+   contact-group reconcile runs in the same request (not in the background) — the
+   membership changes are already committed by then, so re-running is safe and a
+   timeout mid-reconcile can never lose a committed change. If the day's Xero API
+   budget or a timeout cuts the reconcile short, the results panel says how many
+   groups synced and the nightly reconcile finishes the rest automatically.
 
 ### Export
 
@@ -121,7 +142,7 @@ The list is a working roster; its controls:
 | Import CSV | Bulk-create from a CSV | Membership edit; 500-row cap; duplicate-email rows skipped |
 | Export CSV | Download the filtered list | View access can export |
 | Invite / Resend / Reset Password | Send login/setup emails | Setup invites are 7-day links; reset expiry 1 hour / 1 day / 3 days |
-| Bulk bar | Deactivate / Reactivate / Change Access / send emails | Membership edit |
+| Bulk bar | Deactivate / Reactivate / Change Access / Set Membership Type / send emails | Membership edit |
 | Refresh Xero Groups | Refresh cached contact-group memberships | Membership edit; only when Xero is connected |
 | Credit adjustment (detail) | Request a credit change | Finance edit; a **different** admin must approve; dollars stored as cents |
 | Merge (detail) | Combine a duplicate into this member | Full Admin only; typed confirmation phrase |

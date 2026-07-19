@@ -166,4 +166,9 @@ export interface PendingXeroCreateDecision {
   suggestedContacts: XeroSearchResult[];
 }
 
-export type BulkAction = "" | "deactivate" | "reactivate" | "set-role";
+export type BulkAction =
+  | ""
+  | "deactivate"
+  | "reactivate"
+  | "set-role"
+  | "set-membership-type";

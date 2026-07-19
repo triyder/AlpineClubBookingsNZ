@@ -253,6 +253,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/members/[id]/xero-link": "finance",
   "/api/admin/members/[id]/xero-push": "finance",
   "/api/admin/members/[id]/xero-unlink": "finance",
+  "/api/admin/members/bulk-membership-type": "membership",
+  "/api/admin/members/bulk-membership-type/preview": "membership",
   "/api/admin/members/bulk-update": "membership",
   "/api/admin/members/export": "membership",
   "/api/admin/members/import": "membership",
