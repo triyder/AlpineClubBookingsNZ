@@ -567,6 +567,32 @@ describe("Admin membership types API", () => {
     });
   });
 
+  it("updates allowed age tiers to N/A (no age) only", async () => {
+    mocks.membershipTypeFindUnique.mockResolvedValueOnce(
+      membershipType({
+        id: "type-1",
+        allowedAgeTiers: [{ ageTier: "ADULT" }],
+      }),
+    );
+
+    const response = await updateMembershipType(
+      request(
+        "http://localhost/api/admin/membership-types/type-1",
+        {
+          allowedAgeTiers: ["NOT_APPLICABLE"],
+        },
+        "PATCH",
+      ),
+      params("type-1"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.membershipTypeAgeTierCreateMany).toHaveBeenCalledWith({
+      data: [{ membershipTypeId: "type-1", ageTier: "NOT_APPLICABLE" }],
+      skipDuplicates: true,
+    });
+  });
+
   it("reorders membership types and audits previous and new order", async () => {
     mocks.membershipTypeFindMany
       .mockResolvedValueOnce([
