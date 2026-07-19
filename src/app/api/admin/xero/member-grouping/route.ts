@@ -6,7 +6,7 @@ import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import { ageTierEnum, canonicalizeAgeTiers } from "@/lib/age-tier-schema";
 import { getXeroContactGroups, getXeroContactGroupCacheLastRefreshedAt } from "@/lib/xero";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { getXeroGroupingMode } from "@/lib/xero-member-grouping";
@@ -36,7 +36,10 @@ const groupingModeEnum = z.enum(["NONE", "MEMBERSHIP_TYPE", "MEMBERSHIP_TYPE_AND
 
 const ruleShape = {
   membershipTypeId: z.string().trim().min(1).nullable().optional(),
-  ageTier: ageTierEnum.nullable().optional(),
+  // Multi-select tier set (#2093). Omitted / empty = "all age tiers" (the old
+  // null "Any age" wildcard). Canonical-sorted and full-set-collapsed on
+  // normalize; a duplicate tier in the payload is de-duped there too.
+  ageTiers: z.array(ageTierEnum).optional(),
   mode: ruleModeEnum,
   groupId: z.string().trim().min(1).max(100),
   groupName: z.string().trim().min(1).max(255).nullable().optional(),
@@ -78,7 +81,7 @@ async function loadConfig() {
       select: {
         id: true,
         membershipTypeId: true,
-        ageTier: true,
+        ageTiers: true,
         mode: true,
         groupId: true,
         groupName: true,
@@ -104,7 +107,7 @@ async function loadConfig() {
       id: rule.id,
       membershipTypeId: rule.membershipTypeId,
       membershipTypeName: rule.membershipType?.name ?? null,
-      ageTier: rule.ageTier,
+      ageTiers: rule.ageTiers,
       mode: rule.mode,
       groupId: rule.groupId,
       groupName: rule.groupName,
@@ -128,7 +131,7 @@ export async function GET() {
 
 type RuleFields = {
   membershipTypeId?: string | null;
-  ageTier?: AgeTier | null;
+  ageTiers?: AgeTier[];
   mode: "MANAGED" | "ACCEPTED";
   groupId: string;
   groupName?: string | null;
@@ -137,22 +140,28 @@ type RuleFields = {
 function normalizeRule(input: RuleFields) {
   return {
     membershipTypeId: input.membershipTypeId?.trim() || null,
-    ageTier: input.ageTier ?? null,
+    // Canonical-sorted + full-set-collapse (#2093, D-B2): empty = "all tiers".
+    ageTiers: canonicalizeAgeTiers(input.ageTiers),
     mode: input.mode,
     groupId: input.groupId.trim(),
     groupName: input.groupName?.trim() || null,
   };
 }
 
-/** App-side dedupe for a friendly message before the DB partial unique index. */
+/**
+ * App-side dedupe for a friendly message before the DB partial unique index.
+ * The tier set is compared for exact array equality — Prisma's list `equals`
+ * is order-sensitive, so both operands must be canonical-sorted (normalizeRule
+ * guarantees this for the candidate; stored rows are canonical by construction).
+ */
 async function isDuplicateRuleShape(
-  rule: { membershipTypeId: string | null; ageTier: AgeTier | null; mode: "MANAGED" | "ACCEPTED"; groupId: string },
+  rule: { membershipTypeId: string | null; ageTiers: AgeTier[]; mode: "MANAGED" | "ACCEPTED"; groupId: string },
   excludeId?: string,
 ): Promise<boolean> {
   const existing = await prisma.xeroContactGroupRule.findFirst({
     where: {
       membershipTypeId: rule.membershipTypeId,
-      ageTier: rule.ageTier,
+      ageTiers: { equals: rule.ageTiers },
       mode: rule.mode,
       groupId: rule.groupId,
       ...(excludeId ? { id: { not: excludeId } } : {}),
@@ -164,7 +173,7 @@ async function isDuplicateRuleShape(
 
 const duplicateResponse = () =>
   NextResponse.json(
-    { error: "A rule with the same membership type, age tier, mode, and Xero group already exists." },
+    { error: "A rule with the same membership type, age tiers, mode, and Xero group already exists." },
     { status: 409 },
   );
 

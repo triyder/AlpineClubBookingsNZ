@@ -34,7 +34,7 @@ const membershipTypeSelect = {
   xeroContactGroupRules: {
     select: {
       id: true,
-      ageTier: true,
+      ageTiers: true,
       mode: true,
       groupId: true,
       groupName: true,
