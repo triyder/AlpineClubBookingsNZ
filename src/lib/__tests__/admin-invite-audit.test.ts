@@ -9,6 +9,7 @@ const mockGetXeroContactGroupMemberships = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     accessRoleDefinition: {
       // Empty definitions: resolution falls back to legacy bundles.
       findMany: vi.fn().mockResolvedValue([]),

@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 // Mock modules before imports
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     familyGroup: {
       findMany: vi.fn(),
       findUnique: vi.fn(),

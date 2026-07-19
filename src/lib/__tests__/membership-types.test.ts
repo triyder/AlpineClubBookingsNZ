@@ -9,6 +9,8 @@ import {
   canonicalMembershipTypeKey,
   defaultMembershipTypeKeyForRole,
   ensureBuiltInMembershipTypes,
+  membershipTypeAgeExemption,
+  membershipTypeForcedEditOffendingTiers,
   normalizeMembershipTypeAgeTiers,
   normalizeMembershipTypeKey,
   validateMembershipTypeRuleConfiguration,
@@ -232,5 +234,105 @@ describe("built-in membership type seed helpers", () => {
         allowedAgeTiers: ["NOT_APPLICABLE"],
       }),
     ).toBeNull();
+  });
+});
+
+describe("#2106 — membershipTypeAgeExemption classification", () => {
+  it("classifies an N/A-only set as FORCED", () => {
+    expect(membershipTypeAgeExemption(["NOT_APPLICABLE"])).toBe("FORCED");
+  });
+
+  it("classifies N/A alongside person tiers as ALLOWED", () => {
+    expect(membershipTypeAgeExemption(["ADULT", "NOT_APPLICABLE"])).toBe(
+      "ALLOWED",
+    );
+    expect(
+      membershipTypeAgeExemption(["INFANT", "CHILD", "YOUTH", "ADULT", "NOT_APPLICABLE"]),
+    ).toBe("ALLOWED");
+  });
+
+  it("classifies a person-only set (or an empty/undefined set) as DISALLOWED", () => {
+    expect(membershipTypeAgeExemption(["INFANT", "CHILD", "YOUTH", "ADULT"])).toBe(
+      "DISALLOWED",
+    );
+    expect(membershipTypeAgeExemption([])).toBe("DISALLOWED");
+    expect(membershipTypeAgeExemption(undefined)).toBe("DISALLOWED");
+  });
+});
+
+describe("#2106 — subscription-behaviour restriction on age-exempt config", () => {
+  it("rejects N/A in the allowed tiers when subscription behaviour is not NOT_REQUIRED", () => {
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["NOT_APPLICABLE"],
+        subscriptionBehavior: "REQUIRED",
+      }),
+    ).toMatch(/not required/i);
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        subscriptionBehavior: "BASED_ON_AGE_TIER",
+      }),
+    ).toMatch(/not required/i);
+  });
+
+  it("accepts N/A when subscription behaviour is NOT_REQUIRED", () => {
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["NOT_APPLICABLE"],
+        subscriptionBehavior: "NOT_REQUIRED",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not gate person-only sets on subscription behaviour", () => {
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["ADULT"],
+        subscriptionBehavior: "REQUIRED",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("#2106 — FORCED-transition type-edit coverage guard", () => {
+  it("blocks becoming FORCED while a person-tier member is assigned", () => {
+    const offending = membershipTypeForcedEditOffendingTiers({
+      previousAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+      nextAllowedAgeTiers: ["NOT_APPLICABLE"],
+      affectedMemberAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+    });
+    expect(offending).toEqual(["ADULT"]);
+  });
+
+  it("blocks leaving FORCED (dropping N/A) while an N/A member is assigned", () => {
+    const offending = membershipTypeForcedEditOffendingTiers({
+      previousAllowedAgeTiers: ["NOT_APPLICABLE"],
+      nextAllowedAgeTiers: ["ADULT"],
+      affectedMemberAgeTiers: ["NOT_APPLICABLE"],
+    });
+    expect(offending).toEqual(["NOT_APPLICABLE"]);
+  });
+
+  it("allows a FORCED transition when every affected member is covered", () => {
+    expect(
+      membershipTypeForcedEditOffendingTiers({
+        previousAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        nextAllowedAgeTiers: ["NOT_APPLICABLE"],
+        affectedMemberAgeTiers: ["NOT_APPLICABLE"],
+      }),
+    ).toEqual([]);
+  });
+
+  it("ignores ordinary allowed-tier edits that neither create nor destroy FORCED", () => {
+    // ALLOWED -> DISALLOWED is not a FORCED transition, so this guard is a no-op
+    // even though an N/A member would be offended (that is the merge/other guards' job).
+    expect(
+      membershipTypeForcedEditOffendingTiers({
+        previousAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        nextAllowedAgeTiers: ["ADULT"],
+        affectedMemberAgeTiers: ["NOT_APPLICABLE"],
+      }),
+    ).toEqual([]);
   });
 });

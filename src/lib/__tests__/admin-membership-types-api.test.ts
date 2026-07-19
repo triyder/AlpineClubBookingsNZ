@@ -568,9 +568,11 @@ describe("Admin membership types API", () => {
   });
 
   it("updates allowed age tiers to N/A (no age) only", async () => {
+    // #2106: age-exempt (N/A) config is only valid on NOT_REQUIRED types.
     mocks.membershipTypeFindUnique.mockResolvedValueOnce(
       membershipType({
         id: "type-1",
+        subscriptionBehavior: "NOT_REQUIRED",
         allowedAgeTiers: [{ ageTier: "ADULT" }],
       }),
     );

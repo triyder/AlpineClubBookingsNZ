@@ -211,6 +211,7 @@ describe("members list: combined Type – Tier column (#1445)", () => {
           key: "full",
           name: "Full",
           isActive: true,
+          ageExemption: "DISALLOWED",
         },
       },
     ]);

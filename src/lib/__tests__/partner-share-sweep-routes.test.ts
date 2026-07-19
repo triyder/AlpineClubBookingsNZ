@@ -12,6 +12,7 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     member: {
       findUnique: vi.fn(),
       findFirst: vi.fn(),

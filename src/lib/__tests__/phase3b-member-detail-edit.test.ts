@@ -23,6 +23,7 @@ vi.mock("@/lib/prisma", () => ({
     adminCreditAdjustmentRequest: { count: vi.fn().mockResolvedValue(0) },
     refundRequest: { count: vi.fn().mockResolvedValue(0) },
     memberSubscription: { count: vi.fn().mockResolvedValue(0) },
+    seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     membershipSubscriptionCharge: { count: vi.fn().mockResolvedValue(0) },
     membershipSubscriptionBillingSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
