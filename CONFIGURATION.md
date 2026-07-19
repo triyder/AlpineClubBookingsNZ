@@ -995,6 +995,7 @@ Committee settings are database-backed and managed from `/admin/committee`.
 Booking Officer, including the role email alias used for committee contact
 delivery. `CommitteeAssignment` links a member to one of those roles and stores
 presentation controls: blurb, sort order, published, show-phone, contactable,
+contact email mode (role alias, member email, or a custom override address),
 and active/deactivated state. Multiple members can hold the same master role.
 
 Committee assignment is separate from `Member.role` and
@@ -1008,10 +1009,13 @@ API returns the linked member's display name, the role name, the assignment
 blurb or role description, and an opaque assignment contact key only when the
 assignment is contactable. Member email addresses are never returned to the
 browser; `/api/contact` resolves contactable assignment keys server-side and
-delivers to the role email alias configured on `CommitteeRole`, falling back to
-the linked member's email when the role has no alias, then to the configured
-club contact address when no published, contactable assignment or recipient
-email is available. Committee-routed contact emails use an opaque
+delivers to the address selected by the assignment's contact email mode — the
+role email alias configured on `CommitteeRole` (the default), the linked
+member's own email, or the assignment's custom override address. When the
+selected address is blank or missing, delivery falls back to the role alias and
+then the linked member's email so contact mail is never lost, then to the
+configured club contact address when no published, contactable assignment or
+recipient email is available. Committee-routed contact emails use an opaque
 committee-contact marker in EmailLog rows instead of persisting the recipient
 address. Phone numbers come from the linked member profile and display only when
 the assignment's show-phone flag is enabled.

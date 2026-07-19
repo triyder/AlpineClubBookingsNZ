@@ -35,7 +35,8 @@ button. Page Content is edited under the **content** permission area.
 2. Click **Edit &lt;page&gt;** to open its editor, change the title, menu title,
    menu order, rich-text content (with content tokens such as
    `{{member-application-form}}`, `{{contact-form}}`, or
-   `{{committee-members-cards}}`), and its published state. Use **+ Add Page** to
+   `{{committee-members-cards}}` — the editor's token help button lists every
+   token the page supports), and its published state. Use **+ Add Page** to
    create a new page.
 3. **System** pages (e.g. Club Lodge `/home`, Page Not Found `/404`) cannot be
    unpublished and keep their fixed menu order.

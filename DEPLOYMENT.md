@@ -176,6 +176,12 @@ docker compose up -d --build app app_blue app_green caddy
 docker compose ps
 ```
 
+To validate the production image alone (without Compose), build it locally:
+
+```bash
+docker build -t tacbookings:local .
+```
+
 Club identity, capacity, age tiers, seasons, and rates are configured **in the
 database**, not in a file. After the migrate/seed steps, sign in as the seeded
 admin and complete configuration at `/admin/setup` (identity, lodges/capacity,

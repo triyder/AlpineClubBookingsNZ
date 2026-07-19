@@ -5,8 +5,9 @@ Audience: Operator
 ## What it is
 
 The shared sign-in for the physical lodge **kiosk** — the tablet at the lodge that
-guests and hut leaders use to check in and out, see who's staying, and view lodge
-information. This page sets the kiosk account's email and password (and, for a
+guests and hut leaders use to check in and out, see who's staying (including a
+week-at-a-glance of nightly guest counts), and view lodge information. This
+page sets the kiosk account's email and password (and, for a
 multi-lodge club, which lodge each kiosk device serves); it is **not** a personal
 admin login. Find it at **Admin → Lodge Operations → Lodge Kiosk**
 (`/admin/lodge`).
