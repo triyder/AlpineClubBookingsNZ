@@ -37,15 +37,18 @@ import { RowValidator, nz, readCsvRows } from "../values";
 //     type). Matches JoiningFee @@unique([membershipTypeId, ageTier,
 //     effectiveFrom]).
 //   membership-fees/annual-fees.csv
-//     membershipTypeKey, effectiveFrom, effectiveTo, amountCents, billingBasis,
-//     prorationRule
-//     natural key: membershipTypeKey x effectiveFrom. Matches
-//     MembershipAnnualFee @@unique([membershipTypeId, effectiveFrom]).
+//     membershipTypeKey, ageTier, effectiveFrom, effectiveTo, amountCents,
+//     billingBasis, prorationRule
+//     natural key: membershipTypeKey x ageTier x effectiveFrom (#2067; a blank
+//     ageTier is the flat, whole-type fee). Matches MembershipAnnualFee
+//     @@unique([membershipTypeId, ageTier, effectiveFrom]). PER_FAMILY fees must
+//     be flat (blank ageTier) — a per-family + per-tier row is a blocking row
+//     error, mirroring the API 409 and the DB CHECK.
 //   membership-fees/annual-fee-components.csv
-//     membershipTypeKey, effectiveFrom, label, amountCents, prorate,
+//     membershipTypeKey, ageTier, effectiveFrom, label, amountCents, prorate,
 //     xeroAccountCode, xeroItemCode, sortOrder
-//     natural key: (parent annual fee = membershipTypeKey x effectiveFrom) x
-//     label. Each component is one Xero invoice line (#1932, E6).
+//     natural key: (parent annual fee = membershipTypeKey x ageTier x
+//     effectiveFrom) x label. Each component is one Xero invoice line (#1932, E6).
 //
 // Money stays in integer cents throughout. Referenced membership types must
 // already exist on the target (by key) — membership types themselves are not
@@ -87,6 +90,7 @@ const JOINING_FEE_FIELDS = [
 ] as const;
 const ANNUAL_FEE_FIELDS = [
   "membershipTypeKey",
+  "ageTier",
   "effectiveFrom",
   "effectiveTo",
   "amountCents",
@@ -95,6 +99,7 @@ const ANNUAL_FEE_FIELDS = [
 ] as const;
 const COMPONENT_FIELDS = [
   "membershipTypeKey",
+  "ageTier",
   "effectiveFrom",
   "label",
   "amountCents",
@@ -136,7 +141,7 @@ registerEntity({
   tier: "key-strong",
   format: "csv",
   file: ANNUAL_FEES_FILE,
-  naturalKey: ["membershipTypeKey", "effectiveFrom"],
+  naturalKey: ["membershipTypeKey", "ageTier", "effectiveFrom"],
   singleton: false,
   fields: [...ANNUAL_FEE_FIELDS],
 });
@@ -148,7 +153,7 @@ registerEntity({
   tier: "key-weak",
   format: "csv",
   file: ANNUAL_FEE_COMPONENTS_FILE,
-  naturalKey: ["membershipTypeKey", "effectiveFrom", "label"],
+  naturalKey: ["membershipTypeKey", "ageTier", "effectiveFrom", "label"],
   singleton: false,
   fields: [...COMPONENT_FIELDS],
 });
@@ -158,9 +163,13 @@ function toDateStr(value: Date | null | undefined): string {
   return value ? new Date(value).toISOString().slice(0, 10) : "";
 }
 
-/** Parent-fee key for a component/fee: membershipTypeKey + effective-from. */
-function parentKey(membershipTypeKey: string, effectiveFrom: Date): string {
-  return `${membershipTypeKey}/${toDateStr(effectiveFrom)}`;
+/**
+ * Parent-fee key for a component/fee: membershipTypeKey + ageTier + effective-from
+ * (#2067). A blank/NULL ageTier is the flat, whole-type fee. Must include the tier
+ * so a component attaches to its own tier's fee, never a sibling tier's.
+ */
+function parentKey(membershipTypeKey: string, ageTier: string | null, effectiveFrom: Date): string {
+  return `${membershipTypeKey}/${ageTier ?? ""}/${toDateStr(effectiveFrom)}`;
 }
 
 // ---- Batched current-state loading (shared by plan + apply) -----------------
@@ -191,11 +200,11 @@ interface FeesBatch {
   membershipTypeKeys: Set<string>;
   /** by `${key}/${ageTier??""}/${fromISO}` */
   joiningFees: Map<string, JoiningFeeCurrent>;
-  /** by `${key}/${fromISO}` */
+  /** by `${key}/${ageTier??""}/${fromISO}` (#2067) */
   annualFees: Map<string, AnnualFeeCurrent>;
-  /** by `${key}/${fromISO}/${label}` (last-wins on duplicate labels) */
+  /** by `${key}/${ageTier??""}/${fromISO}/${label}` (last-wins on duplicate labels) */
   components: Map<string, ComponentCurrent>;
-  /** by parentKey `${key}/${fromISO}` → ALL existing rows (duplicates kept). */
+  /** by parentKey `${key}/${ageTier??""}/${fromISO}` → ALL existing rows (duplicates kept). */
   componentsByParent: Map<string, ComponentCurrent[]>;
 }
 
@@ -215,6 +224,7 @@ async function loadFeesBatch(db: ReadDb): Promise<FeesBatch> {
     db.membershipAnnualFee.findMany({
       select: {
         id: true,
+        ageTier: true,
         effectiveFrom: true,
         effectiveTo: true,
         amountCents: true,
@@ -250,7 +260,7 @@ async function loadFeesBatch(db: ReadDb): Promise<FeesBatch> {
   const components = new Map<string, ComponentCurrent>();
   const componentsByParent = new Map<string, ComponentCurrent[]>();
   for (const fee of annualRows) {
-    const pk = parentKey(fee.membershipType.key, fee.effectiveFrom);
+    const pk = parentKey(fee.membershipType.key, fee.ageTier, fee.effectiveFrom);
     annualFees.set(pk, {
       id: fee.id,
       amountCents: fee.amountCents,
@@ -304,6 +314,7 @@ export const membershipFeesExporter: CategoryExporter = {
       }),
       ctx.db.membershipAnnualFee.findMany({
         select: {
+          ageTier: true,
           effectiveFrom: true,
           effectiveTo: true,
           amountCents: true,
@@ -348,6 +359,7 @@ export const membershipFeesExporter: CategoryExporter = {
     const sortedAnnual = [...annualFees].sort(
       (a, b) =>
         a.membershipType.key.localeCompare(b.membershipType.key) ||
+        (a.ageTier ?? "").localeCompare(b.ageTier ?? "") ||
         toDateStr(a.effectiveFrom).localeCompare(toDateStr(b.effectiveFrom)),
     );
     const annualRows: Record<string, unknown>[] = [];
@@ -355,6 +367,7 @@ export const membershipFeesExporter: CategoryExporter = {
     for (const fee of sortedAnnual) {
       annualRows.push({
         membershipTypeKey: fee.membershipType.key,
+        ageTier: fee.ageTier ?? "",
         effectiveFrom: toDateStr(fee.effectiveFrom),
         effectiveTo: toDateStr(fee.effectiveTo),
         amountCents: fee.amountCents,
@@ -367,6 +380,7 @@ export const membershipFeesExporter: CategoryExporter = {
       for (const c of comps) {
         componentRows.push({
           membershipTypeKey: fee.membershipType.key,
+          ageTier: fee.ageTier ?? "",
           effectiveFrom: toDateStr(fee.effectiveFrom),
           label: c.label,
           amountCents: c.amountCents,
@@ -418,6 +432,7 @@ interface ParsedJoiningFee {
 interface ParsedAnnualFee {
   raw: Record<string, string>;
   membershipTypeKey: string;
+  ageTier: string | null;
   effectiveFrom: Date;
   key: string;
   parentKey: string;
@@ -432,6 +447,7 @@ interface ParsedAnnualFee {
 interface ParsedComponent {
   raw: Record<string, string>;
   membershipTypeKey: string;
+  ageTier: string | null;
   effectiveFrom: Date;
   label: string;
   key: string;
@@ -488,6 +504,7 @@ function parseMembershipFees(
         `${ANNUAL_FEES_FILE} row ${i + 2}: membershipTypeKey — unknown membership type "${membershipTypeKey}"`,
       );
     }
+    const ageTier = nz(raw.ageTier) === null ? null : v.enum("ageTier", "AgeTier", raw.ageTier);
     const effectiveFrom = v.date("effectiveFrom", raw.effectiveFrom);
     const effectiveTo = nz(raw.effectiveTo) === null ? null : v.date("effectiveTo", raw.effectiveTo);
     const amountCents = v.moneyCents("amountCents", raw.amountCents);
@@ -496,13 +513,22 @@ function parseMembershipFees(
       nz(raw.prorationRule) === null
         ? DEFAULT_PRORATION_RULE
         : v.enum("prorationRule", "MembershipFeeProrationRule", raw.prorationRule);
+    // Decision 1 (#2067): PER_FAMILY fees stay flat-only — a per-family + per-tier
+    // row is a blocking row error (mirrors the API 409 and the DB CHECK). Guarded
+    // on v.ok so a malformed enum is reported once, not doubled.
+    if (v.ok && ageTier !== null && billingBasis === "PER_FAMILY") {
+      errors.push(
+        `${ANNUAL_FEES_FILE} row ${i + 2}: ageTier — a per-family fee must be flat (blank ageTier); per-age-tier rows are only allowed for per-member or no-invoice fees`,
+      );
+    }
     if (!v.ok || !batch.membershipTypeKeys.has(membershipTypeKey)) return;
     out.annualFees.push({
       raw,
       membershipTypeKey,
+      ageTier,
       effectiveFrom,
-      key: parentKey(membershipTypeKey, effectiveFrom),
-      parentKey: parentKey(membershipTypeKey, effectiveFrom),
+      key: parentKey(membershipTypeKey, ageTier, effectiveFrom),
+      parentKey: parentKey(membershipTypeKey, ageTier, effectiveFrom),
       billingBasis,
       data: { amountCents, effectiveTo, billingBasis, prorationRule },
     });
@@ -516,6 +542,7 @@ function parseMembershipFees(
         `${ANNUAL_FEE_COMPONENTS_FILE} row ${i + 2}: membershipTypeKey — unknown membership type "${membershipTypeKey}"`,
       );
     }
+    const ageTier = nz(raw.ageTier) === null ? null : v.enum("ageTier", "AgeTier", raw.ageTier);
     const effectiveFrom = v.date("effectiveFrom", raw.effectiveFrom);
     const label = v.required("label", raw.label);
     const amountCents = v.moneyCents("amountCents", raw.amountCents);
@@ -525,10 +552,11 @@ function parseMembershipFees(
     out.components.push({
       raw,
       membershipTypeKey,
+      ageTier,
       effectiveFrom,
       label,
-      key: `${parentKey(membershipTypeKey, effectiveFrom)}/${label}`,
-      parentKey: parentKey(membershipTypeKey, effectiveFrom),
+      key: `${parentKey(membershipTypeKey, ageTier, effectiveFrom)}/${label}`,
+      parentKey: parentKey(membershipTypeKey, ageTier, effectiveFrom),
       data: {
         amountCents,
         prorate,
@@ -854,6 +882,7 @@ async function applyMembershipFees(ctx: ApplyContext): Promise<CategoryApplyResu
         const created = await ctx.tx.membershipAnnualFee.create({
           data: {
             membershipTypeId,
+            ageTier: row.ageTier as never,
             effectiveFrom: row.effectiveFrom,
             ...(data as object),
           } as never,
