@@ -151,6 +151,13 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+// #2104: the batch modify route delegates to modifyBookingBatch; mocked here so
+// the review-justification-required error can be surfaced through the route's
+// catch block without standing up the full batch service. The modify-dates /
+// guests routes exercised elsewhere in this file never touch this service.
+vi.mock("@/lib/booking-batch-modification-service", () => ({
+  modifyBookingBatch: vi.fn(),
+}));
 
 import { auth } from "@/lib/auth";
 import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
@@ -167,6 +174,10 @@ import { validateAndCalculatePromoDiscount, validatePromoCodeRules } from "@/lib
 import { processRefund } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
+import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
+import { BookingModifyReviewJustificationRequiredError } from "@/lib/booking-modify-validation";
+
+const mockedModifyBatch = vi.mocked(modifyBookingBatch);
 
 const mockedAuth = vi.mocked(auth);
 const mockedCheckCapacity = vi.mocked(checkCapacity);
@@ -2755,5 +2766,53 @@ describe("bookingModifiedTemplate", () => {
     });
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
+  });
+});
+
+// --- #2104: no-adult review justification is machine-readable ---
+
+describe("BookingModifyReviewJustificationRequiredError (#2104)", () => {
+  it("carries the REVIEW_JUSTIFICATION_REQUIRED code and a 400 status", () => {
+    const err = new BookingModifyReviewJustificationRequiredError();
+    expect(err.code).toBe("REVIEW_JUSTIFICATION_REQUIRED");
+    expect(err.status).toBe(400);
+    expect(err.message).toMatch(/written reason/i);
+  });
+});
+
+describe("PUT /api/bookings/[id]/modify — review justification code (#2104)", () => {
+  let PUT: typeof import("@/app/api/bookings/[id]/modify/route").PUT;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockedAuth.mockResolvedValue({
+      user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
+    } as any);
+    // requireActiveSessionUser reads prisma.member.findUnique off the singleton.
+    mockFindUnique.mockResolvedValue({
+      id: "m1",
+      active: true,
+      forcePasswordChange: false,
+      twoFactorEnabled: false,
+    });
+    const mod = await import("@/app/api/bookings/[id]/modify/route");
+    PUT = mod.PUT;
+  });
+
+  it("returns 400 with the machine-readable code when the batch service demands a justification", async () => {
+    mockedModifyBatch.mockRejectedValue(
+      new BookingModifyReviewJustificationRequiredError(),
+    );
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({ removeGuestIds: ["g1"] }),
+    });
+
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(400);
+
+    const body = await res.json();
+    expect(body.code).toBe("REVIEW_JUSTIFICATION_REQUIRED");
+    expect(body.error).toMatch(/written reason/i);
   });
 });

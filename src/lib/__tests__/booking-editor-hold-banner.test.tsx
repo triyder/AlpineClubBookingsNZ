@@ -45,6 +45,8 @@ function makeBooking(
       editableFrom: null,
       checkInEditable: false,
     },
+    requiresAdminReview: false,
+    adminReviewStatus: null,
     ...overrides,
   };
 }

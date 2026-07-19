@@ -60,6 +60,11 @@ export interface BookingEditorData {
   canEditNonMemberGuestNames: boolean;
   canFixNonMemberGuestNameTypos: boolean;
   editPolicy: EditPolicyInfo;
+  // #2104: threaded so the edit panel can skip the proactive justification field
+  // for a booking that is already flagged/reviewed (the server only demands a
+  // reason on the FIRST no-adult trip).
+  requiresAdminReview: boolean;
+  adminReviewStatus: string | null;
 }
 
 
@@ -101,6 +106,8 @@ export function BookingEditor({
           canEditNonMemberGuestNames: booking.canEditNonMemberGuestNames,
           canFixNonMemberGuestNameTypos: booking.canFixNonMemberGuestNameTypos,
           editPolicy: booking.editPolicy,
+          requiresAdminReview: booking.requiresAdminReview,
+          adminReviewStatus: booking.adminReviewStatus,
         }}
         canAdminOverride={canAdminOverride}
         onDone={() => setEditing(false)}

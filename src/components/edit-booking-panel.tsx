@@ -19,6 +19,21 @@ import {
 import { formatCents } from "@/lib/utils";
 import { getAgeTierLabel, useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { GuestNightGrid } from "@/components/guest-night-grid";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+
+// #2104: mirror of requiresAdultSupervisionReview (src/lib/booking-review.ts).
+// Inlined (not imported) to match the create wizard's client-side predicate
+// (use-booking-wizard.ts:180-187) and keep server-leaning modules out of the
+// client bundle. The server remains the enforcer; this only drives the UI.
+function editTripsAdultSupervisionReview(
+  guests: Array<{ ageTier: string }>,
+): boolean {
+  const hasAdult = guests.some((g) => g.ageTier === "ADULT");
+  const hasMinor = guests.some(
+    (g) => g.ageTier === "CHILD" || g.ageTier === "YOUTH" || g.ageTier === "INFANT",
+  );
+  return hasMinor && !hasAdult;
+}
 
 function shiftDateKey(date: string, days: number): string {
   const parsed = new Date(`${date}T00:00:00.000Z`);
@@ -91,6 +106,12 @@ interface BookingData {
     // Optional so pre-existing fixtures stay valid; the booking page sets it.
     adminOverrideAvailable?: boolean;
   };
+  // #2104: an already-flagged/reviewed booking (requiresAdminReview && a
+  // non-null adminReviewStatus) must not re-prompt for a justification — the
+  // server only demands a reason on the FIRST no-adult trip. Optional so
+  // pre-existing fixtures/callers stay valid.
+  requiresAdminReview?: boolean;
+  adminReviewStatus?: string | null;
 }
 
 interface NewGuest {
@@ -315,6 +336,15 @@ export function EditBookingPanel({
   // Save state
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  // #2104: member-facing justification for a modification that leaves minors
+  // with no adult on the booking. Shown proactively when the local predicate
+  // trips, or reactively when the server returns REVIEW_JUSTIFICATION_REQUIRED.
+  const [memberReviewJustification, setMemberReviewJustification] = useState("");
+  const [reviewJustificationError, setReviewJustificationError] = useState("");
+  const [serverRequiresJustification, setServerRequiresJustification] =
+    useState(false);
+  const reviewJustificationRef = useRef<HTMLDivElement>(null);
+  const { scrollToError } = useScrollToFeedback();
   const [requestReason, setRequestReason] = useState("");
   const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [requestError, setRequestError] = useState("");
@@ -866,6 +896,23 @@ export function EditBookingPanel({
   // dialog shows exactly when the server will honour the choice. Member
   // self-edits keep the immediate always-notify save.
   const actingAsAdmin = booking.viewerRole === "ADMIN";
+
+  // #2104: does the post-edit guest set (remaining + added) leave minors with no
+  // adult? The server (resolveModifyReviewUpdate) only demands a written reason
+  // on the FIRST trip, so an already-flagged/reviewed booking never re-prompts.
+  const postEditTripsReview = editTripsAdultSupervisionReview([
+    ...remainingGuests.map((g) => ({ ageTier: g.ageTier })),
+    ...addedGuests.map((g) => ({ ageTier: g.ageTier })),
+  ]);
+  const bookingAlreadyUnderReview =
+    Boolean(booking.requiresAdminReview) && (booking.adminReviewStatus ?? null) !== null;
+  // An admin acts through the notify dialog and auto-approves the review, so the
+  // field is member-only. serverRequiresJustification covers client/server drift
+  // (the reactive REVIEW_JUSTIFICATION_REQUIRED path).
+  const showReviewJustification =
+    (postEditTripsReview && !actingAsAdmin && !bookingAlreadyUnderReview) ||
+    serverRequiresJustification;
+
   function handleSaveClick() {
     if (actingAsAdmin) {
       setNotifyDialogOpen(true);
@@ -876,6 +923,16 @@ export function EditBookingPanel({
 
   async function handleSave(notifyMemberChoice?: boolean) {
     setSaveError("");
+    // #2104: block submission with an inline error adjacent to the field (not the
+    // bottom saveError slot) when a required justification is missing, and bring
+    // the field into view.
+    if (showReviewJustification && !memberReviewJustification.trim()) {
+      setReviewJustificationError(
+        "Please add a reason so an admin can review this booking.",
+      );
+      scrollToError(reviewJustificationRef);
+      return;
+    }
     if (quote?.settlementOptions?.requiresSettlementMethod && !settlementMethod) {
       setSaveError("Choose a refund or account credit before saving");
       return;
@@ -884,6 +941,13 @@ export function EditBookingPanel({
 
     try {
       const body = buildModificationPayload();
+      // #2104: attach the justification only when the field is shown (a member
+      // trip). buildModificationPayload is shared with the change-request POST,
+      // so the field is added here in handleSave, never in that builder.
+      if (showReviewJustification) {
+        body.memberReviewJustification =
+          memberReviewJustification.trim() || undefined;
+      }
       if (settlementMethod) {
         body.settlementMethod = settlementMethod;
       }
@@ -902,6 +966,18 @@ export function EditBookingPanel({
 
       const data = await res.json();
       if (!res.ok) {
+        // #2104: the server tripped the no-adult review rule but the local
+        // predicate missed it (client/server drift). Reveal the justification
+        // field, show the message adjacent to it, and bring it into view.
+        if (data.code === "REVIEW_JUSTIFICATION_REQUIRED") {
+          setServerRequiresJustification(true);
+          setReviewJustificationError(
+            data.error ||
+              "Please add a reason so an admin can review this booking.",
+          );
+          scrollToError(reviewJustificationRef);
+          return;
+        }
         // Belt-and-braces (#1668): a stale quote can miss an over-capacity
         // target the apply then rejects. Re-surface the confirm flow.
         if (data.code === "OVER_CAPACITY_CONFIRM_REQUIRED") {
@@ -1888,6 +1964,40 @@ export function EditBookingPanel({
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* #2104: required justification when the edit leaves minors with no adult.
+          Rendered above the save footer; the inline error sits with the field
+          (not the bottom saveError slot) so a member cannot miss it. */}
+      {showReviewJustification && (
+        <div
+          ref={reviewJustificationRef}
+          className="space-y-2 rounded-md border border-warning/20 bg-warning-muted p-4"
+        >
+          <Label htmlFor="edit-review-justification" className="text-warning">
+            Reason for leaving no adult on the booking (required)
+          </Label>
+          <p className="text-sm text-warning">
+            This change would leave the minors on this booking with no adult. Please
+            explain why so an admin can review it. The booking is blocked from lodge
+            check-in until an admin approves it.
+          </p>
+          <Textarea
+            id="edit-review-justification"
+            value={memberReviewJustification}
+            onChange={(e) => {
+              setMemberReviewJustification(e.target.value);
+              if (reviewJustificationError) setReviewJustificationError("");
+            }}
+            rows={3}
+            maxLength={1000}
+            placeholder="Explain why an adult is not on the booking..."
+            aria-invalid={reviewJustificationError ? true : undefined}
+          />
+          {reviewJustificationError && (
+            <p className="text-sm text-red-700">{reviewJustificationError}</p>
+          )}
+        </div>
       )}
 
       {/* Action buttons */}

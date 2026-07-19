@@ -574,6 +574,12 @@ export default async function BookingDetailPage({
     nonMemberHoldUntil: booking.nonMemberHoldUntil?.toISOString() ?? null,
     canEditNonMemberGuestNames,
     canFixNonMemberGuestNameTypos,
+    // #2104: an already-flagged/reviewed booking must not re-prompt the member
+    // for a justification when the guest list shuffles — the edit panel keys the
+    // proactive field on these (the server only demands a reason on the FIRST
+    // trip; see resolveModifyReviewUpdate).
+    requiresAdminReview: booking.requiresAdminReview,
+    adminReviewStatus: booking.adminReviewStatus,
     editPolicy: {
       // This is the member (non-override) policy, so mode is never
       // "admin-override" here; the ternary only narrows the widened union.

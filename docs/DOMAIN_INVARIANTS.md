@@ -1389,6 +1389,18 @@ a paid booking a best-effort admin email fires (template `admin-minors-review`,
 gated by its own `adminBookingReviewRequired` notification preference #1422),
 since nothing changes the booking's visible status to signal the block.
 
+The member **edit** panel collects this justification proactively (#2104): it
+mirrors the `requiresAdultSupervisionReview` predicate client-side (the same
+inlined check the create wizard uses) and renders a required reason field as soon
+as an in-progress edit would leave the post-edit party minors-only — unless the
+viewer is acting as an admin (admins auto-approve) or the booking is already
+flagged/reviewed (the server only demands a reason on the FIRST trip). As a
+belt-and-braces fallback for any client/server drift, the modify route returns
+the machine-readable `REVIEW_JUSTIFICATION_REQUIRED` code, on which the panel
+reveals the same field and re-surfaces the request. The server
+(`resolveModifyReviewUpdate`) remains the sole enforcer; the client field only
+saves the member a round-trip.
+
 A quote hold spans the whole quote lifecycle (issue #1254). Sending a quote
 places the hold automatically: the held booking (AWAITING_REVIEW, a
 capacity-holding status) reserves the beds/guest-nights before the send is
