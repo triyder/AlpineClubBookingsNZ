@@ -1,0 +1,53 @@
+name: Wiki sync
+
+# One-way mirror of docs/user-guide/ to the GitHub wiki (issue #2083).
+# docs/user-guide/ on main is the single source of truth; direct wiki edits
+# are overwritten. See scripts/sync-user-guide-wiki.mjs for the transform.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/user-guide/**"
+      - "docs/images/public/**"
+      - "scripts/sync-user-guide-wiki.mjs"
+      - ".github/workflows/wiki-sync.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # This checkout is read-only; never persist the write-scoped token.
+          persist-credentials: false
+
+      - name: Clone wiki
+        run: |
+          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" .wiki
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Transform user guide into wiki pages
+        run: node scripts/sync-user-guide-wiki.mjs --out .wiki
+
+      - name: Commit and push if changed
+        run: |
+          cd .wiki
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Sync user guide from ${GITHUB_SHA}"
+          git push

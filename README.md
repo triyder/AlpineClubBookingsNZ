@@ -179,7 +179,7 @@ by audience. Key entry points:
 
 | Audience | Where to go |
 |---|---|
-| **Club members** | [User guides](docs/user-guide/README.md) — booking a stay, paying, waitlist, family, your account |
+| **Club members** | [User guides](docs/user-guide/README.md) — booking a stay, paying, waitlist, family, your account — also on the [project wiki](https://github.com/thatskiff33/AlpineClubBookingsNZ/wiki) |
 | **Adopting clubs** | [`docs/IMPLEMENTATION_GUIDE.md`](docs/IMPLEMENTATION_GUIDE.md) · [`CONFIGURATION.md`](CONFIGURATION.md) · [`DEPLOYMENT.md`](DEPLOYMENT.md) · [`docs/UPGRADING.md`](docs/UPGRADING.md) |
 | **Operators / committee** | [65 illustrated operator guides](docs/README.md) · feature hubs: [finance dashboard](docs/finance-dashboard/README.md), [multi-lodge](docs/multi-lodge/README.md), [lobby display](docs/lobby-display/README.md), [Xero](docs/xero/ARCHITECTURE.md), [config transfer](docs/config-transfer/README.md) · [`docs/CANCELLATIONS.md`](docs/CANCELLATIONS.md) · [`docs/AUTHORITATIVE_FEES.md`](docs/AUTHORITATIVE_FEES.md) |
 | **Developers** | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/DOMAIN_INVARIANTS.md`](docs/DOMAIN_INVARIANTS.md) · [`docs/STATE_MACHINES.md`](docs/STATE_MACHINES.md) · [`docs/UX_FLOW_MAP.md`](docs/UX_FLOW_MAP.md) · [`docs/E2E_PLAYWRIGHT.md`](docs/E2E_PLAYWRIGHT.md) · [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) |

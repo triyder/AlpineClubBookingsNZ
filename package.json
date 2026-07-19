@@ -51,6 +51,7 @@
     "docs:screenshots": "tsx e2e/tools/capture-screenshots.ts",
     "docs:readme-art": "tsx e2e/tools/compose-readme-art.ts",
     "docs:demo-gif": "tsx e2e/tools/capture-demo-gif.ts",
+    "docs:wiki-sync": "node scripts/sync-user-guide-wiki.mjs",
     "db:generate": "prisma generate",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:seed:demo": "npx tsx prisma/demo-seed.ts",

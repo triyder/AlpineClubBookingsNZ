@@ -3,3 +3,8 @@
 # so git must not flag (or try to auto-fix) whitespace in them — e.g. a
 # trailing blank line at EOF would otherwise trip `git diff --check` on merge.
 prisma/migrations/**/*.sql -whitespace
+
+# ESM scripts are imported by vitest tests as well as run via `node`. A CRLF
+# checkout (Windows autocrlf) of a shebang line breaks vite-node's import of
+# the module, so these always materialise with LF.
+scripts/*.mjs text eol=lf
