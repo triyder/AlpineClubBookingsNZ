@@ -13,8 +13,9 @@ up the display vocabulary. Find it at **Admin → Lobby Display** (`/admin/displ
 The whole area is gated by the **`lobbyDisplay`** module, which is **off by
 default**. The **Lobby Display** sidebar entry and every page below it appear only
 once the module is enabled (**Admin → Setup → Modules**); until then the routes
-return 404. This guide documents what ships on `main`: the hub, **Devices**,
-**Layouts**, **Templates**, **Reference**, and the template **preview**. The lobby
+return 404. This guide documents what ships on `main`: the hub and its five cards
+— **Devices**, **Visual builder**, **Layouts (Advanced)**, **Templates**, and
+**Reference** — plus the template **preview**. The lobby
 display complements the interactive [Lodge Kiosk](lodge.md): the kiosk is a tablet
 someone taps; the lobby display is a read-only screen the whole room reads at a
 glance. For the deeper design and operating detail, see the
@@ -34,10 +35,12 @@ glance. For the deeper design and operating detail, see the
 
 1. Enable **Lobby TV display** under **Admin → Setup → Modules** (it is off by
    default). The **Lobby Display** entry then appears in the sidebar.
-2. Open **Admin → Lobby Display**. The hub cards through to **Devices**,
-   **Layouts**, **Templates**, and **Reference**.
+2. Open **Admin → Lobby Display**. The hub cards through to **Devices**, the
+   **Visual builder**, **Layouts (Advanced)**, **Templates**, and **Reference**.
+   Most operators want the **Visual builder** — it composes a board without HTML
+   (see below); the Layouts/Templates cards are the advanced, hand-authored path.
 
-   ![Lobby Display hub showing the Devices, Layouts, Templates, and Reference cards](../images/admin/admin-display.png)
+   ![Lobby Display hub showing the Devices, Visual builder, Layouts (Advanced), Templates, and Reference cards](../images/admin/admin-display.png)
 
 ### 2. Pair a screen (Devices)
 
@@ -55,7 +58,20 @@ glance. For the deeper design and operating detail, see the
    committee notice, and `{{config:key}}` values) are edited on each lodge under
    **Admin → Lodges → [a lodge] → display**, not here.
 
-### 3. Author the structure (Layouts — advanced)
+### 3. Compose a board without HTML (Visual builder)
+
+1. Open the **Visual builder** card — the guided, no-HTML way to build a board and
+   the path most operators should use. You pick a board **shape**, drop the
+   **modules** you want (arrivals, room occupancy, chores, notices, and the rest)
+   into its zones, and watch a **live preview** update as you go. When you save, the
+   builder writes a valid **Layout** and **Template** for you, so you never touch
+   `{{area:key}}` placeholders or CSS by hand. Bind the result to a screen on the
+   **Devices** page exactly like any other template. For the full builder walk-through
+   and the deeper authoring model, see the
+   [Lobby Display feature hub](../lobby-display/README.md) — this guide keeps to the
+   hub-level orientation rather than duplicating it.
+
+### 4. Author the structure by hand (Layouts — advanced)
 
 1. Open the **Layouts** card. A **Layout** is the structural skeleton of a
    display: an HTML **body** with `{{area:key}}` placeholders, a **default CSS**
@@ -68,12 +84,15 @@ glance. For the deeper design and operating detail, see the
    cover the common boards. Editing layouts is the advanced surface; see the
    [feature hub](../lobby-display/README.md) for the authoring model.
 
-### 4. Fill a board (Templates)
+### 5. Fill a board by hand (Templates — advanced)
 
 1. Open the **Templates** card. A **Template** fills a Layout's areas with content
    or embedded modules, layers CSS overrides on the layout default, and carries the
    footer. The gallery lists the **built-in templates** that ship ready to use;
-   each has **Preview**, **Edit**, and **Delete**.
+   each has **Preview**, **Edit**, and **Delete**. This raw **Key / Layout / CSS**
+   authoring flow is the **advanced** path — most operators should compose a board
+   with the **Visual builder** (§3) instead, which produces the layout and template
+   for them; reach for Templates directly only when you need hand control.
 
    ![Display Templates page showing the built-in template gallery with Preview, Edit, and Delete actions, and the New template form](../images/admin/admin-display-templates.png)
 
@@ -89,7 +108,7 @@ glance. For the deeper design and operating detail, see the
 4. Bind the finished template to a screen on the **Devices** page — a template
    renders against whichever lodge its display is bound to.
 
-### 5. Look up the vocabulary (Reference)
+### 6. Look up the vocabulary (Reference)
 
 1. Open the **Reference** card — a read-only page (nothing here changes a setting)
    listing the embeddable **modules** (`{{module:…}}`) and their CSS hooks, the
@@ -99,7 +118,7 @@ glance. For the deeper design and operating detail, see the
 
    ![Display Reference page listing the embeddable modules, area conditions with live status, and the display and brand CSS tokens](../images/admin/admin-display-reference.png)
 
-### 6. Preview a template
+### 7. Preview a template
 
 1. From a template's **Preview** button, the template renders in a sandboxed frame,
    isolated from your admin session, against a chosen lodge. Opening the preview
@@ -113,8 +132,9 @@ glance. For the deeper design and operating detail, see the
 | Page / card | What it controls | Notes / constraints |
 | --- | --- | --- |
 | Devices | Pairs and revokes lobby screens per lodge, assigns a template, sets refresh interval | Read-only screens; individually revocable; pairing uses a six-character code |
-| Layouts | The structural skeleton: body HTML with `{{area:key}}`, default CSS, named areas | Advanced; built-in layouts cover the common boards |
-| Templates | Fills a layout's areas with content/modules, CSS overrides, and footer | Key fixed after creation; layout locked after creation; external URLs/`@import`/scripts stripped on save |
+| Visual builder | Composes a board with no HTML: pick a shape, drop modules into zones, live preview; saves a valid layout + template | The recommended authoring path for most operators; deeper walk-through in the [feature hub](../lobby-display/README.md) |
+| Layouts (Advanced) | The structural skeleton: body HTML with `{{area:key}}`, default CSS, named areas | Advanced hand-authoring; built-in layouts cover the common boards |
+| Templates | Fills a layout's areas with content/modules, CSS overrides, and footer | Advanced hand-authoring; Key fixed after creation; layout locked after creation; external URLs/`@import`/scripts stripped on save |
 | Reference | Read-only vocabulary: modules, area conditions (live status), CSS tokens | Changes nothing; for authoring reference only |
 | Preview | Renders a template in a sandboxed frame against a chosen lodge | Isolated from the admin session; opened from a template's Preview |
 | Per-lodge display values | Guest-name granularity, committee notice, `{{config:key}}` values | Edited on each lodge (**Admin → Lodges → [a lodge] → display**), not on this hub |
