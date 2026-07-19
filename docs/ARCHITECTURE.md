@@ -89,6 +89,14 @@ Important route groups:
 - `src/app/api` contains route handlers for auth, bookings, payments, admin,
   finance, lodge, webhooks, cron, and health checks.
 
+Every app-shell layout (`(public)`, `(authenticated)`, `(admin)`, `(finance)`)
+injects the admin-configured theme via `getWebsiteThemeRenderState()` inside an
+`app-theme-scope` wrapper, so never hardcode the brand accent (e.g. Tailwind
+`teal-*`) in components: reach it through semantic tokens (`--primary`,
+`bg-primary`, `text-primary-foreground`, `border-primary/30`, ...) so the saved
+site colours apply in light and dark, and use the `--hue-*` tokens for
+categorical status hues that must stay fixed across themes.
+
 ## Module Boundaries
 
 This application is intentionally still a single Next.js monolith. The

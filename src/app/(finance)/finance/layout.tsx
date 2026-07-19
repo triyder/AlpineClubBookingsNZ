@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { NavBar } from "@/components/nav-bar";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { getCachedClubIdentity } from "@/lib/public-layout-config";
+import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
+import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -22,9 +24,10 @@ export default async function FinanceLayout({
   const member = await requireFinanceViewer("/finance");
   const fullName = `${member.firstName} ${member.lastName}`.trim() || "Member";
   const isManager = hasFinanceManagerAccess(member);
-  const [effectiveModules, lodgeCapacity, clubIdentity] = await Promise.all([
+  const [effectiveModules, lodgeCapacity, theme, clubIdentity] = await Promise.all([
     loadEffectiveModuleFlags(),
     getDefaultLodgeCapacity(),
+    getWebsiteThemeRenderState(),
     getCachedClubIdentity(),
   ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
@@ -32,7 +35,13 @@ export default async function FinanceLayout({
 
   return (
     <AppProviders clubIdentity={liveClubIdentity} nonce={nonce}>
-      <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
+      <div
+        className={`${clubThemeFontVariableClassName} app-theme-scope min-h-screen flex flex-col bg-background text-foreground`}
+      >
+        <style
+          dangerouslySetInnerHTML={{ __html: theme.appCss }}
+          data-site-style="club-theme"
+        />
         <NavBar
           features={effectiveModules}
           user={{
