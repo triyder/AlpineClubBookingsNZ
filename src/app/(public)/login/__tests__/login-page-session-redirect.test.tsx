@@ -1,6 +1,11 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ADMIN_PERMISSION_AREAS,
+  type AdminPermissionLevel,
+  type AdminPermissionMatrix,
+} from "@/lib/admin-permissions";
 
 // The authenticated self-heal: /login must never render the sign-in form for
 // a live session (the silent login loop, #1669) — it redirects through the
@@ -58,6 +63,15 @@ function sessionUser(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function matrix(
+  overrides: Partial<AdminPermissionMatrix> = {}
+): AdminPermissionMatrix {
+  const base = Object.fromEntries(
+    ADMIN_PERMISSION_AREAS.map((area) => [area.key, "none"])
+  ) as Record<string, AdminPermissionLevel>;
+  return { ...base, ...overrides } as AdminPermissionMatrix;
+}
+
 async function runLoginPage(
   params: Record<string, string | string[] | undefined> = {}
 ) {
@@ -82,6 +96,44 @@ describe("LoginPage authenticated self-heal", () => {
 
   it("falls back to /dashboard when no callbackUrl is present", async () => {
     mockAuth.mockResolvedValue(sessionUser());
+
+    await expect(runLoginPage()).rejects.toThrow("redirect:/dashboard");
+  });
+
+  it("self-heals an admin with no preference to their first accessible admin page", async () => {
+    // Admin access but the overview area is denied, so the resolver must land on
+    // the next accessible admin page (never a literal /admin/dashboard), proving
+    // the self-heal honours getFirstAccessibleAdminHref rather than a constant.
+    mockAuth.mockResolvedValue(
+      sessionUser({
+        postLoginLanding: null,
+        adminPermissionMatrix: matrix({ bookings: "edit" }),
+      })
+    );
+
+    await expect(runLoginPage()).rejects.toThrow("redirect:/admin/bookings");
+  });
+
+  it("lets an explicit callbackUrl win over an admin's role default", async () => {
+    mockAuth.mockResolvedValue(
+      sessionUser({
+        postLoginLanding: null,
+        adminPermissionMatrix: matrix({ overview: "edit" }),
+      })
+    );
+
+    await expect(
+      runLoginPage({ callbackUrl: "/bookings" })
+    ).rejects.toThrow("redirect:/bookings");
+  });
+
+  it("honours a MEMBER_DASHBOARD preference for an admin self-heal", async () => {
+    mockAuth.mockResolvedValue(
+      sessionUser({
+        postLoginLanding: "MEMBER_DASHBOARD",
+        adminPermissionMatrix: matrix({ overview: "edit" }),
+      })
+    );
 
     await expect(runLoginPage()).rejects.toThrow("redirect:/dashboard");
   });
@@ -132,6 +184,40 @@ describe("LoginPage authenticated self-heal", () => {
     await expect(
       runLoginPage({ callbackUrl: "/bookings" })
     ).rejects.toThrow("redirect:/login/enroll?callbackUrl=%2Fbookings");
+  });
+
+  it("sends an admin with no deep link into the detour WITHOUT baking a landing", async () => {
+    // Determinism (#2090): the self-heal must not materialise the resolved
+    // admin landing into the detour callbackUrl. With no explicit deep link the
+    // detour carries no callbackUrl at all; /login/enroll re-resolves the same
+    // default, so every entry into the detour lands identically.
+    mockAuth.mockResolvedValue(
+      sessionUser({
+        twoFactorRequired: true,
+        twoFactorEnrolled: false,
+        postLoginLanding: null,
+        adminPermissionMatrix: matrix({ finance: "view" }),
+      })
+    );
+
+    // Anchored so a baked-in "?callbackUrl=…" cannot slip past a substring match.
+    await expect(runLoginPage()).rejects.toThrow(/redirect:\/login\/enroll$/);
+  });
+
+  it("still carries a genuine deep link into the detour callbackUrl", async () => {
+    mockAuth.mockResolvedValue(
+      sessionUser({
+        twoFactorRequired: true,
+        twoFactorEnrolled: true,
+        twoFactorMethod: "totp",
+        postLoginLanding: null,
+        adminPermissionMatrix: matrix({ finance: "view" }),
+      })
+    );
+
+    await expect(
+      runLoginPage({ callbackUrl: "/nominations/tok" })
+    ).rejects.toThrow("redirect:/login/verify?callbackUrl=%2Fnominations%2Ftok");
   });
 
   it("redirects a verified two-factor session to the callbackUrl", async () => {

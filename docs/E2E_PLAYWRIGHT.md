@@ -155,9 +155,16 @@ providers, and `scripts/e2e-stack.sh` refuses to run if it sees `sk_live`/
   start of each run; the email-code persona needs no stored secret because its
   code is read live from mailpit each time.
 - Stay dates are computed relative to today (Monday–Wednesday windows at least
-  three weeks out). The base seed's seasons cover Jun–Sep 2026 and Nov
-  2026–Mar 2027; a run whose windows fall in a season gap fails loudly at the
-  season assertion — extend the seeded seasons if that happens.
+  three weeks out). Since #2117 the E2E DB's booking **seasons are also
+  relative**: `e2e/setup/relativize-seasons.ts` (run by `scripts/e2e-stack.sh`
+  after the base seed) re-dates them to the broad Winter/Summer bands defined in
+  `SEEDED_SEASONS` (`prisma/e2e-fixtures.ts`), which always bracket the seeded
+  fixtures and the stay-window horizon. Likewise **every seeded booking date is
+  relative** (`DEMO_BOOKING_WINDOWS` / the window fixtures in
+  `prisma/e2e-fixtures.ts`), so nothing rots red as wall-clock advances and the
+  seasons never need manual extension. The production first-run seed
+  (`prisma/seed.ts`) keeps its fixed real-world season dates — only the demo/E2E
+  database is relativized.
 
 ## Seeded fixtures and personas
 

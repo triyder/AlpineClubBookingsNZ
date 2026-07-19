@@ -14,14 +14,45 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-// Post-login destination for a magic-link sign-in. The email carries no
-// callbackUrl, so we always land on the default authenticated home; the 2FA
-// funnel below still diverts to /login/verify or /login/enroll when required.
+// Fallback post-login destination for a magic-link sign-in. A magic link never
+// carries a callbackUrl, so there is never an explicit deep link; the landing
+// is resolved post-auth from the member's preference / admin role default
+// (#2090), falling back to this default only if resolution fails.
 const POST_LOGIN_PATH = "/dashboard";
+
+// Post-auth landing (#2090). A magic-link sign-in has no explicit callbackUrl,
+// so the resolver returns the member's preference / admin role default. Any
+// failure falls back to the default authenticated home.
+async function resolvePostAuthLanding(): Promise<string> {
+  // A hung resolver must never strand the user on the "Signing you in…" spinner:
+  // abort after a short timeout and fall back to the default authenticated home
+  // (the same fallback the catch below uses for any network failure).
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch("/api/auth/post-login-landing", {
+      credentials: "same-origin",
+      signal: controller.signal,
+    });
+    if (!response.ok) return POST_LOGIN_PATH;
+    const body = (await response.json()) as { path?: string };
+    return typeof body.path === "string" && body.path
+      ? body.path
+      : POST_LOGIN_PATH;
+  } catch {
+    return POST_LOGIN_PATH;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // Mirror the password login's post-login navigation so a 2FA-enabled member is
 // still challenged after a magic-link sign-in. Returns the 2FA / change-password
-// path, or null to fall through to the default authenticated home.
+// detour path, or null when no challenge is open (navigate to the resolved
+// landing instead). Determinism (#2090): a magic link never carries an explicit
+// deep link, so the detour carries NO callbackUrl — the default landing is
+// re-resolved server-side at /login/enroll and /login/verify from the
+// fully-authed session, never a raced post-signIn resolver fetch.
 async function resolveTwoFactorPath(): Promise<string | null> {
   const response = await fetch("/api/auth/2fa/status", {
     credentials: "same-origin",
@@ -42,10 +73,7 @@ async function resolveTwoFactorPath(): Promise<string | null> {
     return null;
   }
 
-  const params = new URLSearchParams({ callbackUrl: POST_LOGIN_PATH });
-  return twoFactorStatus.enrolled
-    ? `/login/verify?${params.toString()}`
-    : `/login/enroll?${params.toString()}`;
+  return twoFactorStatus.enrolled ? "/login/verify" : "/login/enroll";
 }
 
 type Status = "verifying" | "error" | "password-change";
@@ -95,11 +123,16 @@ function MagicSignIn() {
           return;
         }
 
-        // Signed in. Mirror the password login's post-login navigation so a
-        // 2FA-enabled member is still challenged. Full document navigation
-        // (never router.push) sends the fresh session cookie and avoids the
-        // logged-out RSC cache bounce (#1669).
-        window.location.assign((await resolveTwoFactorPath()) ?? POST_LOGIN_PATH);
+        // Signed in. Check the 2FA gate FIRST (#2090): when a challenge is open
+        // the detour (/login/enroll or /login/verify) re-resolves the default
+        // landing server-side, so we skip the client landing resolver on that
+        // path. Only a directly-authenticated member (no challenge) resolves the
+        // landing here. Full document navigation (never router.push) sends the
+        // fresh session cookie and avoids the logged-out RSC cache bounce (#1669).
+        const twoFactorPath = await resolveTwoFactorPath();
+        window.location.assign(
+          twoFactorPath ?? (await resolvePostAuthLanding()),
+        );
       } catch {
         setStatus("error");
       }

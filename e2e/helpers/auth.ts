@@ -189,9 +189,10 @@ export async function loginPersona(
   }
 }
 
-// Full sign-in for a persona: password, then whichever two-factor step the
-// server demands. Enrollment secrets are persisted under e2e/.auth so later
-// logins in the same run (and re-runs without a database reset) can verify.
+// Full sign-in for the booking persona (Alice): password, then whichever
+// two-factor step the server demands. Enrollment secrets are persisted under
+// e2e/.auth so later logins in the same run (and re-runs without a database
+// reset) can verify. Used only by auth.setup.ts for personas.booker.
 export async function signIn(page: Page, persona: Persona): Promise<void> {
   await submitLoginForm(page, persona.email);
 
@@ -209,5 +210,14 @@ export async function signIn(page: Page, persona: Persona): Promise<void> {
     await verifyTotp(page, stored.secret);
   }
 
-  await expect(page).toHaveURL(/\/dashboard/);
+  // Alice (personas.booker) is seeded financeAccessLevel: "MANAGER"
+  // (prisma/demo-seed.ts), which maps to the FINANCE_ADMIN access role whose
+  // definition grants overview: view (admin-permissions.ts) — so her first
+  // accessible admin page is /admin/dashboard. Post-login now defaults an
+  // admin-access member to that page (#2090 D-D3). (A finance VIEWER like Bob
+  // maps to FINANCE_USER — finance only — and lands on /admin/payments; see
+  // two-factor-login.spec.ts.) This helper's only caller (auth.setup.ts) just
+  // needs a completed sign-in, so asserting her deterministic landing keeps it
+  // a real gate.
+  await expect(page).toHaveURL(/\/admin\/dashboard/);
 }

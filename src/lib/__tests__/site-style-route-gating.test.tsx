@@ -23,6 +23,8 @@ vi.mock("next/headers", () => ({
 
 vi.mock("next/navigation", () => ({
   redirect: mocks.redirect,
+  // The admin layout now mounts the command palette, which calls useRouter.
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
 }));
 
 vi.mock("@/lib/club-theme", () => ({
@@ -89,6 +91,8 @@ vi.mock("@/components/website-footer", () => ({
 
 vi.mock("@/components/admin-sidebar", () => ({
   AdminSidebar: () => <aside>Admin sidebar</aside>,
+  ADMIN_NAV_SECTION_ORDER: [],
+  getAdminFeatureSearchIndex: () => [],
 }));
 
 vi.mock("@/components/contextual-help-button", () => ({

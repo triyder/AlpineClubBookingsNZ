@@ -56,7 +56,11 @@ vi.mock("@/lib/public-layout-config", async () => {
 vi.mock("@/components/app-providers", () => ({
   AppProviders: ({ children }: { children: ReactNode }) => children,
 }));
-vi.mock("@/components/admin-sidebar", () => ({ AdminSidebar: () => null }));
+vi.mock("@/components/admin-sidebar", () => ({
+  AdminSidebar: () => null,
+  ADMIN_NAV_SECTION_ORDER: [],
+  getAdminFeatureSearchIndex: () => [],
+}));
 vi.mock("@/components/contextual-help-button", () => ({
   ContextualHelpButton: () => null,
 }));

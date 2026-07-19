@@ -181,7 +181,7 @@ describe("Admin membership types API", () => {
         xeroContactGroupRules: [
           {
             id: "rule-managed-adult",
-            ageTier: "ADULT",
+            ageTiers: ["ADULT"],
             mode: "MANAGED",
             groupId: "group-adult-social",
             groupName: "Adult Social",

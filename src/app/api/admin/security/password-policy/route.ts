@@ -21,7 +21,8 @@ import { requireAdmin } from "@/lib/session-guards";
 // the admin-route-area-matrix pin): support:view to read, support:edit to write.
 // Every write is audited under the `security` category. This endpoint governs the
 // password rules ONLY; magicLinkTtlMinutes is owned by the sibling magic-link
-// issue (#2034) and is deliberately not writable here.
+// route (PUT /api/admin/security/magic-link, wired in #2103) and is deliberately
+// not writable here — the strict schema below rejects it.
 
 const AREA = "support" as const;
 

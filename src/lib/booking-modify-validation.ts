@@ -362,6 +362,12 @@ export function resolveTargetDates({
  * caller did not supply `memberReviewJustification`.
  */
 export class BookingModifyReviewJustificationRequiredError extends ApiError {
+  // Machine-readable code (#2104) so the modify route can echo it and the member
+  // edit panel can reveal the justification field even when the client-side
+  // predicate missed the trip (client/server drift). Mirrors the pattern used by
+  // OverCapacityConfirmationRequiredError.
+  readonly code = "REVIEW_JUSTIFICATION_REQUIRED";
+
   constructor() {
     super(
       "Removing the last adult requires a written reason so an admin can review. Please add a justification and try again.",

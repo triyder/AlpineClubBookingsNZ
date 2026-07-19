@@ -31,12 +31,27 @@ beforeEach(() => {
 });
 
 describe("LoginForm — Google button", () => {
-  it("shows the button and starts the OAuth flow when enabled", () => {
+  it("starts the OAuth flow returning to /login for server-side landing resolution (#2090)", () => {
+    // With no explicit deep link, Google returns to /login, whose authenticated
+    // self-heal resolves the member's landing preference / admin role default.
     renderForm({ googleLoginEnabled: true });
     const button = screen.getByRole("button", { name: /continue with google/i });
     fireEvent.click(button);
     expect(mockSignIn).toHaveBeenCalledWith("google", {
-      callbackUrl: "/dashboard",
+      callbackUrl: "/login",
+    });
+  });
+
+  it("returns straight to a genuinely explicit deep link when one is present (#2090)", () => {
+    renderForm({
+      googleLoginEnabled: true,
+      explicitCallbackUrl: "/nominations/tok-1",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /continue with google/i }),
+    );
+    expect(mockSignIn).toHaveBeenCalledWith("google", {
+      callbackUrl: "/nominations/tok-1",
     });
   });
 

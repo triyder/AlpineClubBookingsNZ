@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Loader2, Save } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +14,12 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import type { ModuleSettingsValues } from "@/config/modules";
 import {
   DEFAULT_MAGIC_LINK_TTL_MINUTES,
@@ -22,83 +29,149 @@ import {
 } from "@/lib/magic-link";
 
 /**
- * Self-contained Login & Security card for email magic-link sign-in (#2034).
+ * Self-contained Login & Security card for email magic-link sign-in (#2034,
+ * gated in #2103).
  *
  * Mounted on the Login & Security page (`/admin/security`, #2033), which loads
  * the club module settings and the configured expiry and passes them in.
  *
- * The enable/disable TOGGLE is fully wired: it persists the `magicLink` module
- * column through the existing `PUT /api/admin/modules` route (module toggles
- * have no dedicated per-key route — the whole settings object is written), so no
- * new route is introduced here.
- *
- * The link-expiry field shows the club's configured value
- * (`LoginSecuritySetting.magicLinkTtlMinutes`, #2033), which the sign-in request
- * route reads. Persisting a new value from this page requires an
- * `onSaveTtlMinutes` handler; without one the field is display-only (a settable
- * on-page control is a planned follow-up).
+ * The card follows the canonical settings-section pattern: it loads read-only,
+ * gates on `support` edit access (`useAdminAreaEditAccess`), and stages ALL
+ * changes behind an explicit Edit → Save/Cancel step — nothing auto-persists on
+ * toggle. Save writes at most two endpoints, once each:
+ *   - the enable toggle persists the `magicLink` module column. Because
+ *     `PUT /api/admin/modules` takes the whole strict settings object, the
+ *     handler first GETs the FRESH settings and merges only `magicLink` over
+ *     them, so a module another card changed since page load is never clobbered.
+ *   - the link expiry persists `magicLinkTtlMinutes` via
+ *     `PUT /api/admin/security/magic-link` (or the optional `onSaveTtlMinutes`
+ *     override seam, retained for testability). The sign-in request route reads
+ *     that value back, re-clamped, at issuance.
  */
 export interface MagicLinkSecurityCardProps {
   moduleSettings: ModuleSettingsValues;
   initialTtlMinutes?: number;
+  /**
+   * Optional override for the TTL write. When omitted (the production path — a
+   * server component cannot pass a function prop), the card PUTs the new
+   * `/api/admin/security/magic-link` route itself.
+   */
   onSaveTtlMinutes?: (minutes: number) => Promise<void>;
 }
+
+class ForbiddenSaveError extends Error {}
+
+const TOGGLE_FAIL_MESSAGE = "Could not update the email sign-in link setting.";
+const TTL_FAIL_MESSAGE = "Could not update the link expiry.";
 
 export function MagicLinkSecurityCard({
   moduleSettings,
   initialTtlMinutes = DEFAULT_MAGIC_LINK_TTL_MINUTES,
   onSaveTtlMinutes,
 }: MagicLinkSecurityCardProps) {
-  const [enabled, setEnabled] = useState(moduleSettings.magicLink);
-  const [ttlMinutes, setTtlMinutes] = useState(
-    clampMagicLinkTtlMinutes(initialTtlMinutes),
-  );
+  const canEdit = useAdminAreaEditAccess("support");
+  const initialClampedTtl = clampMagicLinkTtlMinutes(initialTtlMinutes);
+
+  const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [savedNote, setSavedNote] = useState("");
 
-  async function persistEnabled(next: boolean) {
-    setSaving(true);
+  // Draft (live inputs) vs saved snapshot (last persisted value).
+  const [enabled, setEnabled] = useState(moduleSettings.magicLink);
+  const [ttlMinutes, setTtlMinutes] = useState(initialClampedTtl);
+  const [savedEnabled, setSavedEnabled] = useState(moduleSettings.magicLink);
+  const [savedTtl, setSavedTtl] = useState(initialClampedTtl);
+
+  const ttlValid =
+    Number.isInteger(ttlMinutes) &&
+    ttlMinutes >= MAGIC_LINK_TTL_MIN_MINUTES &&
+    ttlMinutes <= MAGIC_LINK_TTL_MAX_MINUTES;
+
+  const dirty = enabled !== savedEnabled || ttlMinutes !== savedTtl;
+
+  function startEditing() {
     setError("");
     setSavedNote("");
-    const previous = enabled;
-    setEnabled(next);
-    try {
-      const res = await fetch("/api/admin/modules", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          settings: { ...moduleSettings, magicLink: next },
-        }),
-      });
-      if (!res.ok) {
-        setEnabled(previous);
-        setError("Could not update the email sign-in link setting.");
-        return;
-      }
-      setSavedNote(
-        next ? "Email sign-in link enabled." : "Email sign-in link disabled.",
-      );
-    } catch {
-      setEnabled(previous);
-      setError("Could not update the email sign-in link setting.");
-    } finally {
-      setSaving(false);
-    }
+    setEditing(true);
   }
 
-  async function persistTtl() {
-    const clamped = clampMagicLinkTtlMinutes(ttlMinutes);
-    setTtlMinutes(clamped);
-    if (!onSaveTtlMinutes) return;
+  function cancelEditing() {
+    setEnabled(savedEnabled);
+    setTtlMinutes(savedTtl);
+    setError("");
+    setSavedNote("");
+    setEditing(false);
+  }
+
+  async function putJson(url: string, body: unknown, failMessage: string) {
+    const res = await fetch(url, {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      if (res.status === 403) throw new ForbiddenSaveError();
+      throw new Error(failMessage);
+    }
+    return res;
+  }
+
+  async function handleSave() {
+    if (!dirty || !ttlValid) return;
     setSaving(true);
     setError("");
     setSavedNote("");
     try {
-      await onSaveTtlMinutes(clamped);
-      setSavedNote(`Link expiry set to ${clamped} minutes.`);
-    } catch {
-      setError("Could not update the link expiry.");
+      // Persist the module toggle if it changed: GET the FRESH settings and
+      // merge only `magicLink`, so a module another card changed since page
+      // load is never reverted by writing back a stale snapshot.
+      if (enabled !== savedEnabled) {
+        const freshRes = await fetch("/api/admin/modules", {
+          credentials: "same-origin",
+        });
+        if (!freshRes.ok) {
+          if (freshRes.status === 403) throw new ForbiddenSaveError();
+          throw new Error(TOGGLE_FAIL_MESSAGE);
+        }
+        const fresh = (await freshRes.json()) as {
+          settings: ModuleSettingsValues;
+        };
+        await putJson(
+          "/api/admin/modules",
+          { settings: { ...fresh.settings, magicLink: enabled } },
+          TOGGLE_FAIL_MESSAGE,
+        );
+      }
+
+      // Persist the TTL if it changed.
+      const clampedTtl = clampMagicLinkTtlMinutes(ttlMinutes);
+      if (clampedTtl !== savedTtl) {
+        if (onSaveTtlMinutes) {
+          await onSaveTtlMinutes(clampedTtl);
+        } else {
+          await putJson(
+            "/api/admin/security/magic-link",
+            { magicLinkTtlMinutes: clampedTtl },
+            TTL_FAIL_MESSAGE,
+          );
+        }
+      }
+
+      setSavedEnabled(enabled);
+      setSavedTtl(clampedTtl);
+      setTtlMinutes(clampedTtl);
+      setEditing(false);
+      setSavedNote("Email sign-in settings saved.");
+    } catch (saveError) {
+      if (saveError instanceof ForbiddenSaveError) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+      } else {
+        setError(
+          saveError instanceof Error ? saveError.message : TOGGLE_FAIL_MESSAGE,
+        );
+      }
     } finally {
       setSaving(false);
     }
@@ -106,24 +179,47 @@ export function MagicLinkSecurityCard({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Email sign-in link</CardTitle>
-        <CardDescription>
-          Let members request a single-use email link to sign in without typing
-          their password. This is additive to password login — it never replaces
-          it — and only ever works for existing active members with a verified
-          email.
-        </CardDescription>
+      <CardHeader className="flex flex-row items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <CardTitle>Email sign-in link</CardTitle>
+          <CardDescription>
+            Let members request a single-use email link to sign in without typing
+            their password. This is additive to password login — it never replaces
+            it — and only ever works for existing active members with a verified
+            email.
+          </CardDescription>
+        </div>
+        {!editing && (
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            variant="outline"
+            size="sm"
+            onClick={startEditing}
+          >
+            Edit
+          </ViewOnlyActionButton>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
+        <AdminViewOnlyNotice canEdit={canEdit}>
+          Your admin role can view login &amp; security settings but cannot change
+          them. Support edit access is required.
+        </AdminViewOnlyNotice>
+
         {error && <Alert variant="error">{error}</Alert>}
         {savedNote && <Alert variant="success">{savedNote}</Alert>}
+
+        {editing && dirty && (
+          <p className="text-sm text-amber-700" role="status">
+            You have unsaved changes.
+          </p>
+        )}
 
         <label className="flex items-start gap-3">
           <Checkbox
             checked={enabled}
-            disabled={saving}
-            onCheckedChange={persistEnabled}
+            disabled={!editing || saving}
+            onCheckedChange={(checked) => setEnabled(checked === true)}
             aria-label="Enable email sign-in link"
           />
           <span className="text-sm">
@@ -137,35 +233,55 @@ export function MagicLinkSecurityCard({
 
         <div className="space-y-2">
           <Label htmlFor="magic-link-ttl">Link expiry (minutes)</Label>
-          <div className="flex items-center gap-2">
-            <Input
-              id="magic-link-ttl"
-              type="number"
-              min={MAGIC_LINK_TTL_MIN_MINUTES}
-              max={MAGIC_LINK_TTL_MAX_MINUTES}
-              value={ttlMinutes}
-              disabled={saving}
-              onChange={(e) => setTtlMinutes(Number(e.target.value))}
-              className="w-28"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={saving || !onSaveTtlMinutes}
-              onClick={persistTtl}
-            >
-              Save expiry
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
+          <Input
+            id="magic-link-ttl"
+            type="number"
+            min={MAGIC_LINK_TTL_MIN_MINUTES}
+            max={MAGIC_LINK_TTL_MAX_MINUTES}
+            value={ttlMinutes}
+            disabled={!editing || saving}
+            onChange={(e) => setTtlMinutes(Number(e.target.value))}
+            className="w-28"
+            aria-describedby="magic-link-ttl-hint"
+          />
+          <p id="magic-link-ttl-hint" className="text-xs text-muted-foreground">
             Sign-in links expire between {MAGIC_LINK_TTL_MIN_MINUTES} and{" "}
             {MAGIC_LINK_TTL_MAX_MINUTES} minutes after they are sent (default{" "}
             {DEFAULT_MAGIC_LINK_TTL_MINUTES}).
-            {!onSaveTtlMinutes &&
-              " Changing the expiry from this page is a planned follow-up."}
           </p>
+          {editing && !ttlValid && (
+            <p className="text-xs text-destructive">
+              Enter a whole number between {MAGIC_LINK_TTL_MIN_MINUTES} and{" "}
+              {MAGIC_LINK_TTL_MAX_MINUTES}.
+            </p>
+          )}
         </div>
+
+        {editing && (
+          <div className="flex flex-wrap gap-2 pt-2">
+            <ViewOnlyActionButton
+              canEdit={canEdit}
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={!dirty || saving || !ttlValid}
+            >
+              {saving ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="mr-2 h-4 w-4" />
+              )}
+              Save
+            </ViewOnlyActionButton>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={cancelEditing}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

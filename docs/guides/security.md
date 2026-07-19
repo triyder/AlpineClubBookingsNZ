@@ -31,12 +31,20 @@ configure the `magicLink` and `googleLogin` modules you enable on
 
    ![Login & Security page with the password policy card, the email sign-in link card, and the Google sign-in card](../images/admin/admin-security.png)
 
-2. In **Password policy**, set the strength requirements that apply to every
-   member and admin password.
-3. In **Email sign-in link**, confirm the `magicLink` module is on and set the
-   link's expiry (default 15 minutes). In **Google sign-in**, confirm the
-   `googleLogin` module is on and that the server-side Google credentials are
-   configured — the sign-in button only appears once both are true.
+   Each of the three cards opens read-only. To change anything, use the card's
+   **Edit** button, make your changes, then **Save** (or **Cancel** to discard
+   them) — nothing is applied until you save. If your admin role can view but not
+   change these settings, the Edit button is disabled and a short "view only"
+   note appears.
+
+2. In **Password policy**, click **Edit**, set the strength requirements that
+   apply to every member and admin password, then **Save**.
+3. In **Email sign-in link**, click **Edit**, confirm the enable toggle is on,
+   set the link's expiry (a whole number of minutes between 5 and 60; default
+   15), then **Save**. In **Google sign-in**, click **Edit**, confirm the enable
+   toggle is on, then **Save**; the sign-in button only appears once the
+   `googleLogin` module is on **and** the server-side Google credentials are
+   configured.
 
 ## Settings reference
 

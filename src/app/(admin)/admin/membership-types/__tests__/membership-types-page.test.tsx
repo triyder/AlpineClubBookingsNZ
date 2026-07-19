@@ -58,7 +58,7 @@ const membershipTypes = [
     xeroContactGroupRules: [
       {
         id: "rule-associate",
-        ageTier: "ADULT",
+        ageTiers: ["ADULT"],
         mode: "ACCEPTED",
         groupId: "group-associate",
         groupName: "Associate members",

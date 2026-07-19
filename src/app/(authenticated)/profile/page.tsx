@@ -11,6 +11,7 @@ import {
 import { ProfileSectionCard } from "./profile-section-card";
 import { ChangeEmailForm } from "./change-email-form";
 import { NotificationPreferences } from "./notification-preferences";
+import { PostLoginLandingPreference } from "./post-login-landing-preference";
 import { FamilyGroupSection } from "./family-group-section";
 import { PartnerLinkSection } from "./partner-link-section";
 import { AccountCreditSection } from "./account-credit-section";
@@ -42,6 +43,8 @@ import {
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { requiresPaidSubscriptionForMemberForBooking } from "@/lib/membership-type-policy";
 import { hasAdminAccess } from "@/lib/access-roles";
+import { getFirstAccessibleAdminHref } from "@/lib/admin-permissions";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
 function singleSearchParam(value?: string | string[]) {
@@ -157,7 +160,12 @@ export default async function ProfilePage({
       postalPostalCode: true,
       postalCountry: true,
       role: true,
-      accessRoles: { select: { role: true } },
+      financeAccessLevel: true,
+      // Joined definitions so getFirstAccessibleAdminHref resolves the merged
+      // matrix (custom / club-edited roles included) for the landing-preference
+      // control's visibility (#2090).
+      accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
+      postLoginLanding: true,
       ageTier: true,
       occupation: true,
       lodgeScreenPhoneOptIn: true,
@@ -196,6 +204,12 @@ export default async function ProfilePage({
 
   if (!member) redirect("/login");
   const isAdmin = hasAdminAccess(member);
+  // The landing-preference control (#2090) is offered to any member whose role
+  // resolves to an admin page (Full Admin, scoped admins, finance viewers) —
+  // i.e. those affected by the new admin default, who may want to opt back to
+  // the member dashboard. Members with no accessible admin page have no
+  // meaningful choice, so the control is hidden.
+  const canChooseLanding = getFirstAccessibleAdminHref(member) !== null;
 
   const currentSub = member.subscriptions.find(
     (s) => s.seasonYear === currentSeasonYear,
@@ -336,6 +350,7 @@ export default async function ProfilePage({
                 {subscriptionStatusLabel(subscriptionStatus ?? "NOT_INVOICED")}
               </Badge>
             </div>
+            {canChooseLanding ? <PostLoginLandingPreference /> : null}
           </CardContent>
         </Card>
 

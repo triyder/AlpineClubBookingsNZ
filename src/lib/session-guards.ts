@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
+import type { PostLoginLanding } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import {
   dedupeAccessRoles,
@@ -34,6 +35,7 @@ type SessionUser = {
   twoFactorVerified?: boolean;
   twoFactorEnrolled?: boolean;
   twoFactorMethod?: "TOTP" | "EMAIL" | null;
+  postLoginLanding?: PostLoginLanding | null;
 };
 
 type RequireAdminResult =

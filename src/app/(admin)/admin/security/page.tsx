@@ -8,8 +8,17 @@ import { loadClubModuleSettings } from "@/lib/module-settings";
 
 // Login & Security admin page (epic #2030, child #2033). Scaffolds the page and
 // hosts the password-policy card, the magic-link sign-in card (#2034), and the
-// Google sign-in card (#2035).
+// Google sign-in card (#2035). Every card loads read-only and stages its own
+// edits behind a per-section Edit → Save/Cancel step (#2103).
 // Route access is governed by the `support` admin area (see admin-permissions.ts).
+//
+// The magic-link card writes its own edits: the enable toggle through
+// PUT /api/admin/modules (GET-fresh-then-merge to avoid clobbering sibling
+// modules) and the link expiry through PUT /api/admin/security/magic-link. This
+// server component passes only serialisable props — the configured TTL is passed
+// as `initialTtlMinutes` so the card round-trips the persisted value — and does
+// not inject an `onSaveTtlMinutes` handler (a React Server Component cannot pass
+// a function prop; the card's built-in route call is the production write path).
 
 export const metadata: Metadata = {
   title: "Login & Security",

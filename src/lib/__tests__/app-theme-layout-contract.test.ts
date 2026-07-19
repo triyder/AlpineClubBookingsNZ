@@ -23,6 +23,8 @@ describe("database theme app-shell contract", () => {
     ["src/app/(public)/layout.tsx", "getCachedWebsiteThemeRenderState()"],
     ["src/app/(authenticated)/layout.tsx", "getWebsiteThemeRenderState()"],
     ["src/app/(admin)/layout.tsx", "getWebsiteThemeRenderState()"],
+    ["src/app/(finance)/finance/layout.tsx", "getWebsiteThemeRenderState()"],
+    ["src/app/(lodge)/layout.tsx", "getWebsiteThemeRenderState()"],
   ])(
     "injects the sanitized ClubTheme CSS in %s",
     (path, themeLoader) => {
@@ -41,6 +43,17 @@ describe("database theme app-shell contract", () => {
 
     expect(layout).toContain("clubThemeFontVariableClassName");
     expect(layout).not.toContain('from "next/font/google"');
+  });
+
+  it.each([
+    "src/app/(authenticated)/layout.tsx",
+    "src/app/(admin)/layout.tsx",
+    "src/app/(finance)/finance/layout.tsx",
+    "src/app/(lodge)/layout.tsx",
+  ])("applies the configured font-variable class to the app shell in %s", (path) => {
+    const layout = readRepoFile(path);
+
+    expect(layout).toContain("clubThemeFontVariableClassName");
   });
 
   it("passes the configured public logo to public utility shell chrome", () => {

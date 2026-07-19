@@ -11,6 +11,9 @@
     "e2e/auth.setup.ts",
     // Invoked from scripts/e2e-stack.sh (shell), never imported.
     "e2e/setup/enable-e2e-modules.ts",
+    // Invoked from scripts/e2e-stack.sh (shell) to relativize booking seasons on
+    // the E2E DB so seeded fixtures never expire (#2117), never imported.
+    "e2e/setup/relativize-seasons.ts",
     // Invoked from scripts/e2e-stack.sh (shell) only when E2E_MULTI_LODGE=1
     // (advisory multi-lodge project, #1568), never imported.
     "e2e/setup/seed-second-lodge.ts",

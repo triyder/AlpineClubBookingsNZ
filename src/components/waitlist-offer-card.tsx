@@ -91,19 +91,19 @@ export function WaitlistOfferCard({
   const isExpired = timeLeft === "Expired";
 
   return (
-    <Card className="border-teal-200 bg-teal-50">
+    <Card className="border-primary/30 bg-card">
       <CardHeader>
-        <CardTitle className="text-teal-900">A Spot Has Opened Up!</CardTitle>
+        <CardTitle className="text-foreground">A Spot Has Opened Up!</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {isCrossLodge ? (
           <>
-            <p className="text-sm text-teal-800">
+            <p className="text-sm text-muted-foreground">
               A spot has become available at{" "}
               <strong>{offeredLodgeName ?? "another of our lodges"}</strong>, one
               of the alternate lodges you said you&apos;d accept.
             </p>
-            <p className="text-sm text-teal-800">
+            <p className="text-sm text-muted-foreground">
               The price at this lodge for your stay is{" "}
               <strong>{displayPriceCents !== null && displayPriceCents !== undefined ? formatOfferCents(displayPriceCents) : ""}</strong>
               , which differs from your original booking. Nothing is booked
@@ -112,12 +112,12 @@ export function WaitlistOfferCard({
             </p>
           </>
         ) : (
-          <p className="text-sm text-teal-800">
+          <p className="text-sm text-muted-foreground">
             A spot has become available for your waitlisted booking. Confirm now to secure your place.
           </p>
         )}
 
-        <div className="flex items-center gap-2 text-sm font-medium text-teal-700">
+        <div className="flex items-center gap-2 text-sm font-medium text-primary">
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
           </svg>
@@ -129,7 +129,7 @@ export function WaitlistOfferCard({
         </div>
 
         {(isCrossLodge ? (displayPriceCents ?? 0) > 0 : finalPriceCents > 0) && (
-          <p className="text-sm text-teal-700">
+          <p className="text-sm text-muted-foreground">
             You will be prompted to complete payment after confirming.
           </p>
         )}
@@ -142,7 +142,6 @@ export function WaitlistOfferCard({
           <Button
             onClick={handleConfirm}
             disabled={confirming || isExpired}
-            className="bg-teal-600 hover:bg-teal-700"
           >
             {confirming
               ? "Confirming..."

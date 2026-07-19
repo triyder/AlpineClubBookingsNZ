@@ -89,6 +89,14 @@ Important route groups:
 - `src/app/api` contains route handlers for auth, bookings, payments, admin,
   finance, lodge, webhooks, cron, and health checks.
 
+Every app-shell layout (`(public)`, `(authenticated)`, `(admin)`, `(finance)`)
+injects the admin-configured theme via `getWebsiteThemeRenderState()` inside an
+`app-theme-scope` wrapper, so never hardcode the brand accent (e.g. Tailwind
+`teal-*`) in components: reach it through semantic tokens (`--primary`,
+`bg-primary`, `text-primary-foreground`, `border-primary/30`, ...) so the saved
+site colours apply in light and dark, and use the `--hue-*` tokens for
+categorical status hues that must stay fixed across themes.
+
 ## Module Boundaries
 
 This application is intentionally still a single Next.js monolith. The
@@ -222,6 +230,23 @@ Stripe refund with no Xero credit note, waitlist offer whose email needs
 operator action) and feeds the amber "Provider state out of step" block on the
 booking detail Admin tools card — read-only detection mirroring the
 stuck-state queries.
+
+Admin settings sections follow one canonical edit model (developer rule, binding
+for new or modified sections; see `AGENTS.md` → Change Discipline). A section
+renders read-only on mount and stages every change behind a per-section Edit →
+Save/Cancel step: no individual control auto-persists on toggle, Cancel reverts
+to the last saved snapshot, and Save writes once. Edit affordances gate on the
+tri-state `useAdminAreaEditAccess(area)` through `ViewOnlyActionButton` /
+`AdminViewOnlyNotice` (so the resolving `undefined` window stays neutral), and
+the backing write route enforces the matching `area:edit` permission. Module
+toggles that share the strict `PUT /api/admin/modules` object (for example the
+magic-link and Google cards on `/admin/security`) must GET the fresh settings and
+merge only their own key before writing, so a sibling card's change is never
+clobbered by a stale render-time snapshot. Two pre-existing surfaces are
+acknowledged divergents that this rule does not retrofit on its own: the
+`/admin/modules` grid (deliberate bulk toggles) and the older staged-but-ungated
+settings forms. Reference:
+`src/components/admin/booking-policies/group-discount-section.tsx`.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
@@ -435,6 +460,25 @@ All sidebar badge counts come from the single `GET /api/admin/pending-counts`
 endpoint (`src/lib/admin-pending-counts.ts`), whose per-queue where-clauses
 mirror the individual queue routes. Sidebar sections render expanded by
 default; a per-section collapse preference persists in localStorage.
+
+The admin command palette (#2092, `src/components/admin-command-palette.tsx`)
+opens on Ctrl/Cmd-K or the sidebar header "Search…" button (wired through a
+window event in `src/lib/admin-command-palette-events.ts`) and lets admins jump
+to any page they can access. Its index is derived at runtime by
+`getAdminFeatureSearchIndex`, which **reuses** `getVisibleAdminNavSections` and
+de-duplicates by href — so the palette applies exactly the sidebar's four
+visibility rules (module flag, `fullAdminOnly`, `orAccess`, permission matrix)
+plus the hut-leader relabel, and can never surface an href the admin is not
+permitted to open. The index is a deliberate **superset** of what the sidebar
+renders at any given moment, not a mirror of it: the two queue-driven "Needs
+Attention" deep links (Unpaid Finished Stays / Unpaid Stay Additions) stay
+searchable as always-accessible, pre-filtered views even when their queue is
+empty, whereas the sidebar reveals them only while their queue is non-empty. As
+defence in depth, `getAdminFeatureSearchIndex` fails **closed** — a missing
+permission matrix yields an empty index — even though `getVisibleAdminNavSections`
+keeps its pre-existing fail-open contract. There is no second registry to drift:
+`navSections` remains the single source of truth, optionally enriched with a
+per-entry `keywords` field that only widens palette matching.
 
 `src/lib/token-catalogue.ts` is the client-safe single source of truth for the
 `{{token}}` placeholders supported in admin HTML content (page bodies and lodge

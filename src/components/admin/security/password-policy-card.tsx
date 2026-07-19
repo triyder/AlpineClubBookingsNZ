@@ -26,9 +26,12 @@ import {
 } from "@/lib/password-policy";
 
 // Self-contained password-policy card for the Login & Security page (epic #2030,
-// child #2033). Kept fully independent — it loads and saves its own state via
-// /api/admin/security/password-policy — so the sibling magic-link (#2034) and
-// Google (#2035) cards can be dropped onto the page with no churn here.
+// child #2033; edit-gated in #2103). Kept fully independent — it loads and saves
+// its own state via /api/admin/security/password-policy — so the sibling
+// magic-link (#2034) and Google (#2035) cards can be dropped onto the page with
+// no churn here. It follows the canonical settings-section pattern: read-only on
+// load, per-section Edit → Save/Cancel, Cancel reverts to the saved snapshot,
+// and Refresh is hidden while editing.
 
 // The four configurable character-class requirements, in display order.
 const CLASS_FIELDS = [
@@ -82,6 +85,7 @@ export function PasswordPolicyCard() {
   const [draft, setDraft] = useState<PolicyDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [error, setError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
 
@@ -100,6 +104,7 @@ export function PasswordPolicyCard() {
       const next = toDraft(body.policy);
       setSaved(next);
       setDraft({ ...next });
+      setEditing(false);
     } catch (loadError) {
       setError(
         loadError instanceof Error ? loadError.message : "Failed to load password policy",
@@ -124,6 +129,13 @@ export function PasswordPolicyCard() {
     Number.isInteger(draft.minPasswordLength) &&
     draft.minPasswordLength >= MIN_PASSWORD_LENGTH_FLOOR &&
     draft.minPasswordLength <= MIN_PASSWORD_LENGTH_CEILING;
+
+  function cancelEditing() {
+    if (saved) setDraft({ ...saved });
+    setError("");
+    setSavedMessage("");
+    setEditing(false);
+  }
 
   function setClass(key: ClassField, value: boolean) {
     setDraft((current) => (current ? { ...current, [key]: value } : current));
@@ -163,6 +175,7 @@ export function PasswordPolicyCard() {
       const next = toDraft(body.policy);
       setSaved(next);
       setDraft({ ...next });
+      setEditing(false);
       setSavedMessage("Password policy saved.");
     } catch (saveError) {
       setError(
@@ -176,18 +189,31 @@ export function PasswordPolicyCard() {
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-start gap-3">
-          <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" />
-          <div className="min-w-0 flex-1">
-            <CardTitle className="text-base">Password policy</CardTitle>
-            <CardDescription className="mt-1">
-              Set the minimum length and required character types for member
-              passwords. Rules apply the next time a member sets or changes their
-              password; existing passwords keep working. To force everyone onto the
-              new rules, use the &ldquo;require password change&rdquo; option on the
-              member record.
-            </CardDescription>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" />
+            <div className="min-w-0 flex-1">
+              <CardTitle className="text-base">Password policy</CardTitle>
+              <CardDescription className="mt-1">
+                Set the minimum length and required character types for member
+                passwords. Rules apply the next time a member sets or changes their
+                password; existing passwords keep working. To force everyone onto
+                the new rules, use the &ldquo;require password change&rdquo; option
+                on the member record.
+              </CardDescription>
+            </div>
           </div>
+          {!editing && draft ? (
+            <ViewOnlyActionButton
+              canEdit={canEdit}
+              variant="outline"
+              size="sm"
+              type="button"
+              onClick={() => setEditing(true)}
+            >
+              Edit
+            </ViewOnlyActionButton>
+          ) : null}
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -227,7 +253,7 @@ export function PasswordPolicyCard() {
                 max={MIN_PASSWORD_LENGTH_CEILING}
                 value={draft.minPasswordLength}
                 onChange={(event) => setMinLength(event.target.value)}
-                disabled={saving || !canEdit}
+                disabled={!editing || saving}
                 className="max-w-[8rem]"
                 aria-describedby="min-password-length-hint"
               />
@@ -255,7 +281,7 @@ export function PasswordPolicyCard() {
                       id={checkboxId}
                       checked={draft[key]}
                       onCheckedChange={(checked) => setClass(key, checked === true)}
-                      disabled={saving || !canEdit}
+                      disabled={!editing || saving}
                     />
                     <Label htmlFor={checkboxId} className="font-normal">
                       {label}
@@ -268,29 +294,48 @@ export function PasswordPolicyCard() {
               })}
             </fieldset>
 
+            {editing && dirty ? (
+              <p className="text-sm text-amber-700" role="status">
+                You have unsaved changes.
+              </p>
+            ) : null}
+
             <div className="flex flex-wrap gap-2 pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void loadSettings()}
-                disabled={loading || saving}
-              >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Refresh
-              </Button>
-              <ViewOnlyActionButton
-                canEdit={canEdit}
-                type="button"
-                onClick={() => void saveSettings()}
-                disabled={!dirty || saving || !minLengthValid}
-              >
-                {saving ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="mr-2 h-4 w-4" />
-                )}
-                Save
-              </ViewOnlyActionButton>
+              {editing ? (
+                <>
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
+                    type="button"
+                    onClick={() => void saveSettings()}
+                    disabled={!dirty || saving || !minLengthValid}
+                  >
+                    {saving ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="mr-2 h-4 w-4" />
+                    )}
+                    Save
+                  </ViewOnlyActionButton>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={cancelEditing}
+                    disabled={saving}
+                  >
+                    Cancel
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void loadSettings()}
+                  disabled={loading || saving}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Refresh
+                </Button>
+              )}
             </div>
           </>
         ) : null}

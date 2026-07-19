@@ -305,6 +305,98 @@ describe("admin Xero member-grouping route (view/edit gating, #1934)", () => {
     await expect(res.json()).resolves.toMatchObject({ reason: "cache_cursor_changed" });
   });
 
+  it("create-rule canonical-sorts the tier set before persisting (#2093)", async () => {
+    mocks.ruleCreate.mockResolvedValue({ id: "rule-new" });
+    const res = await POST(
+      postRequest({
+        action: "create-rule",
+        // Deliberately reversed + duplicated tier order.
+        ageTiers: ["YOUTH", "ADULT", "YOUTH"],
+        mode: "MANAGED",
+        groupId: "g1",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.ruleCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ ageTiers: ["YOUTH", "ADULT"] }),
+    });
+  });
+
+  it("create-rule collapses a full-tier selection to [] (all age tiers)", async () => {
+    mocks.ruleCreate.mockResolvedValue({ id: "rule-new" });
+    const res = await POST(
+      postRequest({
+        action: "create-rule",
+        ageTiers: ["INFANT", "CHILD", "YOUTH", "ADULT", "NOT_APPLICABLE"],
+        mode: "MANAGED",
+        groupId: "g1",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.ruleCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ ageTiers: [] }),
+    });
+  });
+
+  it("create-rule with no ageTiers defaults to [] (all age tiers)", async () => {
+    mocks.ruleCreate.mockResolvedValue({ id: "rule-new" });
+    const res = await POST(
+      postRequest({ action: "create-rule", mode: "MANAGED", groupId: "g1" }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.ruleCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ ageTiers: [] }),
+    });
+  });
+
+  it("rejects a duplicate rule shape via canonical-array dedupe (409)", async () => {
+    // findFirst is queried with the canonical (sorted) tier set.
+    mocks.ruleFindFirst.mockResolvedValue({ id: "existing" });
+    const res = await POST(
+      postRequest({
+        action: "create-rule",
+        ageTiers: ["YOUTH", "ADULT"],
+        mode: "MANAGED",
+        groupId: "g1",
+      }),
+    );
+    expect(res.status).toBe(409);
+    expect(mocks.ruleFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // Canonical order is INFANT < CHILD < YOUTH < ADULT < NOT_APPLICABLE.
+        where: expect.objectContaining({ ageTiers: { equals: ["YOUTH", "ADULT"] } }),
+      }),
+    );
+    expect(mocks.ruleCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects an all-tiers duplicate when a full-tick selection collapses to [] (friendly 409)", async () => {
+    // An existing "all age tiers" rule is stored as []. A create that ticks all
+    // five tiers collapses to [] in normalizeRule, so isDuplicateRuleShape must
+    // query findFirst with the empty array and return the friendly 409 — never
+    // falling through to the DB unique-index P2002.
+    mocks.ruleFindFirst.mockResolvedValue({ id: "existing-all-tiers" });
+    const res = await POST(
+      postRequest({
+        action: "create-rule",
+        ageTiers: ["INFANT", "CHILD", "YOUTH", "ADULT", "NOT_APPLICABLE"],
+        mode: "MANAGED",
+        groupId: "g1",
+      }),
+    );
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({
+      error:
+        "A rule with the same membership type, age tiers, mode, and Xero group already exists.",
+    });
+    expect(mocks.ruleFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ ageTiers: { equals: [] } }),
+      }),
+    );
+    expect(mocks.ruleCreate).not.toHaveBeenCalled();
+  });
+
   it("allows set-mode for a finance:edit admin", async () => {
     const res = await POST(postRequest({ action: "set-mode", mode: "NONE" }));
     expect(res.status).toBe(200);

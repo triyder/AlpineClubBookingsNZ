@@ -88,9 +88,16 @@ idempotent — retrying the same work never double-charges.
 
 1. **Xero member grouping** (`/admin/xero/member-grouping`, also linked from the
    sidebar) chooses the grouping **mode** (None / Membership Type / Membership Type
-   + Age) and the **rules**, with a read-only **dry-run diff** before any **bulk
-   re-sync**. Changing a mode or rule never re-groups existing members
-   automatically. For the full cutover procedure, follow the
+   + Age) and the **rules**. Each rule can target a **set of age tiers** — tick
+   any subset, or tick none for **"All age tiers"** (the wildcard). When rules
+   overlap, the **most specific wins**: `type + tiers` beats `type-only` beats
+   `tiers-only`, and among tiered rules **fewer tiers is more specific** (an
+   "all age tiers" rule is the least specific). A **"Refresh from Xero"** button
+   re-pulls the contact-group cache and a **"Last synced"** header shows when it
+   last refreshed; a read-only **dry-run diff** must be reviewed before any
+   heavyweight **bulk re-sync**. Changing a mode or rule (including a tier set),
+   or refreshing from Xero, never re-groups existing members automatically and
+   invalidates any prior dry-run. For the full cutover procedure, follow the
    [Xero member grouping runbook](../XERO_MEMBER_GROUPING_RUNBOOK.md).
 
 ## Settings reference

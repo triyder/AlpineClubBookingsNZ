@@ -273,7 +273,7 @@ export function RatioExplorer({
                 }}
                 className={`rounded-full border px-3 py-1 text-sm ${
                   chip.key === rangeKey
-                    ? "border-teal-700 bg-teal-700 text-white"
+                    ? "border-primary bg-primary text-primary-foreground"
                     : "border-slate-300 bg-transparent text-slate-700 hover:bg-slate-100"
                 }`}
               >

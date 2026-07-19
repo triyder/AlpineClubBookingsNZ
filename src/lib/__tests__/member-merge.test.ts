@@ -57,6 +57,17 @@ describe("mergeMemberFields", () => {
     expect(diff.find((r) => r.field === "occupation")?.source).toBe("loser");
   });
 
+  it("never fills postLoginLanding from the loser (#2090 — dropped on merge)", () => {
+    const { patch, diff } = mergeMemberFields(
+      baseMember({ postLoginLanding: null }),
+      baseMember({ postLoginLanding: "ADMIN_DASHBOARD" }),
+    );
+    // A per-account UI preference is not shared personal data: the master keeps
+    // its own (null = role default) and the loser's is dropped, not filled in.
+    expect(patch.postLoginLanding).toBeUndefined();
+    expect(diff.find((r) => r.field === "postLoginLanding")).toBeUndefined();
+  });
+
   it("keeps a populated master field (master wins)", () => {
     const { patch, diff } = mergeMemberFields(
       baseMember({ occupation: "Doctor" }),

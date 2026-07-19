@@ -1,11 +1,12 @@
 import { type BrowserContext, expect, test } from "@playwright/test";
 import { storageStatePath } from "./helpers/auth";
-import { E2E_ADMIN } from "./helpers/fixtures";
+import { DEMO_BOOKING_WINDOWS, E2E_ADMIN } from "./helpers/fixtures";
 
 // High row (docs/END_TO_END_TEST_MATRIX.md): "Approve a review-flagged booking,
 // then allocate its guests to specific beds." The seeded AWAITING_REVIEW booking
-// bReview (owner Ken King, adminReviewStatus PENDING, nights 2026-07-30/07-31 —
-// prisma/demo-seed.ts) is approved through the admin approvals panel, then Ken's
+// bReview (owner Ken King, adminReviewStatus PENDING, on a RELATIVE future
+// window — DEMO_BOOKING_WINDOWS.kenReview, prisma/demo-seed.ts, issue #2117) is
+// approved through the admin approvals panel, then Ken's
 // guest is placed on a specific bed via the manual Select + Allocate path (NOT
 // drag-and-drop) on the bed-allocation board, and the manual draft placement is
 // approved.
@@ -72,7 +73,11 @@ test("an admin approves a review-flagged booking then allocates a bed to its gue
   await expect(page.getByText("Booking approved.")).toBeVisible();
 
   // ── Allocate Ken's guest to Bunk Room A / A1 via Select + Allocate ──
-  await page.goto("/admin/bed-allocation?from=2026-07-30&to=2026-08-01");
+  // Board window matches Ken's RELATIVE seeded booking (issue #2117).
+  const ken = DEMO_BOOKING_WINDOWS.kenReview;
+  await page.goto(
+    `/admin/bed-allocation?from=${ken.checkIn}&to=${ken.checkOut}`,
+  );
   await expect(
     page.getByRole("heading", { name: "Bed Allocation" }),
   ).toBeVisible();

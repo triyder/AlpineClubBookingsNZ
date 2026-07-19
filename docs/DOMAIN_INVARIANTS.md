@@ -1389,6 +1389,18 @@ a paid booking a best-effort admin email fires (template `admin-minors-review`,
 gated by its own `adminBookingReviewRequired` notification preference #1422),
 since nothing changes the booking's visible status to signal the block.
 
+The member **edit** panel collects this justification proactively (#2104): it
+mirrors the `requiresAdultSupervisionReview` predicate client-side (the same
+inlined check the create wizard uses) and renders a required reason field as soon
+as an in-progress edit would leave the post-edit party minors-only — unless the
+viewer is acting as an admin (admins auto-approve) or the booking is already
+flagged/reviewed (the server only demands a reason on the FIRST trip). As a
+belt-and-braces fallback for any client/server drift, the modify route returns
+the machine-readable `REVIEW_JUSTIFICATION_REQUIRED` code, on which the panel
+reveals the same field and re-surfaces the request. The server
+(`resolveModifyReviewUpdate`) remains the sole enforcer; the client field only
+saves the member a round-trip.
+
 A quote hold spans the whole quote lifecycle (issue #1254). Sending a quote
 places the hold automatically: the held booking (AWAITING_REVIEW, a
 capacity-holding status) reserves the beds/guest-nights before the send is
@@ -2208,8 +2220,18 @@ and is hard-deleted at the end. The merge is **additive and master-wins**:
   Xero groups not referenced by any active rule are never touched.
 - `NONE` mode is a total no-op — the per-member sync short-circuits before any
   Xero call, and the cancellation path performs no managed removals.
+- A rule targets a **set** of age tiers (`ageTiers`, #2093): the EMPTY set is
+  the "all age tiers" wildcard (the migrated null "Any age"); a non-empty set
+  matches a member whose tier is IN the set. Sets are stored canonical-sorted and
+  a full-tier selection collapses to the empty set, so each shape has exactly one
+  canonical form and the DB partial unique index dedupes reordered sets. In
+  `MEMBERSHIP_TYPE` mode a non-empty tier set makes the rule inert.
 - Resolution is pure and mode-driven (`resolveMemberGrouping`): most-specific
-  MANAGED match wins (type+tier > type-only > tier-only); ACCEPTED is the union
+  MANAGED match wins on the ladder `type + tiers` > `type-only` > `tiers-only`;
+  among tiered rules **fewer tiers is more specific**, and an all-tiers (`[]`)
+  rule is the LEAST specific in the tier dimension (a naive ascending
+  tier-count comparator would wrongly invert this). Exact ties break
+  deterministically by `sortOrder` then group id. ACCEPTED is the union
   of matching accepted rules plus the matched managed group. The effective
   membership type is resolved by the ONE shared policy helper
   (`resolveMembershipTypePolicyForMember`) at the CURRENT season year — pricing

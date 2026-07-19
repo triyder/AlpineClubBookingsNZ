@@ -16,6 +16,7 @@ import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle
 import {
   bookingStatusLifecycleRank,
   capacityHoldingBookingFilter,
+  UPCOMING_CHECK_IN_BOOKING_STATUSES,
 } from "@/lib/booking-status";
 import { bookingsOverlap, sameLodgeNullTolerant } from "@/lib/capacity";
 import {
@@ -320,13 +321,10 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
     checkInFilter.lte = futureDate;
 
     if (!query.status) {
+      // Shared with the dashboard "Bookings" officer card so its headline count
+      // matches this pre-filtered list (booking-status.ts).
       where.status = {
-        in: [
-          BookingStatus.PAYMENT_PENDING,
-          BookingStatus.CONFIRMED,
-          BookingStatus.PAID,
-          BookingStatus.PENDING,
-        ],
+        in: [...UPCOMING_CHECK_IN_BOOKING_STATUSES],
       };
     }
   }

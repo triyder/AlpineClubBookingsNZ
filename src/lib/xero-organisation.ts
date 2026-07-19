@@ -84,12 +84,26 @@ interface OrgLockDatesCacheEntry {
 let lockDatesCache: OrgLockDatesCacheEntry | null = null;
 
 /**
- * Parse a Xero lock-date string into a date-only Date, or null when unset or
- * unparseable. xero-node types these as optional strings; the value may be a
- * Microsoft-JSON `/Date(1234567890000+1300)/` timestamp or an ISO date string.
+ * Parse a Xero lock-date value into a date-only Date, or null when unset or
+ * unparseable. xero-node TYPES these fields as optional strings, but its
+ * ObjectSerializer converts any string payload starting with `/Date(` into a
+ * JS Date at runtime (deserializeDateFormats), so when an organisation has a
+ * lock date set the value arrives here as a Date object. A raw string can
+ * still appear as a Microsoft-JSON `/Date(1234567890000+1300)/` timestamp or
+ * an ISO date string, so all three shapes must parse.
  */
-function parseXeroLockDate(value: string | undefined | null): Date | null {
+function parseXeroLockDate(value: string | Date | undefined | null): Date | null {
   if (!value) return null;
+
+  if (value instanceof Date) {
+    if (!Number.isNaN(value.getTime())) {
+      // Normalize to a date-only Date in UTC, matching the MS-JSON path below.
+      const parsed = parseDateOnly(value.toISOString().slice(0, 10));
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+    logger.warn({ value }, "Unparseable Xero lock date; treating as unset");
+    return null;
+  }
 
   const msJson = /\/Date\((\d+)/.exec(value);
   if (msJson) {

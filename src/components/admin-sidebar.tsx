@@ -47,6 +47,7 @@ import {
   Building2,
   DollarSign,
   LockKeyhole,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,7 @@ import {
   buildUnpaidFinishedStaysHref,
   buildUnsettledAdditionalFinishedStaysHref,
 } from "@/lib/unpaid-finished-stays";
+import { openAdminCommandPalette } from "@/lib/admin-command-palette-events";
 
 interface NavSection {
   label?: string;
@@ -84,6 +86,13 @@ interface NavSection {
      * (bookings OR finance) and cannot be expressed by canViewAdminHrefWithMatrix.
      */
     orAccess?: (matrix: AdminPermissionMatrix) => boolean;
+    /**
+     * Extra search terms (synonyms, acronyms, sibling concepts) that should
+     * surface this page in the admin feature palette (#2092) even when they
+     * don't appear in the label. Purely additive — never affects sidebar
+     * rendering or visibility, only the fuzzy match in the command palette.
+     */
+    keywords?: string[];
   }>;
 }
 
@@ -191,6 +200,7 @@ const navSections: NavSection[] = [
         href: "/admin/bed-allocation",
         label: "Bed Allocation",
         icon: BedDouble,
+        keywords: ["rooms", "beds", "assign", "bunks"],
       },
       { href: "/admin/waitlist", label: "Waitlist", icon: Clock },
     ],
@@ -202,8 +212,18 @@ const navSections: NavSection[] = [
       // see the Finance group "Fees" entry); /admin/seasons is reduced to season
       // windows and stays lodge-scoped (#130, ADR-005) — reached from Fees → Hut
       // Fees and the lodge hub's "Seasons & Rates" card, not a standalone entry.
-      { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
-      { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
+      {
+        href: "/admin/age-tier-settings",
+        label: "Age Groups",
+        icon: Sliders,
+        keywords: ["age tiers", "child pricing", "youth", "senior"],
+      },
+      {
+        href: "/admin/promo-codes",
+        label: "Promo Codes",
+        icon: Tag,
+        keywords: ["discount", "coupon", "voucher"],
+      },
       {
         href: "/admin/booking-policies",
         label: "Booking Policies",
@@ -217,8 +237,19 @@ const navSections: NavSection[] = [
       // Consolidated fee console (#1933, E7): Hut Fees (bookings) + Joining &
       // Annual Fees (finance). Shown to anyone with view on either area via the
       // OR predicate, since its prefix resolves to bookings only.
-      { href: "/admin/fees", label: "Fees", icon: DollarSign, orAccess: canAccessConsolidatedFeesPage },
-      { href: "/admin/payments", label: "Payments", icon: CreditCard },
+      {
+        href: "/admin/fees",
+        label: "Fees",
+        icon: DollarSign,
+        orAccess: canAccessConsolidatedFeesPage,
+        keywords: ["hut fees", "joining fees", "annual fees", "rates", "pricing"],
+      },
+      {
+        href: "/admin/payments",
+        label: "Payments",
+        icon: CreditCard,
+        keywords: ["stripe", "transactions", "receipts"],
+      },
       {
         href: "/admin/internet-banking",
         label: "Internet Banking",
@@ -229,15 +260,30 @@ const navSections: NavSection[] = [
         label: "Refunds & Credits",
         icon: RotateCcw,
       },
-      { href: "/admin/reports", label: "Reports", icon: BarChart2 },
-      { href: "/admin/xero", label: "Xero Sync", icon: RefreshCw },
+      {
+        href: "/admin/reports",
+        label: "Reports",
+        icon: BarChart2,
+        keywords: ["statements", "export", "analytics", "revenue"],
+      },
+      {
+        href: "/admin/xero",
+        label: "Xero Sync",
+        icon: RefreshCw,
+        keywords: ["accounting", "invoices", "reconcile"],
+      },
       { href: "/admin/xero/member-grouping", label: "Xero Member Grouping", icon: Users },
     ],
   },
   {
     label: "Members",
     items: [
-      { href: "/admin/members", label: "Members", icon: Users },
+      {
+        href: "/admin/members",
+        label: "Members",
+        icon: Users,
+        keywords: ["users", "people", "contacts", "membership"],
+      },
       { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
       {
         href: "/admin/member-applications",
@@ -250,7 +296,12 @@ const navSections: NavSection[] = [
         icon: UserX,
       },
       { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
-      { href: "/admin/communications", label: "Communications", icon: Mail },
+      {
+        href: "/admin/communications",
+        label: "Communications",
+        icon: Mail,
+        keywords: ["email", "newsletter", "bulk message", "broadcast"],
+      },
       // Lockers is lodge-scoped (#130, ADR-005) — reached via the lodge hub's
       // "Lockers" card, not a standalone sidebar entry.
       { href: "/admin/family-groups", label: "Family Groups", icon: Users },
@@ -266,7 +317,12 @@ const navSections: NavSection[] = [
     items: [
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
       { href: "/admin/roster", label: "Roster", icon: ClipboardList },
-      { href: "/admin/lodge", label: "Lodge Kiosk", icon: Tablet },
+      {
+        href: "/admin/lodge",
+        label: "Lodge Kiosk",
+        icon: Tablet,
+        keywords: ["check-in", "kiosk", "arrivals"],
+      },
       { href: "/admin/work-parties", label: "Work Parties", icon: Hammer },
       {
         href: "/admin/lodge-instructions",
@@ -284,7 +340,14 @@ const navSections: NavSection[] = [
     // redirects there. Per-lodge display config (glob, name granularity,
     // committee notice) lives on each lodge in the lodge configuration hub
     // (/admin/lodges/[id]) since LTV-035/#81.
-    items: [{ href: "/admin/display", label: "Lobby Display", icon: Tv }],
+    items: [
+      {
+        href: "/admin/display",
+        label: "Lobby Display",
+        icon: Tv,
+        keywords: ["signage", "screen", "tv", "devices"],
+      },
+    ],
   },
   {
     label: "Monitoring & Support",
@@ -295,14 +358,24 @@ const navSections: NavSection[] = [
         label: "Stuck States",
         icon: AlertTriangle,
       },
-      { href: "/admin/health", label: "System Health", icon: Activity },
+      {
+        href: "/admin/health",
+        label: "System Health",
+        icon: Activity,
+        keywords: ["status", "diagnostics", "uptime", "monitoring"],
+      },
       {
         href: "/admin/email-deliverability",
         label: "Email Deliverability",
         icon: Mail,
       },
       { href: "/admin/background-jobs", label: "Background Jobs", icon: Clock },
-      { href: "/admin/audit-log", label: "Audit Log", icon: Shield },
+      {
+        href: "/admin/audit-log",
+        label: "Audit Log",
+        icon: Shield,
+        keywords: ["history", "activity", "changes", "trail"],
+      },
       {
         href: "/admin/deletion-requests",
         label: "Deletion Requests",
@@ -315,7 +388,12 @@ const navSections: NavSection[] = [
     items: [
       { href: "/admin/setup", label: "Setup", icon: ListChecks },
       { href: "/admin/modules", label: "Modules", icon: Puzzle },
-      { href: "/admin/security", label: "Login & Security", icon: LockKeyhole },
+      {
+        href: "/admin/security",
+        label: "Login & Security",
+        icon: LockKeyhole,
+        keywords: ["password", "2fa", "two-factor", "sign-in", "magic link"],
+      },
       { href: "/admin/lodges", label: "Lodges", icon: Building2 },
       {
         href: "/admin/membership-setup",
@@ -332,7 +410,12 @@ const navSections: NavSection[] = [
         label: "Bookings Setup",
         icon: BedDouble,
       },
-      { href: "/admin/integrations", label: "Integrations", icon: Plug },
+      {
+        href: "/admin/integrations",
+        label: "Integrations",
+        icon: Plug,
+        keywords: ["api", "connections", "third-party", "webhooks"],
+      },
       {
         href: "/admin/notifications",
         label: "Notifications & Email",
@@ -345,16 +428,30 @@ const navSections: NavSection[] = [
         label: "Access Roles",
         icon: Shield,
         fullAdminOnly: true,
+        keywords: ["permissions", "rbac", "staff roles", "admin roles"],
       },
       {
         href: "/admin/config-transfer",
         label: "Export & Import",
         icon: ArrowRightLeft,
         fullAdminOnly: true,
+        keywords: ["backup", "migration", "config transfer", "restore"],
       },
       { href: "/admin/committee", label: "Committee", icon: UsersRound },
     ],
   },
+];
+
+/**
+ * Distinct sidebar section labels in canonical `navSections` order (#2092). The
+ * command palette orders its groups by this list so that a page first
+ * encountered under "Needs Attention" during href de-duplication doesn't drag
+ * its natural group to the wrong position. `undefined` marks the label-less
+ * sections (Admin Dashboard, Lobby Display) whose palette entries fall under the
+ * "General" heading; `new Set` collapses those to a single first-occurrence slot.
+ */
+export const ADMIN_NAV_SECTION_ORDER: ReadonlyArray<string | undefined> = [
+  ...new Set(navSections.map((section) => section.label)),
 ];
 
 // test seam
@@ -384,6 +481,78 @@ export function getVisibleAdminNavSections(
         ),
     }))
     .filter((section) => section.items.length > 0);
+}
+
+/** A single searchable page in the admin feature palette (#2092). */
+export interface AdminFeatureSearchEntry {
+  /** Destination the palette navigates to on selection. */
+  href: string;
+  /** Visible label, already relabelled (e.g. hut-leader term) by the source. */
+  label: string;
+  /** Owning sidebar section label, if any (top-level entries have none). */
+  section?: string;
+  /** Optional extra match terms carried from the nav entry. */
+  keywords?: string[];
+}
+
+/**
+ * Flat, de-duplicated search index for the admin feature palette (#2092),
+ * derived at runtime from {@link getVisibleAdminNavSections}. Reusing that
+ * function — rather than re-reading `navSections` or re-implementing the
+ * predicate — is deliberate and load-bearing: it guarantees the palette
+ * applies EXACTLY the same four visibility conditions the sidebar does
+ * (module-flag visibility, `fullAdminOnly`, `orAccess`, and the permission
+ * matrix) plus the hut-leader relabel, so the palette can never reveal an href
+ * an admin is not permitted to open.
+ *
+ * Superset, not "exactly what the sidebar shows": the index lists every page
+ * the sidebar COULD show this admin, which is deliberately more than the
+ * sidebar renders at any given moment. The two queue-driven "Needs Attention"
+ * deep links (Unpaid Finished Stays / Unpaid Stay Additions) appear here
+ * unconditionally — they are useful, always-accessible, pre-filtered views —
+ * whereas the sidebar reveals them only while their queue is non-empty. This is
+ * never a superset in permission terms: an href the admin may not open is never
+ * indexed.
+ *
+ * Fail-closed: unlike {@link getVisibleAdminNavSections} (whose fail-OPEN
+ * missing-matrix contract predates this and is shared with other callers), a
+ * missing `permissionMatrix` yields an EMPTY index here, so the search surface
+ * denies by default rather than exposing every page — defence in depth (#2092).
+ *
+ * De-duplication: a handful of hrefs appear twice in `navSections` — once in
+ * the queue-driven "Needs Attention" section and once in their natural home
+ * section. We key by href and let later (natural) sections overwrite the
+ * earlier "Needs Attention" copy, so every page appears exactly once, labelled
+ * by its natural section where it has one.
+ */
+export function getAdminFeatureSearchIndex(
+  features: FeatureFlags,
+  permissionMatrix?: AdminPermissionMatrix,
+  isFullAdmin?: boolean,
+  hutLeaderLabel = "Hut Leader",
+): AdminFeatureSearchEntry[] {
+  // Palette-scoped defence in depth: deny (empty index) when no matrix is
+  // supplied, rather than inheriting getVisibleAdminNavSections' fail-open.
+  if (!permissionMatrix) {
+    return [];
+  }
+  const byHref = new Map<string, AdminFeatureSearchEntry>();
+  for (const section of getVisibleAdminNavSections(
+    features,
+    permissionMatrix,
+    isFullAdmin,
+    hutLeaderLabel,
+  )) {
+    for (const item of section.items) {
+      byHref.set(item.href, {
+        href: item.href,
+        label: item.label,
+        section: section.label,
+        keywords: item.keywords,
+      });
+    }
+  }
+  return [...byHref.values()];
 }
 
 type AdminNavBadgeMap = Record<string, number>;
@@ -666,6 +835,50 @@ function SidebarLinks({
   );
 }
 
+/**
+ * "Search…" trigger shown in the sidebar header (#2092). Opens the same command
+ * palette as Ctrl/Cmd-K via a window event, so mouse users get a discoverable
+ * entry point. The keyboard hint resolves to ⌘K on macOS and Ctrl K elsewhere,
+ * computed after mount to avoid a hydration mismatch.
+ */
+function SidebarSearchButton({ onOpen }: { onOpen?: () => void }) {
+  const [isMac, setIsMac] = useState(false);
+
+  useEffect(() => {
+    setIsMac(/Mac|iP(hone|ad|od)/.test(window.navigator.platform));
+  }, []);
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        // The mobile Sheet closes (onOpen -> setMobileOpen(false)) at the same
+        // moment the palette opens. The Sheet's exit focus handling and the
+        // palette's focus trap briefly compete, and the palette captures its
+        // focus-restore target (this button) just before the Sheet unmounts it.
+        // The palette guards the restore with document.contains, so restoring to
+        // a detached node is a no-op. This stacked-layer focus race is not
+        // meaningfully reproducible in jsdom — it is a manual mobile check.
+        onOpen?.();
+        openAdminCommandPalette();
+      }}
+      // The ⌘K / Ctrl K glyphs are decorative (aria-hidden); expose the shortcut
+      // semantically instead so the accessible name stays just "Search…".
+      aria-keyshortcuts="Meta+K Control+K"
+      className="mb-2 flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+    >
+      <Search className="h-4 w-4 shrink-0" />
+      <span className="flex-1 text-left">Search…</span>
+      <kbd
+        aria-hidden
+        className="pointer-events-none hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex"
+      >
+        {isMac ? "⌘" : "Ctrl"} K
+      </kbd>
+    </button>
+  );
+}
+
 export function AdminSidebar({
   features,
   permissionMatrix,
@@ -690,6 +903,7 @@ export function AdminSidebar({
           <span>Admin Panel</span>
         </div>
         <div className="flex-1 overflow-y-auto p-3 pb-8">
+          <SidebarSearchButton />
           <SidebarLinks
             features={features}
             permissionMatrix={permissionMatrix}
@@ -715,6 +929,7 @@ export function AdminSidebar({
               <SheetTitle>Admin Panel</SheetTitle>
             </SheetHeader>
             <div className="flex-1 overflow-y-auto p-3 pb-8">
+              <SidebarSearchButton onOpen={() => setMobileOpen(false)} />
               <SidebarLinks
                 features={features}
                 permissionMatrix={permissionMatrix}

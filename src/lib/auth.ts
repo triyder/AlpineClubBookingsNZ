@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 import { getAuthSecret, getAuthTrustHost } from "./runtime-config";
 import logger from "./logger";
+import type { PostLoginLanding } from "@prisma/client";
 import type { AppRole } from "./member-roles";
 import {
   hasAccessRole,
@@ -58,6 +59,9 @@ const SESSION_MEMBER_SECURITY_SELECT = {
   passwordChangedAt: true,
   twoFactorEnabled: true,
   twoFactorMethod: true,
+  // Post-login landing preference (#2090), refreshed per request alongside the
+  // security fields so a profile toggle change takes effect on the next request.
+  postLoginLanding: true,
   // Joined definitions (#1367) so the per-request token refresh can compute
   // the merged admin-permission matrix over custom and club-edited
   // definition-backed roles, not just the enum bundles.
@@ -106,6 +110,11 @@ declare module "next-auth" {
       twoFactorVerified: boolean;
       twoFactorEnrolled: boolean;
       twoFactorMethod: "TOTP" | "EMAIL" | null;
+      /**
+       * Post-login landing preference (#2090). null = follow the role default
+       * (admin access ⇒ first accessible admin page, else /dashboard).
+       */
+      postLoginLanding: PostLoginLanding | null;
     };
   }
   interface User {
@@ -491,6 +500,7 @@ export const authConfig = {
             canLogin: member.canLogin,
           });
           token.forcePasswordChange = member.forcePasswordChange;
+          token.postLoginLanding = member.postLoginLanding ?? null;
           token.isEmailVerified = member.emailVerified;
           token.sessionInvalidated =
             member.passwordChangedAt instanceof Date &&
@@ -541,6 +551,11 @@ export const authConfig = {
         emptyAdminPermissionMatrix();
       session.user.id = token.id as string;
       session.user.forcePasswordChange = token.forcePasswordChange as boolean;
+      session.user.postLoginLanding =
+        token.postLoginLanding === "MEMBER_DASHBOARD" ||
+        token.postLoginLanding === "ADMIN_DASHBOARD"
+          ? token.postLoginLanding
+          : null;
       session.user.isEmailVerified = token.isEmailVerified as boolean;
       session.user.sessionInvalidated = Boolean(token.sessionInvalidated);
       if (typeof token.sessionIssuedAt === "number") {

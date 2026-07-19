@@ -240,3 +240,81 @@ export async function getRosterMonthStatus(input: {
 
   return computeRosterDayStatuses(dates, bookings, assignments);
 }
+
+/**
+ * Count the nights in a bounded window that still need a chore roster — the
+ * "work to do" headline for the admin dashboard's Roster Assignment officer
+ * card (#2091). This mirrors the DB-touching `getRosterMonthStatus` above but
+ * scoped to a caller-supplied window instead of a whole calendar month (the
+ * dashboard passes today..+7, so the query stays cheap), then delegates to the
+ * SAME pure `computeRosterDayStatuses` source of truth and counts its
+ * `needs-roster` days: nights with ≥1 staying guest (via
+ * `getActiveGuestsForNight`, so guestless bookings don't inflate the count) and
+ * no chore assignment at all.
+ *
+ * Rostering is per-NIGHT, so a stay rostered on some of its nights still
+ * contributes its un-rostered nights here — exactly what the roster calendar
+ * paints amber — instead of dropping out the moment one night is covered. A day
+ * with staying guests but an existing assignment counts as covered (or
+ * needs-attention on the calendar), never as needs-roster, so this headline can
+ * never read 0 while the roster surface shows needs-roster nights in the same
+ * window.
+ */
+export async function countRosterNightsNeedingChores(input: {
+  from: Date;
+  to: Date;
+  lodgeId?: string;
+}): Promise<number> {
+  const { from, to } = input;
+
+  const [bookings, assignments] = await Promise.all([
+    prisma.booking.findMany({
+      where: {
+        status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
+        deletedAt: null,
+        checkIn: { lt: to },
+        checkOut: { gt: from },
+        ...(input.lodgeId ? lodgeNullTolerantScope(input.lodgeId) : {}),
+        guests: {
+          some: {
+            stayStart: { lt: to },
+            stayEnd: { gt: from },
+          },
+        },
+      },
+      select: {
+        id: true,
+        checkIn: true,
+        checkOut: true,
+        guests: {
+          select: {
+            stayStart: true,
+            stayEnd: true,
+            ageTier: true,
+            nights: { select: { stayDate: true } },
+          },
+        },
+      },
+      orderBy: [{ checkIn: "asc" }, { createdAt: "asc" }],
+    }),
+    prisma.choreAssignment.findMany({
+      where: {
+        date: { gte: from, lt: to },
+        ...(input.lodgeId
+          ? { booking: lodgeNullTolerantScope(input.lodgeId) }
+          : {}),
+      },
+      select: {
+        date: true,
+        status: true,
+        bookingId: true,
+      },
+    }),
+  ]);
+
+  const dates = eachDateOnlyInRange(from, to).map(formatDateOnly);
+
+  return computeRosterDayStatuses(dates, bookings, assignments).filter(
+    (day) => day.status === "needs-roster",
+  ).length;
+}

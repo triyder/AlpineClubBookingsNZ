@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  MAGIC_LINK_TTL_MAX_MINUTES,
+  MAGIC_LINK_TTL_MIN_MINUTES,
+} from "@/lib/magic-link";
 
 // Shared password-policy validator + hints (epic #2030, child #2033).
 //
@@ -47,9 +51,10 @@ export const MIN_PASSWORD_LENGTH_CEILING = 64;
 // the bcrypt input and blocks a long-string CPU DoS; independent of settings.
 export const PASSWORD_MAX_LENGTH = 128;
 
-// Magic-link TTL bounds (field-only in #2033; consumed by #2034).
-export const MAGIC_LINK_TTL_MIN_MINUTES = 5;
-export const MAGIC_LINK_TTL_MAX_MINUTES = 60;
+// Magic-link TTL bounds are owned by `@/lib/magic-link` (the module named for
+// the feature and imported by the client card). #2103 collapsed the duplicate
+// that used to be defined here; this module now imports the single canonical
+// pair (used below by normalizeLoginSecurityPolicy).
 
 function clampInt(value: number, min: number, max: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;

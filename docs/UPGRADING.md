@@ -84,6 +84,49 @@ as a red flag and check the release notes before deploying.
 
 ---
 
+## Unreleased
+
+The unreleased range adds the per-member **post-login landing** with a changed
+admin default (#2090). Its single migration
+(`20260719150000_add_post_login_landing`) is additive/expand-only — a new
+`PostLoginLanding` enum plus a **nullable** `Member.postLoginLanding` column with
+**no default** — and carries an `old_code_compatible=yes` ledger row. A normal
+deploy window is sufficient; the `ADD COLUMN` is a metadata-only catalog change
+even on the hot `Member` table (no default → no row scan, no rewrite).
+
+### Before deployment
+
+1. **Take and restore-test a fresh backup**, as always.
+2. **Nothing stored changes any member's landing on migrate.** Every existing
+   row keeps `postLoginLanding = NULL` (follow the role default). The old colour
+   has no `postLoginLanding` field and never reads it, so it is fully
+   old-colour compatible through the migrate→cutover window.
+
+### Post-upgrade actions
+
+1. **Tell your admins their landing changes on the next sign-in (behaviour
+   change).** From the first login after cutover, a member with admin access who
+   has set no preference lands on their **admin area** (their first accessible
+   admin page) instead of `/dashboard`. This applies to **every** member whose
+   role resolves to an accessible admin page — not just full admins, but also
+   **read-only admins** and **finance-only viewers**, who will now land on their
+   first accessible admin page (for example, a finance-only viewer lands on
+   `/admin/payments`). This default is applied by the application, not by stored
+   data. A plain member is unaffected; a member with no accessible admin area —
+   including a demoted ex-admin — still lands on `/dashboard`, never a
+   permission-denied loop.
+2. **Point admins who prefer the member view at the new toggle.** The profile
+   **Account Information** card now shows an "After sign-in, take me to" control
+   for members with an accessible admin page: **Use my role default** (the new
+   behaviour), **Member dashboard**, or **Admin dashboard**. A genuinely
+   deep-linked `callbackUrl` (e.g. an emailed link) still always wins over the
+   preference.
+
+**Rollback boundary.** A pre-migration failure aborts before any schema change;
+the old colour is untouched. A failed cutover auto-restores the old colour, which
+runs against the migrated schema — the new column is nullable and unread by the
+old colour, so it keeps working. There is no down-migration.
+
 ## v0.12.0 → v0.12.1
 
 `v0.12.1` is a patch release with five migrations, **all expand/additive and

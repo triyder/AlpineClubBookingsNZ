@@ -100,6 +100,27 @@ function stableDigest(value: unknown): string {
 }
 
 /**
+ * Fingerprint-compatibility serialization of a rule's tier set (#2093, D-B5).
+ * The historical tuple element was the SCALAR rule.ageTier, so to keep the
+ * fingerprint byte-identical across the scalar->array migration this back-maps
+ * for FINGERPRINT PURPOSES ONLY (storage stays canonical-sorted arrays):
+ *  - `[]`      -> null   (the migrated "Any age" rule — WITHOUT this the first
+ *                         post-deploy resync would see every existing rule churn
+ *                         and do a spurious full regroup),
+ *  - `[X]`     -> "X"    (the single-tier rule — same as the old scalar),
+ *  - `[X, Y…]` -> the canonical-sorted array (a genuinely new 2+-tier shape).
+ */
+function fingerprintAgeTiers(ageTiers: AgeTier[]): AgeTier | AgeTier[] | null {
+  if (ageTiers.length === 0) return null;
+  if (ageTiers.length === 1) return ageTiers[0];
+  // Deliberate lexicographic sort (not CANONICAL_AGE_TIER_ORDER): it only needs
+  // to be deterministic, and it is harmless — this branch is reached only by a
+  // genuinely-new 2+-tier rule, which has no historical scalar fingerprint to
+  // stay byte-compatible with. Do not "fix" it to the canonical order.
+  return [...ageTiers].sort();
+}
+
+/**
  * Stable fingerprint of the grouping *decision inputs*: the mode plus every
  * active rule's grouping-relevant fields (type slot, tier slot, kind, target
  * group, sort order — NOT the display-only groupName or the row id, so a
@@ -116,7 +137,7 @@ export function computeXeroGroupingRulesFingerprint(
       (rule) =>
         [
           rule.membershipTypeId,
-          rule.ageTier,
+          fingerprintAgeTiers(rule.ageTiers),
           rule.kind,
           rule.groupId,
           rule.sortOrder,

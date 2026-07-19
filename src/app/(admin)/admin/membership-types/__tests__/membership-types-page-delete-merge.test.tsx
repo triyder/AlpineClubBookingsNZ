@@ -87,7 +87,7 @@ function customType(overrides: Record<string, unknown> = {}) {
     xeroContactGroupRules: [
       {
         id: "rule-social",
-        ageTier: "ADULT",
+        ageTiers: ["ADULT"],
         mode: "MANAGED",
         groupId: "group-social",
         groupName: "Social members",
@@ -129,7 +129,7 @@ const membershipTypes = [
     xeroContactGroupRules: [
       {
         id: "rule-associate",
-        ageTier: "ADULT",
+        ageTiers: ["ADULT"],
         mode: "ACCEPTED",
         groupId: "group-associate",
         groupName: "Associate members",
