@@ -75,9 +75,9 @@ async function snap(page: Page, label: string, hold = HOLD): Promise<void> {
 
 async function main(): Promise<void> {
   const persona = personas.booker;
-  const window = stayWindow(0);
+  const stay = stayWindow(0);
   console.log(
-    `Capturing booking demo as ${persona.email} for ${window.checkIn} -> ${window.checkOut} against ${BASE_URL}`,
+    `Capturing booking demo as ${persona.email} for ${stay.checkIn} -> ${stay.checkOut} against ${BASE_URL}`,
   );
 
   const browser = await chromium.launch();
@@ -96,10 +96,10 @@ async function main(): Promise<void> {
     await page.getByText("Select Your Dates").waitFor({ state: "visible", timeout: 15_000 });
     await snap(page, "dates step (calendar)", HOLD_LONG);
 
-    await selectCalendarDay(page, window.checkIn);
+    await selectCalendarDay(page, stay.checkIn);
     await snap(page, "check-in selected");
 
-    await selectCalendarDay(page, window.checkOut);
+    await selectCalendarDay(page, stay.checkOut);
     await snap(page, "stay range selected");
 
     await page.getByRole("button", { name: "Continue", exact: true }).click();
