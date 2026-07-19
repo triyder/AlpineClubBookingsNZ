@@ -107,10 +107,14 @@ even on the hot `Member` table (no default → no row scan, no rewrite).
 1. **Tell your admins their landing changes on the next sign-in (behaviour
    change).** From the first login after cutover, a member with admin access who
    has set no preference lands on their **admin area** (their first accessible
-   admin page) instead of `/dashboard`. This default is applied by the
-   application, not by stored data. A plain member is unaffected; a member with
-   no accessible admin area — including a demoted ex-admin — still lands on
-   `/dashboard`, never a permission-denied loop.
+   admin page) instead of `/dashboard`. This applies to **every** member whose
+   role resolves to an accessible admin page — not just full admins, but also
+   **read-only admins** and **finance-only viewers**, who will now land on their
+   first accessible admin page (for example, a finance-only viewer lands on
+   `/admin/payments`). This default is applied by the application, not by stored
+   data. A plain member is unaffected; a member with no accessible admin area —
+   including a demoted ex-admin — still lands on `/dashboard`, never a
+   permission-denied loop.
 2. **Point admins who prefer the member view at the new toggle.** The profile
    **Account Information** card now shows an "After sign-in, take me to" control
    for members with an accessible admin page: **Use my role default** (the new

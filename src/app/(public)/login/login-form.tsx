@@ -76,6 +76,11 @@ export function LoginForm({
   // time. An explicit deep-link callbackUrl (if any) is forwarded so it can win
   // per D-D4. Any failure falls back to the pre-auth-sanitised redirectTo.
   async function resolvePostAuthLanding(): Promise<string> {
+    // A hung resolver must never strand the user on a spinner: abort after a
+    // short timeout and fall back to the pre-auth-sanitised redirectTo (the same
+    // fallback the catch below uses for any network failure).
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
     try {
       const params = new URLSearchParams();
       if (explicitCallbackUrl) {
@@ -84,13 +89,15 @@ export function LoginForm({
       const query = params.toString();
       const response = await fetch(
         `/api/auth/post-login-landing${query ? `?${query}` : ""}`,
-        { credentials: "same-origin" },
+        { credentials: "same-origin", signal: controller.signal },
       );
       if (!response.ok) return redirectTo;
       const body = (await response.json()) as { path?: string };
       return typeof body.path === "string" && body.path ? body.path : redirectTo;
     } catch {
       return redirectTo;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

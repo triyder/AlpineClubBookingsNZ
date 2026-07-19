@@ -24,9 +24,15 @@ const POST_LOGIN_PATH = "/dashboard";
 // so the resolver returns the member's preference / admin role default. Any
 // failure falls back to the default authenticated home.
 async function resolvePostAuthLanding(): Promise<string> {
+  // A hung resolver must never strand the user on the "Signing you in…" spinner:
+  // abort after a short timeout and fall back to the default authenticated home
+  // (the same fallback the catch below uses for any network failure).
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
   try {
     const response = await fetch("/api/auth/post-login-landing", {
       credentials: "same-origin",
+      signal: controller.signal,
     });
     if (!response.ok) return POST_LOGIN_PATH;
     const body = (await response.json()) as { path?: string };
@@ -35,6 +41,8 @@ async function resolvePostAuthLanding(): Promise<string> {
       : POST_LOGIN_PATH;
   } catch {
     return POST_LOGIN_PATH;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

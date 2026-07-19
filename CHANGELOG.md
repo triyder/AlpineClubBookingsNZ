@@ -7,8 +7,12 @@ All notable public reference-release changes should be recorded here.
 - **Post-login landing for admins + per-member preference (#2090).** After
   sign-in, a member with admin access now lands on their admin area instead of
   the member dashboard when they have set no preference — precisely
-  `getFirstAccessibleAdminHref(matrix) ?? /dashboard`, so an admin whose matrix
-  denies the overview area still lands on their first accessible admin page, and
+  `getFirstAccessibleAdminHref(matrix) ?? /dashboard`. This applies to **every**
+  member whose role resolves to an accessible admin page, not just full admins:
+  read-only admins and finance-only viewers are included and now land on their
+  first accessible admin page (e.g. a finance-only viewer lands on
+  `/admin/payments`). An admin whose matrix denies the overview area still lands
+  on their first accessible admin page, and
   a member with no admin area (or a demoted admin holding a stale preference)
   still lands safely on `/dashboard`, never a 403 loop. A new typed, nullable
   `Member.postLoginLanding` column (`MEMBER_DASHBOARD | ADMIN_DASHBOARD`, null =
