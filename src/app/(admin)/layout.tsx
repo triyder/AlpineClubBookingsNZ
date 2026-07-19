@@ -5,6 +5,7 @@ import { AppProviders } from "@/components/app-providers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { AdminSidebar } from "@/components/admin-sidebar";
+import { AdminCommandPalette } from "@/components/admin-command-palette";
 import { ContextualHelpButton } from "@/components/contextual-help-button";
 import { NavBar } from "@/components/nav-bar";
 import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
@@ -153,6 +154,12 @@ export default async function AdminLayout({
         <NavBar user={user} features={effectiveModules} />
         <div className="flex flex-1 flex-col md:flex-row">
           <AdminSidebar
+            features={effectiveModules}
+            permissionMatrix={permissionMatrix}
+            isFullAdmin={actorIsFullAdmin}
+            hutLeaderLabel={liveClubIdentity.hutLeaderLabel}
+          />
+          <AdminCommandPalette
             features={effectiveModules}
             permissionMatrix={permissionMatrix}
             isFullAdmin={actorIsFullAdmin}
