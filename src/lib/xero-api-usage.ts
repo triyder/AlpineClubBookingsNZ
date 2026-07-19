@@ -152,6 +152,27 @@ export async function recordXeroApiUsage(input: RecordXeroApiUsageInput): Promis
   }
 }
 
+/**
+ * The errorMessage of the most recent FAILED recorded Xero API call, or null
+ * when none is recorded. Already redaction-truncated at write time
+ * (truncateErrorMessage); callers surfacing it to a browser should still pass
+ * it through the redaction helper again defensively (#2105).
+ */
+export async function getLatestXeroUsageErrorMessage(): Promise<string | null> {
+  const usagePrisma = prisma as XeroApiUsagePrisma & {
+    xeroApiUsageEvent?: { findFirst?: (args: unknown) => unknown };
+  };
+  if (!usagePrisma.xeroApiUsageEvent?.findFirst) {
+    return null;
+  }
+  const latest = (await prisma.xeroApiUsageEvent.findFirst({
+    where: { success: false, errorMessage: { not: null } },
+    orderBy: { createdAt: "desc" },
+    select: { errorMessage: true },
+  })) as { errorMessage: string | null } | null;
+  return latest?.errorMessage ?? null;
+}
+
 export async function getTodaysXeroUsageSummary() {
   const usageDate = startOfLocalDay(new Date());
   const last24HoursStart = new Date(Date.now() - 24 * 60 * 60 * 1000);

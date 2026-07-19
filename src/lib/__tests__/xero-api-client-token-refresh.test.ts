@@ -41,9 +41,15 @@ vi.mock("@/lib/xero-api-usage", () => ({
   recordXeroApiUsage: vi.fn(),
 }));
 
+// The refresh-failure path fires a best-effort alert via a dynamic import.
+vi.mock("@/lib/xero-error-alert", () => ({
+  notifyXeroSyncError: vi.fn().mockResolvedValue(undefined),
+}));
+
 import {
   getAuthenticatedXeroClient,
   resetXeroRateLimitStateForTests,
+  XeroReconnectRequiredError,
 } from "@/lib/xero-api-client";
 
 function makeTokens(overrides: Record<string, unknown> = {}) {
@@ -194,5 +200,108 @@ describe("getAuthenticatedXeroClient token refresh lease", () => {
       refresh_token: "fresh-refresh",
       token_type: "Bearer",
     });
+  });
+});
+
+// #2105: the token/tenant sites and identity-auth refresh failures throw the
+// dedicated XeroReconnectRequiredError (unchanged message strings); transient
+// identity 5xx stays an ordinary retryable Error.
+describe("getAuthenticatedXeroClient error taxonomy (#2105)", () => {
+  const REFRESH_FAILED_MESSAGE =
+    "Xero token refresh failed. Please reconnect Xero via the admin panel.";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-21T12:00:00.000Z"));
+    vi.clearAllMocks();
+    resetXeroRateLimitStateForTests();
+    mocks.releaseXeroTokenRefreshLease.mockResolvedValue(undefined);
+    mocks.saveXeroTokens.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("throws XeroReconnectRequiredError when Xero is not connected (no tokens)", async () => {
+    mocks.loadXeroTokens.mockResolvedValue(null);
+
+    const err = await getAuthenticatedXeroClient().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(XeroReconnectRequiredError);
+    expect((err as Error).message).toBe(
+      "Xero is not connected. Please connect via admin panel.",
+    );
+  });
+
+  it("throws XeroReconnectRequiredError when the tenant ID is missing", async () => {
+    mocks.loadXeroTokens.mockResolvedValue(makeTokens({ tenantId: null }));
+
+    const err = await getAuthenticatedXeroClient().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(XeroReconnectRequiredError);
+    expect((err as Error).message).toBe(
+      "Xero tenant ID not found. Please reconnect Xero.",
+    );
+  });
+
+  function arrangeFailingRefresh(refreshError: unknown) {
+    const tokens = makeTokens();
+    const xero = makeXeroClient();
+    xero.refreshWithRefreshToken = vi.fn().mockRejectedValue(refreshError);
+    mocks.createXeroClient.mockReturnValue(xero);
+    mocks.loadXeroTokens.mockResolvedValue(tokens);
+    mocks.claimXeroTokenRefreshLease.mockResolvedValue({
+      claimed: true,
+      tokens,
+      leaseUntil: new Date("2026-06-21T12:02:00.000Z"),
+    });
+  }
+
+  it("maps an invalid_grant refresh rejection to XeroReconnectRequiredError (unchanged message)", async () => {
+    arrangeFailingRefresh(
+      Object.assign(new Error("invalid_grant (token revoked)"), {
+        error: "invalid_grant",
+      }),
+    );
+
+    const err = await getAuthenticatedXeroClient().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(XeroReconnectRequiredError);
+    expect((err as Error).message).toBe(REFRESH_FAILED_MESSAGE);
+  });
+
+  it("maps an HTTP 400 refresh rejection to XeroReconnectRequiredError", async () => {
+    arrangeFailingRefresh(
+      Object.assign(new Error("Bad Request"), {
+        response: { statusCode: 400 },
+      }),
+    );
+
+    await expect(getAuthenticatedXeroClient()).rejects.toBeInstanceOf(
+      XeroReconnectRequiredError,
+    );
+  });
+
+  it("keeps a transient identity 5xx refresh rejection an ordinary retryable Error (NOT reconnect-required)", async () => {
+    arrangeFailingRefresh(
+      Object.assign(new Error("identity endpoint unavailable"), {
+        response: { statusCode: 503 },
+      }),
+    );
+
+    const err = await getAuthenticatedXeroClient().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(XeroReconnectRequiredError);
+    expect((err as Error).message).toBe(REFRESH_FAILED_MESSAGE);
   });
 });

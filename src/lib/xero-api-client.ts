@@ -82,6 +82,47 @@ export class XeroTransientOutageError extends Error {
   }
 }
 
+/**
+ * Raised at the token/tenant sites that indicate the Xero connection can only
+ * be restored by an admin re-authorising it (missing tokens, missing tenant, or
+ * a refresh that failed with an identity-level auth error such as a revoked
+ * refresh token). Distinct from XeroTransientOutageError, which the retry/gate
+ * machinery raises for temporary unavailability the caller should retry.
+ *
+ * getXeroApiErrorInfo maps this class (name-keyed) to the same 401-style
+ * "reconnect Xero" client message a live 401/403 produces, and the lock-date
+ * guard classifies it as reason "reconnect_required".
+ */
+export class XeroReconnectRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "XeroReconnectRequiredError";
+  }
+}
+
+/**
+ * A token-refresh failure means "reconnect Xero" only when the identity
+ * endpoint rejected the refresh token itself — an `invalid_grant` / HTTP 400
+ * (revoked, expired, or already-rotated refresh token). A transient identity
+ * 5xx (or a network blip with no status) leaves the refresh token valid and is
+ * a retryable outage, NOT a reconnect situation, so it stays an ordinary Error.
+ */
+function refreshFailureRequiresReconnect(err: unknown): boolean {
+  const statusCode = getXeroErrorStatusCode(err);
+  if (statusCode !== undefined && statusCode >= 500) {
+    return false;
+  }
+  if (statusCode === 400 || statusCode === 401) {
+    return true;
+  }
+  const text = getXeroErrorSearchText(err);
+  return (
+    text.includes("invalid_grant") ||
+    text.includes("invalid grant") ||
+    text.includes("unauthorized_client")
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Authenticated Xero client (with auto-refresh)
 // ---------------------------------------------------------------------------
@@ -101,7 +142,7 @@ async function buildAuthenticatedXeroClient(
   tokens: XeroTokenRecord
 ): Promise<{ xero: XeroClient; tenantId: string }> {
   if (!tokens.tenantId) {
-    throw new Error("Xero tenant ID not found. Please reconnect Xero.");
+    throw new XeroReconnectRequiredError("Xero tenant ID not found. Please reconnect Xero.");
   }
 
   const xero = createXeroClient();
@@ -122,11 +163,11 @@ async function waitForSharedXeroTokenRefresh(): Promise<XeroTokenRecord> {
     await sleep(TOKEN_REFRESH_POLL_MS);
     const latestTokens = await loadXeroTokens();
     if (!latestTokens) {
-      throw new Error("Xero is not connected. Please connect via admin panel.");
+      throw new XeroReconnectRequiredError("Xero is not connected. Please connect via admin panel.");
     }
 
     if (!latestTokens.tenantId) {
-      throw new Error("Xero tenant ID not found. Please reconnect Xero.");
+      throw new XeroReconnectRequiredError("Xero tenant ID not found. Please reconnect Xero.");
     }
 
     if (!tokenNeedsRefresh(latestTokens)) {
@@ -141,7 +182,7 @@ async function waitForSharedXeroTokenRefresh(): Promise<XeroTokenRecord> {
 
   const latestTokens = await loadXeroTokens();
   if (!latestTokens) {
-    throw new Error("Xero is not connected. Please connect via admin panel.");
+    throw new XeroReconnectRequiredError("Xero is not connected. Please connect via admin panel.");
   }
 
   return latestTokens;
@@ -159,10 +200,10 @@ export async function getAuthenticatedXeroClient(): Promise<{
 
   const tokens = await loadXeroTokens();
   if (!tokens) {
-    throw new Error("Xero is not connected. Please connect via admin panel.");
+    throw new XeroReconnectRequiredError("Xero is not connected. Please connect via admin panel.");
   }
   if (!tokens.tenantId) {
-    throw new Error("Xero tenant ID not found. Please reconnect Xero.");
+    throw new XeroReconnectRequiredError("Xero tenant ID not found. Please reconnect Xero.");
   }
 
   // Check if token needs refresh
@@ -231,7 +272,11 @@ export async function getAuthenticatedXeroClient(): Promise<{
               errorMessage: err instanceof Error ? err.message : String(err),
             })
           ).catch(() => {});
-          throw new Error("Xero token refresh failed. Please reconnect Xero via the admin panel.");
+          const message = "Xero token refresh failed. Please reconnect Xero via the admin panel.";
+          if (refreshFailureRequiresReconnect(err)) {
+            throw new XeroReconnectRequiredError(message);
+          }
+          throw new Error(message);
         }
       } finally {
         await releaseXeroTokenRefreshLease(claimedTokens.id, leaseUntil).catch((err) => {

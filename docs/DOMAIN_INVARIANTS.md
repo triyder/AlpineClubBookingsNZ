@@ -1226,6 +1226,25 @@ effective lock date (409 `XERO_PERIOD_LOCKED`, with unlock instructions). The
 guard is **skipped when Xero is not connected** and **fails closed** (retryable
 503 `XERO_LOCK_DATE_CHECK_FAILED`) when the lock dates cannot be read; the Xero
 call is made outside any DB transaction and its result is cached ~5 minutes.
+The guard still fails closed for every cause, but now **classifies that cause**
+(#2105): the `XeroLockDateCheckFailedError` carries a `reason` of
+`reconnect_required` (the Xero connection needs re-authorising — a revoked or
+missing token/tenant, surfaced by the taxonomy's `XeroReconnectRequiredError`),
+`rate_limited` (Xero's daily API budget is exhausted — `XeroDailyLimitError`),
+or `transient` (a temporary outage or unclassified failure). The `reason` and
+the cause-specific admin copy are emitted **only for the admin audience**
+(`getXeroLockGuardErrorResponse` omits it for members) — member-facing bodies
+stay the generic wording so they disclose no Xero connection state. The code
+(`XERO_LOCK_DATE_CHECK_FAILED`) and status (503) are unchanged for both.
+Independently, admins can run a **click-only connection-health probe**
+(`GET /api/admin/xero/status?probe=1`): it refreshes the token and reuses the
+cached lock-date/org read, returning `tokenHealth` of
+`ok | reconnect_required | rate_limited | error`, and is cached server-side
+30–60s so repeated clicks make no extra Xero call. A daily-limit cooldown maps
+to `rate_limited` **without any API call** (the in-process gate throws before the
+network request), so the probe can never burn the shared daily budget; it never
+runs on page mount or a poll. The most recent recorded usage `errorMessage`
+(redacted) is surfaced alongside the health chip.
 The same guard protects the **booking modify paths**
 (`xero-period-lock-guard`), with two deliberately asymmetric scopes:
 - **Admin override** (#1697): a **recalculate** override can queue a

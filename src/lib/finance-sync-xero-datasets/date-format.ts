@@ -35,9 +35,25 @@ export function parseRequiredDateOnly(value: string, fieldName: string): Date {
   return parsed;
 }
 
-export function parseOptionalDateOnly(value: string | null | undefined): Date | null {
+export function parseOptionalDateOnly(
+  value: string | Date | null | undefined,
+): Date | null {
   if (!value) {
     return null;
+  }
+
+  // xero-node's ObjectSerializer coerces `/Date(...)/` payloads to JS Dates at
+  // runtime even though it TYPES these invoice fields as strings, so a real
+  // due/issue date arrives here as a Date. Normalise it to a date-only Date the
+  // same way the string path does (mirrors toOptionalDateOnlyText / the
+  // lock-date parser) — without this branch a Date silently parsed to null,
+  // dropping the due date from the aging-bucket / days-overdue computation.
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      return null;
+    }
+    const dateOnly = parseDateOnly(value.toISOString().slice(0, 10));
+    return Number.isNaN(dateOnly.getTime()) ? null : dateOnly;
   }
 
   const parsed = parseDateOnly(value);

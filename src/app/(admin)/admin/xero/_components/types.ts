@@ -7,6 +7,20 @@ export interface XeroStatus {
   tokenExpiresAt: string | null
 }
 
+/** Live connection-health probe result (#2105), returned by `/status?probe=1`. */
+export type XeroTokenHealth =
+  | "ok"
+  | "reconnect_required"
+  | "rate_limited"
+  | "error"
+
+export interface XeroConnectionProbe {
+  tokenHealth: XeroTokenHealth
+  checkedAt: string
+  lastErrorMessage: string | null
+  cached: boolean
+}
+
 export interface XeroReferenceCacheMeta {
   source: "memory" | "database" | "xero"
   lastRefreshedAt: string

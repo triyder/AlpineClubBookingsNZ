@@ -46,6 +46,7 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { wouldQueueCheckInDatedInvoiceUpdate } from "@/lib/xero-booking-edit-conditions";
 // The source domain module, not the @/lib/xero facade (#1208 lint rule).
 import { isXeroConnected } from "@/lib/xero-token-store";
+import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import {
   getEffectiveXeroLockDate,
   getXeroLockDates,
@@ -75,24 +76,98 @@ export class XeroPeriodLockedError extends ApiError {
   }
 }
 
+/**
+ * Why the lock-date check failed closed (#2105). Surfaced to admins only (in the
+ * error body and copy); member-facing wording never discloses it.
+ * - "reconnect_required": the Xero connection needs re-authorising (revoked /
+ *   missing token or tenant) — an admin must reconnect before retrying.
+ * - "rate_limited": Xero's daily API budget is exhausted; retrying now cannot
+ *   succeed until the cooldown clears.
+ * - "transient": a temporary outage or unclassified failure — retry may work.
+ */
+export type XeroLockDateCheckFailureReason =
+  | "reconnect_required"
+  | "rate_limited"
+  | "transient";
+
+function buildLockDateCheckFailedMessage(
+  audience: XeroLockGuardAudience,
+  reason: XeroLockDateCheckFailureReason,
+  retryAfterSec?: number,
+): string {
+  // Members get the same generic wording for every cause — deliberate
+  // non-disclosure of the organisation's Xero connection state.
+  if (audience === "member") {
+    return "We couldn't confirm this change can be saved right now. Please try again, or contact an administrator.";
+  }
+  switch (reason) {
+    case "reconnect_required":
+      return "Could not verify the Xero lock dates because the Xero connection needs re-authorising. Reconnect Xero (Admin → Xero → Setup), then try again.";
+    case "rate_limited": {
+      if (retryAfterSec && retryAfterSec > 0) {
+        const hours = Math.max(1, Math.round(retryAfterSec / 3600));
+        return `Could not verify the Xero lock dates because Xero's daily API limit has been reached. Please try again in about ${hours} hour${hours === 1 ? "" : "s"}.`;
+      }
+      return "Could not verify the Xero lock dates because Xero's daily API limit has been reached. Please try again tomorrow.";
+    }
+    case "transient":
+    default:
+      return "Could not verify the Xero lock dates. Please try again.";
+  }
+}
+
 export class XeroLockDateCheckFailedError extends ApiError {
   readonly code = "XERO_LOCK_DATE_CHECK_FAILED";
-  constructor(audience: XeroLockGuardAudience = "admin") {
-    super(
-      audience === "member"
-        ? "We couldn't confirm this change can be saved right now. Please try again, or contact an administrator."
-        : "Could not verify the Xero lock dates. Please try again.",
-      503,
-    );
+  readonly audience: XeroLockGuardAudience;
+  readonly reason: XeroLockDateCheckFailureReason;
+  constructor(
+    audience: XeroLockGuardAudience = "admin",
+    reason: XeroLockDateCheckFailureReason = "transient",
+    retryAfterSec?: number,
+  ) {
+    super(buildLockDateCheckFailedMessage(audience, reason, retryAfterSec), 503);
     this.name = "XeroLockDateCheckFailedError";
+    this.audience = audience;
+    this.reason = reason;
   }
+}
+
+/**
+ * Classify a lock-date fetch failure into the audience-appropriate
+ * XeroLockDateCheckFailedError. Name-keyed (not instanceof) so the guard stays
+ * decoupled from xero-api-client's module graph and easy to unit-test.
+ */
+function classifyXeroLockDateCheckFailure(
+  error: unknown,
+  audience: XeroLockGuardAudience | undefined,
+): XeroLockDateCheckFailedError {
+  if (error instanceof Error && error.name === "XeroReconnectRequiredError") {
+    return new XeroLockDateCheckFailedError(audience, "reconnect_required");
+  }
+  if (error instanceof Error && error.name === "XeroDailyLimitError") {
+    const retryAfterSec = (error as { retryAfterSec?: number }).retryAfterSec;
+    return new XeroLockDateCheckFailedError(audience, "rate_limited", retryAfterSec);
+  }
+  // A live 401/403 from the org read (token revoked in Xero's UI before the
+  // pre-expiry refresh window trips) arrives as a raw API error, not a
+  // reconnect-classed one — same status fallback as getXeroApiErrorInfo.
+  const statusCode = getXeroErrorStatusCode(error);
+  if (statusCode === 401 || statusCode === 403) {
+    return new XeroLockDateCheckFailedError(audience, "reconnect_required");
+  }
+  return new XeroLockDateCheckFailedError(audience, "transient");
 }
 
 /**
  * Response body + status for the two guard errors, or null for anything else.
  */
 export function getXeroLockGuardErrorResponse(error: unknown): {
-  body: { error: string; code: string; lockDate?: string };
+  body: {
+    error: string;
+    code: string;
+    lockDate?: string;
+    reason?: XeroLockDateCheckFailureReason;
+  };
   status: number;
 } | null {
   if (error instanceof XeroPeriodLockedError) {
@@ -103,7 +178,13 @@ export function getXeroLockGuardErrorResponse(error: unknown): {
   }
   if (error instanceof XeroLockDateCheckFailedError) {
     return {
-      body: { error: error.message, code: error.code },
+      body: {
+        error: error.message,
+        code: error.code,
+        // The failure cause is disclosed to admins only (#2105): member bodies
+        // stay exactly as before so they leak no Xero connection state.
+        ...(error.audience === "admin" ? { reason: error.reason } : {}),
+      },
       status: error.status,
     };
   }
@@ -139,8 +220,8 @@ export async function assertCheckInClearsXeroLockDate(
   let lockDates;
   try {
     lockDates = await getXeroLockDates();
-  } catch {
-    throw new XeroLockDateCheckFailedError(options?.audience);
+  } catch (error) {
+    throw classifyXeroLockDateCheckFailure(error, options?.audience);
   }
   const effectiveLock = getEffectiveXeroLockDate(lockDates);
   if (effectiveLock && checkIn <= effectiveLock) {

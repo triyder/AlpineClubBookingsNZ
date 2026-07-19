@@ -2,6 +2,7 @@
 
 import type { AgeTier } from "@prisma/client";
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BookingCalendar } from "@/components/booking-calendar";
 import { GuestForm, type GuestData } from "@/components/guest-form";
@@ -94,6 +95,9 @@ export default function AdminBookPage() {
   const [priceQuote, setPriceQuote] = useState<PriceQuote | null>(null);
   const [priceLoading, setPriceLoading] = useState(false);
   const [error, setError] = useState("");
+  // The admin-audience `reason` a XERO_LOCK_DATE_CHECK_FAILED 503 carries
+  // (#2105) — drives the "Go to Xero setup" link on a reconnect-required cause.
+  const [errorReason, setErrorReason] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [availableBeds, setAvailableBeds] = useState(lodgeCapacity);
@@ -366,6 +370,7 @@ export default function AdminBookPage() {
   }) {
     setSubmitting(true);
     setError("");
+    setErrorReason(null);
     const checkInStr = formatLocalDateOnly(checkIn!);
     const checkOutStr = formatLocalDateOnly(checkOut!);
 
@@ -416,8 +421,10 @@ export default function AdminBookPage() {
       return;
     }
     // XERO_PERIOD_LOCKED / XERO_LOCK_DATE_CHECK_FAILED and every other error
-    // surface verbatim in the existing banner.
+    // surface verbatim in the existing banner. A reconnect-required lock-date
+    // check failure additionally offers a link to the Xero setup page (#2105).
     setError(data.error || "Failed to create booking");
+    setErrorReason(typeof data.reason === "string" ? data.reason : null);
     setSubmitting(false);
   }
 
@@ -531,6 +538,13 @@ export default function AdminBookPage() {
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           <p>{error}</p>
+          {errorReason === "reconnect_required" && (
+            <p className="mt-1">
+              <Link href="/admin/xero/setup" className="font-medium underline">
+                Go to Xero setup
+              </Link>
+            </p>
+          )}
         </div>
       )}
 

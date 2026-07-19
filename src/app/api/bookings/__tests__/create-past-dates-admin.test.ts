@@ -430,7 +430,7 @@ describe("POST /api/bookings retroactive create gating (#1695)", () => {
     expect(h.createConfirmedBooking).toHaveBeenCalledTimes(1);
   });
 
-  it("fails closed with 503 when the lock-date fetch throws", async () => {
+  it("fails closed with 503 and an admin transient reason when the lock-date fetch throws", async () => {
     h.isXeroConnected.mockResolvedValue(true);
     h.getXeroLockDates.mockRejectedValue(new Error("xero down"));
 
@@ -441,6 +441,30 @@ describe("POST /api/bookings retroactive create gating (#1695)", () => {
     expect(res.status).toBe(503);
     const body = await res.json();
     expect(body.code).toBe("XERO_LOCK_DATE_CHECK_FAILED");
+    // Admin create path → the classified reason is disclosed in the body (#2105).
+    expect(body.reason).toBe("transient");
+    expect(body.error).toBe("Could not verify the Xero lock dates. Please try again.");
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+  });
+
+  it("classifies a reconnect-required lock-date failure with the admin reconnect reason + copy (#2105)", async () => {
+    h.isXeroConnected.mockResolvedValue(true);
+    h.getXeroLockDates.mockRejectedValue(
+      Object.assign(
+        new Error("Xero is not connected. Please connect via admin panel."),
+        { name: "XeroReconnectRequiredError" },
+      ),
+    );
+
+    const res = await POST(
+      makeRequest(pastPayload({ allowPastDates: true })),
+    );
+
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.code).toBe("XERO_LOCK_DATE_CHECK_FAILED");
+    expect(body.reason).toBe("reconnect_required");
+    expect(body.error).toContain("needs re-authorising");
     expect(h.createConfirmedBooking).not.toHaveBeenCalled();
   });
 

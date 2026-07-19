@@ -482,7 +482,7 @@ describe("getXeroLockGuardErrorResponse", () => {
     });
   });
 
-  it("maps XeroLockDateCheckFailedError to a 503 body with code", () => {
+  it("maps XeroLockDateCheckFailedError to a 503 body with code and the admin reason (#2105)", () => {
     const mapped = getXeroLockGuardErrorResponse(
       new XeroLockDateCheckFailedError(),
     );
@@ -490,6 +490,8 @@ describe("getXeroLockGuardErrorResponse", () => {
       body: {
         error: "Could not verify the Xero lock dates. Please try again.",
         code: "XERO_LOCK_DATE_CHECK_FAILED",
+        // Admin audience (the default) carries the classified reason.
+        reason: "transient",
       },
       status: 503,
     });
@@ -525,5 +527,106 @@ describe("getXeroLockGuardErrorResponse", () => {
   it("returns null for anything else", () => {
     expect(getXeroLockGuardErrorResponse(new Error("other"))).toBeNull();
     expect(getXeroLockGuardErrorResponse(null)).toBeNull();
+  });
+});
+
+// #2105: the guard still fails closed, but now classifies WHY. The reason and
+// cause-specific admin copy are disclosed to admins only; member bodies stay
+// generic and reason-free.
+describe("lock-date check-failure classification (#2105)", () => {
+  const reconnectError = () =>
+    Object.assign(
+      new Error("Xero is not connected. Please connect via admin panel."),
+      { name: "XeroReconnectRequiredError" },
+    );
+  const dailyLimitError = (retryAfterSec?: number) =>
+    Object.assign(new Error("Xero daily API limit reached."), {
+      name: "XeroDailyLimitError",
+      retryAfterSec,
+    });
+
+  const failWith = async (
+    error: unknown,
+    options?: { audience?: "admin" | "member" },
+  ) => {
+    h.getXeroLockDates.mockRejectedValue(error);
+    return assertCheckInClearsXeroLockDate(daysAgo(5), options).then(
+      () => null,
+      (e: unknown) => e as XeroLockDateCheckFailedError,
+    );
+  };
+
+  it("classifies a reconnect-required cause with reason + admin reconnect copy", async () => {
+    const error = await failWith(reconnectError());
+    expect(error).toBeInstanceOf(XeroLockDateCheckFailedError);
+    expect(error?.reason).toBe("reconnect_required");
+    expect(error?.message).toBe(
+      "Could not verify the Xero lock dates because the Xero connection needs re-authorising. Reconnect Xero (Admin → Xero → Setup), then try again.",
+    );
+    expect(getXeroLockGuardErrorResponse(error)).toEqual({
+      body: {
+        error: error?.message,
+        code: "XERO_LOCK_DATE_CHECK_FAILED",
+        reason: "reconnect_required",
+      },
+      status: 503,
+    });
+  });
+
+  it("classifies a daily-limit cause as rate_limited with retry timing when available", async () => {
+    const error = await failWith(dailyLimitError(7200));
+    expect(error?.reason).toBe("rate_limited");
+    expect(error?.message).toContain("daily API limit");
+    expect(error?.message).toContain("about 2 hours");
+  });
+
+  it("falls back to rate_limited 'tomorrow' wording without retry timing", async () => {
+    const error = await failWith(dailyLimitError());
+    expect(error?.reason).toBe("rate_limited");
+    expect(error?.message).toContain("Please try again tomorrow.");
+  });
+
+  it("defaults an unclassified failure to transient (the current wording)", async () => {
+    const error = await failWith(new Error("xero down"));
+    expect(error?.reason).toBe("transient");
+    expect(error?.message).toBe(
+      "Could not verify the Xero lock dates. Please try again.",
+    );
+  });
+
+  it("classifies a raw 401/403 from the org read as reconnect_required (revoked-token window)", async () => {
+    // A token revoked in Xero's UI is rejected live before the pre-expiry
+    // refresh window trips, so the error arrives as a raw API status — the
+    // classifier falls back to the same 401/403 check as getXeroApiErrorInfo.
+    const raw401 = Object.assign(new Error("Unauthorized"), {
+      response: { statusCode: 401 },
+    });
+    const error = await failWith(raw401);
+    expect(error?.reason).toBe("reconnect_required");
+
+    const raw403 = Object.assign(new Error("Forbidden"), {
+      response: { statusCode: 403 },
+    });
+    const error403 = await failWith(raw403);
+    expect(error403?.reason).toBe("reconnect_required");
+  });
+
+  it("classifies internally but discloses NO reason to members (non-disclosure)", async () => {
+    const error = await failWith(reconnectError(), { audience: "member" });
+    // Internally the cause is still known…
+    expect(error?.reason).toBe("reconnect_required");
+    // …but the member wording and body stay generic and reason-free.
+    expect(error?.message).toBe(
+      "We couldn't confirm this change can be saved right now. Please try again, or contact an administrator.",
+    );
+    const mapped = getXeroLockGuardErrorResponse(error);
+    expect(mapped?.body).not.toHaveProperty("reason");
+    expect(mapped).toEqual({
+      body: {
+        error: error?.message,
+        code: "XERO_LOCK_DATE_CHECK_FAILED",
+      },
+      status: 503,
+    });
   });
 });
