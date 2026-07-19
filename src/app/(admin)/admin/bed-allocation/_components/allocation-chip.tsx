@@ -34,7 +34,9 @@ interface AllocationChipProps {
   onReassignBed: (bedId: string) => void;
   onRemove: () => void;
   pending: boolean;
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the client session resolves; the
+  // `!canEdit` idiom treats that as disabled, so no truthy default here.
+  canEdit: boolean | undefined;
 }
 
 export function AllocationChip({
@@ -44,7 +46,7 @@ export function AllocationChip({
   onReassignBed,
   onRemove,
   pending,
-  canEdit = true,
+  canEdit,
 }: AllocationChipProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({

@@ -49,7 +49,8 @@ interface MemberLifecycleCardProps {
     notifyMember?: boolean,
   ) => void
   /** Whether the actor may act (membership edit, #1997). */
-  canEdit?: boolean
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined
   className?: string
 }
 
@@ -74,7 +75,7 @@ export function MemberLifecycleCard({
   onSubmitArchive,
   onSubmitCancellation,
   onReviewArchive,
-  canEdit = true,
+  canEdit,
   className,
 }: MemberLifecycleCardProps) {
   // #1788: which archive review is waiting on the admin's notify-or-not choice.

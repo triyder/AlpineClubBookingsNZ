@@ -34,7 +34,9 @@ interface GuestChipProps {
   onAllocate: () => void;
   pending: boolean;
   highlighted?: boolean;
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the client session resolves; the
+  // `!canEdit` idiom treats that as disabled, so no truthy default here.
+  canEdit: boolean | undefined;
 }
 
 export function GuestChip({
@@ -46,7 +48,7 @@ export function GuestChip({
   onAllocate,
   pending,
   highlighted,
-  canEdit = true,
+  canEdit,
 }: GuestChipProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({

@@ -880,6 +880,7 @@ export default function MemberDetailPage({
           setLoading(true);
           void fetchMember();
         }}
+        canEdit={canEditMembership}
       />
 
       <MemberXeroLinkDialog

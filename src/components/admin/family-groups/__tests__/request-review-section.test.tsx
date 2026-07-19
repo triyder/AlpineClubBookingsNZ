@@ -159,6 +159,7 @@ describe("FamilyGroupRequestReviewSection - searchRequestMembers", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest()]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 
@@ -187,6 +188,7 @@ describe("FamilyGroupRequestReviewSection - searchRequestMembers", () => {
           }),
         ]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 
@@ -208,6 +210,7 @@ describe("FamilyGroupRequestReviewSection - searchRequestMembers", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest()]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 
@@ -231,6 +234,7 @@ describe("FamilyGroupRequestReviewSection - searchRequestMembers", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest()]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 
@@ -254,6 +258,7 @@ describe("FamilyGroupRequestReviewSection - searchRequestMembers", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest()]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 
@@ -275,6 +280,7 @@ describe("FamilyGroupRequestReviewSection - searchRequestMembers", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest()]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 
@@ -294,6 +300,7 @@ describe("FamilyGroupRequestReviewSection - searchRequestMembers", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest()]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 
@@ -317,6 +324,7 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest()]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 
@@ -336,6 +344,7 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest()]}
         onReviewed={vi.fn()}
+        canEdit={true}
         createMemberNoun="adult"
       />
     );
@@ -356,6 +365,7 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest({ matchingMembers: [buildMatch()] })]}
         onReviewed={onReviewed}
+        canEdit={true}
       />
     );
 
@@ -393,6 +403,7 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest({ matchingMembers: [buildMatch()] })]}
         onReviewed={onReviewed}
+        canEdit={true}
       />
     );
 
@@ -421,6 +432,7 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest({ matchingMembers: [buildMatch()] })]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 
@@ -445,6 +457,7 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest()]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 
@@ -478,6 +491,7 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest()]}
         onReviewed={onReviewed}
+        canEdit={true}
       />
     );
 
@@ -509,6 +523,7 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest()]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 
@@ -537,6 +552,7 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest({ matchingMembers: [buildMatch()] })]}
         onReviewed={onReviewed}
+        canEdit={true}
       />
     );
 
@@ -561,6 +577,7 @@ describe("FamilyGroupRequestReviewSection - handleRequest", () => {
       <FamilyGroupRequestReviewSection
         requests={[buildChildRequest({ matchingMembers: [buildMatch()] })]}
         onReviewed={onReviewed}
+        canEdit={true}
       />
     );
 
@@ -602,6 +619,7 @@ describe("FamilyGroupRequestReviewSection - notify choice dialog (#1789)", () =>
       <FamilyGroupRequestReviewSection
         requests={[buildGroupCreateRequest({ invitedMemberId: "partner-1" })]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 
@@ -637,6 +655,7 @@ describe("FamilyGroupRequestReviewSection - notify choice dialog (#1789)", () =>
           buildChildRequest({ id: "req-join", type: "JOIN_REQUEST" }),
         ]}
         onReviewed={vi.fn()}
+        canEdit={true}
       />
     );
 

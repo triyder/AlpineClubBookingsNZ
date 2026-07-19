@@ -50,6 +50,7 @@ function renderItem(operation: XeroOperation) {
   return render(
     <OperationItem
       operation={operation}
+      canEdit={true}
       retrying={false}
       markingNonReplayable={false}
       resolving={false}

@@ -31,13 +31,19 @@ interface MemberDetailHeaderProps {
   xeroConnected: boolean | null;
   xeroPushing: boolean;
   xeroUnlinking: boolean;
-  /** Add Dependent writes the membership-area members route (#1997). */
-  canEditMembership?: boolean;
+  /**
+   * Add Dependent writes the membership-area members route (#1997).
+   * Tri-state (#2065): `undefined` while the client session resolves — the
+   * `!canEdit`/`canEdit === false` idioms treat that as the neutral disabled
+   * state, so this must never default to `true`.
+   */
+  canEditMembership: boolean | undefined;
   /**
    * The Xero link/push/unlink actions write members/[id]/xero-* routes, which
-   * the route-area matrix maps to the finance area (#1997).
+   * the route-area matrix maps to the finance area (#1997). Tri-state (#2065):
+   * `undefined` while the client session resolves.
    */
-  canEditFinance?: boolean;
+  canEditFinance: boolean | undefined;
   onOpenDependentDialog: () => void;
   onOpenLinkXero: () => void;
   onOpenCreateXero: () => void;
@@ -54,8 +60,8 @@ export function MemberDetailHeader({
   xeroConnected,
   xeroPushing,
   xeroUnlinking,
-  canEditMembership = true,
-  canEditFinance = true,
+  canEditMembership,
+  canEditFinance,
   onOpenDependentDialog,
   onOpenLinkXero,
   onOpenCreateXero,

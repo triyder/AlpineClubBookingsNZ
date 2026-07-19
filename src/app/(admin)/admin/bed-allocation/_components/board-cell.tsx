@@ -28,7 +28,9 @@ interface BoardCellProps {
   pendingAllocationIds: Set<string>;
   highlightedBookingId: string;
   activeDragLane?: boolean;
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the client session resolves; the
+  // `!canEdit` idiom treats that as disabled, so no truthy default here.
+  canEdit: boolean | undefined;
 }
 
 export function BoardCell({
@@ -43,7 +45,7 @@ export function BoardCell({
   pendingAllocationIds,
   highlightedBookingId,
   activeDragLane,
-  canEdit = true,
+  canEdit,
 }: BoardCellProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: cellDroppableId(bedId, stayDate),

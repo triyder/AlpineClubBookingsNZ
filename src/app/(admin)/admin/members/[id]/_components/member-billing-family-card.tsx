@@ -22,7 +22,8 @@ type BillingFamilyProps = {
    * finance-area fee-configuration route, so this is keyed on finance edit
    * (#1997).
    */
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined;
   onChange?: (billingFamilyGroupId: string | null) => void;
 };
 
@@ -36,7 +37,7 @@ export function MemberBillingFamilyCard({
   familyGroups,
   familyBillingMode,
   disabled,
-  canEdit = true,
+  canEdit,
   onChange,
 }: BillingFamilyProps) {
   const [value, setValue] = useState<string>(billingFamilyGroupId ?? "none");

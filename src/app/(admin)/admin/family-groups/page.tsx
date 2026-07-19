@@ -509,6 +509,7 @@ export default function FamilyGroupsPage() {
             onChanged={() => {
               void fetchData();
             }}
+            canEdit={canEditMembership}
           />
         ) : (
           <Card>

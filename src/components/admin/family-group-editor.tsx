@@ -28,12 +28,15 @@ export interface FamilyGroupEditorProps {
   groupId: string;
   onClose: () => void;
   onChanged?: () => void;
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined;
 }
 
 export function FamilyGroupEditor({
   groupId,
   onClose,
   onChanged,
+  canEdit,
 }: FamilyGroupEditorProps) {
   const [group, setGroup] = useState<FamilyGroupDetail | null>(null);
   const [requests, setRequests] = useState<FamilyGroupRequest[]>([]);
@@ -465,6 +468,7 @@ export function FamilyGroupEditor({
               }}
               idPrefix="editor-"
               createMemberNoun="adult"
+              canEdit={canEdit}
             />
           )}
         </section>

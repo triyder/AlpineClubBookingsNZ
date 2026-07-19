@@ -32,7 +32,8 @@ export interface FamilyGroupRequestReviewCardProps {
   searching: boolean;
   submitting: boolean;
   /** Whether the actor may act on the request (membership edit, #1997). */
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined;
   showSearchGuidance?: boolean;
   showRemovalDetails?: boolean;
   onSelectMember: (memberId: string) => void;
@@ -57,7 +58,7 @@ export function FamilyGroupRequestReviewCard({
   requestError,
   searching,
   submitting,
-  canEdit = true,
+  canEdit,
   showSearchGuidance = false,
   showRemovalDetails = false,
   onSelectMember,

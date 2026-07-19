@@ -95,6 +95,7 @@ describe("GuestChip bed select", () => {
         onSelectBed={vi.fn()}
         onAllocate={vi.fn()}
         pending={false}
+        canEdit={true}
       />,
     );
 
@@ -114,6 +115,7 @@ describe("GuestChip bed select", () => {
         onSelectBed={vi.fn()}
         onAllocate={vi.fn()}
         pending={false}
+        canEdit={true}
       />,
     );
 
@@ -130,6 +132,7 @@ describe("GuestChip bed select", () => {
         onSelectBed={vi.fn()}
         onAllocate={vi.fn()}
         pending={false}
+        canEdit={true}
       />,
     );
     const card = container.firstElementChild as HTMLElement;
@@ -163,6 +166,7 @@ describe("GuestChip bed select", () => {
         onSelectBed={vi.fn()}
         onAllocate={vi.fn()}
         pending={false}
+        canEdit={true}
         highlighted
       />,
     );

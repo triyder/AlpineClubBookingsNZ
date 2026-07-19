@@ -58,6 +58,7 @@ describe("RoomTable active drag lane rendering", () => {
     const nights = ["2026-07-01", "2026-07-02"];
     const { container } = render(
       <RoomTable
+        canEdit={true}
         room={buildRoom()}
         nights={nights}
         allocationByBedAndDate={new Map()}
@@ -121,6 +122,7 @@ describe("RoomTable active drag lane rendering", () => {
     };
     const { container } = render(
       <RoomTable
+        canEdit={true}
         room={buildRoom()}
         nights={["2026-07-01"]}
         allocationByBedAndDate={new Map([["bed-1:2026-07-01", [allocation]]])}
@@ -143,6 +145,7 @@ describe("RoomTable bed-type icon (#1675)", () => {
   function renderRoom(room: DashboardRoom) {
     return render(
       <RoomTable
+        canEdit={true}
         room={room}
         nights={["2026-07-01"]}
         allocationByBedAndDate={new Map()}
@@ -269,6 +272,7 @@ describe("RoomTable double-bed sharing (#1701)", () => {
 
     render(
       <RoomTable
+        canEdit={true}
         room={room}
         nights={["2026-07-01"]}
         allocationByBedAndDate={map}

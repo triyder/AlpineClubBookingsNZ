@@ -410,7 +410,7 @@ export function OperationsPanel({
 
 export function OperationItem({
   operation,
-  canEdit = true,
+  canEdit,
   retrying,
   markingNonReplayable,
   resolving,
@@ -420,7 +420,8 @@ export function OperationItem({
 }: {
   operation: XeroOperation
   /** Whether the actor may act on the operation (finance edit, #1997). */
-  canEdit?: boolean
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined
   retrying: boolean
   markingNonReplayable: boolean
   resolving: boolean
