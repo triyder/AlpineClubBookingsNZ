@@ -68,6 +68,17 @@ before changing Next.js APIs or conventions.
   feature hub) and every hub back-links. Run `npm run docs:linkcheck` (CI runs
   the equivalent lychee offline check) before pushing doc changes, and when you
   add a new admin route area add its row to `docs/COVERAGE_MATRIX.md`.
+- New or modified admin settings sections must follow the canonical settings
+  pattern: the section loads read-only; a per-section Edit reveals Save/Cancel;
+  no individual control auto-persists on change (a toggle or field edit only
+  stages a draft); Cancel reverts to the saved snapshot and Save persists once.
+  Gate edit affordances on the tri-state `useAdminAreaEditAccess` via
+  `ViewOnlyActionButton`/`AdminViewOnlyNotice`, and the write route must enforce
+  the matching `area:edit` permission. This is binding for settings work touched
+  from here on; two pre-existing surfaces are acknowledged divergents and are NOT
+  retrofitted by this rule alone: the `/admin/modules` grid (bulk toggles) and
+  the staged-but-ungated legacy settings forms. Reference implementation:
+  `src/components/admin/booking-policies/group-discount-section.tsx`.
 - Security, payment, booking, membership lifecycle, Xero, Stripe, and
   data-integrity work requires high or xhigh reasoning effort and human review
   before merge.

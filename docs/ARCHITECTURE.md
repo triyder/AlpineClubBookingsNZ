@@ -231,6 +231,23 @@ operator action) and feeds the amber "Provider state out of step" block on the
 booking detail Admin tools card — read-only detection mirroring the
 stuck-state queries.
 
+Admin settings sections follow one canonical edit model (developer rule, binding
+for new or modified sections; see `AGENTS.md` → Change Discipline). A section
+renders read-only on mount and stages every change behind a per-section Edit →
+Save/Cancel step: no individual control auto-persists on toggle, Cancel reverts
+to the last saved snapshot, and Save writes once. Edit affordances gate on the
+tri-state `useAdminAreaEditAccess(area)` through `ViewOnlyActionButton` /
+`AdminViewOnlyNotice` (so the resolving `undefined` window stays neutral), and
+the backing write route enforces the matching `area:edit` permission. Module
+toggles that share the strict `PUT /api/admin/modules` object (for example the
+magic-link and Google cards on `/admin/security`) must GET the fresh settings and
+merge only their own key before writing, so a sibling card's change is never
+clobbered by a stale render-time snapshot. Two pre-existing surfaces are
+acknowledged divergents that this rule does not retrofit on its own: the
+`/admin/modules` grid (deliberate bulk toggles) and the older staged-but-ungated
+settings forms. Reference:
+`src/components/admin/booking-policies/group-discount-section.tsx`.
+
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
 shape, keeping its wizard-step views in `src/app/(authenticated)/book/_components`
