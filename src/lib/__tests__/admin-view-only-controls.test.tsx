@@ -154,6 +154,8 @@ import { MemberDeletionCard } from "@/app/(admin)/admin/members/[id]/_components
 import { MemberCreditCard } from "@/app/(admin)/admin/members/[id]/_components/member-credit-card";
 import { MemberParentLinksCard } from "@/app/(admin)/admin/members/[id]/_components/member-parent-links-card";
 import { MemberDependentsCard } from "@/app/(admin)/admin/members/[id]/_components/member-dependents-card";
+import { FamilyGroupEditor } from "@/components/admin/family-group-editor";
+import FamilyGroupsPage from "@/app/(admin)/admin/family-groups/page";
 import { MemberBillingFamilyCard } from "@/app/(admin)/admin/members/[id]/_components/member-billing-family-card";
 import { MemberLodgeAccessCard } from "@/app/(admin)/admin/members/[id]/_components/member-lodge-access-card";
 import { MemberPartnerLinkCard } from "@/app/(admin)/admin/members/[id]/_components/member-partner-link-card";
@@ -2838,6 +2840,136 @@ describe("MemberDependentsCard view-only gating (#1997, membership)", () => {
     sessionMatrix = matrix("view", { membership: "edit" });
     render(<MemberDependentsCard {...props} canEdit={true} />);
     expect(screen.getByRole("button", { name: /Add Dependent/i })).toBeEnabled();
+  });
+});
+
+describe("FamilyGroupEditor view-only gating (#2065, membership)", () => {
+  const GROUP = {
+    id: "g1",
+    name: "Kea Family",
+    members: [
+      {
+        id: "mem1",
+        firstName: "Pat",
+        lastName: "Kea",
+        email: "pat@example.com",
+        ageTier: "ADULT",
+        active: true,
+        canLogin: true,
+        hasPassword: true,
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    sessionMatrix = null;
+    stubFetchRoutes({
+      "/api/admin/family-groups/requests": { requests: [] },
+      "/api/admin/family-groups/g1": GROUP,
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const props = {
+    groupId: "g1",
+    onClose: vi.fn(),
+    onChanged: vi.fn(),
+  } as const;
+
+  it("disables the mutation controls and exposes the read-only reason for a view-only admin", async () => {
+    render(<FamilyGroupEditor {...props} canEdit={false} />);
+
+    const del = await screen.findByRole("button", { name: /^Delete$/ });
+    expect(del).toBeDisabled();
+    expect(del).toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    expect(
+      screen.getByRole("button", { name: /Update Group/i }),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Group Name")).toBeDisabled();
+    expect(
+      screen.getByText(/can view this family group but cannot change/i),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps controls disabled but shows no read-only reason while the session is resolving", async () => {
+    render(<FamilyGroupEditor {...props} canEdit={undefined} />);
+
+    const del = await screen.findByRole("button", { name: /^Delete$/ });
+    expect(del).toBeDisabled();
+    // Neutral resolving state: disabled WITHOUT the view-only reason/banner.
+    expect(del).not.toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    expect(
+      screen.getByRole("button", { name: /Update Group/i }),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Group Name")).toBeDisabled();
+    expect(
+      screen.queryByText(/can view this family group but cannot change/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the mutation controls live for an edit-capable admin", async () => {
+    render(<FamilyGroupEditor {...props} canEdit={true} />);
+
+    const del = await screen.findByRole("button", { name: /^Delete$/ });
+    expect(del).toBeEnabled();
+    expect(del).not.toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    // One member is loaded, so Update Group is not gated by the empty-set rule.
+    expect(screen.getByRole("button", { name: /Update Group/i })).toBeEnabled();
+    expect(screen.getByLabelText("Group Name")).toBeEnabled();
+    expect(
+      screen.queryByText(/can view this family group but cannot change/i),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("FamilyGroupsPage row-action view-only gating (#2065, membership)", () => {
+  const SUMMARY = {
+    id: "g1",
+    name: "Kea Family",
+    members: [],
+    memberCount: 0,
+    inactiveCount: 0,
+    pendingRequests: 0,
+    createdAt: "2026-07-01T00:00:00.000Z",
+  };
+
+  beforeEach(() => {
+    sessionMatrix = null;
+    stubFetchRoutes({
+      "/api/admin/family-groups/requests": { requests: [] },
+      "/api/admin/family-groups/partner-invites": { invites: [] },
+      "/api/admin/family-groups": { familyGroups: [SUMMARY] },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("disables row Delete but keeps row Edit open for a membership:view admin", async () => {
+    sessionMatrix = matrix("view", { membership: "view" });
+    render(<FamilyGroupsPage />);
+
+    const del = await screen.findByRole("button", { name: /Delete Kea Family/i });
+    expect(del).toBeDisabled();
+    expect(del).toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    // Edit opens the (internally edit-gated) editor, so it stays available for
+    // read-only browsing — mirroring the members/[id] open-editor trigger.
+    expect(
+      screen.getByRole("button", { name: /Edit Kea Family/i }),
+    ).toBeEnabled();
+  });
+
+  it("enables row Delete for a membership:edit admin", async () => {
+    sessionMatrix = matrix("view", { membership: "edit" });
+    render(<FamilyGroupsPage />);
+
+    expect(
+      await screen.findByRole("button", { name: /Delete Kea Family/i }),
+    ).toBeEnabled();
   });
 });
 

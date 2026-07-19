@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import {
   getMemberName,
   type FamilyGroupMemberRow,
@@ -10,6 +10,10 @@ const SESSION_LAG_WARNING =
   "The previous holder's session may remain valid for up to 8 hours after the swap.";
 
 export interface FamilyGroupLoginHolderSectionProps {
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  // Swapping the login holder / sending a setup invite writes the membership
+  // area, so a view-only membership admin must not act here.
+  canEdit: boolean | undefined;
   clusters: Array<SharedEmailCluster<FamilyGroupMemberRow>>;
   selections: Record<string, string>;
   savingEmail: string | null;
@@ -23,6 +27,7 @@ export interface FamilyGroupLoginHolderSectionProps {
 }
 
 export function FamilyGroupLoginHolderSection({
+  canEdit,
   clusters,
   selections,
   savingEmail,
@@ -84,7 +89,7 @@ export function FamilyGroupLoginHolderSection({
                           value={member.id}
                           checked={selections[cluster.email] === member.id}
                           onChange={() => onSelectLoginHolder(cluster.email, member.id)}
-                          disabled={disabled}
+                          disabled={disabled || canEdit !== true}
                           className="mt-1 h-4 w-4 border-slate-300"
                         />
                         <div className="min-w-0 flex-1">
@@ -116,7 +121,8 @@ export function FamilyGroupLoginHolderSection({
                           )}
                         </div>
                         {!member.hasPassword && (
-                          <Button
+                          <ViewOnlyActionButton
+                            canEdit={canEdit}
                             type="button"
                             variant="outline"
                             size="sm"
@@ -129,7 +135,7 @@ export function FamilyGroupLoginHolderSection({
                             {setupInviteSendingId === member.id
                               ? "Sending..."
                               : "Send password setup email"}
-                          </Button>
+                          </ViewOnlyActionButton>
                         )}
                       </label>
                     );
@@ -143,13 +149,14 @@ export function FamilyGroupLoginHolderSection({
               {messages[cluster.email] && (
                 <p className="text-sm text-emerald-700">{messages[cluster.email]}</p>
               )}
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 type="button"
                 onClick={() => onSaveLoginHolder(cluster)}
                 disabled={savingEmail === cluster.email || !selections[cluster.email]}
               >
                 {savingEmail === cluster.email ? "Saving..." : "Save login holder"}
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           );
         })

@@ -11,7 +11,7 @@ import { Trash2, Plus, Users, X, Edit2, Search } from "lucide-react";
 import { FamilyGroupEditor } from "@/components/admin/family-group-editor";
 import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import { FamilyGroupRequestReviewSection } from "@/components/admin/family-groups/request-review-section";
-import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
+import { AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   type FamilyGroupRequest,
@@ -272,6 +272,7 @@ export default function FamilyGroupsPage() {
   }
 
   async function handleDelete(id: string) {
+    if (!canEditMembership) return;
     if (!confirm("Delete this family group? Members will be unlinked.")) return;
     const res = await fetch(`/api/admin/family-groups/${id}`, { method: "DELETE" });
     if (res.ok) {
@@ -669,21 +670,29 @@ export default function FamilyGroupsPage() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex justify-end gap-1">
+                          {/* Edit opens the editor, which is itself edit-gated
+                              internally (#2065). Opening it stays available so a
+                              view-only membership admin can browse the group —
+                              mirroring the members/[id] "open editor" trigger,
+                              which is an ungated Button. */}
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => openEditForm(g)}
+                            aria-label={`Edit ${g.name || "Unnamed Group"}`}
                           >
                             <Edit2 className="h-4 w-4" />
                           </Button>
-                          <Button
+                          <ViewOnlyActionButton
+                            canEdit={canEditMembership}
                             variant="ghost"
                             size="sm"
                             onClick={() => handleDelete(g.id)}
                             className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            aria-label={`Delete ${g.name || "Unnamed Group"}`}
                           >
                             <Trash2 className="h-4 w-4" />
-                          </Button>
+                          </ViewOnlyActionButton>
                         </div>
                       </td>
                     </tr>

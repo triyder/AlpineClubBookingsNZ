@@ -11,6 +11,11 @@ import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import { FamilyGroupLoginHolderSection } from "@/components/admin/family-groups/login-holder-section";
 import { FamilyGroupRequestReviewSection } from "@/components/admin/family-groups/request-review-section";
 import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
+import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
+import {
   buildSharedEmailClusters,
   getMemberName,
   normalizeFamilyEmail,
@@ -148,16 +153,21 @@ export function FamilyGroupEditor({
   }, [error, scrollToError]);
 
   function addMember(member: MemberOption) {
+    // Defence-in-depth: a view-only (or still-resolving) admin must not mutate
+    // the pending member set even if a control slips past the disabled gate.
+    if (!canEdit) return;
     setSelectedMembers((current) => [...current, member]);
     setMemberSearch("");
   }
 
   function removeMember(id: string) {
+    if (!canEdit) return;
     setSelectedMembers((current) => current.filter((member) => member.id !== id));
   }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (!canEdit) return;
     setError("");
     setStatusMessage("");
 
@@ -192,6 +202,7 @@ export function FamilyGroupEditor({
   }
 
   async function handleDelete() {
+    if (!canEdit) return;
     if (!confirm("Delete this family group? Members will be unlinked.")) return;
 
     setDeleting(true);
@@ -211,6 +222,7 @@ export function FamilyGroupEditor({
   }
 
   async function sendPasswordSetupInvite(member: FamilyGroupMemberRow) {
+    if (!canEdit) return;
     setSetupInviteSendingId(member.id);
     setSetupInviteMessages((current) => {
       const next = { ...current };
@@ -244,6 +256,7 @@ export function FamilyGroupEditor({
   }
 
   async function saveLoginHolder(cluster: SharedEmailCluster) {
+    if (!canEdit) return;
     const newHolderId = loginHolderSelections[cluster.email];
     if (!newHolderId) {
       setLoginHolderErrors((current) => ({
@@ -323,7 +336,8 @@ export function FamilyGroupEditor({
               Rename the group, manage linked members, review pending requests, or swap a shared-email login holder.
             </p>
           </div>
-          <Button
+          <ViewOnlyActionButton
+            canEdit={canEdit}
             type="button"
             variant="outline"
             size="sm"
@@ -333,7 +347,7 @@ export function FamilyGroupEditor({
           >
             <Trash2 className="h-4 w-4" />
             {deleting ? "Deleting..." : "Delete"}
-          </Button>
+          </ViewOnlyActionButton>
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -349,6 +363,10 @@ export function FamilyGroupEditor({
         )}
         {statusMessage && <p className="text-sm text-emerald-700">{statusMessage}</p>}
 
+        <AdminViewOnlyNotice canEdit={canEdit}>
+          Your admin role can view this family group but cannot change it.
+        </AdminViewOnlyNotice>
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <Label htmlFor={`family-group-name-${groupId}`}>Group Name</Label>
@@ -358,6 +376,7 @@ export function FamilyGroupEditor({
               onChange={(event) => setFormName(event.target.value)}
               placeholder='e.g., "Smith Family"'
               required
+              disabled={canEdit !== true}
             />
           </div>
 
@@ -378,7 +397,9 @@ export function FamilyGroupEditor({
                       <button
                         type="button"
                         onClick={() => removeMember(member.id)}
-                        className="ml-1 hover:text-red-600"
+                        disabled={canEdit !== true}
+                        title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+                        className="ml-1 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-current"
                         aria-label={`Remove ${getMemberName(member)}`}
                       >
                         <X className="h-3 w-3" />
@@ -393,6 +414,7 @@ export function FamilyGroupEditor({
                 value={memberSearch}
                 onChange={(event) => setMemberSearch(event.target.value)}
                 placeholder="Search members by name or email..."
+                disabled={canEdit !== true}
               />
               {searching && (
                 <div className="absolute right-3 top-2.5 text-xs text-slate-400">
@@ -406,7 +428,8 @@ export function FamilyGroupEditor({
                       key={member.id}
                       type="button"
                       onClick={() => addMember(member)}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                      disabled={canEdit !== true}
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <span className="font-medium">{getMemberName(member)}</span>
                       <span className="ml-2 text-slate-500">{member.email}</span>
@@ -421,9 +444,13 @@ export function FamilyGroupEditor({
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" disabled={submitting || selectedMembers.length < 1}>
+            <ViewOnlyActionButton
+              canEdit={canEdit}
+              type="submit"
+              disabled={submitting || selectedMembers.length < 1}
+            >
               {submitting ? "Saving..." : "Update Group"}
-            </Button>
+            </ViewOnlyActionButton>
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
@@ -431,6 +458,7 @@ export function FamilyGroupEditor({
         </form>
 
         <FamilyGroupLoginHolderSection
+          canEdit={canEdit}
           clusters={sharedEmailClusters}
           selections={loginHolderSelections}
           savingEmail={loginHolderSavingEmail}
