@@ -379,14 +379,45 @@ export async function buildSubscriptionBillingPreview(input: {
       continue;
     }
     if (membershipType.subscriptionBehavior === "NOT_REQUIRED") continue;
-    // Per-tier pricing (#2067): resolve the fee for the member's own age tier;
-    // the resolver falls back to the flat NULL-tier row when the type has no
-    // per-tier row (and for NOT_APPLICABLE members).
-    const fee = await getMemoizedFee(membershipType.id, member.ageTier);
+    // Per-tier pricing (#2067) + age-tier liability (#2041): for a
+    // BASED_ON_AGE_TIER type the fee PRICE and the liability gate must both key
+    // off the SAME season-start computed tier — the age at the START of the club
+    // financial year (season start = 1st of the FY start month), derived from
+    // DOB so mid-season birthdays never change that season's tier (decision Q3;
+    // e.g. youth-from-10 with an Apr-start year: a 31 Mar 10th birthday stays a
+    // Child all season, a 1 Apr 10th birthday is a Youth that season). Pricing
+    // off the STORED tier while gating liability on the computed tier would
+    // mis-price a member whose stored tier has drifted from the season-start
+    // tier (the age-up cron only maintains the ADULT boundary, and
+    // non-current-season billing recomputes) — e.g. liable as YOUTH but charged
+    // the CHILD price, or overcharged at ADULT for a prior season. Members
+    // without a DOB fall back to their stored tier (ADULT default) — fail-closed
+    // / required. Every OTHER policy has no computed tier, so its fee resolves
+    // by the member's stored tier (joining-fee convention); a NOT_APPLICABLE
+    // tier still short-circuits to the flat fee inside the resolver.
+    let seasonStartTier: AgeTier | null = null;
+    if (membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER") {
+      const ageTierSettings = await getAgeTierSettingsMemoized();
+      seasonStartTier = member.dateOfBirth
+        ? computeAgeTierWithSettings(
+            member.dateOfBirth,
+            getSeasonStartDate(input.seasonYear),
+            ageTierSettings,
+          )
+        : member.ageTier;
+    }
+    // The tier ACTUALLY used to resolve the fee — also what names a
+    // MISSING_FEE_SCHEDULE exception and keys the memo cache: the season-start
+    // tier for a BASED_ON_AGE_TIER type, else the member's stored tier.
+    const feeTier =
+      membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER"
+        ? seasonStartTier
+        : member.ageTier;
+    const fee = await getMemoizedFee(membershipType.id, feeTier);
     if (!fee) {
       exceptions.push(exception({
         code: "MISSING_FEE_SCHEDULE",
-        message: `${membershipType.name} has no effective annual fee for the ${member.ageTier} age tier on ${decisionDateOnly}.`,
+        message: `${membershipType.name} has no effective annual fee for the ${feeTier} age tier on ${decisionDateOnly}.`,
         seasonYear: input.seasonYear, memberId: member.id, familyGroupId: null,
         membershipTypeId: membershipType.id,
         context: { memberName, decisionDate: decisionDateOnly },
@@ -403,20 +434,6 @@ export async function buildSubscriptionBillingPreview(input: {
       fee.billingBasis === "PER_MEMBER"
     ) {
       const ageTierSettings = await getAgeTierSettingsMemoized();
-      // Liability tier = age at the START of the club financial year (season
-      // start = 1st of the FY start month), derived from DOB so mid-season
-      // birthdays never change that season's liability (decision Q3; e.g.
-      // youth-from-10 with an Apr-start year: a 31 Mar 10th birthday stays a
-      // Child all season, a 1 Apr 10th birthday is a Youth that season).
-      // Members without a DOB fall back to their stored tier (ADULT default) —
-      // fail-closed / required.
-      const seasonStartTier = member.dateOfBirth
-        ? computeAgeTierWithSettings(
-            member.dateOfBirth,
-            getSeasonStartDate(input.seasonYear),
-            ageTierSettings,
-          )
-        : member.ageTier;
       if (!requiresPaidSubscriptionForAgeTier(seasonStartTier, ageTierSettings)) {
         // Skip the charge; confirm upserts a NOT_REQUIRED season row (Q4).
         exemptMemberIds.add(member.id);

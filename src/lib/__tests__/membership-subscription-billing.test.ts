@@ -790,4 +790,98 @@ describe("membership subscription billing", () => {
       expect(preview.entries).toHaveLength(2);
     });
   });
+
+  describe("stored tier vs season-start tier price alignment (#2067 finding 1)", () => {
+    // A BASED_ON_AGE_TIER member must be PRICED by the same season-start tier
+    // that gates liability — not by the stored tier, which can drift (the age-up
+    // cron only maintains the ADULT boundary, and prior-season billing
+    // recomputes). Age-tier settings fall back to the built-in defaults (no
+    // ageTierSetting delegate on the prisma mock): INFANT/CHILD exempt,
+    // YOUTH/ADULT required; YOUTH is age 10-17 at season start.
+    function basedMember(
+      id: string,
+      opts: { dateOfBirth?: Date | null; ageTier?: string } = {},
+    ) {
+      return member(id, {
+        dateOfBirth: opts.dateOfBirth ?? null,
+        ageTier: opts.ageTier ?? "ADULT",
+        seasonalMembershipAssignments: [{
+          membershipType: {
+            id: "type-full",
+            key: "FULL",
+            name: "Full",
+            subscriptionBehavior: "BASED_ON_AGE_TIER",
+            annualFees: [fee()],
+          },
+        }],
+      });
+    }
+
+    // Distinct price per tier so the resolved fee reveals which tier was used.
+    function tierPricedFees() {
+      const priceByTier: Record<string, number> = { CHILD: 3_000, YOUTH: 6_000, ADULT: 12_000 };
+      mocks.effectiveFee.mockImplementation(async ({ ageTier }: { ageTier: string | null }) =>
+        fee({ id: `fee-${ageTier}`, amountCents: priceByTier[ageTier ?? ""] ?? 9_999, prorationRule: "NONE" }));
+    }
+
+    it("stored CHILD but season-start YOUTH: charged the YOUTH price (liability tier drives the price)", async () => {
+      tierPricedFees();
+      mocks.members.findMany.mockResolvedValue([
+        // Turns 10 on 01 Apr 2026 -> YOUTH at season start; stored tier still CHILD.
+        basedMember("drifted-up", { dateOfBirth: new Date(2016, 3, 1), ageTier: "CHILD" }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
+      // Resolved by the season-start tier, never the stored CHILD tier.
+      expect(mocks.effectiveFee.mock.calls.every((c) => c[0].ageTier === "YOUTH")).toBe(true);
+      expect(preview.entries).toHaveLength(1);
+      expect(preview.entries[0]).toMatchObject({ membershipAnnualFeeId: "fee-YOUTH", annualAmountCents: 6_000, chargedAmountCents: 6_000 });
+      expect(preview.exemptMemberIds).toEqual([]);
+    });
+
+    it("stored ADULT but season-start YOUTH (prior-season billing): charged the YOUTH price, not ADULT", async () => {
+      tierPricedFees();
+      mocks.members.findMany.mockResolvedValue([
+        // At 1 Apr 2026 season start they were 10 -> YOUTH; the stored tier has
+        // since aged up to ADULT. Billing 2026 must charge the YOUTH price.
+        basedMember("drifted-adult", { dateOfBirth: new Date(2016, 3, 1), ageTier: "ADULT" }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
+      expect(mocks.effectiveFee.mock.calls.every((c) => c[0].ageTier === "YOUTH")).toBe(true);
+      expect(preview.entries[0]).toMatchObject({ membershipAnnualFeeId: "fee-YOUTH", annualAmountCents: 6_000 });
+    });
+
+    it("stored == season-start tier: resolves that tier unchanged (no regression)", async () => {
+      tierPricedFees();
+      mocks.members.findMany.mockResolvedValue([
+        basedMember("aligned-youth", { dateOfBirth: new Date(2016, 3, 1), ageTier: "YOUTH" }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
+      expect(mocks.effectiveFee.mock.calls.every((c) => c[0].ageTier === "YOUTH")).toBe(true);
+      expect(preview.entries[0]).toMatchObject({ membershipAnnualFeeId: "fee-YOUTH", annualAmountCents: 6_000 });
+    });
+
+    it("non-age-based type (REQUIRED) prices by the STORED tier, ignoring DOB", async () => {
+      tierPricedFees();
+      mocks.members.findMany.mockResolvedValue([
+        // DOB would compute ADULT at season start, but a REQUIRED type has no
+        // computed tier — it must price by the stored YOUTH tier (joining-fee
+        // convention). The default member() type is REQUIRED.
+        member("required-youth", { ageTier: "YOUTH", dateOfBirth: new Date(1990, 0, 1) }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
+      expect(mocks.effectiveFee.mock.calls.every((c) => c[0].ageTier === "YOUTH")).toBe(true);
+      expect(preview.entries[0]).toMatchObject({ membershipAnnualFeeId: "fee-YOUTH", annualAmountCents: 6_000 });
+    });
+
+    it("MISSING_FEE_SCHEDULE names the season-start tier actually used, not the stored tier", async () => {
+      mocks.effectiveFee.mockResolvedValue(null);
+      mocks.members.findMany.mockResolvedValue([
+        basedMember("no-youth-fee", { dateOfBirth: new Date(2016, 3, 1), ageTier: "CHILD" }),
+      ]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
+      expect(preview.exceptions.map((r) => r.code)).toEqual(["MISSING_FEE_SCHEDULE"]);
+      expect(preview.exceptions[0].message).toContain("YOUTH");
+      expect(preview.exceptions[0].message).not.toContain("CHILD");
+    });
+  });
 });
