@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type {
+  AgeTier,
   MembershipFeeBillingBasis,
   MembershipFeeProrationRule,
   MembershipSubscriptionChargeSource,
@@ -322,21 +323,24 @@ export async function buildSubscriptionBillingPreview(input: {
   const coveredSet = new Set(alreadyCovered.map((row) => row.memberId));
   // #1944: members already PAID (manual or Xero) are never re-invoiced.
   const paidSet = new Set(alreadyPaid.map((row) => row.memberId));
-  // The effective fee depends only on the membership type and the decision
-  // date, and the decision date is fixed for the whole preview, so memoize
-  // per membership type instead of querying once per member (#1886).
-  const feeByMembershipTypeId = new Map<
+  // The effective fee depends on the membership type, the member's age tier
+  // (#2067 per-tier pricing), and the decision date; the decision date is fixed
+  // for the whole preview, so memoize per (type, tier) instead of querying once
+  // per member (#1886). An all-flat config resolves every tier to the same flat
+  // row inside the resolver, so it stays byte-identical — just keyed per tier.
+  const feeByTypeAndTier = new Map<
     string,
     Awaited<ReturnType<typeof getEffectiveMembershipAnnualFee>>
   >();
-  const getMemoizedFee = async (membershipTypeId: string) => {
-    if (!feeByMembershipTypeId.has(membershipTypeId)) {
-      feeByMembershipTypeId.set(
-        membershipTypeId,
-        await getEffectiveMembershipAnnualFee(membershipTypeId, decisionDate, db),
+  const getMemoizedFee = async (membershipTypeId: string, ageTier: AgeTier | null) => {
+    const memoKey = `${membershipTypeId}:${ageTier ?? "FLAT"}`;
+    if (!feeByTypeAndTier.has(memoKey)) {
+      feeByTypeAndTier.set(
+        memoKey,
+        await getEffectiveMembershipAnnualFee({ membershipTypeId, ageTier }, decisionDate, db),
       );
     }
-    return feeByMembershipTypeId.get(membershipTypeId) ?? null;
+    return feeByTypeAndTier.get(memoKey) ?? null;
   };
   const billedFamilyTypes = new Map(existingFamilyCharges.map((charge) => [
     `${input.seasonYear}:${charge.membershipTypeId}:family:${charge.familyGroupId}`,
@@ -375,11 +379,14 @@ export async function buildSubscriptionBillingPreview(input: {
       continue;
     }
     if (membershipType.subscriptionBehavior === "NOT_REQUIRED") continue;
-    const fee = await getMemoizedFee(membershipType.id);
+    // Per-tier pricing (#2067): resolve the fee for the member's own age tier;
+    // the resolver falls back to the flat NULL-tier row when the type has no
+    // per-tier row (and for NOT_APPLICABLE members).
+    const fee = await getMemoizedFee(membershipType.id, member.ageTier);
     if (!fee) {
       exceptions.push(exception({
         code: "MISSING_FEE_SCHEDULE",
-        message: `${membershipType.name} has no effective annual fee on ${decisionDateOnly}.`,
+        message: `${membershipType.name} has no effective annual fee for the ${member.ageTier} age tier on ${decisionDateOnly}.`,
         seasonYear: input.seasonYear, memberId: member.id, familyGroupId: null,
         membershipTypeId: membershipType.id,
         context: { memberName, decisionDate: decisionDateOnly },

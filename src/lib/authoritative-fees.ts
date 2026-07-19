@@ -207,22 +207,45 @@ export async function getEffectiveJoiningFee(
   return { amountCents: null, effectiveFrom: null, source: "NONE" };
 }
 
+/**
+ * Resolve the effective annual membership fee for a membership type x age tier
+ * (#2067), mirroring getEffectiveJoiningFee's Flat-vs-per-tier precedence: the
+ * exact-tier row wins, else the type's flat NULL-tier row (a member of any tier
+ * resolves the flat fee when the type has no per-tier row). NOT_APPLICABLE
+ * (organisations/schools) short-circuits to the flat lookup — no per-tier rows
+ * are offered for it. Passing a null ageTier reads the flat row directly, which
+ * is byte-identical to the pre-#2067 behaviour for every all-flat config.
+ * Components are always included so the returned row carries its invoice lines.
+ */
 export async function getEffectiveMembershipAnnualFee(
-  membershipTypeId: string,
+  params: { membershipTypeId: string; ageTier: AgeTier | null },
   asOf: Date = getTodayDateOnly(),
   store: Prisma.TransactionClient | typeof prisma = prisma,
 ) {
+  const activeWindow = {
+    effectiveFrom: { lte: asOf },
+    OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
+  };
+  // Components are the invoice lines (#1932, E6). Order is stable so the
+  // preview digest, the frozen charge-component snapshot, and the Xero line
+  // array all agree byte-for-byte on line order.
+  const include = { components: { orderBy: [{ sortOrder: "asc" as const }, { id: "asc" as const }] } };
+
+  // Exact-tier row first (NOT_APPLICABLE has no per-tier rows — decision 5).
+  if (params.ageTier && params.ageTier !== "NOT_APPLICABLE") {
+    const tierRow = await store.membershipAnnualFee.findFirst({
+      where: { membershipTypeId: params.membershipTypeId, ageTier: params.ageTier, ...activeWindow },
+      orderBy: { effectiveFrom: "desc" },
+      include,
+    });
+    if (tierRow) return tierRow;
+  }
+
+  // Flat NULL-tier fallback (also the sole lookup for a null/NOT_APPLICABLE tier).
   return store.membershipAnnualFee.findFirst({
-    where: {
-      membershipTypeId,
-      effectiveFrom: { lte: asOf },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
-    },
+    where: { membershipTypeId: params.membershipTypeId, ageTier: null, ...activeWindow },
     orderBy: { effectiveFrom: "desc" },
-    // Components are the invoice lines (#1932, E6). Order is stable so the
-    // preview digest, the frozen charge-component snapshot, and the Xero line
-    // array all agree byte-for-byte on line order.
-    include: { components: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
+    include,
   });
 }
 
