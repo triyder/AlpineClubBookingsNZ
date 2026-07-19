@@ -587,3 +587,111 @@ describe("config-transfer membership-fees duplicate labels (#1941)", () => {
     expect(plan.errors.join(" ")).toMatch(/target's annual fee .* already has duplicate-label component\(s\) "Base"/i);
   });
 });
+
+// ---- FIX-2 (#2067): cross-row PER_FAMILY / per-tier mix guard ----------------
+
+describe("config-transfer membership-fees PER_FAMILY/tier mix guard (#2067 finding 2)", () => {
+  it("BLOCKS a hand-edited bundle mixing a flat PER_FAMILY fee with a per-tier fee in overlapping windows", async () => {
+    const files = bundle({
+      "membership-fees/annual-fees.csv":
+        AF_TIER_HEADER +
+        "FULL,,2026-01-01,,20000,PER_FAMILY,NONE\n" +
+        "FULL,ADULT,2026-01-01,,15000,PER_MEMBER,NONE\n",
+      "membership-fees/annual-fee-components.csv":
+        AC_TIER_HEADER +
+        "FULL,,2026-01-01,Base,20000,true,,,0\n" +
+        "FULL,ADULT,2026-01-01,Base,15000,true,,,0\n",
+    });
+    const plan = await membershipFeesImporter.plan(planCtx(files, makeStore().db as unknown as ReadDb));
+    expect(plan.errors.join(" ")).toMatch(/flat per-family fee .* overlapping a per-age-tier/i);
+  });
+
+  it("allows a flat PER_MEMBER fee coexisting with a per-tier PER_MEMBER fee (no PER_FAMILY mix)", async () => {
+    const files = bundle({
+      "membership-fees/annual-fees.csv":
+        AF_TIER_HEADER +
+        "FULL,,2026-01-01,,12000,PER_MEMBER,NONE\n" +
+        "FULL,ADULT,2026-01-01,,15000,PER_MEMBER,NONE\n",
+      "membership-fees/annual-fee-components.csv":
+        AC_TIER_HEADER +
+        "FULL,,2026-01-01,Base,12000,true,,,0\n" +
+        "FULL,ADULT,2026-01-01,Base,15000,true,,,0\n",
+    });
+    const plan = await membershipFeesImporter.plan(planCtx(files, makeStore().db as unknown as ReadDb));
+    expect(plan.errors).toEqual([]);
+  });
+
+  it("BLOCKS a flat PER_FAMILY bundle row overlapping a per-tier fee ALREADY on the target (post-merge)", async () => {
+    // A legit ADULT per-tier fee is already on the target; the bundle adds a flat
+    // PER_FAMILY fee in an overlapping window. The DB GiST/CHECK allow it, but it
+    // reaches the exact state the fee-configuration API forbids.
+    const target = makeStore({
+      annualFees: [
+        { id: "af-adult", membershipTypeId: "mt-full", ageTier: "ADULT", effectiveFrom: d("2026-01-01"), effectiveTo: null, amountCents: 15000, billingBasis: "PER_MEMBER", prorationRule: "NONE" },
+      ],
+      components: [
+        { id: "c-a", membershipAnnualFeeId: "af-adult", label: "Base", amountCents: 15000, prorate: true, xeroAccountCode: null, xeroItemCode: null, sortOrder: 0 },
+      ],
+    });
+    const files = bundle({
+      "membership-fees/annual-fees.csv": AF_TIER_HEADER + "FULL,,2026-06-01,,20000,PER_FAMILY,NONE\n",
+      "membership-fees/annual-fee-components.csv": AC_TIER_HEADER + "FULL,,2026-06-01,Base,20000,true,,,0\n",
+    });
+    const plan = await membershipFeesImporter.plan(planCtx(files, target.db as unknown as ReadDb, "merge"));
+    expect(plan.errors.join(" ")).toMatch(/flat per-family fee .* overlapping a per-age-tier/i);
+  });
+
+  it("does not flag a flat PER_FAMILY fee in a NON-overlapping window with a per-tier fee", async () => {
+    const files = bundle({
+      "membership-fees/annual-fees.csv":
+        AF_TIER_HEADER +
+        "FULL,ADULT,2026-01-01,2026-05-31,15000,PER_MEMBER,NONE\n" +
+        "FULL,,2026-06-01,,20000,PER_FAMILY,NONE\n",
+      "membership-fees/annual-fee-components.csv":
+        AC_TIER_HEADER +
+        "FULL,ADULT,2026-01-01,Base,15000,true,,,0\n" +
+        "FULL,,2026-06-01,Base,20000,true,,,0\n",
+    });
+    const plan = await membershipFeesImporter.plan(planCtx(files, makeStore().db as unknown as ReadDb));
+    expect(plan.errors).toEqual([]);
+  });
+
+  it("round-trip of a legitimate per-tier PER_MEMBER install stays clean (guard is inert on valid state)", async () => {
+    // The seeded per-tier source has NO flat PER_FAMILY fee, so export→import
+    // must not trip the mix guard.
+    const source = makeStore({
+      annualFees: [
+        { id: "af-adult", membershipTypeId: "mt-full", ageTier: "ADULT", effectiveFrom: d("2026-01-01"), effectiveTo: null, amountCents: 15000, billingBasis: "PER_MEMBER", prorationRule: "NONE" },
+        { id: "af-youth", membershipTypeId: "mt-full", ageTier: "YOUTH", effectiveFrom: d("2026-01-01"), effectiveTo: null, amountCents: 8000, billingBasis: "PER_MEMBER", prorationRule: "NONE" },
+      ],
+      components: [
+        { id: "c-a", membershipAnnualFeeId: "af-adult", label: "Base", amountCents: 15000, prorate: true, xeroAccountCode: null, xeroItemCode: null, sortOrder: 0 },
+        { id: "c-y", membershipAnnualFeeId: "af-youth", label: "Base", amountCents: 8000, prorate: true, xeroAccountCode: null, xeroItemCode: null, sortOrder: 0 },
+      ],
+    });
+    const { files } = readBundle((await exportFees(source.db as unknown as ReadDb)).zip);
+    const plan = await membershipFeesImporter.plan(planCtx(files, makeStore().db as unknown as ReadDb));
+    expect(plan.errors).toEqual([]);
+  });
+});
+
+// ---- FIX-3 (#2067): NOT_APPLICABLE is not a valid fee tier -------------------
+
+describe("config-transfer membership-fees NOT_APPLICABLE tier (#2067 finding 3)", () => {
+  it("BLOCKS an annual-fee row carrying ageTier NOT_APPLICABLE", async () => {
+    const files = bundle({
+      "membership-fees/annual-fees.csv": AF_TIER_HEADER + "FULL,NOT_APPLICABLE,2026-01-01,,12000,PER_MEMBER,NONE\n",
+      "membership-fees/annual-fee-components.csv": AC_TIER_HEADER + "FULL,NOT_APPLICABLE,2026-01-01,Base,12000,true,,,0\n",
+    });
+    const plan = await membershipFeesImporter.plan(planCtx(files, makeStore().db as unknown as ReadDb));
+    expect(plan.errors.join(" ")).toMatch(/annual-fees\.csv.*NOT_APPLICABLE is not a valid fee tier/i);
+  });
+
+  it("BLOCKS a joining-fee row carrying ageTier NOT_APPLICABLE", async () => {
+    const files = bundle({
+      "membership-fees/joining-fees.csv": JF_HEADER + "FULL,NOT_APPLICABLE,2026-01-01,,10000\n",
+    });
+    const plan = await membershipFeesImporter.plan(planCtx(files, makeStore().db as unknown as ReadDb));
+    expect(plan.errors.join(" ")).toMatch(/joining-fees\.csv.*NOT_APPLICABLE is not a valid fee tier/i);
+  });
+});

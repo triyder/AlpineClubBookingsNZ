@@ -181,6 +181,11 @@ interface JoiningFeeCurrent {
 }
 interface AnnualFeeCurrent {
   id: string;
+  // #2067 finding 2: carried so the cross-row PER_FAMILY/tier mix guard can see
+  // existing target rows (type, tier, window) the bundle does not overwrite.
+  membershipTypeKey: string;
+  ageTier: string | null;
+  effectiveFrom: Date;
   amountCents: number;
   billingBasis: string;
   prorationRule: string;
@@ -263,6 +268,9 @@ async function loadFeesBatch(db: ReadDb): Promise<FeesBatch> {
     const pk = parentKey(fee.membershipType.key, fee.ageTier, fee.effectiveFrom);
     annualFees.set(pk, {
       id: fee.id,
+      membershipTypeKey: fee.membershipType.key,
+      ageTier: fee.ageTier,
+      effectiveFrom: fee.effectiveFrom,
       amountCents: fee.amountCents,
       billingBasis: fee.billingBasis,
       prorationRule: fee.prorationRule,
@@ -485,6 +493,16 @@ function parseMembershipFees(
     const effectiveFrom = v.date("effectiveFrom", raw.effectiveFrom);
     const effectiveTo = nz(raw.effectiveTo) === null ? null : v.date("effectiveTo", raw.effectiveTo);
     const amountCents = v.moneyCents("amountCents", raw.amountCents);
+    // #2067 finding 3: NOT_APPLICABLE is the server-managed organisation/school
+    // tier — it is never a real fee tier (the API's tier enum excludes it and the
+    // resolver short-circuits it to the flat lookup). A compliant bundle can never
+    // carry it, so block it as a row error. Guarded on v.ok so a separately
+    // malformed enum is reported once.
+    if (v.ok && ageTier === "NOT_APPLICABLE") {
+      errors.push(
+        `${JOINING_FEES_FILE} row ${i + 2}: ageTier — NOT_APPLICABLE is not a valid fee tier; leave ageTier blank for a flat, whole-type fee`,
+      );
+    }
     if (!v.ok || !batch.membershipTypeKeys.has(membershipTypeKey)) return;
     out.joiningFees.push({
       raw,
@@ -519,6 +537,16 @@ function parseMembershipFees(
     if (v.ok && ageTier !== null && billingBasis === "PER_FAMILY") {
       errors.push(
         `${ANNUAL_FEES_FILE} row ${i + 2}: ageTier — a per-family fee must be flat (blank ageTier); per-age-tier rows are only allowed for per-member or no-invoice fees`,
+      );
+    }
+    // #2067 finding 3: NOT_APPLICABLE is the server-managed organisation/school
+    // tier — the fee-configuration API's tier enum excludes it, the resolver
+    // short-circuits it to the flat lookup (so a per-tier NOT_APPLICABLE row is a
+    // dead row that can never bill), and a public token would advertise a phantom
+    // "— Not applicable" fee. A compliant bundle can never carry it, so block it.
+    if (v.ok && ageTier === "NOT_APPLICABLE") {
+      errors.push(
+        `${ANNUAL_FEES_FILE} row ${i + 2}: ageTier — NOT_APPLICABLE is not a valid fee tier; leave ageTier blank for a flat, whole-type fee`,
       );
     }
     if (!v.ok || !batch.membershipTypeKeys.has(membershipTypeKey)) return;
@@ -754,6 +782,110 @@ function validatePostMergeComponentInvariant(
   }
 }
 
+/** Inclusive, open-ended (effectiveTo null = no upper bound) window overlap —
+ * the same semantics as authoritative-fees' scheduleOverlapWhere. */
+function windowsOverlap(
+  a: { effectiveFrom: Date; effectiveTo: Date | null },
+  b: { effectiveFrom: Date; effectiveTo: Date | null },
+): boolean {
+  const aStartsBeforeBEnds = b.effectiveTo === null || a.effectiveFrom <= b.effectiveTo;
+  const bStartsBeforeAEnds = a.effectiveTo === null || b.effectiveFrom <= a.effectiveTo;
+  return aStartsBeforeBEnds && bStartsBeforeAEnds;
+}
+
+function describeWindow(f: { effectiveFrom: Date; effectiveTo: Date | null }): string {
+  return `${toDateStr(f.effectiveFrom)}..${f.effectiveTo ? toDateStr(f.effectiveTo) : "open"}`;
+}
+
+/**
+ * Cross-row PER_FAMILY / per-tier mix guard (#2067, FIX-2). The fee-configuration
+ * API refuses a flat PER_FAMILY fee that overlaps ANY per-age-tier fee for the
+ * same membership type in BOTH directions (route.ts `mixWhere`): a tiered member
+ * would resolve the per-member tier row while a flat-only member resolves the
+ * per-family row — an ambiguous pricing mix. The DB GiST EXCLUDE + CHECK
+ * DELIBERATELY allow flat+tier coexistence (COALESCE'd tiers never conflict), so
+ * they do NOT catch this; only the API did, and config-transfer bypasses the API.
+ * Without this a hand-edited bundle carrying `TYPE,,…,PER_FAMILY` plus
+ * `TYPE,ADULT,…,PER_MEMBER` in overlapping windows imports cleanly into the exact
+ * state the API forbids.
+ *
+ * Mirrors the API by validating the EFFECTIVE POST-MERGE annual-fee set per type:
+ * the bundle's rows (billingBasis + effectiveTo resolved for the write mode) PLUS
+ * every existing target row the bundle does not overwrite (upsert-only apply
+ * leaves those in place). Overlap uses the API's inclusive, open-ended semantics.
+ */
+function validatePerFamilyTierMix(
+  parsed: ParsedFees,
+  batch: FeesBatch,
+  mode: ImportMode,
+  errors: string[],
+): void {
+  interface EffectiveFee {
+    ageTier: string | null;
+    billingBasis: string;
+    effectiveFrom: Date;
+    effectiveTo: Date | null;
+  }
+  const byType = new Map<string, EffectiveFee[]>();
+  const push = (typeKey: string, fee: EffectiveFee) => {
+    const list = byType.get(typeKey) ?? [];
+    list.push(fee);
+    byType.set(typeKey, list);
+  };
+
+  const bundleKeys = new Set(parsed.annualFees.map((f) => f.key));
+  // Existing target rows the bundle does NOT overwrite (same natural key) survive
+  // the upsert-only apply, so they are part of the post-merge state.
+  for (const current of batch.annualFees.values()) {
+    const key = parentKey(current.membershipTypeKey, current.ageTier, current.effectiveFrom);
+    if (bundleKeys.has(key)) continue;
+    push(current.membershipTypeKey, {
+      ageTier: current.ageTier,
+      billingBasis: current.billingBasis,
+      effectiveFrom: current.effectiveFrom,
+      effectiveTo: current.effectiveTo,
+    });
+  }
+  // Bundle rows, with billingBasis + effectiveTo resolved for the write mode
+  // (merge keeps the DB value when the bundle cell is blank; billingBasis is a
+  // required column so it is always the bundle's value, but effectiveTo can be
+  // blank). effectiveFrom is the natural key, never merged.
+  for (const row of parsed.annualFees) {
+    const current = batch.annualFees.get(row.key) ?? null;
+    const billingBasis =
+      mode === "overwrite" || rawHasValue(row.raw, "billingBasis")
+        ? row.data.billingBasis
+        : current?.billingBasis ?? row.data.billingBasis;
+    const effectiveTo =
+      mode === "overwrite" || rawHasValue(row.raw, "effectiveTo")
+        ? row.data.effectiveTo
+        : current?.effectiveTo ?? row.data.effectiveTo;
+    push(row.membershipTypeKey, {
+      ageTier: row.ageTier,
+      billingBasis,
+      effectiveFrom: row.effectiveFrom,
+      effectiveTo,
+    });
+  }
+
+  for (const [typeKey, fees] of byType) {
+    const flatPerFamily = fees.filter(
+      (f) => f.ageTier === null && f.billingBasis === "PER_FAMILY",
+    );
+    const perTier = fees.filter((f) => f.ageTier !== null);
+    if (flatPerFamily.length === 0 || perTier.length === 0) continue;
+    for (const flat of flatPerFamily) {
+      for (const tier of perTier) {
+        if (windowsOverlap(flat, tier)) {
+          errors.push(
+            `${ANNUAL_FEES_FILE}: membership type "${typeKey}" would have a flat per-family fee (window ${describeWindow(flat)}) overlapping a per-age-tier ${tier.ageTier} fee (window ${describeWindow(tier)}) — a per-family (flat) fee and per-age-tier fees cannot both be active for one type in overlapping windows (mirrors the fee-configuration API); use one pricing model per window`,
+          );
+        }
+      }
+    }
+  }
+}
+
 // ---- Plan ------------------------------------------------------------------
 
 async function planMembershipFees(ctx: PlanContext): Promise<CategoryPlanResult> {
@@ -767,6 +899,12 @@ async function planMembershipFees(ctx: PlanContext): Promise<CategoryPlanResult>
   // a renamed label, or duplicate-label rows the label-keyed upsert can't fix).
   // Runs at plan time and therefore again at the in-lock re-plan.
   validatePostMergeComponentInvariant(parsed, batch, ctx.mode, errors);
+  // #2067 FIX-2: block a bundle whose EFFECTIVE post-merge state would put a flat
+  // PER_FAMILY fee in an overlapping window with a per-age-tier fee for the same
+  // type — the API forbids this mix but the DB constraints allow it, so config
+  // transfer must enforce it here. Runs at plan time and again at the in-lock
+  // re-plan.
+  validatePerFamilyTierMix(parsed, batch, ctx.mode, errors);
 
   for (const row of parsed.joiningFees) {
     const current = batch.joiningFees.get(row.key) ?? null;
