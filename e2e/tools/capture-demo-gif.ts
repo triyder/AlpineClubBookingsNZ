@@ -143,16 +143,19 @@ async function main(): Promise<void> {
   const resized = await Promise.all(
     frames.map((f) => sharp(f).resize({ width: GIF_WIDTH }).png().toBuffer()),
   );
-  await sharp(resized, { join: { animated: true } })
+  // Encode to a buffer and enforce the size budget BEFORE writing, so an
+  // oversized result never lands in the tree.
+  const gif = await sharp(resized, { join: { animated: true } })
     .gif({ delay: delays.map((d) => Math.round(d / 10) * 10), loop: 0, effort: 7 })
-    .toFile(OUT_PATH);
-  const kb = Math.round(fs.statSync(OUT_PATH).size / 1024);
-  const rel = path.relative(process.cwd(), OUT_PATH).replace(/\\/g, "/");
-  console.log(`wrote ${rel} (${GIF_WIDTH}px wide, ${frames.length} frames, ${kb} KB)`);
+    .toBuffer();
+  const kb = Math.round(gif.length / 1024);
   if (kb > 5 * 1024) {
-    console.error("GIF exceeds the 5 MB budget — reduce frames or width.");
+    console.error(`GIF is ${kb} KB — exceeds the 5 MB budget; reduce frames or width. Not written.`);
     process.exit(1);
   }
+  fs.writeFileSync(OUT_PATH, gif);
+  const rel = path.relative(process.cwd(), OUT_PATH).replace(/\\/g, "/");
+  console.log(`wrote ${rel} (${GIF_WIDTH}px wide, ${frames.length} frames, ${kb} KB)`);
 }
 
 main().catch((err) => {

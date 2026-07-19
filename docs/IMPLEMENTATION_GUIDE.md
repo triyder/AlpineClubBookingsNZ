@@ -98,10 +98,10 @@ bring up the core app.
 
 After migrations and seed data run, admins activate or deactivate optional
 modules at `/admin/modules`. Kiosk, chores, finance dashboard, waitlist, Xero,
-bed allocation, Internet Banking payments, address autocomplete, two-factor
-authentication, email sign-in link (a passwordless magic link, additive to
-password login), Google sign-in (profile-initiated Google account linking,
-additive to password login; requires `GOOGLE_CLIENT_ID` and
+bed allocation, Internet Banking payments, address autocomplete, lobby
+display, two-factor authentication, email sign-in link (a passwordless magic
+link, additive to password login), Google sign-in (profile-initiated Google
+account linking, additive to password login; requires `GOOGLE_CLIENT_ID` and
 `GOOGLE_CLIENT_SECRET`), and Google Analytics default off until an admin
 enables them. General-purpose modules default on and can be disabled there.
 Internet Banking payments also require operational Xero to be enabled,
