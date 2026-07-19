@@ -9,6 +9,7 @@ import {
 import {
   MEMBERSHIP_TYPE_BOOKING_BEHAVIORS,
   MEMBERSHIP_TYPE_AGE_TIERS,
+  DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS,
   MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS,
   buildUniqueMembershipTypeKey,
   membershipTypeOrderBy,
@@ -135,8 +136,11 @@ export async function POST(request: Request) {
     subscriptionBehavior: parsed.data.subscriptionBehavior,
     sortOrder,
   };
+  // Omitting allowedAgeTiers falls back to the four real age tiers only — never
+  // the full selectable set — so N/A is never silently added to a new type
+  // (#2069).
   const allowedAgeTiers = normalizeMembershipTypeAgeTiers(
-    parsed.data.allowedAgeTiers ?? MEMBERSHIP_TYPE_AGE_TIERS,
+    parsed.data.allowedAgeTiers ?? DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS,
   );
   const configurationError = validateMembershipTypeRuleConfiguration({
     allowedAgeTiers,

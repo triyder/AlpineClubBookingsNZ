@@ -448,6 +448,58 @@ describe("AdminMembershipTypesPage", () => {
     10000,
   );
 
+  it("offers an N/A (no age) tier in the new-type editor and still blocks an empty selection (#2069)", async () => {
+    await renderPage();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "New membership type" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "New membership type",
+    });
+
+    // The explicit N/A option is offered even though no existing type uses it...
+    const naCheckbox = within(dialog).getByLabelText("N/A (no age)");
+    expect(naCheckbox).not.toBeNull();
+    // ...and it is opt-in: a fresh draft pre-checks only the four age tiers.
+    expect(naCheckbox).toHaveProperty("checked", false);
+    for (const label of ["Infant", "Child", "Youth", "Adult"]) {
+      expect(within(dialog).getByLabelText(label)).toHaveProperty(
+        "checked",
+        true,
+      );
+    }
+
+    // Make the draft dirty so validation surfaces, then clear every age tier.
+    fireEvent.change(within(dialog).getByLabelText("Name"), {
+      target: { value: "School org" },
+    });
+    for (const label of ["Infant", "Child", "Youth", "Adult"]) {
+      fireEvent.click(within(dialog).getByLabelText(label));
+    }
+
+    // Empty selection stays blocked (client-side).
+    expect(
+      within(dialog).getByText("Select at least one allowed age tier."),
+    ).not.toBeNull();
+    expect(
+      within(dialog)
+        .getByRole("button", { name: "Create type" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+
+    // Ticking N/A alone is a valid selection and clears the block.
+    fireEvent.click(within(dialog).getByLabelText("N/A (no age)"));
+    expect(
+      within(dialog).queryByText("Select at least one allowed age tier."),
+    ).toBeNull();
+    expect(
+      within(dialog)
+        .getByRole("button", { name: "Create type" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+  });
+
   it("labels a BASED_ON_AGE_TIER type and shows the age-tier helper text in the editor (#2041)", async () => {
     // Custom list with a type that defers its subscription answer to the age
     // tier. Overrides only the list endpoint; other endpoints keep the default.

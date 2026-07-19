@@ -21,7 +21,22 @@ export const MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS = [
   "BASED_ON_AGE_TIER",
 ] as const satisfies readonly MembershipTypeSubscriptionBehavior[];
 
+// Age tiers an admin can tick as "allowed" for a membership type. Includes the
+// explicit "N/A (no age)" option (NOT_APPLICABLE, sorted last) so
+// organisation/school types can be configured as age-exempt (#2069). This feeds
+// the create/update zod enums, the normalizer, and the dialog checkbox list.
 export const MEMBERSHIP_TYPE_AGE_TIERS = [
+  "INFANT",
+  "CHILD",
+  "YOUTH",
+  "ADULT",
+  "NOT_APPLICABLE",
+] as const satisfies readonly AgeTier[];
+
+// The default allowed-tier set for a new membership type when the caller omits
+// allowedAgeTiers. Deliberately the four real age tiers only — N/A is opt-in and
+// must never be pre-selected or silently added to a default (#2069).
+export const DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS = [
   "INFANT",
   "CHILD",
   "YOUTH",

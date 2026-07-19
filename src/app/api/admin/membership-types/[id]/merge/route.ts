@@ -148,9 +148,10 @@ export async function POST(
   }
 
   // Age-tier compatibility: every affected member's current age tier must be
-  // allowed by the target type. NOT_APPLICABLE (organisations) is exempt — it is
-  // never a configurable allowed tier and orgs are excluded from every
-  // age-based rule (see docs/DOMAIN_INVARIANTS.md).
+  // allowed by the target type. Members whose own tier is NOT_APPLICABLE
+  // (organisations) are exempt — orgs are excluded from every age-based rule
+  // (see docs/DOMAIN_INVARIANTS.md) — even though "N/A (no age)" is itself a
+  // configurable allowed tier on the type since #2069.
   const sourceAssignments = await prisma.seasonalMembershipAssignment.findMany({
     where: { membershipTypeId: sourceId },
     select: {
