@@ -158,6 +158,18 @@ describe("getAdminFeatureSearchIndex — permission filtering (the invariant)", 
     expect(membershipHrefs.has("/admin/fees")).toBe(false);
   });
 
+  it("fails closed: an undefined permission matrix yields an EMPTY index (deny by default)", () => {
+    // Defence in depth (#2092): getVisibleAdminNavSections fails OPEN on a
+    // missing matrix (its pre-existing, shared contract), but the palette index
+    // must NOT — a missing matrix returns nothing rather than every page.
+    expect(getAdminFeatureSearchIndex(allOn, undefined, true)).toEqual([]);
+    expect(getAdminFeatureSearchIndex(allOn, undefined, false)).toEqual([]);
+    // The sidebar seam still fails open, so this is genuinely palette-scoped.
+    expect(
+      getVisibleAdminNavSections(allOn, undefined, true).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("respects module-flag visibility (a disabled module drops its pages)", () => {
     const xeroOff = { ...allOn, xeroIntegration: false } as FeatureFlags;
     const index = getAdminFeatureSearchIndex(xeroOff, fullMatrix, true);

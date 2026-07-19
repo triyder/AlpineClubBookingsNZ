@@ -13,6 +13,7 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import {
+  ADMIN_NAV_SECTION_ORDER,
   getAdminFeatureSearchIndex,
   type AdminFeatureSearchEntry,
 } from "@/components/admin-sidebar";
@@ -23,22 +24,48 @@ import { ADMIN_COMMAND_PALETTE_OPEN_EVENT } from "@/lib/admin-command-palette-ev
 /** Fallback heading for entries whose sidebar section has no label. */
 const UNGROUPED_SECTION = "General";
 
+/** Group headings in canonical sidebar-section order (label-less -> General). */
+const CANONICAL_GROUP_ORDER: string[] = ADMIN_NAV_SECTION_ORDER.map(
+  (label) => label ?? UNGROUPED_SECTION,
+);
+
 function groupBySection(
   entries: AdminFeatureSearchEntry[],
 ): Array<{ section: string; entries: AdminFeatureSearchEntry[] }> {
-  const groups: Array<{ section: string; entries: AdminFeatureSearchEntry[] }> =
-    [];
-  const indexBySection = new Map<string, number>();
-
+  // Bucket entries by heading first. We deliberately do NOT let bucket-creation
+  // order decide group order: getAdminFeatureSearchIndex de-duplicates by href
+  // and a page first seen under "Needs Attention" keeps that early insertion
+  // slot even after its natural-section label overwrites the value, which would
+  // otherwise pull its natural group to the wrong position.
+  const bucketBySection = new Map<string, AdminFeatureSearchEntry[]>();
   for (const entry of entries) {
     const section = entry.section ?? UNGROUPED_SECTION;
-    let idx = indexBySection.get(section);
-    if (idx === undefined) {
-      idx = groups.length;
-      indexBySection.set(section, idx);
-      groups.push({ section, entries: [] });
+    const bucket = bucketBySection.get(section);
+    if (bucket) {
+      bucket.push(entry);
+    } else {
+      bucketBySection.set(section, [entry]);
     }
-    groups[idx].entries.push(entry);
+  }
+
+  // Emit groups in canonical sidebar order (Needs Attention lands in its own
+  // natural slot). Any heading not in the canonical list is appended in
+  // first-encounter order as a defensive fallback.
+  const groups: Array<{ section: string; entries: AdminFeatureSearchEntry[] }> =
+    [];
+  const emitted = new Set<string>();
+  for (const section of CANONICAL_GROUP_ORDER) {
+    const bucket = bucketBySection.get(section);
+    if (bucket && !emitted.has(section)) {
+      groups.push({ section, entries: bucket });
+      emitted.add(section);
+    }
+  }
+  for (const [section, bucket] of bucketBySection) {
+    if (!emitted.has(section)) {
+      groups.push({ section, entries: bucket });
+      emitted.add(section);
+    }
   }
 
   return groups;
@@ -82,8 +109,11 @@ export function AdminCommandPalette({
   }, [open]);
 
   // The index is derived from getVisibleAdminNavSections (via
-  // getAdminFeatureSearchIndex), so it already reflects EXACTLY the pages this
-  // admin may see — no href here is inaccessible, on any interaction path.
+  // getAdminFeatureSearchIndex), so every href here is one this admin is
+  // permitted to open, on any interaction path. It is a deliberate superset of
+  // what the sidebar renders right now — the queue-driven "Needs Attention"
+  // deep links are always searchable even when their queue is empty — never a
+  // permission superset.
   const index = useMemo(
     () =>
       getAdminFeatureSearchIndex(
@@ -126,6 +156,11 @@ export function AdminCommandPalette({
 
   const handleSelect = useCallback(
     (href: string) => {
+      // Navigating away: drop the restore target so onCloseAutoFocus lets the
+      // destination page take focus naturally instead of bouncing back to the
+      // opener button. Only an Escape/overlay dismiss (which leaves
+      // restoreFocusRef set) restores focus to where the admin was.
+      restoreFocusRef.current = null;
       setOpen(false);
       router.push(href);
     },

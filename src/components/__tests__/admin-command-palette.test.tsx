@@ -171,6 +171,61 @@ describe("AdminCommandPalette", () => {
     opener.remove();
   });
 
+  it("orders groups by canonical sidebar section order, not dedup insertion order", async () => {
+    renderPalette();
+    pressCtrlK();
+    await screen.findByPlaceholderText("Search admin features…");
+
+    // cmdk portals the dialog to document.body; read the group headings there.
+    const headings = Array.from(
+      document.body.querySelectorAll("[cmdk-group-heading]"),
+    ).map((el) => el.textContent);
+
+    // Matches the sidebar's navSections order. Regression guard: the de-dup
+    // keys "Bookings & Beds" pages first under "Needs Attention", which must not
+    // drag that group ahead of "Needs Attention".
+    expect(headings).toEqual([
+      "General",
+      "Needs Attention",
+      "Bookings & Beds",
+      "Rates & Policies",
+      "Finance",
+      "Members",
+      "Lodge Operations",
+      "Monitoring & Support",
+      "Setup & Configuration",
+    ]);
+  });
+
+  it("does not restore focus to the opener when a selection navigates away", async () => {
+    renderPalette();
+
+    const opener = document.createElement("button");
+    opener.textContent = "opener";
+    document.body.appendChild(opener);
+    opener.focus();
+
+    openAdminCommandPalette();
+    const input = await screen.findByPlaceholderText("Search admin features…");
+    await waitFor(() => expect(document.activeElement).toBe(input));
+
+    fireEvent.change(input, { target: { value: "Payments" } });
+    await waitFor(() => expect(screen.getByText("Payments")).not.toBeNull());
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByPlaceholderText("Search admin features…"),
+      ).toBeNull(),
+    );
+    expect(pushMock).toHaveBeenCalledWith("/admin/payments");
+    // Focus is NOT bounced back to the opener — the destination page takes it.
+    // (Only an Escape/overlay dismiss restores focus; see the test above.)
+    expect(document.activeElement).not.toBe(opener);
+
+    opener.remove();
+  });
+
   it("never reveals an href the admin cannot access (interaction path)", async () => {
     // Bookings-only, non-full-admin: same filter as getVisibleAdminNavSections.
     renderPalette(matrix({ bookings: "view" }), false);

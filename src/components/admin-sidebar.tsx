@@ -442,6 +442,18 @@ const navSections: NavSection[] = [
   },
 ];
 
+/**
+ * Distinct sidebar section labels in canonical `navSections` order (#2092). The
+ * command palette orders its groups by this list so that a page first
+ * encountered under "Needs Attention" during href de-duplication doesn't drag
+ * its natural group to the wrong position. `undefined` marks the label-less
+ * sections (Admin Dashboard, Lobby Display) whose palette entries fall under the
+ * "General" heading; `new Set` collapses those to a single first-occurrence slot.
+ */
+export const ADMIN_NAV_SECTION_ORDER: ReadonlyArray<string | undefined> = [
+  ...new Set(navSections.map((section) => section.label)),
+];
+
 // test seam
 export function getVisibleAdminNavSections(
   features: FeatureFlags,
@@ -491,7 +503,21 @@ export interface AdminFeatureSearchEntry {
  * applies EXACTLY the same four visibility conditions the sidebar does
  * (module-flag visibility, `fullAdminOnly`, `orAccess`, and the permission
  * matrix) plus the hut-leader relabel, so the palette can never reveal an href
- * the sidebar would hide.
+ * an admin is not permitted to open.
+ *
+ * Superset, not "exactly what the sidebar shows": the index lists every page
+ * the sidebar COULD show this admin, which is deliberately more than the
+ * sidebar renders at any given moment. The two queue-driven "Needs Attention"
+ * deep links (Unpaid Finished Stays / Unpaid Stay Additions) appear here
+ * unconditionally — they are useful, always-accessible, pre-filtered views —
+ * whereas the sidebar reveals them only while their queue is non-empty. This is
+ * never a superset in permission terms: an href the admin may not open is never
+ * indexed.
+ *
+ * Fail-closed: unlike {@link getVisibleAdminNavSections} (whose fail-OPEN
+ * missing-matrix contract predates this and is shared with other callers), a
+ * missing `permissionMatrix` yields an EMPTY index here, so the search surface
+ * denies by default rather than exposing every page — defence in depth (#2092).
  *
  * De-duplication: a handful of hrefs appear twice in `navSections` — once in
  * the queue-driven "Needs Attention" section and once in their natural home
@@ -505,6 +531,11 @@ export function getAdminFeatureSearchIndex(
   isFullAdmin?: boolean,
   hutLeaderLabel = "Hut Leader",
 ): AdminFeatureSearchEntry[] {
+  // Palette-scoped defence in depth: deny (empty index) when no matrix is
+  // supplied, rather than inheriting getVisibleAdminNavSections' fail-open.
+  if (!permissionMatrix) {
+    return [];
+  }
   const byHref = new Map<string, AdminFeatureSearchEntry>();
   for (const section of getVisibleAdminNavSections(
     features,
@@ -821,14 +852,27 @@ function SidebarSearchButton({ onOpen }: { onOpen?: () => void }) {
     <button
       type="button"
       onClick={() => {
+        // The mobile Sheet closes (onOpen -> setMobileOpen(false)) at the same
+        // moment the palette opens. The Sheet's exit focus handling and the
+        // palette's focus trap briefly compete, and the palette captures its
+        // focus-restore target (this button) just before the Sheet unmounts it.
+        // The palette guards the restore with document.contains, so restoring to
+        // a detached node is a no-op. This stacked-layer focus race is not
+        // meaningfully reproducible in jsdom — it is a manual mobile check.
         onOpen?.();
         openAdminCommandPalette();
       }}
+      // The ⌘K / Ctrl K glyphs are decorative (aria-hidden); expose the shortcut
+      // semantically instead so the accessible name stays just "Search…".
+      aria-keyshortcuts="Meta+K Control+K"
       className="mb-2 flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
     >
       <Search className="h-4 w-4 shrink-0" />
       <span className="flex-1 text-left">Search…</span>
-      <kbd className="pointer-events-none hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">
+      <kbd
+        aria-hidden
+        className="pointer-events-none hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex"
+      >
         {isMac ? "⌘" : "Ctrl"} K
       </kbd>
     </button>
