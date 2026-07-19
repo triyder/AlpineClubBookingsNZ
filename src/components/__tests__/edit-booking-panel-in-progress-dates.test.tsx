@@ -23,7 +23,7 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
-function installFetch() {
+function installFetch(quoteOverrides: Record<string, unknown> = {}) {
   global.fetch = vi.fn(async (input: unknown) => {
     const url = String(input);
     if (url.includes("/api/members/family")) {
@@ -48,6 +48,7 @@ function installFetch() {
         promoStillValid: true,
         promoValidation: null,
         itemizedChanges: [],
+        ...quoteOverrides,
       });
     }
     return jsonResponse({});
@@ -139,5 +140,39 @@ describe("EditBookingPanel — in-progress date extension (#2124)", () => {
     expect(
       screen.getByText(/minimum-stay rules apply to your whole stay/i),
     ).toBeInTheDocument();
+  });
+
+  it("renders the advisory warning when a quote flags the whole stay under a minimum", async () => {
+    // #2124 review: the verdict must be VISIBLE to the member. It is advisory
+    // only — Save is not gated on it (pinned below), matching the future-edit
+    // semantics; the hard block lives on the create path.
+    installFetch({
+      minimumStayValid: false,
+      minimumStayViolations: [
+        { message: "Stays including a Friday or Saturday night must be at least 2 nights." },
+      ],
+    });
+    const user = (await import("@testing-library/user-event")).default.setup();
+    render(
+      <EditBookingPanel booking={inProgressBooking()} onDone={vi.fn()} />,
+    );
+
+    const checkOut = screen.getByLabelText("Check-out") as HTMLInputElement;
+    await user.clear(checkOut);
+    // Shorten to the earliest allowed check-out to trigger a fresh quote.
+    await user.type(checkOut, "2026-08-16");
+
+    expect(
+      await screen.findByText(
+        /leave your stay under a minimum-stay rule/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/at least 2 nights/i),
+    ).toBeInTheDocument();
+    // Advisory only: Save stays enabled despite the flagged minimum.
+    expect(
+      screen.getByRole("button", { name: /save changes/i }),
+    ).toBeEnabled();
   });
 });
