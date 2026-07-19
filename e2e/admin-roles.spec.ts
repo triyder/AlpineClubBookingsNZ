@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { loginPersona } from "./helpers/auth";
-import { ROLE_PERSONAS } from "./helpers/fixtures";
+import { relDateOnly, ROLE_PERSONAS } from "./helpers/fixtures";
 
 // High row (docs/END_TO_END_TEST_MATRIX.md): "Role boundaries for full admin,
 // read-only admin, booking officer, membership officer, Treasurer, content
@@ -140,8 +140,9 @@ test("lodge role reaches lodge operations but no admin portal", async ({
 
   // Lodge-distinguishing surface: the roster wizard's layout redirects a
   // NON-lodge member to the kiosk, so staying on /lodge/roster proves the
-  // LODGE access role specifically (any member can reach the kiosk).
-  await page.goto("/lodge/roster/2026-08-15/setup");
+  // LODGE access role specifically (any member can reach the kiosk). A relative
+  // future in-season date (issue #2117) keeps the roster page valid on any run.
+  await page.goto(`/lodge/roster/${relDateOnly(30)}/setup`);
   await expect(page).toHaveURL(/\/lodge\/roster\//);
 
   // Out-of-area: LODGE carries no admin bundle → admin pages bounce away.

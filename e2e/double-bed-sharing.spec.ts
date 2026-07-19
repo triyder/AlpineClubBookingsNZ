@@ -1,6 +1,6 @@
 import { type BrowserContext, expect, test } from "@playwright/test";
 import { storageStatePath } from "./helpers/auth";
-import { E2E_ADMIN } from "./helpers/fixtures";
+import { DEMO_BOOKING_WINDOWS, E2E_ADMIN } from "./helpers/fixtures";
 import { overrideModules, setModuleSettings, type ModuleSettings } from "./helpers/modules";
 
 // docs/END_TO_END_TEST_MATRIX.md rows "Partner relationship (#1742)" and
@@ -18,9 +18,11 @@ import { overrideModules, setModuleSettings, type ModuleSettings } from "./helpe
 //   - One SINGLE bed is retyped to DOUBLE (beds PATCH; restored in afterAll) so
 //     the lodge has partner-shared headroom and a shareable double to place on.
 //   - S1 and S3 read the SEEDED bookings bPayPending (Carol, PAYMENT_PENDING,
-//     2026-07-20/23) and bCompleted (Heidi, COMPLETED, 2026-06-05/08), resolved
-//     by member name off the bed-allocation board — S1 cancels its panel and S3
-//     only previews, so they persist nothing.
+//     future + modifiable) and bCompleted (Heidi, COMPLETED, past), whose nights
+//     are RELATIVE fixtures (issue #2117: a fixed future date here crossing the
+//     NZ in-progress boundary was the original CI-red root cause), resolved by
+//     member name off the bed-allocation board over the shared fixture window —
+//     S1 cancels its panel and S3 only previews, so they persist nothing.
 //   - S2 and S4 build their own FUTURE, CONFIRMED (capacity-holding) bookings on
 //     runtime-derived empty in-season windows (deriveHoldingWindows): the
 //     second-occupant rule and the base-full check both need capacity-holding
@@ -365,15 +367,18 @@ test.beforeAll(async ({ browser }) => {
   expect(ibPut.ok(), `enable holdBedSlots (${ibPut.status()})`).toBeTruthy();
 
   // Resolve the seeded bookings S1 and S3 read (by owner name off the board).
+  // The board window matches the RELATIVE seeded fixture (issue #2117): Carol's
+  // PAYMENT_PENDING booking is future+modifiable, Heidi's COMPLETED booking is
+  // past — imported from the shared fixtures so seed and spec never drift.
   carolBookingId = await resolveBookingIdByMember(
     "Carol Clark",
-    "2026-07-20",
-    "2026-07-23",
+    DEMO_BOOKING_WINDOWS.carolPaymentPending.checkIn,
+    DEMO_BOOKING_WINDOWS.carolPaymentPending.checkOut,
   );
   heidiBookingId = await resolveBookingIdByMember(
     "Heidi Hill",
-    "2026-06-05",
-    "2026-06-08",
+    DEMO_BOOKING_WINDOWS.heidiCompleted.checkIn,
+    DEMO_BOOKING_WINDOWS.heidiCompleted.checkOut,
   );
 });
 

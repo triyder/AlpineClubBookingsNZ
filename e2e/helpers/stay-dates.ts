@@ -1,12 +1,14 @@
 // Disjoint Monday–Wednesday stay windows for the booking persona, starting a
-// few weeks out so they clear the demo seed's fixed July bookings. Windows are
+// few weeks out so they clear the demo seed's relative bookings. Windows are
 // pure date math (NZ date-only lodge nights); the wizard itself rejects a
-// window that falls outside a seeded season, which keeps failures loud. The
-// base seed covers Winter 2026 (Jun–Sep) and Summer 2026–27 (Nov–Mar), so runs
-// during a season gap (e.g. Oct 2026) need reseeded season dates — see
-// docs/E2E_PLAYWRIGHT.md.
+// window that falls outside a seeded season, which keeps failures loud. Since
+// issue #2117 the base seed's seasons are RELATIVE (a broad Winter band from
+// ~90 days back to ~240 days out, a ~30-day gap, then a Summer band), so a
+// window a few weeks out is always in-season on any run date — see
+// SEEDED_SEASONS (prisma/e2e-fixtures.ts) and docs/E2E_PLAYWRIGHT.md.
 import {
   IB_WINDOW,
+  SEEDED_SEASONS,
   WAITLIST_FULL_WINDOW,
   WAITLIST_OFFER_WINDOW,
 } from "../../prisma/e2e-fixtures";
@@ -25,26 +27,20 @@ const RESERVED_WINDOW_CHECKINS = new Set<string>([
   WAITLIST_OFFER_WINDOW.checkIn,
 ]);
 
-// Seeded booking seasons (prisma/seed.ts): Winter 2026 and Summer 2026-27, with
-// a deliberate October 2026 gap between them. A window whose nights fall in that
-// gap (or after the last seeded season) has no season rate, so /api/bookings/quote
-// prices it out-of-season and the wizard refuses to advance to review — the
-// exact failure that appeared once the three reserved September skips pushed the
-// highest index past 09-30 into early October (#1703 follow-up). Windows must
-// therefore land entirely inside one season, on any run date. ISO YYYY-MM-DD
-// sorts lexicographically, so plain string comparison is a correct date compare.
+// Seeded booking seasons (relative; defined in prisma/e2e-fixtures.ts, written
+// by prisma/seed.ts): a Winter band and a Summer band with a deliberate ~30-day
+// gap between them. A window whose nights fall in that gap (or outside both
+// bands) has no season rate, so /api/bookings/quote prices it out-of-season and
+// the wizard refuses to advance to review (cf. #1703). Windows must therefore
+// land entirely inside one season, on any run date. ISO YYYY-MM-DD sorts
+// lexicographically, so plain string comparison is a correct date compare.
 // Season key matches the club-config rate columns (config/club.json →
 // nightlyRates.winter / .summer) and the seed's WINTER/SUMMER season types.
-export type SeededSeasonKey = "winter" | "summer";
-
-const SEEDED_SEASONS: ReadonlyArray<{
-  key: SeededSeasonKey;
-  start: string;
-  end: string;
-}> = [
-  { key: "winter", start: "2026-06-01", end: "2026-09-30" }, // Winter 2026
-  { key: "summer", start: "2026-11-01", end: "2027-03-31" }, // Summer 2026-27
-];
+// The concrete season spans are RELATIVE (issue #2117) and defined ONCE in
+// prisma/e2e-fixtures.ts, imported by BOTH this helper and
+// e2e/setup/relativize-seasons.ts (which re-dates the base seed's Season rows on
+// the E2E DB), so the DB seasons and this classifier can never drift apart.
+export type SeededSeasonKey = (typeof SEEDED_SEASONS)[number]["key"];
 
 function isWindowInSeededSeason(nights: string[]): boolean {
   return SEEDED_SEASONS.some((season) =>

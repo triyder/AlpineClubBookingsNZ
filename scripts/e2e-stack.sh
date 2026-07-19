@@ -78,6 +78,9 @@ prepare() {
   echo "==> Seeding base data"
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx prisma/seed.ts
 
+  echo "==> Relativizing booking seasons so seeded fixtures never expire (#2117)"
+  DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/relativize-seasons.ts
+
   echo "==> Enabling the modules the E2E journeys need"
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/enable-e2e-modules.ts
 

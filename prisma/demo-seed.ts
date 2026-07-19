@@ -31,11 +31,13 @@ import { backfillCurrentSeasonMembershipAssignments } from "../src/lib/membershi
 import { getDefaultLodgeId } from "../src/lib/lodges";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import {
+  DEMO_BOOKING_WINDOWS,
   DUAL_HAT_ADMIN,
   E2E_ADMIN,
   EMAIL_2FA_ENROLLEE,
   IB_BOOKING_ID,
   IB_WINDOW,
+  relDateOnly,
   LODGE_FILL_OWNER,
   MAPPING_APPLICANT,
   MAPPING_APPLICATION_ID,
@@ -424,7 +426,7 @@ async function main() {
   // Promo codes — every PromoCodeType (+ a work-party internal promo).
   // -------------------------------------------------------------------------
   await prisma.promoCode.create({
-    data: { code: "WINTER15", description: "15% off winter stays", type: "PERCENTAGE", percentOff: 15, validUntil: d("2026-09-30") },
+    data: { code: "WINTER15", description: "15% off winter stays", type: "PERCENTAGE", percentOff: 15, validUntil: d(relDateOnly(180)) },
   });
   const promoFixed = await prisma.promoCode.create({
     data: { code: "MATE20", description: "$20 off per guest", type: "FIXED_AMOUNT", valueCents: 2000, maxUsesPerMember: 1 },
@@ -437,10 +439,11 @@ async function main() {
   });
   // Work-party internal promo (auto-applied, hidden from listings).
   const workPromo = await prisma.promoCode.create({
-    data: { code: "WORKPARTY-JUL26", description: "July working bee — free nights", type: "PERCENTAGE", percentOff: 100, internal: true },
+    data: { code: "WORKPARTY", description: "Working bee — free nights", type: "PERCENTAGE", percentOff: 100, internal: true },
   });
+  // Upcoming work-party event (relative so it stays in the future — issue #2117).
   await prisma.workPartyEvent.create({
-    data: { name: "July Working Bee 2026", description: "Track clearing + firewood", startDate: d("2026-07-12"), endDate: d("2026-07-14"), discountPercent: 100, promoCodeId: workPromo.id },
+    data: { name: "Upcoming Working Bee", description: "Track clearing + firewood", startDate: d(relDateOnly(20)), endDate: d(relDateOnly(22)), discountPercent: 100, promoCodeId: workPromo.id },
   });
   // Assign a personal promo to a member.
   await prisma.promoCodeAssignment.create({ data: { promoCodeId: promoFixed.id, memberId: bob.id } });
@@ -450,6 +453,13 @@ async function main() {
   // Bookings — one per BookingStatus, with guests, nights, events, payments.
   // -------------------------------------------------------------------------
   const NIGHTLY = 4500; // $45/night member rate (demo)
+
+  // Booking nights are RELATIVE to the run date (issue #2117): a fixed calendar
+  // date silently turned CI red the day wall-clock reached it. Each window below
+  // is a named, relative { checkIn, checkOut, nights } fixture shared with the
+  // Playwright specs that read these bookings (prisma/e2e-fixtures.ts), so seed
+  // and spec never drift. `W.x.checkIn` / `W.x.checkOut` are YYYY-MM-DD strings.
+  const W = DEMO_BOOKING_WINDOWS;
 
   // helper to create a booking shell
   async function makeBooking(
@@ -475,30 +485,33 @@ async function main() {
     });
   }
 
-  // 1. DRAFT
-  const bDraft = await makeBooking(alice, "DRAFT", "2026-07-10", "2026-07-12", {
-    draftExpiresAt: d("2026-07-09"),
+  // 1. DRAFT (past, expiry already passed)
+  const bDraft = await makeBooking(alice, "DRAFT", W.aliceDraft.checkIn, W.aliceDraft.checkOut, {
+    draftExpiresAt: d(relDateOnly(-26)),
   });
-  await addGuest(bDraft.id, { firstName: "Alice", lastName: "Anderson", ageTier: "ADULT", isMember: true, memberId: alice.id }, "2026-07-10", "2026-07-12", NIGHTLY);
+  await addGuest(bDraft.id, { firstName: "Alice", lastName: "Anderson", ageTier: "ADULT", isMember: true, memberId: alice.id }, W.aliceDraft.checkIn, W.aliceDraft.checkOut, NIGHTLY);
   await prisma.bookingEvent.create({ data: { bookingId: bDraft.id, type: "CREATED", actorMemberId: alice.id } });
 
-  // 2. PENDING (payment PENDING)
-  const bPending = await makeBooking(bob, "PENDING", "2026-07-15", "2026-07-17");
-  await addGuest(bPending.id, { firstName: "Bob", lastName: "Brown", ageTier: "ADULT", isMember: true, memberId: bob.id }, "2026-07-15", "2026-07-17", NIGHTLY);
+  // 2. PENDING (payment PENDING) — future
+  const bPending = await makeBooking(bob, "PENDING", W.bobPending.checkIn, W.bobPending.checkOut);
+  await addGuest(bPending.id, { firstName: "Bob", lastName: "Brown", ageTier: "ADULT", isMember: true, memberId: bob.id }, W.bobPending.checkIn, W.bobPending.checkOut, NIGHTLY);
   await prisma.payment.create({ data: { bookingId: bPending.id, amountCents: bPending.finalPriceCents, source: "STRIPE", status: "PENDING", stripePaymentIntentId: "pi_demo_pending" } });
   await prisma.bookingEvent.create({ data: { bookingId: bPending.id, type: "CREATED", actorMemberId: bob.id } });
 
-  // 3. PAYMENT_PENDING (payment PROCESSING)
-  const bPayPending = await makeBooking(carol, "PAYMENT_PENDING", "2026-07-20", "2026-07-23");
-  await addGuest(bPayPending.id, { firstName: "Carol", lastName: "Clark", ageTier: "ADULT", isMember: true, memberId: carol.id }, "2026-07-20", "2026-07-23", NIGHTLY);
+  // 3. PAYMENT_PENDING (payment PROCESSING) — FUTURE + modifiable. Read by
+  // double-bed-sharing.spec.ts (S1/S3); a fixed date here crossing the NZ
+  // in-progress boundary was the #2117 root cause, so it stays >=35 days out.
+  const bPayPending = await makeBooking(carol, "PAYMENT_PENDING", W.carolPaymentPending.checkIn, W.carolPaymentPending.checkOut);
+  await addGuest(bPayPending.id, { firstName: "Carol", lastName: "Clark", ageTier: "ADULT", isMember: true, memberId: carol.id }, W.carolPaymentPending.checkIn, W.carolPaymentPending.checkOut, NIGHTLY);
   await prisma.payment.create({ data: { bookingId: bPayPending.id, amountCents: bPayPending.finalPriceCents, source: "STRIPE", status: "PROCESSING", stripePaymentIntentId: "pi_demo_processing" } });
 
   // 4. CONFIRMED (payment SUCCEEDED via INTERNET_BANKING) + bed allocations + modification
-  const bConfirmed = await makeBooking(dave, "CONFIRMED", "2026-06-25", "2026-06-28");
-  const daveGuest = await addGuest(bConfirmed.id, { firstName: "Dave", lastName: "Davis", ageTier: "ADULT", isMember: true, memberId: dave.id }, "2026-06-25", "2026-06-28", NIGHTLY);
+  //    Past stay (completed chores/allocations below reference these nights).
+  const bConfirmed = await makeBooking(dave, "CONFIRMED", W.daveConfirmed.checkIn, W.daveConfirmed.checkOut);
+  const daveGuest = await addGuest(bConfirmed.id, { firstName: "Dave", lastName: "Davis", ageTier: "ADULT", isMember: true, memberId: dave.id }, W.daveConfirmed.checkIn, W.daveConfirmed.checkOut, NIGHTLY);
   const confirmedPayment = await prisma.payment.create({ data: { bookingId: bConfirmed.id, amountCents: bConfirmed.finalPriceCents, source: "INTERNET_BANKING", reference: "BANK-REF-7781", status: "SUCCEEDED", xeroInvoiceNumber: "INV-2201" } });
   await prisma.paymentTransaction.create({ data: { paymentId: confirmedPayment.id, kind: "PRIMARY", source: "INTERNET_BANKING", amountCents: bConfirmed.finalPriceCents, status: "SUCCEEDED", reference: "BANK-REF-7781" } });
-  for (const [i, night] of nightsBetween("2026-06-25", "2026-06-28").entries()) {
+  for (const [i, night] of nightsBetween(W.daveConfirmed.checkIn, W.daveConfirmed.checkOut).entries()) {
     await prisma.bedAllocation.create({ data: { bookingId: bConfirmed.id, bookingGuestId: daveGuest.id, roomId: roomA.id, bedId: bedsA[i].id, stayDate: d(night), source: "AUTO" } });
   }
   await prisma.bookingEvent.create({ data: { bookingId: bConfirmed.id, type: "CREATED", actorMemberId: dave.id } });
@@ -509,8 +522,8 @@ async function main() {
       bookingId: bConfirmed.id,
       memberId: dave.id,
       modificationType: "DATE_CHANGE",
-      previousData: { checkIn: "2026-06-24", checkOut: "2026-06-28" },
-      newData: { checkIn: "2026-06-25", checkOut: "2026-06-28" },
+      previousData: { checkIn: relDateOnly(-41), checkOut: W.daveConfirmed.checkOut },
+      newData: { checkIn: W.daveConfirmed.checkIn, checkOut: W.daveConfirmed.checkOut },
       priceDiffCents: -NIGHTLY,
       changeFeeCents: 0,
     },
@@ -524,7 +537,7 @@ async function main() {
       paymentIntentId: "pi_demo_confirmed",
       amountCents: NIGHTLY,
       idempotencyKey: "demo-recovery-mod-1",
-      succeededAt: d("2026-06-20"),
+      succeededAt: d(relDateOnly(-39)),
     },
   });
 
@@ -532,8 +545,8 @@ async function main() {
   const bPaid = await prisma.booking.create({
     data: {
       memberId: erin.id,
-      checkIn: d("2026-07-03"),
-      checkOut: d("2026-07-06"),
+      checkIn: d(W.erinPaid.checkIn),
+      checkOut: d(W.erinPaid.checkOut),
       status: "PAID",
       totalPriceCents: NIGHTLY * 3,
       promoAdjustmentCents: NIGHTLY,
@@ -541,7 +554,7 @@ async function main() {
       lodgeId,
     },
   });
-  const erinGuest = await addGuest(bPaid.id, { firstName: "Erin", lastName: "Evans", ageTier: "ADULT", isMember: true, memberId: erin.id }, "2026-07-03", "2026-07-06", NIGHTLY);
+  const erinGuest = await addGuest(bPaid.id, { firstName: "Erin", lastName: "Evans", ageTier: "ADULT", isMember: true, memberId: erin.id }, W.erinPaid.checkIn, W.erinPaid.checkOut, NIGHTLY);
   const paidPayment = await prisma.payment.create({ data: { bookingId: bPaid.id, amountCents: bPaid.finalPriceCents, source: "STRIPE", status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid", stripeCustomerId: "cus_demo_erin", additionalPaymentIntentId: "pi_demo_paid_add", additionalAmountCents: 1500, additionalPaymentStatus: "SUCCEEDED" } });
   await prisma.paymentTransaction.create({ data: { paymentId: paidPayment.id, kind: "PRIMARY", source: "STRIPE", amountCents: bPaid.finalPriceCents, status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid" } });
   await prisma.paymentTransaction.create({ data: { paymentId: paidPayment.id, kind: "ADDITIONAL", source: "STRIPE", amountCents: 1500, status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid_add", reason: "Added extra guest night" } });
@@ -553,74 +566,77 @@ async function main() {
   await prisma.promoCode.update({ where: { id: promoFreeNights.id }, data: { currentRedemptions: 1 } });
   await prisma.bookingEvent.create({ data: { bookingId: bPaid.id, type: "MEMBER_PAID", actorMemberId: erin.id, amountCents: bPaid.finalPriceCents } });
 
-  // 6. BUMPED (payment REFUNDED + refund + recovery op)
-  const bBumped = await makeBooking(frank, "BUMPED", "2026-07-08", "2026-07-10");
-  await addGuest(bBumped.id, { firstName: "Frank", lastName: "Foster", ageTier: "ADULT", isMember: true, memberId: frank.id }, "2026-07-08", "2026-07-10", NIGHTLY);
+  // 6. BUMPED (payment REFUNDED + refund + recovery op) — past
+  const bBumped = await makeBooking(frank, "BUMPED", W.frankBumped.checkIn, W.frankBumped.checkOut);
+  await addGuest(bBumped.id, { firstName: "Frank", lastName: "Foster", ageTier: "ADULT", isMember: true, memberId: frank.id }, W.frankBumped.checkIn, W.frankBumped.checkOut, NIGHTLY);
   const bumpedPayment = await prisma.payment.create({ data: { bookingId: bBumped.id, amountCents: bBumped.finalPriceCents, source: "STRIPE", status: "REFUNDED", refundedAmountCents: bBumped.finalPriceCents, stripePaymentIntentId: "pi_demo_bumped" } });
-  await prisma.paymentRefund.create({ data: { paymentId: bumpedPayment.id, stripeRefundId: "re_demo_bumped", amountCents: bBumped.finalPriceCents, status: "succeeded", reason: "Bumped by capacity", stripeCreatedAt: d("2026-06-30") } });
+  await prisma.paymentRefund.create({ data: { paymentId: bumpedPayment.id, stripeRefundId: "re_demo_bumped", amountCents: bBumped.finalPriceCents, status: "succeeded", reason: "Bumped by capacity", stripeCreatedAt: d(relDateOnly(-30)) } });
   await prisma.paymentRecoveryOperation.create({ data: { type: "REFUND_SUPERSEDED_PAYMENT", status: "PROCESSING", bookingId: bBumped.id, paymentId: bumpedPayment.id, paymentIntentId: "pi_demo_bumped", amountCents: bBumped.finalPriceCents, idempotencyKey: "demo-recovery-bump-1", attempts: 1 } });
   await prisma.bookingEvent.create({ data: { bookingId: bBumped.id, type: "BUMPED", actorMemberId: admin.id, reason: "Capacity reached" } });
   await prisma.bookingEvent.create({ data: { bookingId: bBumped.id, type: "REFUNDED", amountCents: bBumped.finalPriceCents } });
 
-  // 7. CANCELLED (payment PARTIALLY_REFUNDED + partial refund + cancellation credit)
-  const bCancelled = await makeBooking(grace, "CANCELLED", "2026-07-25", "2026-07-28");
-  await addGuest(bCancelled.id, { firstName: "Grace", lastName: "Green", ageTier: "ADULT", isMember: true, memberId: grace.id }, "2026-07-25", "2026-07-28", NIGHTLY);
+  // 7. CANCELLED (payment PARTIALLY_REFUNDED + partial refund + cancellation credit) — past
+  const bCancelled = await makeBooking(grace, "CANCELLED", W.graceCancelled.checkIn, W.graceCancelled.checkOut);
+  await addGuest(bCancelled.id, { firstName: "Grace", lastName: "Green", ageTier: "ADULT", isMember: true, memberId: grace.id }, W.graceCancelled.checkIn, W.graceCancelled.checkOut, NIGHTLY);
   const cancelledPayment = await prisma.payment.create({ data: { bookingId: bCancelled.id, amountCents: bCancelled.finalPriceCents, source: "STRIPE", status: "PARTIALLY_REFUNDED", refundedAmountCents: Math.round(bCancelled.finalPriceCents / 2), stripePaymentIntentId: "pi_demo_cancelled" } });
   await prisma.paymentRefund.create({ data: { paymentId: cancelledPayment.id, stripeRefundId: "re_demo_cancelled", amountCents: Math.round(bCancelled.finalPriceCents / 2), status: "succeeded", reason: "50% cancellation refund" } });
-  const cancellationCredit = await prisma.memberCredit.create({ data: { memberId: grace.id, amountCents: Math.round(bCancelled.finalPriceCents / 2), type: "CANCELLATION_REFUND", description: "50% credit from cancelled July booking", sourceBookingId: bCancelled.id } });
+  const cancellationCredit = await prisma.memberCredit.create({ data: { memberId: grace.id, amountCents: Math.round(bCancelled.finalPriceCents / 2), type: "CANCELLATION_REFUND", description: "50% credit from cancelled booking", sourceBookingId: bCancelled.id } });
   await prisma.bookingEvent.create({ data: { bookingId: bCancelled.id, type: "CANCELLED", actorMemberId: grace.id, reason: "Change of plans" } });
   await prisma.bookingEvent.create({ data: { bookingId: bCancelled.id, type: "CREDITED", amountCents: cancellationCredit.amountCents } });
 
-  // 8. COMPLETED (past, payment SUCCEEDED, guests arrived/departed, chores done)
-  const bCompleted = await makeBooking(heidi, "COMPLETED", "2026-06-05", "2026-06-08");
-  const heidiGuest = await addGuest(bCompleted.id, { firstName: "Heidi", lastName: "Hill", ageTier: "ADULT", isMember: true, memberId: heidi.id, arrivedAt: d("2026-06-05"), departedAt: d("2026-06-08") }, "2026-06-05", "2026-06-08", NIGHTLY);
+  // 8. COMPLETED (PAST, payment SUCCEEDED, guests arrived/departed, chores done)
+  //    Read by double-bed-sharing.spec.ts (S3); must stay in the past.
+  const bCompleted = await makeBooking(heidi, "COMPLETED", W.heidiCompleted.checkIn, W.heidiCompleted.checkOut);
+  const heidiGuest = await addGuest(bCompleted.id, { firstName: "Heidi", lastName: "Hill", ageTier: "ADULT", isMember: true, memberId: heidi.id, arrivedAt: d(W.heidiCompleted.checkIn), departedAt: d(W.heidiCompleted.checkOut) }, W.heidiCompleted.checkIn, W.heidiCompleted.checkOut, NIGHTLY);
   await prisma.payment.create({ data: { bookingId: bCompleted.id, amountCents: bCompleted.finalPriceCents, source: "STRIPE", status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_completed", xeroInvoiceNumber: "INV-2180" } });
   await prisma.bookingEvent.create({ data: { bookingId: bCompleted.id, type: "MEMBER_PAID", actorMemberId: heidi.id, amountCents: bCompleted.finalPriceCents } });
 
-  // 9. WAITLISTED
-  const bWaitlisted = await makeBooking(ivan, "WAITLISTED", "2026-08-01", "2026-08-03", { waitlistPosition: 2 });
-  await addGuest(bWaitlisted.id, { firstName: "Ivan", lastName: "Ivanov", ageTier: "ADULT", isMember: true, memberId: ivan.id }, "2026-08-01", "2026-08-03", NIGHTLY);
+  // 9. WAITLISTED — future window (shared with the WAITLIST_OFFERED booking)
+  const bWaitlisted = await makeBooking(ivan, "WAITLISTED", W.waitlist.checkIn, W.waitlist.checkOut, { waitlistPosition: 2 });
+  await addGuest(bWaitlisted.id, { firstName: "Ivan", lastName: "Ivanov", ageTier: "ADULT", isMember: true, memberId: ivan.id }, W.waitlist.checkIn, W.waitlist.checkOut, NIGHTLY);
 
-  // 10. WAITLIST_OFFERED
-  const bWaitlistOffered = await makeBooking(judy, "WAITLIST_OFFERED", "2026-08-01", "2026-08-03", { waitlistPosition: 1, waitlistOfferedAt: d("2026-06-18"), waitlistOfferExpiresAt: d("2026-06-21") });
-  await addGuest(bWaitlistOffered.id, { firstName: "Judy", lastName: "Jones", ageTier: "ADULT", isMember: true, memberId: judy.id }, "2026-08-01", "2026-08-03", NIGHTLY);
+  // 10. WAITLIST_OFFERED — future stay whose offer has already LAPSED (offer
+  //     timestamps stay in the recent past so the offer is expired on any run).
+  const bWaitlistOffered = await makeBooking(judy, "WAITLIST_OFFERED", W.waitlist.checkIn, W.waitlist.checkOut, { waitlistPosition: 1, waitlistOfferedAt: d(relDateOnly(-5)), waitlistOfferExpiresAt: d(relDateOnly(-2)) });
+  await addGuest(bWaitlistOffered.id, { firstName: "Judy", lastName: "Jones", ageTier: "ADULT", isMember: true, memberId: judy.id }, W.waitlist.checkIn, W.waitlist.checkOut, NIGHTLY);
 
-  // 11. AWAITING_REVIEW (admin review required)
-  const bReview = await makeBooking(ken, "AWAITING_REVIEW", "2026-07-30", "2026-08-01", {
+  // 11. AWAITING_REVIEW (admin review required) — FUTURE. Read + approved by
+  //     bed-allocation.spec.ts, so it must stay future/modifiable.
+  const bReview = await makeBooking(ken, "AWAITING_REVIEW", W.kenReview.checkIn, W.kenReview.checkOut, {
     requiresAdminReview: true,
     adminReviewReason: "Large group / short notice",
     adminReviewStatus: "PENDING",
     memberReviewJustification: "Club committee trip, approved verbally by President.",
   });
-  await addGuest(bReview.id, { firstName: "Ken", lastName: "King", ageTier: "ADULT", isMember: true, memberId: ken.id }, "2026-07-30", "2026-08-01", NIGHTLY);
+  await addGuest(bReview.id, { firstName: "Ken", lastName: "King", ageTier: "ADULT", isMember: true, memberId: ken.id }, W.kenReview.checkIn, W.kenReview.checkOut, NIGHTLY);
 
-  // Failed-payment booking (covers PaymentStatus.FAILED + CANCEL_PAYMENT_INTENT recovery)
-  const bFailed = await makeBooking(lars, "PENDING", "2026-07-19", "2026-07-21");
-  await addGuest(bFailed.id, { firstName: "Lars", lastName: "Larsen", ageTier: "ADULT", isMember: true, memberId: lars.id }, "2026-07-19", "2026-07-21", NIGHTLY);
+  // Failed-payment booking (covers PaymentStatus.FAILED + CANCEL_PAYMENT_INTENT recovery) — future
+  const bFailed = await makeBooking(lars, "PENDING", W.larsFailed.checkIn, W.larsFailed.checkOut);
+  await addGuest(bFailed.id, { firstName: "Lars", lastName: "Larsen", ageTier: "ADULT", isMember: true, memberId: lars.id }, W.larsFailed.checkIn, W.larsFailed.checkOut, NIGHTLY);
   const failedPayment = await prisma.payment.create({ data: { bookingId: bFailed.id, amountCents: bFailed.finalPriceCents, source: "STRIPE", status: "FAILED", stripePaymentIntentId: "pi_demo_failed" } });
   await prisma.paymentTransaction.create({ data: { paymentId: failedPayment.id, kind: "PRIMARY", source: "STRIPE", amountCents: bFailed.finalPriceCents, status: "FAILED", reason: "card_declined", stripePaymentIntentId: "pi_demo_failed" } });
   await prisma.paymentRecoveryOperation.create({ data: { type: "CANCEL_PAYMENT_INTENT", status: "FAILED", bookingId: bFailed.id, paymentId: failedPayment.id, paymentIntentId: "pi_demo_failed", amountCents: bFailed.finalPriceCents, idempotencyKey: "demo-recovery-cancel-1", attempts: 3, lastError: "PaymentIntent already canceled" } });
 
-  // Split booking: member parent (CONFIRMED) + non-member provisional child (PENDING)
-  const splitParent = await makeBooking(mallory, "CONFIRMED", "2026-07-04", "2026-07-06", { hasNonMembers: true });
-  await addGuest(splitParent.id, { firstName: "Mallory", lastName: "Moore", ageTier: "ADULT", isMember: true, memberId: mallory.id }, "2026-07-04", "2026-07-06", NIGHTLY);
+  // Split booking: member parent (CONFIRMED) + non-member provisional child (PENDING) — past
+  const splitParent = await makeBooking(mallory, "CONFIRMED", W.mallorySplit.checkIn, W.mallorySplit.checkOut, { hasNonMembers: true });
+  await addGuest(splitParent.id, { firstName: "Mallory", lastName: "Moore", ageTier: "ADULT", isMember: true, memberId: mallory.id }, W.mallorySplit.checkIn, W.mallorySplit.checkOut, NIGHTLY);
   await prisma.payment.create({ data: { bookingId: splitParent.id, amountCents: splitParent.finalPriceCents, source: "STRIPE", status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_split" } });
   const splitChild = await prisma.booking.create({
     data: {
       memberId: mallory.id,
       parentBookingId: splitParent.id,
-      checkIn: d("2026-07-04"),
-      checkOut: d("2026-07-06"),
+      checkIn: d(W.mallorySplit.checkIn),
+      checkOut: d(W.mallorySplit.checkOut),
       status: "PENDING",
       hasNonMembers: true,
       cancelIfGuestsBumped: false,
-      nonMemberHoldUntil: d("2026-06-27"),
+      nonMemberHoldUntil: d(relDateOnly(-40)),
       totalPriceCents: NIGHTLY * 2 * 2,
       finalPriceCents: NIGHTLY * 2 * 2,
       lodgeId,
     },
   });
-  await addGuest(splitChild.id, { firstName: "Gerry", lastName: "Guest", ageTier: "ADULT", isMember: false }, "2026-07-04", "2026-07-06", NIGHTLY * 2);
+  await addGuest(splitChild.id, { firstName: "Gerry", lastName: "Guest", ageTier: "ADULT", isMember: false }, W.mallorySplit.checkIn, W.mallorySplit.checkOut, NIGHTLY * 2);
   console.log("Bookings seeded (all statuses, payments, refunds, split, promo)");
 
   // -------------------------------------------------------------------------
@@ -639,8 +655,8 @@ async function main() {
   // Change requests + refund requests (every status).
   // -------------------------------------------------------------------------
   await prisma.bookingChangeRequest.create({ data: { bookingId: bConfirmed.id, requestedByMemberId: dave.id, status: "REQUESTED", requestedChanges: { addGuest: { firstName: "Extra", lastName: "Guest", ageTier: "ADULT" } }, reason: "Friend wants to join" } });
-  await prisma.bookingChangeRequest.create({ data: { bookingId: bConfirmed.id, requestedByMemberId: dave.id, status: "APPROVED", requestedChanges: { checkOut: "2026-06-29" }, reviewedByMemberId: admin.id, reviewedAt: d("2026-06-19"), linkedModificationId: daveMod.id } });
-  await prisma.bookingChangeRequest.create({ data: { bookingId: bCompleted.id, requestedByMemberId: heidi.id, status: "REJECTED", requestedChanges: { checkIn: "2026-06-04" }, adminNotes: "Past booking; cannot change.", reviewedByMemberId: admin.id, reviewedAt: d("2026-06-06") } });
+  await prisma.bookingChangeRequest.create({ data: { bookingId: bConfirmed.id, requestedByMemberId: dave.id, status: "APPROVED", requestedChanges: { checkOut: relDateOnly(-36) }, reviewedByMemberId: admin.id, reviewedAt: d(relDateOnly(-38)), linkedModificationId: daveMod.id } });
+  await prisma.bookingChangeRequest.create({ data: { bookingId: bCompleted.id, requestedByMemberId: heidi.id, status: "REJECTED", requestedChanges: { checkIn: relDateOnly(-46) }, adminNotes: "Past booking; cannot change.", reviewedByMemberId: admin.id, reviewedAt: d(relDateOnly(-44)) } });
 
   await prisma.refundRequest.create({ data: { bookingId: bCancelled.id, memberId: grace.id, reason: "Hospitalised — requesting full refund", requestedAmountCents: bCancelled.finalPriceCents, status: "PENDING" } });
   await prisma.refundRequest.create({ data: { bookingId: bBumped.id, memberId: frank.id, reason: "Bumped, want cash not credit", requestedAmountCents: bBumped.finalPriceCents, status: "APPROVED", approvedAmountCents: bBumped.finalPriceCents, reviewedBy: admin.id, reviewedAt: d("2026-07-01") } });
@@ -680,12 +696,12 @@ async function main() {
   // -------------------------------------------------------------------------
   const choreTemplates = await prisma.choreTemplate.findMany({ take: 3, orderBy: { sortOrder: "asc" } });
   if (choreTemplates.length > 0) {
-    await prisma.choreAssignment.create({ data: { choreTemplateId: choreTemplates[0].id, bookingId: bCompleted.id, bookingGuestId: heidiGuest.id, date: d("2026-06-06"), status: "COMPLETED", completedAt: d("2026-06-06"), completedVia: "KIOSK" } });
-    await prisma.choreAssignment.create({ data: { choreTemplateId: choreTemplates[Math.min(1, choreTemplates.length - 1)].id, bookingId: bConfirmed.id, bookingGuestId: daveGuest.id, date: d("2026-06-26"), status: "CONFIRMED" } });
-    await prisma.choreAssignment.create({ data: { choreTemplateId: choreTemplates[Math.min(2, choreTemplates.length - 1)].id, bookingId: bConfirmed.id, date: d("2026-06-27"), status: "SUGGESTED" } });
+    await prisma.choreAssignment.create({ data: { choreTemplateId: choreTemplates[0].id, bookingId: bCompleted.id, bookingGuestId: heidiGuest.id, date: d(W.heidiCompleted.nights[1]), status: "COMPLETED", completedAt: d(W.heidiCompleted.nights[1]), completedVia: "KIOSK" } });
+    await prisma.choreAssignment.create({ data: { choreTemplateId: choreTemplates[Math.min(1, choreTemplates.length - 1)].id, bookingId: bConfirmed.id, bookingGuestId: daveGuest.id, date: d(W.daveConfirmed.nights[1]), status: "CONFIRMED" } });
+    await prisma.choreAssignment.create({ data: { choreTemplateId: choreTemplates[Math.min(2, choreTemplates.length - 1)].id, bookingId: bConfirmed.id, date: d(W.daveConfirmed.nights[2]), status: "SUGGESTED" } });
   }
 
-  await prisma.hutLeaderAssignment.create({ data: { memberId: dave.id, startDate: d("2026-06-25"), endDate: d("2026-06-28"), hutLeaderPin: "4821" } });
+  await prisma.hutLeaderAssignment.create({ data: { memberId: dave.id, startDate: d(W.daveConfirmed.checkIn), endDate: d(W.daveConfirmed.checkOut), hutLeaderPin: "4821" } });
 
   await prisma.issueReport.create({ data: { memberId: alice.id, pageUrl: "https://demo/booking", pageTitle: "New booking", description: "Calendar didn't show August dates." } });
   await prisma.issueReport.create({ data: { memberId: bob.id, pageUrl: "https://demo/dashboard", pageTitle: "Dashboard", description: "Credit balance looked wrong (now fixed).", resolvedAt: d("2026-06-12"), resolvedById: admin.id, resolutionNote: "Cache cleared." } });
@@ -721,12 +737,12 @@ async function main() {
     { firstName: "Tina", lastName: "Tramper", ageTier: "ADULT" },
     { firstName: "Theo", lastName: "Tramper", ageTier: "CHILD" },
   ];
-  await prisma.bookingRequest.create({ data: { type: "GENERAL", status: "NEW", contactFirstName: "Tina", contactLastName: "Tramper", contactEmail: `tina@${DEMO_DOMAIN}`, contactPhone: "021555100", checkIn: d("2026-08-10"), checkOut: d("2026-08-12"), guests: guestsJson, message: "Two of us, hoping to visit." } });
-  await prisma.bookingRequest.create({ data: { type: "GENERAL", status: "VERIFIED", contactFirstName: "Uma", contactLastName: "Usher", contactEmail: `uma@${DEMO_DOMAIN}`, checkIn: d("2026-08-15"), checkOut: d("2026-08-17"), guests: guestsJson, verifiedAt: d("2026-06-15") } });
-  await prisma.bookingRequest.create({ data: { type: "GENERAL", status: "PRICED", contactFirstName: "Vic", contactLastName: "Vance", contactEmail: `vic@${DEMO_DOMAIN}`, checkIn: d("2026-08-20"), checkOut: d("2026-08-22"), guests: guestsJson, indicativePriceCents: 18000, priceCents: 18000, pricedByMemberId: admin.id, pricedAt: d("2026-06-16"), verifiedAt: d("2026-06-15") } });
-  const approvedReq = await prisma.bookingRequest.create({ data: { type: "GENERAL", status: "APPROVED", contactFirstName: "Wendy", contactLastName: "West", contactEmail: `wendy@${DEMO_DOMAIN}`, checkIn: d("2026-08-25"), checkOut: d("2026-08-27"), guests: guestsJson, priceCents: 18000, pricedByMemberId: admin.id, pricedAt: d("2026-06-16"), reviewedByMemberId: admin.id, reviewedAt: d("2026-06-17"), verifiedAt: d("2026-06-15") } });
-  await prisma.paymentLink.create({ data: { bookingId: bReview.id, bookingRequestId: approvedReq.id, tokenHash: "demo-paylink-hash-1", expiresAt: d("2026-06-30") } });
-  await prisma.bookingRequest.create({ data: { type: "GENERAL", status: "DECLINED", contactFirstName: "Xena", contactLastName: "Xu", contactEmail: `xena@${DEMO_DOMAIN}`, checkIn: d("2026-08-28"), checkOut: d("2026-08-30"), guests: guestsJson, reviewedByMemberId: admin.id, reviewedAt: d("2026-06-17"), declineReason: "Lodge fully booked that week." } });
+  await prisma.bookingRequest.create({ data: { type: "GENERAL", status: "NEW", contactFirstName: "Tina", contactLastName: "Tramper", contactEmail: `tina@${DEMO_DOMAIN}`, contactPhone: "021555100", checkIn: d(relDateOnly(80)), checkOut: d(relDateOnly(82)), guests: guestsJson, message: "Two of us, hoping to visit." } });
+  await prisma.bookingRequest.create({ data: { type: "GENERAL", status: "VERIFIED", contactFirstName: "Uma", contactLastName: "Usher", contactEmail: `uma@${DEMO_DOMAIN}`, checkIn: d(relDateOnly(85)), checkOut: d(relDateOnly(87)), guests: guestsJson, verifiedAt: d(relDateOnly(-3)) } });
+  await prisma.bookingRequest.create({ data: { type: "GENERAL", status: "PRICED", contactFirstName: "Vic", contactLastName: "Vance", contactEmail: `vic@${DEMO_DOMAIN}`, checkIn: d(relDateOnly(90)), checkOut: d(relDateOnly(92)), guests: guestsJson, indicativePriceCents: 18000, priceCents: 18000, pricedByMemberId: admin.id, pricedAt: d(relDateOnly(-2)), verifiedAt: d(relDateOnly(-3)) } });
+  const approvedReq = await prisma.bookingRequest.create({ data: { type: "GENERAL", status: "APPROVED", contactFirstName: "Wendy", contactLastName: "West", contactEmail: `wendy@${DEMO_DOMAIN}`, checkIn: d(relDateOnly(95)), checkOut: d(relDateOnly(97)), guests: guestsJson, priceCents: 18000, pricedByMemberId: admin.id, pricedAt: d(relDateOnly(-2)), reviewedByMemberId: admin.id, reviewedAt: d(relDateOnly(-1)), verifiedAt: d(relDateOnly(-3)) } });
+  await prisma.paymentLink.create({ data: { bookingId: bReview.id, bookingRequestId: approvedReq.id, tokenHash: "demo-paylink-hash-1", expiresAt: d(relDateOnly(7)) } });
+  await prisma.bookingRequest.create({ data: { type: "GENERAL", status: "DECLINED", contactFirstName: "Xena", contactLastName: "Xu", contactEmail: `xena@${DEMO_DOMAIN}`, checkIn: d(relDateOnly(100)), checkOut: d(relDateOnly(102)), guests: guestsJson, reviewedByMemberId: admin.id, reviewedAt: d(relDateOnly(-1)), declineReason: "Lodge fully booked that week." } });
   // SCHOOL request, CONVERTED into a booking.
   await prisma.bookingRequest.create({
     data: {
@@ -736,8 +752,10 @@ async function main() {
       contactLastName: "Teacher",
       contactEmail: `office@${DEMO_DOMAIN}`,
       contactPhone: "078881234",
-      checkIn: d("2026-09-07"),
-      checkOut: d("2026-09-09"),
+      // Converted into Dave's (past) CONFIRMED booking, so the request stay
+      // mirrors that window and its review predates it.
+      checkIn: d(W.daveConfirmed.checkIn),
+      checkOut: d(W.daveConfirmed.checkOut),
       guests: [
         { firstName: "Mr", lastName: "Teacher", ageTier: "ADULT" },
         { firstName: "School Child 1", lastName: "", ageTier: "YOUTH" },
@@ -747,9 +765,9 @@ async function main() {
       teachers: [{ firstName: "Mr", lastName: "Teacher", email: `teacher@${DEMO_DOMAIN}` }],
       priceCents: 36000,
       pricedByMemberId: admin.id,
-      pricedAt: d("2026-06-10"),
+      pricedAt: d(relDateOnly(-43)),
       reviewedByMemberId: admin.id,
-      reviewedAt: d("2026-06-11"),
+      reviewedAt: d(relDateOnly(-42)),
       convertedBookingId: bConfirmed.id,
       convertedMemberId: dave.id,
     },
@@ -1138,19 +1156,24 @@ async function main() {
       });
     }
 
-    const b2Draft = await makeSecondLodgeBooking(alice, "DRAFT", "2026-08-05", "2026-08-07");
-    await addGuest(b2Draft.id, { firstName: "Alice", lastName: "Anderson", ageTier: "ADULT", isMember: true, memberId: alice.id }, "2026-08-05", "2026-08-07", NIGHTLY2);
+    // Relative future windows (issue #2117) at this demo-only second lodge.
+    const b2DraftWin = { checkIn: relDateOnly(55), checkOut: relDateOnly(57) };
+    const b2ConfirmedWin = { checkIn: relDateOnly(60), checkOut: relDateOnly(63) };
+    const b2PendingWin = { checkIn: relDateOnly(65), checkOut: relDateOnly(67) };
+
+    const b2Draft = await makeSecondLodgeBooking(alice, "DRAFT", b2DraftWin.checkIn, b2DraftWin.checkOut);
+    await addGuest(b2Draft.id, { firstName: "Alice", lastName: "Anderson", ageTier: "ADULT", isMember: true, memberId: alice.id }, b2DraftWin.checkIn, b2DraftWin.checkOut, NIGHTLY2);
     await prisma.bookingEvent.create({ data: { bookingId: b2Draft.id, type: "CREATED", actorMemberId: alice.id } });
 
-    const b2Confirmed = await makeSecondLodgeBooking(bob, "CONFIRMED", "2026-08-10", "2026-08-13");
-    await addGuest(b2Confirmed.id, { firstName: "Bob", lastName: "Brown", ageTier: "ADULT", isMember: true, memberId: bob.id }, "2026-08-10", "2026-08-13", NIGHTLY2);
+    const b2Confirmed = await makeSecondLodgeBooking(bob, "CONFIRMED", b2ConfirmedWin.checkIn, b2ConfirmedWin.checkOut);
+    await addGuest(b2Confirmed.id, { firstName: "Bob", lastName: "Brown", ageTier: "ADULT", isMember: true, memberId: bob.id }, b2ConfirmedWin.checkIn, b2ConfirmedWin.checkOut, NIGHTLY2);
     const b2Payment = await prisma.payment.create({ data: { bookingId: b2Confirmed.id, amountCents: b2Confirmed.finalPriceCents, source: "INTERNET_BANKING", reference: "BANK-REF-8802", status: "SUCCEEDED", xeroInvoiceNumber: "INV-2301" } });
     await prisma.paymentTransaction.create({ data: { paymentId: b2Payment.id, kind: "PRIMARY", source: "INTERNET_BANKING", amountCents: b2Confirmed.finalPriceCents, status: "SUCCEEDED", reference: "BANK-REF-8802" } });
     await prisma.bookingEvent.create({ data: { bookingId: b2Confirmed.id, type: "CREATED", actorMemberId: bob.id } });
     await prisma.bookingEvent.create({ data: { bookingId: b2Confirmed.id, type: "MEMBER_PAID", actorMemberId: bob.id, amountCents: b2Confirmed.finalPriceCents } });
 
-    const b2Pending = await makeSecondLodgeBooking(carol, "PENDING", "2026-08-18", "2026-08-20");
-    await addGuest(b2Pending.id, { firstName: "Carol", lastName: "Clark", ageTier: "ADULT", isMember: true, memberId: carol.id }, "2026-08-18", "2026-08-20", NIGHTLY2);
+    const b2Pending = await makeSecondLodgeBooking(carol, "PENDING", b2PendingWin.checkIn, b2PendingWin.checkOut);
+    await addGuest(b2Pending.id, { firstName: "Carol", lastName: "Clark", ageTier: "ADULT", isMember: true, memberId: carol.id }, b2PendingWin.checkIn, b2PendingWin.checkOut, NIGHTLY2);
     await prisma.payment.create({ data: { bookingId: b2Pending.id, amountCents: b2Pending.finalPriceCents, source: "STRIPE", status: "PENDING", stripePaymentIntentId: "pi_demo_lodge2_pending" } });
     await prisma.bookingEvent.create({ data: { bookingId: b2Pending.id, type: "CREATED", actorMemberId: carol.id } });
 
