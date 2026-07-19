@@ -194,9 +194,32 @@ content and appearance, and the platform/support admin surfaces):
 - [Export & Import](guides/config-transfer.md) — portable configuration/content
   bundles (Full Admin only).
 
-The lobby TV display keeps its own [feature hub](lobby-display/README.md) (with
-the [operating guide](lobby-display/operating.md)); it is an optional module,
-off by default. Lodge-operations guides (batch 3) are sequenced separately.
+**Lodge-operations guides** (batch 3 — physical-lodge day-to-day: rooms/beds,
+chores, roster, work parties, hut leaders, the lodge kiosk/instructions,
+multi-lodge management, and the lobby display):
+
+- [Rooms & Beds](guides/rooms-beds.md) — the room/bed inventory and the capacity
+  it derives (lodge-scoped).
+- [Chore Templates](guides/chores.md) — the chore library the roster draws from
+  (lodge-scoped).
+- [Chore Roster](guides/roster.md) — the daily chore board: generate, confirm,
+  print, and email.
+- [Hut Leaders](guides/hut-leaders.md) — assigning on-site leaders for the nights
+  that need cover, and their kiosk PINs.
+- [Work Parties](guides/work-parties.md) — working-bee events and their automatic
+  booking discount.
+- [Lodge Kiosk](guides/lodge.md) — the shared lodge-tablet sign-in for check-in
+  and lodge info.
+- [Lodge Instructions](guides/lodge-instructions.md) — the protected opening,
+  closing, and day-to-day documents.
+- [Lodges](guides/lodges.md) — the lodge properties list and per-lodge
+  configuration hub.
+- [Lobby Display](guides/display.md) — pairing lobby screens and authoring the
+  boards they show (the optional `lobbyDisplay` module).
+
+The lobby TV display also keeps its own [feature hub](lobby-display/README.md)
+(with the [operating guide](lobby-display/operating.md)) for the deeper design;
+it is an optional module, off by default.
 
 Until the remaining batches land, use the reference docs below for other areas.
 
