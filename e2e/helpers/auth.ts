@@ -211,10 +211,13 @@ export async function signIn(page: Page, persona: Persona): Promise<void> {
   }
 
   // Alice (personas.booker) is seeded financeAccessLevel: "MANAGER"
-  // (prisma/demo-seed.ts), so her admin matrix grants finance access. Post-login
-  // now defaults an admin-access member to their first accessible admin page
-  // (#2090 D-D3), which for a finance-only member is /admin/payments — not
-  // /dashboard. This helper's only caller (auth.setup.ts) just needs a completed
-  // sign-in, so asserting her deterministic landing keeps it a real gate.
-  await expect(page).toHaveURL(/\/admin\/payments/);
+  // (prisma/demo-seed.ts), which maps to the FINANCE_ADMIN access role whose
+  // definition grants overview: view (admin-permissions.ts) — so her first
+  // accessible admin page is /admin/dashboard. Post-login now defaults an
+  // admin-access member to that page (#2090 D-D3). (A finance VIEWER like Bob
+  // maps to FINANCE_USER — finance only — and lands on /admin/payments; see
+  // two-factor-login.spec.ts.) This helper's only caller (auth.setup.ts) just
+  // needs a completed sign-in, so asserting her deterministic landing keeps it
+  // a real gate.
+  await expect(page).toHaveURL(/\/admin\/dashboard/);
 }
