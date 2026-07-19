@@ -76,12 +76,25 @@ export interface SyncResult {
     group: string
     existingMembershipTypeId: string
     attemptedMembershipTypeId: string
+    existingMembershipTypeName: string | null
+    attemptedMembershipTypeName: string | null
+    sameType: boolean
   }>
   droppedDuplicates?: Array<{
     name: string
     xeroContactId: string
     group: string
     keptGroup: string
+  }>
+  // #2108 (L3): two different Xero contacts linking to the same member with
+  // conflicting type mappings — the loser is reported here, not silently dropped.
+  memberCollisions?: Array<{
+    memberId: string
+    name: string
+    keptGroup: string
+    keptMembershipTypeId: string | null
+    droppedGroup: string
+    droppedMembershipTypeId: string | null
   }>
   skippedExisting?: number
   skippedNoEmail?: number

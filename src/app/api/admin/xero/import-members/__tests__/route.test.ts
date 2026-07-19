@@ -135,6 +135,18 @@ describe("POST /api/admin/xero/import-members (#2108)", () => {
     expect(mockImport).not.toHaveBeenCalled();
   });
 
+  it("rejects an over-long groupName (>200 chars) with 422", async () => {
+    const res = await POST(
+      postReq({
+        groupMappings: [
+          { groupId: "g1", groupName: "x".repeat(201), ageTier: "ADULT" },
+        ],
+      }),
+    );
+    expect(res.status).toBe(422);
+    expect(mockImport).not.toHaveBeenCalled();
+  });
+
   it("maps a service membership-type validation error to 422 with offenders", async () => {
     mockImport.mockRejectedValue(
       new errors.XeroMemberImportValidationError([{ membershipTypeId: "type_x", reason: "inactive" }]),

@@ -16,7 +16,7 @@ const importSchema = z.object({
       z
         .object({
           groupId: z.string().min(1),
-          groupName: z.string().min(1),
+          groupName: z.string().min(1).max(200),
           // Person tiers only — the API never accepts an explicit NOT_APPLICABLE.
           // N/A is only ever DERIVED from an age-exempt membership type (#2108).
           ageTier: bookableAgeTierEnum.optional(),

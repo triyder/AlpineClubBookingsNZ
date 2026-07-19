@@ -11,8 +11,22 @@
  * for the contact (source `IMPORT`, sourceDetail = group name). Newly-created
  * members are batched via `createMany`; matched-EXISTING members are routed
  * through `saveSeasonalMembershipAssignment` so the age-exemption force,
- * shared-double sweep, and per-member audit apply — and an existing
- * current-season assignment is NEVER overwritten (remediation is the bulk tool).
+ * shared-double sweep, and per-member audit apply.
+ *
+ * Never-overwrite invariant: an existing current-season assignment is NEVER
+ * replaced (remediation is the bulk-assign tool). That is enforced by the
+ * PRE-READ skip below — matched-existing members who already hold a
+ * current-season assignment are filtered out and reported before any save runs
+ * (the preview token-staleness 409 in `saveSeasonalMembershipAssignment` is a
+ * backstop for a race). The save path itself upserts by design, so it must only
+ * ever be reached for members with no current-season assignment.
+ *
+ * Scale tradeoff: matched-existing members are assigned in a sequential loop,
+ * one `saveSeasonalMembershipAssignment` call each (preview + save + per-member
+ * Xero contact-group sync fan-out). For a very large tenant importing thousands
+ * of already-linked members this is O(n) round-trips; it is the accepted interim
+ * posture (see the #2107-rebase TODO at the save call site for the batched
+ * reconcile that supersedes the per-member fan-out).
  */
 
 import { randomBytes } from "crypto";
@@ -106,13 +120,32 @@ interface SkippedXeroContactDetail {
 
 // #2108: a matched-EXISTING member who already held a current-season assignment
 // the import must not overwrite (a different type is remediated via the bulk
-// assign tool, never silently changed here).
+// assign tool, never silently changed here). `sameType` distinguishes a harmless
+// "already on this type" keep from a genuine "kept a DIFFERENT type" keep so the
+// UI can label them apart. The membership-type NAMES are resolved server-side so
+// the panel never has to render raw ids.
 interface KeptExistingAssignmentDetail {
   memberId: string;
   name: string;
   group: string;
   existingMembershipTypeId: string;
   attemptedMembershipTypeId: string;
+  existingMembershipTypeName: string | null;
+  attemptedMembershipTypeName: string | null;
+  sameType: boolean;
+}
+
+// #2108 (L3): two DIFFERENT Xero contacts that link to the SAME local member but
+// carry different membership-type mappings. The first matched contact's mapping
+// wins deterministically (payload order); the loser is reported here rather than
+// silently dropped.
+interface MemberCollisionDetail {
+  memberId: string;
+  name: string;
+  keptGroup: string;
+  keptMembershipTypeId: string | null;
+  droppedGroup: string;
+  droppedMembershipTypeId: string | null;
 }
 
 // #2108: a contact that appeared in more than one mapped group. The first
@@ -184,6 +217,7 @@ export async function importMembersFromXeroGroups(
   assignmentsCreated: number;
   keptExistingAssignments: KeptExistingAssignmentDetail[];
   droppedDuplicates: DroppedDuplicateDetail[];
+  memberCollisions: MemberCollisionDetail[];
   errors: number;
   errorDetails: Array<{ member: string; error: string }>;
   groupsProcessed: string[];
@@ -232,8 +266,40 @@ export async function importMembersFromXeroGroups(
   >();
   const keptExistingAssignments: KeptExistingAssignmentDetail[] = [];
   const droppedDuplicates: DroppedDuplicateDetail[] = [];
+  const memberCollisions: MemberCollisionDetail[] = [];
   const affectedMemberIds: string[] = [];
   let assignmentsCreated = 0;
+
+  // #2108 (L3): register a matched-EXISTING member's mapping context. The first
+  // matched contact for a member wins (payload order). If a LATER contact links
+  // to the same member with a DIFFERENT membership type, the loser is reported
+  // as a member collision instead of being silently dropped.
+  const registerMatchedExisting = (
+    memberId: string,
+    name: string,
+    group: string,
+    membershipTypeId: string | null,
+  ) => {
+    const existing = matchedExistingByMemberId.get(memberId);
+    if (!existing) {
+      matchedExistingByMemberId.set(memberId, { name, group, membershipTypeId });
+      return;
+    }
+    if (
+      membershipTypeId &&
+      existing.membershipTypeId &&
+      membershipTypeId !== existing.membershipTypeId
+    ) {
+      memberCollisions.push({
+        memberId,
+        name,
+        keptGroup: existing.group,
+        keptMembershipTypeId: existing.membershipTypeId,
+        droppedGroup: group,
+        droppedMembershipTypeId: membershipTypeId,
+      });
+    }
+  };
 
   // #2108: resolve every referenced membership type up-front. Any that is
   // missing or inactive fails the whole import with a 422 listing offenders —
@@ -481,13 +547,12 @@ export async function importMembersFromXeroGroups(
         if (alreadyLinked) {
           skippedExisting++;
           // #2108: a matched-EXISTING member — a candidate for a type assignment.
-          if (!matchedExistingByMemberId.has(alreadyLinked.id)) {
-            matchedExistingByMemberId.set(alreadyLinked.id, {
-              name: `${alreadyLinked.firstName} ${alreadyLinked.lastName}`,
-              group: mapping.groupName,
-              membershipTypeId: mapping.membershipTypeId ?? null,
-            });
-          }
+          registerMatchedExisting(
+            alreadyLinked.id,
+            `${alreadyLinked.firstName} ${alreadyLinked.lastName}`,
+            mapping.groupName,
+            mapping.membershipTypeId ?? null,
+          );
           continue;
         }
 
@@ -511,13 +576,12 @@ export async function importMembersFromXeroGroups(
           if (isSamePerson) {
             skippedExisting++;
             // #2108: matched-EXISTING member.
-            if (!matchedExistingByMemberId.has(existingPrimary.id)) {
-              matchedExistingByMemberId.set(existingPrimary.id, {
-                name: `${existingPrimary.firstName} ${existingPrimary.lastName}`,
-                group: mapping.groupName,
-                membershipTypeId: mapping.membershipTypeId ?? null,
-              });
-            }
+            registerMatchedExisting(
+              existingPrimary.id,
+              `${existingPrimary.firstName} ${existingPrimary.lastName}`,
+              mapping.groupName,
+              mapping.membershipTypeId ?? null,
+            );
             const updates: Record<string, unknown> = {};
 
             if (!existingPrimary.xeroContactId) {
@@ -595,13 +659,12 @@ export async function importMembersFromXeroGroups(
           if (existingFamilyMember) {
             skippedExisting++;
             // #2108: matched-EXISTING member.
-            if (!matchedExistingByMemberId.has(existingFamilyMember.id)) {
-              matchedExistingByMemberId.set(existingFamilyMember.id, {
-                name: `${existingFamilyMember.firstName} ${existingFamilyMember.lastName}`,
-                group: mapping.groupName,
-                membershipTypeId: mapping.membershipTypeId ?? null,
-              });
-            }
+            registerMatchedExisting(
+              existingFamilyMember.id,
+              `${existingFamilyMember.firstName} ${existingFamilyMember.lastName}`,
+              mapping.groupName,
+              mapping.membershipTypeId ?? null,
+            );
             if (!existingFamilyMember.xeroContactId) {
               await prisma.member.update({
                 where: { id: existingFamilyMember.id },
@@ -877,13 +940,18 @@ export async function importMembersFromXeroGroups(
 
       const existing = existingAssignmentByMemberId.get(memberId);
       if (existing) {
-        // Never overwrite — record the member we kept.
+        // Never overwrite — record the member we kept. `sameType` marks a
+        // harmless "already on this type" keep so the UI does not report it as a
+        // DIFFERENT-type keep that needs remediation. Names are filled in below.
         keptExistingAssignments.push({
           memberId,
           name: context.name,
           group: context.group,
           existingMembershipTypeId: existing.membershipTypeId,
           attemptedMembershipTypeId: membershipTypeId,
+          existingMembershipTypeName: null,
+          attemptedMembershipTypeName: null,
+          sameType: existing.membershipTypeId === membershipTypeId,
         });
         continue;
       }
@@ -908,6 +976,13 @@ export async function importMembersFromXeroGroups(
           previewResult.body as { preview: { previewToken: string } }
         ).preview.previewToken;
 
+        // TODO(#2107-rebase): #2107 adds `skipXeroContactGroupSync` to the save
+        // path. After it merges and this branch rebases, thread
+        // `skipXeroContactGroupSync: true` here and add ONE batched
+        // `reconcileMembersXeroContactGroups(affectedMemberIds, ...)` after this
+        // loop (before the summary audit) to replace the per-member Xero
+        // contact-group sync fan-out. Until then the per-member fan-out inside
+        // `saveSeasonalMembershipAssignment` is the accepted interim posture.
         const saveResult = await saveSeasonalMembershipAssignment({
           memberId,
           seasonYear,
@@ -915,6 +990,7 @@ export async function importMembersFromXeroGroups(
           adminMemberId,
           reason: `Xero import: group ${context.group}`,
           previewToken,
+          source: "IMPORT",
           request: options.request,
         });
         if (saveResult.init?.status && saveResult.init.status >= 400) {
@@ -940,6 +1016,32 @@ export async function importMembersFromXeroGroups(
           error: parseXeroError(assignErr),
         });
       }
+    }
+  }
+
+  // #2108 (HIGH-1): resolve the membership-type NAMES for kept-existing rows so
+  // the results panel can render human-readable names, never raw ids. Covers the
+  // attempted types (in `uniqueMembershipTypeIds`) AND each member's existing
+  // type, which may be a type the import never referenced.
+  if (keptExistingAssignments.length > 0) {
+    const nameIds = Array.from(
+      new Set(
+        keptExistingAssignments.flatMap((kept) => [
+          kept.existingMembershipTypeId,
+          kept.attemptedMembershipTypeId,
+        ]),
+      ),
+    );
+    const namedTypes = await prisma.membershipType.findMany({
+      where: { id: { in: nameIds } },
+      select: { id: true, name: true },
+    });
+    const nameById = new Map(namedTypes.map((type) => [type.id, type.name]));
+    for (const kept of keptExistingAssignments) {
+      kept.existingMembershipTypeName =
+        nameById.get(kept.existingMembershipTypeId) ?? null;
+      kept.attemptedMembershipTypeName =
+        nameById.get(kept.attemptedMembershipTypeId) ?? null;
     }
   }
 
@@ -975,6 +1077,7 @@ export async function importMembersFromXeroGroups(
             assignmentsCreated,
             keptExistingAssignments: keptExistingAssignments.length,
             droppedDuplicates: droppedDuplicates.length,
+            memberCollisions: memberCollisions.length,
             errors,
           },
           affectedMemberIds: affectedMemberIds.slice(0, AUDIT_MEMBER_ID_LIMIT),
@@ -985,6 +1088,7 @@ export async function importMembersFromXeroGroups(
             AUDIT_LIST_LIMIT,
           ),
           droppedDuplicates: droppedDuplicates.slice(0, AUDIT_LIST_LIMIT),
+          memberCollisions: memberCollisions.slice(0, AUDIT_LIST_LIMIT),
         },
         request: options.request,
       }),
@@ -1006,6 +1110,7 @@ export async function importMembersFromXeroGroups(
     assignmentsCreated,
     keptExistingAssignments,
     droppedDuplicates,
+    memberCollisions,
     errors,
     errorDetails,
     groupsProcessed,

@@ -1931,14 +1931,17 @@ Configuration and lifecycle guards:
   self-heal). The reconcile phase writes one critical summary audit row with the
   reconciled/swept counts and a bounded per-member before/after sample (#2106).
 - The Xero member-import (#2108) only ever CREATES current-season assignments,
-  never modifies an existing one, so it is exempt from the seasonal-assignment
-  change-preview gate. When a mapped group carries a `membershipTypeId`, a
-  matched-EXISTING member who already holds a current-season assignment is left
-  untouched and reported (remediation is the bulk-assign tool); one without an
-  assignment is routed through `saveSeasonalMembershipAssignment` (existence
-  check, age-exemption force, shared-double sweep, per-member audit). Newly-
-  created members batch their `IMPORT`-source assignment via `createMany`
-  (`skipDuplicates`). A membership-type mapping additionally requires
+  never modifies an existing one. That never-overwrite invariant is enforced by a
+  PRE-READ skip, not by the save path: when a mapped group carries a
+  `membershipTypeId`, a matched-EXISTING member who already holds a current-season
+  assignment is filtered out and reported before any write (remediation is the
+  bulk-assign tool). A matched-existing member WITHOUT a current-season assignment
+  is routed through `saveSeasonalMembershipAssignment` (`source` `IMPORT`;
+  existence check, age-exemption force, shared-double sweep, per-member audit; the
+  preview-token staleness 409 is a race backstop). The newly-created members'
+  `createMany` batch — never the save path — is what is exempt from the
+  change-preview gate; it writes an `IMPORT`-source assignment with
+  `skipDuplicates`. A membership-type mapping additionally requires
   `membership:edit` on top of the route's inferred `finance:edit` — a
   finance-only admin cannot open the assignment write path. The import writes
   one `important` summary audit row and never triggers a synchronous whole-group

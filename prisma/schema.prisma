@@ -185,8 +185,11 @@ enum FamilyBillingMode {
 enum MembershipAssignmentSource {
   ADMIN
   /// revived by #2108: the Xero member-import writes IMPORT on assignments it
-  /// creates for newly-imported members (`sourceDetail` carries the contact
-  /// group name). Comment-only revival — the value was always in the Postgres enum.
+  /// creates — both the `createMany` batch for newly-imported members
+  /// (`sourceDetail` carries the contact group name) AND the
+  /// `saveSeasonalMembershipAssignment` path for matched-existing members with
+  /// no current-season assignment. Comment-only revival — the value was always
+  /// in the Postgres enum.
   IMPORT
   /// retired (2026-07 audit, #1525 S4): never written in code; kept — see IMPORT.
   FAMILY_SUBSCRIPTION

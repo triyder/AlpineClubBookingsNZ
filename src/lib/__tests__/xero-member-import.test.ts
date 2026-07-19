@@ -287,7 +287,8 @@ describe("Xero member import — membership types (#2108)", () => {
       xeroContactId: "contact_1",
     });
     mocks.prisma.membershipType.findMany.mockResolvedValue([
-      { id: "type_full", isActive: true, allowedAgeTiers: [{ ageTier: "ADULT" }] },
+      { id: "type_full", name: "Full", isActive: true, allowedAgeTiers: [{ ageTier: "ADULT" }] },
+      { id: "type_other", name: "Other", isActive: true, allowedAgeTiers: [{ ageTier: "ADULT" }] },
     ]);
     mocks.prisma.seasonalMembershipAssignment.findMany.mockResolvedValue([
       { memberId: "member_existing", membershipTypeId: "type_other" },
@@ -301,6 +302,8 @@ describe("Xero member import — membership types (#2108)", () => {
 
     expect(mocks.saveSeasonalMembershipAssignment).not.toHaveBeenCalled();
     expect(result.assignmentsCreated).toBe(0);
+    // #2108: the kept row carries resolved membership-type NAMES (never raw ids)
+    // and sameType=false (a genuine DIFFERENT-type keep that needs remediation).
     expect(result.keptExistingAssignments).toEqual([
       {
         memberId: "member_existing",
@@ -308,8 +311,128 @@ describe("Xero member import — membership types (#2108)", () => {
         group: "Full",
         existingMembershipTypeId: "type_other",
         attemptedMembershipTypeId: "type_full",
+        existingMembershipTypeName: "Other",
+        attemptedMembershipTypeName: "Full",
+        sameType: false,
       },
     ]);
+  });
+
+  it("flags a same-type keep as sameType (no remediation implied)", async () => {
+    mocks.prisma.member.findFirst.mockResolvedValueOnce({
+      id: "member_existing",
+      firstName: "Ada",
+      lastName: "Existing",
+      xeroContactId: "contact_1",
+    });
+    mocks.prisma.membershipType.findMany.mockResolvedValue([
+      { id: "type_full", name: "Full", isActive: true, allowedAgeTiers: [{ ageTier: "ADULT" }] },
+    ]);
+    // Existing assignment is the SAME type the import would have assigned.
+    mocks.prisma.seasonalMembershipAssignment.findMany.mockResolvedValue([
+      { memberId: "member_existing", membershipTypeId: "type_full" },
+    ]);
+
+    const result = await importMembersFromXeroGroups(
+      [{ groupId: "group_1", groupName: "Full", membershipTypeId: "type_full" }],
+      false,
+      { adminMemberId: ADMIN_ID },
+    );
+
+    expect(mocks.saveSeasonalMembershipAssignment).not.toHaveBeenCalled();
+    expect(result.keptExistingAssignments).toEqual([
+      {
+        memberId: "member_existing",
+        name: "Ada Existing",
+        group: "Full",
+        existingMembershipTypeId: "type_full",
+        attemptedMembershipTypeId: "type_full",
+        existingMembershipTypeName: "Full",
+        attemptedMembershipTypeName: "Full",
+        sameType: true,
+      },
+    ]);
+  });
+
+  it("passes source=IMPORT into the matched-existing save path", async () => {
+    mocks.prisma.member.findFirst.mockResolvedValueOnce({
+      id: "member_existing",
+      firstName: "Ada",
+      lastName: "Existing",
+      xeroContactId: "contact_1",
+    });
+    mocks.prisma.membershipType.findMany.mockResolvedValue([
+      { id: "type_full", name: "Full", isActive: true, allowedAgeTiers: [{ ageTier: "ADULT" }] },
+    ]);
+    mocks.prisma.seasonalMembershipAssignment.findMany.mockResolvedValue([]);
+    mocks.getSeasonalMembershipChangePreview.mockResolvedValue({
+      body: { preview: { previewToken: "preview-token" } },
+    });
+    mocks.saveSeasonalMembershipAssignment.mockResolvedValue({ body: { changed: true } });
+
+    await importMembersFromXeroGroups(
+      [{ groupId: "group_1", groupName: "Full", membershipTypeId: "type_full" }],
+      false,
+      { adminMemberId: ADMIN_ID },
+    );
+
+    expect(mocks.saveSeasonalMembershipAssignment).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "IMPORT" }),
+    );
+  });
+
+  it("reports a member collision when two contacts map the same member to different types", async () => {
+    // Two contacts in two groups both resolve to the SAME existing member, with
+    // different type mappings. The first mapping wins; the loser is reported.
+    mocks.prisma.xeroContactGroupMembershipCache.findMany.mockResolvedValue([
+      { contactGroupId: "group_1", contactId: "contact_1", contactName: "Ada Existing" },
+      { contactGroupId: "group_2", contactId: "contact_2", contactName: "Ada Alt" },
+    ]);
+    mocks.prisma.xeroContactCache.findMany.mockResolvedValue([
+      makeContact({ contactId: "contact_1", emailAddress: "ada1@example.com" }),
+      makeContact({ contactId: "contact_2", emailAddress: "ada2@example.com" }),
+    ]);
+    // Both contacts are already linked to the same local member.
+    mocks.prisma.member.findFirst.mockResolvedValue({
+      id: "member_shared",
+      firstName: "Ada",
+      lastName: "Existing",
+      xeroContactId: "contact_1",
+    });
+    mocks.prisma.membershipType.findMany.mockResolvedValue([
+      { id: "type_full", name: "Full", isActive: true, allowedAgeTiers: [{ ageTier: "ADULT" }] },
+      { id: "type_assoc", name: "Associate", isActive: true, allowedAgeTiers: [{ ageTier: "ADULT" }] },
+    ]);
+    mocks.prisma.seasonalMembershipAssignment.findMany.mockResolvedValue([]);
+    mocks.getSeasonalMembershipChangePreview.mockResolvedValue({
+      body: { preview: { previewToken: "preview-token" } },
+    });
+    mocks.saveSeasonalMembershipAssignment.mockResolvedValue({ body: { changed: true } });
+
+    const result = await importMembersFromXeroGroups(
+      [
+        { groupId: "group_1", groupName: "First", membershipTypeId: "type_full" },
+        { groupId: "group_2", groupName: "Second", membershipTypeId: "type_assoc" },
+      ],
+      false,
+      { adminMemberId: ADMIN_ID },
+    );
+
+    expect(result.memberCollisions).toEqual([
+      {
+        memberId: "member_shared",
+        name: "Ada Existing",
+        keptGroup: "First",
+        keptMembershipTypeId: "type_full",
+        droppedGroup: "Second",
+        droppedMembershipTypeId: "type_assoc",
+      },
+    ]);
+    // The winning mapping still assigns exactly once via the save path.
+    expect(mocks.saveSeasonalMembershipAssignment).toHaveBeenCalledTimes(1);
+    expect(mocks.saveSeasonalMembershipAssignment).toHaveBeenCalledWith(
+      expect.objectContaining({ membershipTypeId: "type_full" }),
+    );
   });
 
   it("dedupes a contact appearing in two mapped groups (first mapping wins)", async () => {

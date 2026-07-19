@@ -149,6 +149,13 @@ Rules and guarantees:
   shared-double placements) with a per-member audit record.
 - A contact that appears in two mapped groups is imported once — the first
   mapped group in the list wins, and the dropped duplicate is reported.
+- If two **different** contacts link to the **same** local member with
+  conflicting type mappings, the first mapping wins and the loser is reported as
+  a member collision (never silently applied).
+- The results panel surfaces the assignment count, any kept-existing assignments
+  (with the member and both membership-type names, and a bulk-tool remediation
+  hint for a different-type keep), dropped duplicate contacts, and member
+  collisions — each list bounded with a "+N more" overflow.
 - The import writes one summary audit row and does **not** synchronously resync
   Xero contact groups; imported members reconcile through the periodic/mismatch
   tooling described above.

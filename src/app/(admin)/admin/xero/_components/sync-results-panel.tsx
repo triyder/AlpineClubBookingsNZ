@@ -5,6 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { SyncReportView } from "./shared"
 import type { SyncResult } from "./types"
 
+// #2108: cap the membership-type detail lists so a large import never renders
+// thousands of rows; the full picture is on the summary audit row.
+const IMPORT_LIST_CAP = 20
+
 export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: SyncResult | null; currentXeroPath: string }) {
   if (!syncResult) return null
   return (
@@ -108,6 +112,94 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
               ) : null}
               {syncResult.groupsProcessed && syncResult.groupsProcessed.length > 0 ? (
                 <p><span className="text-muted-foreground">Groups processed:</span> {syncResult.groupsProcessed.join(", ")}</p>
+              ) : null}
+              {/* #2108: membership-type import outcomes. */}
+              {syncResult.assignmentsCreated !== undefined && syncResult.assignmentsCreated > 0 ? (
+                <p>
+                  <span className="text-muted-foreground">Membership type assignments created:</span>{" "}
+                  <span className="font-medium text-success">{syncResult.assignmentsCreated}</span>
+                </p>
+              ) : null}
+              {syncResult.keptExistingAssignments && syncResult.keptExistingAssignments.length > 0 ? (
+                <div>
+                  <p>
+                    <span className="text-muted-foreground">Existing assignments kept (not overwritten):</span>{" "}
+                    <span className="font-medium text-warning">{syncResult.keptExistingAssignments.length}</span>
+                  </p>
+                  <ul className="ml-4 mt-1 space-y-0.5 text-sm">
+                    {syncResult.keptExistingAssignments.slice(0, IMPORT_LIST_CAP).map((kept, index) => (
+                      <li key={`${kept.memberId}-${index}`} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span>{kept.name}</span>
+                        <Badge variant="outline" className="text-xs">{kept.group}</Badge>
+                        {kept.sameType ? (
+                          <span className="text-xs text-muted-foreground">
+                            already on {kept.existingMembershipTypeName ?? "this type"}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            kept {kept.existingMembershipTypeName ?? "existing type"} — attempted {kept.attemptedMembershipTypeName ?? "new type"}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {syncResult.keptExistingAssignments.length > IMPORT_LIST_CAP ? (
+                    <p className="ml-4 text-xs text-muted-foreground">
+                      +{syncResult.keptExistingAssignments.length - IMPORT_LIST_CAP} more
+                    </p>
+                  ) : null}
+                  {syncResult.keptExistingAssignments.some((kept) => !kept.sameType) ? (
+                    <p className="ml-4 text-xs text-muted-foreground">
+                      To change a member kept on a different type, use Members → bulk membership type.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {syncResult.droppedDuplicates && syncResult.droppedDuplicates.length > 0 ? (
+                <div>
+                  <p>
+                    <span className="text-muted-foreground">Duplicate contacts dropped (first group wins):</span>{" "}
+                    <span className="font-medium">{syncResult.droppedDuplicates.length}</span>
+                  </p>
+                  <ul className="ml-4 mt-1 space-y-0.5 text-sm">
+                    {syncResult.droppedDuplicates.slice(0, IMPORT_LIST_CAP).map((dropped, index) => (
+                      <li key={`${dropped.xeroContactId}-${index}`} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span>{dropped.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          in <span className="font-medium">{dropped.group}</span> — kept in <span className="font-medium">{dropped.keptGroup}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  {syncResult.droppedDuplicates.length > IMPORT_LIST_CAP ? (
+                    <p className="ml-4 text-xs text-muted-foreground">
+                      +{syncResult.droppedDuplicates.length - IMPORT_LIST_CAP} more
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {syncResult.memberCollisions && syncResult.memberCollisions.length > 0 ? (
+                <div>
+                  <p>
+                    <span className="text-muted-foreground">Member mapping collisions (first group wins):</span>{" "}
+                    <span className="font-medium text-warning">{syncResult.memberCollisions.length}</span>
+                  </p>
+                  <ul className="ml-4 mt-1 space-y-0.5 text-sm">
+                    {syncResult.memberCollisions.slice(0, IMPORT_LIST_CAP).map((collision, index) => (
+                      <li key={`${collision.memberId}-${index}`} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span>{collision.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          kept mapping from <span className="font-medium">{collision.keptGroup}</span> — dropped <span className="font-medium">{collision.droppedGroup}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  {syncResult.memberCollisions.length > IMPORT_LIST_CAP ? (
+                    <p className="ml-4 text-xs text-muted-foreground">
+                      +{syncResult.memberCollisions.length - IMPORT_LIST_CAP} more
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
             </>
           ) : null}

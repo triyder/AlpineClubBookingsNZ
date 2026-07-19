@@ -91,6 +91,9 @@ export function SetupPanels({
               groupId: group.id,
               groupName: group.name,
               ageTier: existing?.ageTier ?? "SKIP",
+              // #2108: preserve the picked membership type across a group refresh
+              // just like the age tier — a refresh must not silently drop it.
+              membershipTypeId: existing?.membershipTypeId,
             }
           })
         )
