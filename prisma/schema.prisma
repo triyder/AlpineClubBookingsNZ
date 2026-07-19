@@ -1211,7 +1211,11 @@ model MembershipTypeAgeTier {
 model XeroContactGroupRule {
   id               String                   @id @default(cuid())
   membershipTypeId String?
-  ageTier          AgeTier?
+  // Set of age tiers this rule targets (#2093). Stored canonical-sorted; the
+  // empty array `[]` means "all age tiers" (the old null "Any age" semantics).
+  // Normalization collapses a full-tier-set selection to `[]` so "all tiers"
+  // has exactly one canonical shape.
+  ageTiers         AgeTier[]
   mode             XeroContactGroupRuleMode
   groupId          String
   groupName        String?
@@ -1223,14 +1227,16 @@ model XeroContactGroupRule {
   membershipType MembershipType? @relation(fields: [membershipTypeId], references: [id], onDelete: Cascade)
 
   @@index([membershipTypeId])
-  @@index([ageTier])
   @@index([mode, isActive, sortOrder])
   @@index([groupId])
   // Dedupe of identical rule shapes is enforced by a raw-SQL partial unique
-  // index (E8, #1934) — Prisma cannot express NULLS NOT DISTINCT, so the index
-  // lives in the migration and is recorded in prisma/partial-unique-indexes.tsv:
+  // index (E8 #1934, multi-select #2093) — Prisma cannot express NULLS NOT
+  // DISTINCT, so the index lives in the migration and is recorded in
+  // prisma/partial-unique-indexes.tsv:
   //   XeroContactGroupRule_shape_unique on
-  //   (membershipTypeId, ageTier, mode, groupId) NULLS NOT DISTINCT.
+  //   (membershipTypeId, ageTiers, mode, groupId) NULLS NOT DISTINCT.
+  // Canonical-sorted array storage makes [ADULT, YOUTH] == [YOUTH, ADULT] a
+  // single stored shape, so btree array equality dedupes correctly.
   // App-side rule CRUD enforces the same dedupe for friendly errors.
 }
 
