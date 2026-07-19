@@ -227,58 +227,24 @@ function buildXeroAddresses(member: {
   return addresses;
 }
 
-function getMissingFieldsForXeroContactCreate(member: {
+// Server-side create gate (#2089). Xero's contact-create API requires only a
+// unique contact name; this app additionally keeps email required because Xero
+// uses it for invoice delivery and contact matching. Phone, date of birth,
+// joined date, and both addresses are OPTIONAL — the payload builder already
+// omits blank addresses/phone, and joined date / date of birth are never sent
+// to Xero on create at all. This helper is the single source of truth for the
+// create gate; the client mirror (`getMissingFieldsForXeroCreate`,
+// members/_utils.ts) must stay in lockstep with the required set here.
+export function getMissingFieldsForXeroContactCreate(member: {
   firstName?: string | null;
   lastName?: string | null;
   email?: string | null;
-  phoneCountryCode?: string | null;
-  phoneAreaCode?: string | null;
-  phoneNumber?: string | null;
-  streetAddressLine1?: string | null;
-  streetCity?: string | null;
-  streetRegion?: string | null;
-  streetPostalCode?: string | null;
-  streetCountry?: string | null;
-  postalAddressLine1?: string | null;
-  postalCity?: string | null;
-  postalRegion?: string | null;
-  postalPostalCode?: string | null;
-  postalCountry?: string | null;
-  dateOfBirth?: Date | null;
-  joinedDate?: Date | null;
 }): string[] {
   const missingFields: string[] = [];
 
   if (!member.firstName?.trim()) missingFields.push("First Name");
   if (!member.lastName?.trim()) missingFields.push("Last Name");
   if (!member.email?.trim()) missingFields.push("Email");
-  if (
-    !member.phoneCountryCode?.trim() ||
-    !member.phoneAreaCode?.trim() ||
-    !member.phoneNumber?.trim()
-  ) {
-    missingFields.push("Phone");
-  }
-  if (!member.dateOfBirth) missingFields.push("Date of Birth");
-  if (!member.joinedDate) missingFields.push("Joined Date");
-  if (
-    !member.streetAddressLine1?.trim() ||
-    !member.streetCity?.trim() ||
-    !member.streetRegion?.trim() ||
-    !member.streetPostalCode?.trim() ||
-    !member.streetCountry?.trim()
-  ) {
-    missingFields.push("Physical Address");
-  }
-  if (
-    !member.postalAddressLine1?.trim() ||
-    !member.postalCity?.trim() ||
-    !member.postalRegion?.trim() ||
-    !member.postalPostalCode?.trim() ||
-    !member.postalCountry?.trim()
-  ) {
-    missingFields.push("Postal Address");
-  }
 
   return missingFields;
 }
@@ -782,6 +748,14 @@ export async function createXeroContactForMember(
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
+    // Sparse-member payload hygiene (#2089): only send a phone block when at
+    // least one phone part is present. Sending a MOBILE entry with empty-string
+    // parts would create a blank phone on the Xero contact.
+    const hasAnyPhonePart = Boolean(
+      member.phoneCountryCode?.trim() ||
+        member.phoneAreaCode?.trim() ||
+        member.phoneNumber?.trim()
+    );
     const contact: Contact = {
       name: `${member.firstName} ${member.lastName}`,
       firstName: member.firstName,
@@ -789,14 +763,16 @@ export async function createXeroContactForMember(
       // A club-internal walk-in placeholder (#1935) must never be sent to Xero
       // as a real address; send an empty email for those owners.
       emailAddress: isPlaceholderContactEmail(member.email) ? "" : member.email,
-      phones: [
-        {
-          phoneType: Phone.PhoneTypeEnum.MOBILE,
-          phoneCountryCode: member.phoneCountryCode || "",
-          phoneAreaCode: member.phoneAreaCode || "",
-          phoneNumber: member.phoneNumber || "",
-        },
-      ],
+      phones: hasAnyPhonePart
+        ? [
+            {
+              phoneType: Phone.PhoneTypeEnum.MOBILE,
+              phoneCountryCode: member.phoneCountryCode || "",
+              phoneAreaCode: member.phoneAreaCode || "",
+              phoneNumber: member.phoneNumber || "",
+            },
+          ]
+        : [],
       addresses: buildXeroAddresses(member),
     };
 

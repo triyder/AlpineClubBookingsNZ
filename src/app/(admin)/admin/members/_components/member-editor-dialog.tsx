@@ -861,11 +861,7 @@ export function MemberEditorDialog({
                 </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="joinedDate">
-                  {!currentEditingMember && xeroChoice === "create"
-                    ? "Joined Date *"
-                    : "Joined Date"}
-                </Label>
+                <Label htmlFor="joinedDate">Joined Date</Label>
                 <Input
                   id="joinedDate"
                   type="date"
@@ -877,9 +873,6 @@ export function MemberEditorDialog({
                     }))
                   }
                 />
-                <p className="text-xs text-muted-foreground">
-                  Required when creating a new Xero contact.
-                </p>
               </div>
             </div>
 

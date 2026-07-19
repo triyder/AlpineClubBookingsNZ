@@ -56,6 +56,26 @@ idempotent — retrying the same work never double-charges.
    stale running jobs, or mark an individual operation non-replayable / resolved.
    **Inbound Events** lists stored webhooks with a per-event **Replay**.
 
+### Create or link a member's Xero contact
+
+1. On a member's admin page (or the members-list editor), the **Xero** panel lets
+   you **link** an existing Xero contact or **create** a new one.
+2. **Creating a contact needs only a first name, last name, and email.** Email is
+   required because Xero uses it for invoice delivery and contact matching;
+   everything else — phone, date of birth, joined date, and both the postal and
+   physical addresses — is optional. Xero's contact-create API itself requires
+   only a unique contact name.
+3. When optional profile fields are blank the panel shows a small note (e.g.
+   *"Profile incomplete: postal address, joined date — missing details will
+   simply be left off the Xero contact"*) and still lets you create the contact. Blank
+   addresses and an all-blank phone are simply omitted from the payload rather
+   than sent as empty blocks. Date of birth and joined date are never sent to
+   Xero on create; the joined date round-trips only through Xero's *company
+   number* field on the import/backfill path.
+4. Before a brand-new contact is created the app checks for **similar existing
+   Xero contacts** and asks you to confirm if any are found, so link an existing
+   contact where one already exists.
+
 ### Set up mappings and import (Xero Setup)
 
 1. Open **Xero Setup** (`/admin/xero/setup`, back-linked from **Integrations**) to
