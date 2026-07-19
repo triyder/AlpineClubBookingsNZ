@@ -14,11 +14,17 @@ import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-acces
 // useAdminAreaEditAccess reads the merged matrix off the session user; drive it
 // per-test so the panels see a content:edit vs content:view admin.
 let sessionMatrix: AdminPermissionMatrix | null = null;
+// Resolution state of the client session. Defaults to "authenticated" so every
+// existing case behaves as fully-resolved; the #2065 resolving-state cases set
+// it to "loading" to exercise the tri-state neutral rendering.
+let sessionStatus: "loading" | "authenticated" | "unauthenticated" =
+  "authenticated";
 vi.mock("next-auth/react", () => ({
   useSession: () => ({
     data: sessionMatrix
       ? { user: { id: "u1", adminPermissionMatrix: sessionMatrix } }
       : null,
+    status: sessionStatus,
   }),
 }));
 
@@ -3192,6 +3198,97 @@ describe("FamilySuggestionsPage view-only gating (#1997, membership)", () => {
       screen.queryByText(
         /can view family group suggestions but cannot create, hide, or reset/i,
       ),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #2065: session-resolution neutral state. Before the client session resolves,
+// useAdminAreaEditAccess returns `undefined`, and every consumer must render a
+// NEUTRAL state — no "view only" banner, no read-only editor caption, and
+// controls disabled (never flashing enabled for a would-be view-only admin,
+// never flashing the banner for a would-be editor). SiteContentPanel is the
+// representative consumer (banner + read-only WysiwygEditor + ViewOnlyActionButton
+// Save). Once resolved, behaviour is identical to today (covered by the
+// SiteContentPanel #1927 block above and asserted again here both ways).
+// ---------------------------------------------------------------------------
+
+describe("SiteContentPanel session-resolution neutral state (#2065)", () => {
+  beforeEach(() => {
+    sessionMatrix = null;
+    sessionStatus = "authenticated";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ documents: SITE_CONTENT_DOCUMENTS }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    sessionStatus = "authenticated";
+  });
+
+  it("shows no banner or read-only caption and keeps Save disabled while resolving", async () => {
+    // Session still resolving: matrix is irrelevant, status drives undefined.
+    sessionStatus = "loading";
+    sessionMatrix = matrix("edit");
+    render(<SiteContentPanel />);
+
+    const saveButtons = await screen.findAllByRole("button", {
+      name: /Save Footer/i,
+    });
+    expect(saveButtons.length).toBeGreaterThan(0);
+    // Neutral: controls disabled (a would-be view-only admin never sees them
+    // enabled), and NO view-only banner / read-only editor caption.
+    for (const button of saveButtons) {
+      expect(button).toBeDisabled();
+    }
+    expect(
+      screen.queryByText(/can view site content but cannot change/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/View only — your admin role cannot edit/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the banner and disabled Save once resolved to a view-only admin", async () => {
+    sessionStatus = "authenticated";
+    sessionMatrix = matrix("view");
+    render(<SiteContentPanel />);
+
+    const saveButtons = await screen.findAllByRole("button", {
+      name: /Save Footer/i,
+    });
+    for (const button of saveButtons) {
+      expect(button).toBeDisabled();
+    }
+    expect(
+      screen.getAllByText(/View only — your admin role cannot edit/i).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("shows enabled Save and no banner once resolved to an edit-capable admin", async () => {
+    sessionStatus = "authenticated";
+    sessionMatrix = matrix("edit");
+    render(<SiteContentPanel />);
+
+    const saveButtons = await screen.findAllByRole("button", {
+      name: /Save Footer/i,
+    });
+    for (const button of saveButtons) {
+      expect(button).toBeEnabled();
+    }
+    expect(
+      screen.queryByText(/can view site content but cannot change/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/View only — your admin role cannot edit/i),
     ).not.toBeInTheDocument();
   });
 });

@@ -132,10 +132,14 @@ re-creatable.
   they need no screenshot. Do not ship a single landing shot for a
   multi-screen area.
 - **Session settle:** authenticated admin pages gate edit affordances on the
-  client session hook, which reports view-only until the post-hydration session
-  fetch resolves; the harness waits for that fetch before shooting so captures
-  never show the false pre-hydration "view only" state. If you add a new kind
-  of late-settling UI, extend the harness settle logic generically — never
+  client session hook (`useAdminAreaEditAccess`). It is tri-state (#2065): it
+  reports `undefined` while the post-hydration session fetch is still resolving,
+  and every consumer renders a NEUTRAL state for that window — controls disabled
+  (never flashing enabled for a would-be view-only admin) and NO "view only"
+  banner or read-only editor caption (never flashing the banner for a would-be
+  editor). The harness still waits for the fetch to settle before shooting, as
+  belt-and-braces, so captures show the fully-resolved state. If you add a new
+  kind of late-settling UI, extend the harness settle logic generically — never
   paper over it per-capture.
 
 ## Guide opening line (canonical)
