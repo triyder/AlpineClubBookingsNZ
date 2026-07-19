@@ -16,7 +16,17 @@ vi.mock("@/lib/prisma", () => ({
     member: {
       findUnique: mockFindUnique,
     },
+    clubTheme: {
+      findUnique: vi.fn(async () => null),
+    },
   },
+}));
+
+// The layout now loads the app fonts and injects the club theme (#2102); stub
+// the font loader so importing it stays light and does not pull in
+// next/font/google under vitest.
+vi.mock("@/lib/club-theme-fonts", () => ({
+  clubThemeFontVariableClassName: "font-vars",
 }));
 
 vi.mock("next/navigation", () => ({
@@ -73,7 +83,15 @@ describe("lodge layout authentication", () => {
     const layoutShell = (result as ReactElement<{ children: ReactElement }>).props
       .children;
 
-    expect((layoutShell.props as { children: unknown }).children).toBe("secure");
+    // The shell now injects the club theme <style> ahead of the page children
+    // (#2102), so children is [themeStyle, page].
+    const shellChildren = (layoutShell.props as { children: unknown[] }).children;
+    const [themeStyle, pageChildren] = shellChildren as [
+      ReactElement<{ "data-site-style"?: string }>,
+      unknown,
+    ];
+    expect(themeStyle.props["data-site-style"]).toBe("club-theme");
+    expect(pageChildren).toBe("secure");
   });
 
   it("redirects inactive authenticated users back to login", async () => {
