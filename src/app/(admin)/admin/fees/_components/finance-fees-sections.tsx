@@ -16,6 +16,8 @@ import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
+import { XeroAccountSelect, XeroItemSelect } from "@/components/admin/xero-code-select";
+import type { XeroAccount, XeroItem } from "@/lib/xero-admin-cache";
 
 // The Joining Fees + Annual Membership Fees + Family billing sections of the
 // consolidated /admin/fees console (#1933, E7). Moved verbatim from the former
@@ -35,6 +37,9 @@ type JoiningFeeRow = Fee & { ageTier: string | null };
 type Data = {
   canEdit: boolean;
   familyBillingMode: FamilyBillingMode;
+  // Resolved default income account code for empty component Account fields
+  // (#2068); paired with the account name from the live chart of accounts.
+  defaultInvoiceAccountCode?: string | null;
   membershipTypes: Array<{ id: string; key: string; name: string; isActive: boolean; annualFees: Fee[]; joiningFees: JoiningFeeRow[] }>;
   familyGroups: Array<{
     id: string; name: string | null; billingMemberId: string | null; billingException: boolean;
@@ -56,6 +61,19 @@ const tierLabel = (tier: string | null) =>
 const today = formatDateOnly(getTodayDateOnly());
 const dollars = (cents: number | null) => cents == null ? "Not configured" : new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100);
 const memberName = (member: { firstName: string; lastName: string }) => `${member.firstName} ${member.lastName}`.trim();
+// The fee-level proration rule, in the same words as the editor's Proration
+// select (#2068, finding 7). Rendered on saved fees so the display can never
+// contradict the stored rule.
+const PRORATION_LABELS: Record<string, string> = {
+  NONE: "Full annual fee",
+  REMAINING_MONTHS_INCLUSIVE: "Remaining months, including decision month",
+};
+const prorationLabel = (rule: string | null | undefined) => PRORATION_LABELS[rule ?? "NONE"] ?? "Full annual fee";
+// A component is only ever prorated when the fee-level rule prorates AND the
+// component opts in; a "Full annual fee" (NONE) rule always charges in full,
+// regardless of the stored per-component flag, so display "full" (#2068).
+const componentIsProrated = (fee: Fee, component: FeeComponent) =>
+  (fee.prorationRule ?? "NONE") !== "NONE" && component.prorate;
 
 export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boolean } = {}) {
   const [data, setData] = useState<Data | null>(null);
@@ -65,6 +83,14 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
   // Surface that as a friendly read-only notice instead of a raw fetch-failed
   // error (E7 review, Lens-A F1). The read API area is intentionally unchanged.
   const [forbidden, setForbidden] = useState(false);
+  // Xero reference data for the component Account/Item pickers (#2068). Fetched
+  // via the admin-gated proxy endpoints (no Xero secrets ever reach the client);
+  // a load error surfaces an amber notice and enables manual-code entry so the
+  // editor never hard-blocks when Xero is disconnected.
+  const [accounts, setAccounts] = useState<XeroAccount[]>([]);
+  const [items, setItems] = useState<XeroItem[]>([]);
+  const [coaError, setCoaError] = useState<string | null>(null);
+  const [itemsError, setItemsError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [membershipTypeId, setMembershipTypeId] = useState("");
   const [membershipTier, setMembershipTier] = useState<string>("FLAT");
@@ -111,6 +137,32 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
     setData(body);
   }, []);
   useEffect(() => { load().catch((cause) => setError(cause instanceof Error ? cause.message : "Failed to load")); }, [load]);
+  // Load the Xero account/item lists for the component pickers on mount (#2068).
+  // Mirrors FinanceReportMappingsPanel's fetch/amber-fallback pattern; the two
+  // requests are independent so one failing still lets the other populate.
+  useEffect(() => {
+    let cancelled = false;
+    async function loadXeroReference() {
+      try {
+        const response = await fetch("/api/admin/xero/chart-of-accounts", { credentials: "same-origin" });
+        const body = await response.json();
+        if (!response.ok || !Array.isArray(body.accounts)) throw new Error(body?.error ?? "Failed to load Xero chart of accounts");
+        if (!cancelled) setAccounts(body.accounts);
+      } catch (cause) {
+        if (!cancelled) { setAccounts([]); setCoaError(cause instanceof Error ? cause.message : "Failed to load Xero chart of accounts"); }
+      }
+      try {
+        const response = await fetch("/api/admin/xero/items", { credentials: "same-origin" });
+        const body = await response.json();
+        if (!response.ok || !Array.isArray(body.items)) throw new Error(body?.error ?? "Failed to load Xero items");
+        if (!cancelled) setItems(body.items);
+      } catch (cause) {
+        if (!cancelled) { setItems([]); setItemsError(cause instanceof Error ? cause.message : "Failed to load Xero items"); }
+      }
+    }
+    void loadXeroReference();
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => {
     if (!membershipTypeId && data?.membershipTypes[0]) setMembershipTypeId(data.membershipTypes[0].id);
     if (!joiningTypeId && data?.membershipTypes[0]) setJoiningTypeId(data.membershipTypes[0].id);
@@ -126,6 +178,16 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
     () => data?.membershipTypes.some((type) => type.annualFees.some((fee) => fee.billingBasis === "PER_FAMILY")) ?? false,
     [data],
   );
+  // The empty-Account placeholder: the resolved default income account (code +
+  // name) that the invoice line will use when a component leaves Account blank
+  // (#2068). The code comes from the GET payload; the name is resolved from the
+  // live chart of accounts when available (falls back to code-only otherwise).
+  const defaultAccountLabel = useMemo(() => {
+    const code = data?.defaultInvoiceAccountCode ?? null;
+    if (!code) return "Default";
+    const account = accounts.find((candidate) => candidate.code.toUpperCase() === code.toUpperCase());
+    return account ? `Default: ${code} — ${account.name}` : `Default: ${code}`;
+  }, [data?.defaultInvoiceAccountCode, accounts]);
   async function mutate(payload: Record<string, unknown>, options?: { silent?: boolean }) {
     setSaving(true); setError(null);
     try {
@@ -300,20 +362,28 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
                   Components total {dollars(componentsTotalCents)}{componentsReconcile ? "" : ` · must equal the fee amount ${dollars(parsedFeeCents)}`}
                 </span>
               </div>
-              <p className="text-xs text-muted-foreground">Each component is its own Xero invoice line. A single component uses the fee total. Components must sum to the fee amount.</p>
-              {componentRows.map((row, index) => <div key={index} className="grid items-end gap-2 md:grid-cols-[2fr_1fr_auto_1fr_1fr_auto]">
+              <p className="text-xs text-muted-foreground">Each component is its own Xero invoice line. A single component uses the fee total. Components must sum to the fee amount. Leave Account or Item empty to use the resolved default.</p>
+              {(coaError || itemsError) && <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                Could not load the Xero {coaError && itemsError ? "chart of accounts and item list" : coaError ? "chart of accounts" : "item list"}. You can still type account and item codes manually; reconnect Xero to pick from the live lists.
+              </div>}
+              {componentRows.map((row, index) =><div key={index} className="grid items-end gap-2 md:grid-cols-[2fr_1fr_auto_1fr_1fr_auto]">
                 <div><Label htmlFor={`component-label-${index}`} className="text-xs">Label</Label><Input id={`component-label-${index}`} value={row.label} onChange={(event) => updateComponentRow(index, { label: event.target.value })} placeholder="Base membership" /></div>
                 <div><Label htmlFor={`component-amount-${index}`} className="text-xs">Amount (NZD)</Label><Input id={`component-amount-${index}`} inputMode="decimal" value={componentRows.length === 1 ? membershipAmount : row.amount} onChange={(event) => updateComponentRow(index, { amount: event.target.value })} disabled={componentRows.length === 1} placeholder="0.00" /></div>
-                <label className="flex items-center gap-1 pb-2 text-xs"><input type="checkbox" checked={row.prorate} onChange={(event) => updateComponentRow(index, { prorate: event.target.checked })} />Prorate</label>
-                <div><Label htmlFor={`component-account-${index}`} className="text-xs">Account (optional)</Label><Input id={`component-account-${index}`} value={row.xeroAccountCode} onChange={(event) => updateComponentRow(index, { xeroAccountCode: event.target.value })} placeholder="Default" /></div>
-                <div><Label htmlFor={`component-item-${index}`} className="text-xs">Item (optional)</Label><Input id={`component-item-${index}`} value={row.xeroItemCode} onChange={(event) => updateComponentRow(index, { xeroItemCode: event.target.value })} placeholder="Default" /></div>
+                {/* A "Full annual fee" (NONE) rule prorates nothing, so the
+                    per-component Prorate opt-in is hidden when the rule is NONE
+                    (#2068, decision 1). Stored values are untouched. */}
+                {prorationRule === "NONE"
+                  ? <span className="pb-2 text-xs text-muted-foreground" aria-hidden="true">Prorate n/a</span>
+                  : <label className="flex items-center gap-1 pb-2 text-xs"><input type="checkbox" checked={row.prorate} onChange={(event) => updateComponentRow(index, { prorate: event.target.checked })} />Prorate</label>}
+                <div><Label className="text-xs">Account (optional)</Label><XeroAccountSelect accounts={accounts} value={row.xeroAccountCode} onChange={(code) => updateComponentRow(index, { xeroAccountCode: code })} emptyLabel={defaultAccountLabel} ariaLabel={`Account for component ${index + 1}`} allowManualCodes={accounts.length === 0 || Boolean(coaError)} /></div>
+                <div><Label className="text-xs">Item (optional)</Label><XeroItemSelect items={items} value={row.xeroItemCode} onChange={(code) => updateComponentRow(index, { xeroItemCode: code })} emptyLabel="Default: no item" ariaLabel={`Item for component ${index + 1}`} allowManualCodes={items.length === 0 || Boolean(itemsError)} /></div>
                 <Button type="button" size="icon" variant="ghost" aria-label={`Remove component ${index + 1}`} disabled={componentRows.length <= 1} onClick={() => removeComponentRow(index)}><Trash2 className="h-4 w-4" /></Button>
               </div>)}
               <Button type="button" variant="outline" size="sm" onClick={addComponentRow}>Add component</Button>
             </div>}
         <div className="flex gap-2"><Button disabled={saving || !membershipTypeId} onClick={saveMembershipFee}><DollarSign className="mr-1 h-4 w-4" />{editingMembershipFeeId ? "Update annual fee" : "Add annual fee"}</Button>{editingMembershipFeeId && <Button variant="outline" onClick={resetMembershipForm}>Cancel edit</Button>}<Button variant="ghost" disabled={saving} onClick={cancelMembershipEditing}>Close section</Button></div>
       </>}
-      <div className="space-y-3">{data?.membershipTypes.map((type) => <div key={type.id} className="rounded-md border p-3"><div className="font-medium">{type.name}</div>{type.annualFees.length === 0 ? <p className="text-sm text-muted-foreground">Not configured</p> : type.annualFees.map((fee) => <div key={fee.id}><div className="mt-2 flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">{tierLabel(fee.ageTier ?? null)}</Badge><Badge variant="outline">{dollars(fee.amountCents)}</Badge><span>{fee.billingBasis?.replaceAll("_", " ")}</span><span>{fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{membershipEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${type.name} ${tierLabel(fee.ageTier ?? null)} fee`} disabled={saving} onClick={() => { setEditingMembershipFeeId(fee.id); setMembershipTypeId(type.id); setMembershipTier(fee.ageTier ?? "FLAT"); setMembershipAmount((fee.amountCents / 100).toFixed(2)); setBillingBasis(fee.billingBasis ?? "PER_MEMBER"); setProrationRule(fee.prorationRule ?? "NONE"); setMembershipFrom(fee.effectiveFrom); setMembershipTo(fee.effectiveTo ?? ""); setComponentRows(fee.components && fee.components.length > 0 ? fee.components.map((component) => ({ label: component.label, amount: (component.amountCents / 100).toFixed(2), prorate: component.prorate, xeroAccountCode: component.xeroAccountCode ?? "", xeroItemCode: component.xeroItemCode ?? "" })) : [defaultComponentDraft()]); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${type.name} ${tierLabel(fee.ageTier ?? null)} fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_MEMBERSHIP_FEE", id: fee.id, label: `${type.name} ${tierLabel(fee.ageTier ?? null)} annual fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>{fee.components && fee.components.length > 0 && <ul className="mt-1 space-y-0.5 pl-3 text-xs text-muted-foreground">{fee.components.map((component) => <li key={component.id}>{component.label} · {dollars(component.amountCents)} · {component.prorate ? "prorated" : "full"}{component.xeroAccountCode ? ` · acct ${component.xeroAccountCode}` : ""}{component.xeroItemCode ? ` · item ${component.xeroItemCode}` : ""}</li>)}</ul>}</div>)}</div>)}</div>
+      <div className="space-y-3">{data?.membershipTypes.map((type) => <div key={type.id} className="rounded-md border p-3"><div className="font-medium">{type.name}</div>{type.annualFees.length === 0 ? <p className="text-sm text-muted-foreground">Not configured</p> : type.annualFees.map((fee) => <div key={fee.id}><div className="mt-2 flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">{tierLabel(fee.ageTier ?? null)}</Badge><Badge variant="outline">{dollars(fee.amountCents)}</Badge><span>{fee.billingBasis?.replaceAll("_", " ")}</span>{fee.billingBasis !== "NO_INVOICE" && <Badge variant="outline">{prorationLabel(fee.prorationRule)}</Badge>}<span>{fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{membershipEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${type.name} ${tierLabel(fee.ageTier ?? null)} fee`} disabled={saving} onClick={() => { setEditingMembershipFeeId(fee.id); setMembershipTypeId(type.id); setMembershipTier(fee.ageTier ?? "FLAT"); setMembershipAmount((fee.amountCents / 100).toFixed(2)); setBillingBasis(fee.billingBasis ?? "PER_MEMBER"); setProrationRule(fee.prorationRule ?? "NONE"); setMembershipFrom(fee.effectiveFrom); setMembershipTo(fee.effectiveTo ?? ""); setComponentRows(fee.components && fee.components.length > 0 ? fee.components.map((component) => ({ label: component.label, amount: (component.amountCents / 100).toFixed(2), prorate: component.prorate, xeroAccountCode: component.xeroAccountCode ?? "", xeroItemCode: component.xeroItemCode ?? "" })) : [defaultComponentDraft()]); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${type.name} ${tierLabel(fee.ageTier ?? null)} fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_MEMBERSHIP_FEE", id: fee.id, label: `${type.name} ${tierLabel(fee.ageTier ?? null)} annual fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>{fee.components && fee.components.length > 0 && <ul className="mt-1 space-y-0.5 pl-3 text-xs text-muted-foreground">{fee.components.map((component) => <li key={component.id}>{component.label} · {dollars(component.amountCents)} · {componentIsProrated(fee, component) ? "prorated" : "full"}{component.xeroAccountCode ? ` · acct ${component.xeroAccountCode}` : ""}{component.xeroItemCode ? ` · item ${component.xeroItemCode}` : ""}</li>)}</ul>}</div>)}</div>)}</div>
     </CardContent></Card>
 
     {familyBillingActive && <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Family billing members</CardTitle>{data?.canEdit && !familyEditing && <Button variant="outline" size="sm" aria-label="Edit family billing" onClick={startFamilyEditing}>Edit</Button>}</CardHeader><CardContent className="space-y-3">
