@@ -11,12 +11,17 @@
 -- empty, so the backfill is already canonical.
 --
 -- The rule-shape partial unique index is reworked from the scalar column to the
--- array column. Postgres btree supports array equality natively (array_ops), and
--- because storage is canonical-sorted, [ADULT, YOUTH] == [YOUTH, ADULT] collide
--- as one shape. NULLS NOT DISTINCT still makes two type-wildcard (NULL
--- membershipTypeId) rules with the same tier set collide. The predicate
--- ("groupId" IS NOT NULL — always true) keeps the index invisible to
--- prisma migrate diff / db:check-drift, as with the other partial unique indexes.
+-- array column. Postgres btree array equality (array_ops) is ORDER-SENSITIVE: it
+-- enforces equality over the array AS STORED, so a raw [ADULT, YOUTH] and a raw
+-- [YOUTH, ADULT] are DISTINCT at the DB level — the index does NOT canonicalize.
+-- Reordered tier sets collide as one shape only because the app always writes
+-- canonical-sorted arrays (normalizeRule -> canonicalizeAgeTiers). A direct-SQL
+-- write of a non-canonical array would bypass that; the app-side dedupe
+-- (isDuplicateRuleShape) plus the defensive shape-dedupe in step 6 below are the
+-- guards. NULLS NOT DISTINCT still makes two type-wildcard (NULL membershipTypeId)
+-- rules with the same stored tier set collide. The predicate ("groupId" IS NOT
+-- NULL — always true) keeps the index invisible to prisma migrate diff /
+-- db:check-drift, as with the other partial unique indexes.
 
 -- 1. Add the new array column ------------------------------------------------
 -- Prisma models `AgeTier[]` as NOT NULL DEFAULT '{}'.
@@ -69,9 +74,11 @@ WHERE dup."membershipTypeId" IS NOT DISTINCT FROM keeper."membershipTypeId"
   AND (keeper."createdAt", keeper."id") < (dup."createdAt", dup."id");
 
 -- 7. Recreate the rule-shape partial unique index over the array form --------
--- NULLS NOT DISTINCT so two type-wildcard rules with the same tier set collide;
--- canonical-sorted storage makes reordered tier sets a single shape. Recorded
--- in prisma/partial-unique-indexes.tsv.
+-- NULLS NOT DISTINCT so two type-wildcard rules with the same stored tier set
+-- collide. The index compares stored arrays with order-sensitive btree array
+-- equality; reordered tier sets collapse to one shape only because the app
+-- writes canonical-sorted arrays (see the header note), not because the index
+-- reorders them. Recorded in prisma/partial-unique-indexes.tsv.
 CREATE UNIQUE INDEX IF NOT EXISTS "XeroContactGroupRule_shape_unique"
   ON "XeroContactGroupRule" ("membershipTypeId", "ageTiers", "mode", "groupId")
   NULLS NOT DISTINCT

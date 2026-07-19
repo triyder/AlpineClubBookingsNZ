@@ -113,6 +113,10 @@ function stableDigest(value: unknown): string {
 function fingerprintAgeTiers(ageTiers: AgeTier[]): AgeTier | AgeTier[] | null {
   if (ageTiers.length === 0) return null;
   if (ageTiers.length === 1) return ageTiers[0];
+  // Deliberate lexicographic sort (not CANONICAL_AGE_TIER_ORDER): it only needs
+  // to be deterministic, and it is harmless — this branch is reached only by a
+  // genuinely-new 2+-tier rule, which has no historical scalar fingerprint to
+  // stay byte-compatible with. Do not "fix" it to the canonical order.
   return [...ageTiers].sort();
 }
 

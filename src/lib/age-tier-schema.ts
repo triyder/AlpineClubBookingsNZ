@@ -30,8 +30,13 @@ export const bookableAgeTierEnum = z.enum(BOOKABLE_AGE_TIER_VALUES);
 /**
  * Canonical age-tier ordering used to store a rule's `ageTiers` set in a single
  * deterministic shape (#2093). Any subset is sorted by this order before
- * storage/serialization so `[ADULT, YOUTH]` and `[YOUTH, ADULT]` become the
- * same array, and the DB shape-unique index (btree array equality) dedupes them.
+ * storage/serialization so `[ADULT, YOUTH]` and `[YOUTH, ADULT]` become the same
+ * stored array. The DB shape-unique index compares arrays with ORDER-SENSITIVE
+ * btree array equality, so it only dedupes reordered sets because this canonical
+ * order is applied before every write (the route's `normalizeRule` calls
+ * {@link canonicalizeAgeTiers}); a direct-SQL write of a non-canonical array
+ * would bypass it (the app-side dedupe + defensive migration dedupe are the
+ * guards for that).
  */
 export const CANONICAL_AGE_TIER_ORDER = [
   "INFANT",
