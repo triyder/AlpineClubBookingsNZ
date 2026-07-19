@@ -308,6 +308,44 @@ describe("Admin membership types API", () => {
     });
   });
 
+  it("creates a type with only N/A (no age) ticked (#2069)", async () => {
+    const response = await createMembershipType(
+      request("http://localhost/api/admin/membership-types", {
+        name: "School org",
+        bookingBehavior: "NON_MEMBER_RATE",
+        subscriptionBehavior: "NOT_REQUIRED",
+        allowedAgeTiers: ["NOT_APPLICABLE"],
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocks.membershipTypeAgeTierCreateMany).toHaveBeenCalledWith({
+      data: [{ membershipTypeId: "type-custom", ageTier: "NOT_APPLICABLE" }],
+      skipDuplicates: true,
+    });
+  });
+
+  it("defaults omitted allowedAgeTiers to the four age tiers, never N/A (#2069)", async () => {
+    const response = await createMembershipType(
+      request("http://localhost/api/admin/membership-types", {
+        name: "Defaulted",
+        bookingBehavior: "MEMBER_RATE",
+        subscriptionBehavior: "REQUIRED",
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocks.membershipTypeAgeTierCreateMany).toHaveBeenCalledWith({
+      data: [
+        { membershipTypeId: "type-custom", ageTier: "INFANT" },
+        { membershipTypeId: "type-custom", ageTier: "CHILD" },
+        { membershipTypeId: "type-custom", ageTier: "YOUTH" },
+        { membershipTypeId: "type-custom", ageTier: "ADULT" },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
   it("accepts BASED_ON_AGE_TIER end-to-end through zod into the create (#2041)", async () => {
     const response = await createMembershipType(
       request("http://localhost/api/admin/membership-types", {
@@ -842,6 +880,79 @@ describe("Admin membership types API", () => {
       expect(body.error).toContain("YOUTH");
       expect(mocks.seasonalMembershipAssignmentUpdateMany).not.toHaveBeenCalled();
       expect(mocks.membershipTypeDelete).not.toHaveBeenCalled();
+    });
+
+    it("blocks real-age members from merging into an N/A-only target (#2069)", async () => {
+      mockTypesById({
+        "type-source": source(),
+        "type-target": membershipType({
+          id: "type-target",
+          key: "SCHOOL_ORG",
+          name: "School org",
+          isBuiltIn: false,
+          isActive: true,
+          allowedAgeTiers: [{ ageTier: "NOT_APPLICABLE" }],
+        }),
+      });
+      mocks.seasonalMembershipAssignmentFindMany.mockResolvedValue([
+        { id: "a1", memberId: "m1", member: { ageTier: "ADULT" } },
+      ]);
+
+      const response = await mergeMembershipType(
+        request(
+          "http://localhost/api/admin/membership-types/type-source/merge",
+          { targetId: "type-target" },
+        ),
+        params("type-source"),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(body.error).toContain("ADULT");
+      expect(mocks.seasonalMembershipAssignmentUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.membershipTypeDelete).not.toHaveBeenCalled();
+    });
+
+    it("lets N/A members merge into an N/A-only target (#2069)", async () => {
+      mockTypesById({
+        "type-source": source(),
+        "type-target": membershipType({
+          id: "type-target",
+          key: "SCHOOL_ORG",
+          name: "School org",
+          isBuiltIn: false,
+          isActive: true,
+          allowedAgeTiers: [{ ageTier: "NOT_APPLICABLE" }],
+        }),
+      });
+      mocks.seasonalMembershipAssignmentFindMany.mockResolvedValue([
+        {
+          id: "a1",
+          memberId: "m1",
+          seasonYear: 2026,
+          member: { ageTier: "NOT_APPLICABLE" },
+        },
+      ]);
+      mocks.seasonalMembershipAssignmentUpdateMany.mockResolvedValue({
+        count: 1,
+      });
+
+      const response = await mergeMembershipType(
+        request(
+          "http://localhost/api/admin/membership-types/type-source/merge",
+          { targetId: "type-target" },
+        ),
+        params("type-source"),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.seasonalMembershipAssignmentUpdateMany).toHaveBeenCalledWith({
+        where: { membershipTypeId: "type-source" },
+        data: { membershipTypeId: "type-target" },
+      });
+      expect(mocks.membershipTypeDelete).toHaveBeenCalledWith({
+        where: { id: "type-source" },
+      });
     });
 
     it("returns 404 when the target does not exist", async () => {

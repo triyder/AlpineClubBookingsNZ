@@ -3,10 +3,13 @@ import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUILT_IN_MEMBERSHIP_TYPES,
+  DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS,
+  MEMBERSHIP_TYPE_AGE_TIERS,
   backfillCurrentSeasonMembershipAssignments,
   canonicalMembershipTypeKey,
   defaultMembershipTypeKeyForRole,
   ensureBuiltInMembershipTypes,
+  normalizeMembershipTypeAgeTiers,
   normalizeMembershipTypeKey,
   validateMembershipTypeRuleConfiguration,
 } from "@/lib/membership-types";
@@ -195,6 +198,39 @@ describe("built-in membership type seed helpers", () => {
 
     expect(
       validateMembershipTypeRuleConfiguration({ allowedAgeTiers: ["YOUTH", "ADULT"] }),
+    ).toBeNull();
+  });
+
+  it("offers N/A (no age) as a selectable tier but keeps it out of the new-type default (#2069)", () => {
+    // N/A is selectable and sorts last...
+    expect(MEMBERSHIP_TYPE_AGE_TIERS).toEqual([
+      "INFANT",
+      "CHILD",
+      "YOUTH",
+      "ADULT",
+      "NOT_APPLICABLE",
+    ]);
+    // ...but the omitted-input default is the four real age tiers only.
+    expect(DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS).toEqual([
+      "INFANT",
+      "CHILD",
+      "YOUTH",
+      "ADULT",
+    ]);
+  });
+
+  it("normalizes an N/A-only selection and treats it as a valid configuration (#2069)", () => {
+    expect(normalizeMembershipTypeAgeTiers(["NOT_APPLICABLE"])).toEqual([
+      "NOT_APPLICABLE",
+    ]);
+    // N/A sorts after real tiers regardless of input order.
+    expect(
+      normalizeMembershipTypeAgeTiers(["NOT_APPLICABLE", "ADULT"]),
+    ).toEqual(["ADULT", "NOT_APPLICABLE"]);
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["NOT_APPLICABLE"],
+      }),
     ).toBeNull();
   });
 });
