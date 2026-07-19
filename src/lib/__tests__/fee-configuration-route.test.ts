@@ -127,10 +127,12 @@ describe("fee configuration route", () => {
     await expect((await GET()).json()).resolves.toMatchObject({ canEdit: false });
   });
 
-  it("surfaces the resolved default income account code for empty component Account fields (#2068)", async () => {
-    // No xeroAccountMapping row -> the hard-coded subscriptionIncome default (203).
-    await expect((await GET()).json()).resolves.toMatchObject({ defaultInvoiceAccountCode: "203" });
-    // A configured mapping wins.
+  it("surfaces only an EXPLICITLY-configured default income account code (#2068, F1)", async () => {
+    // No xeroAccountMapping row -> subscriptionIncome is not explicitly
+    // configured, so the invoice build would refuse to bill. The editor must NOT
+    // advertise the hard-coded "203" fallback; it surfaces null instead.
+    await expect((await GET()).json()).resolves.toMatchObject({ defaultInvoiceAccountCode: null });
+    // An explicitly configured mapping is surfaced as-is.
     mocks.accountMappingFindUnique.mockResolvedValueOnce({ code: "215", itemCode: null });
     await expect((await GET()).json()).resolves.toMatchObject({ defaultInvoiceAccountCode: "215" });
   });
