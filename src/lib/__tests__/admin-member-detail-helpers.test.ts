@@ -17,7 +17,6 @@ import {
   formatPromoBenefit,
   getAuditActorDisplayName,
   getMemberDetailBackLabel,
-  getMissingFieldsForXeroCreate,
   isCollapsibleMemberSection,
   memberSectionStorageKeys,
   memberUsesSamePostalAddress,
@@ -258,58 +257,6 @@ describe("admin-member-detail-helpers", () => {
         postalCountry: "New Zealand",
       })
       expect(result).toBe(false)
-    })
-  })
-
-  describe("getMissingFieldsForXeroCreate", () => {
-    const completeForm = {
-      firstName: "Alice",
-      lastName: "Smith",
-      email: "alice@example.com",
-      phoneCountryCode: "64",
-      phoneAreaCode: "27",
-      phoneNumber: "1234567",
-      dateOfBirth: "1990-01-15",
-      joinedDate: "2024-05-01",
-      streetAddressLine1: "1 Main Rd",
-      streetCity: "Wellington",
-      streetRegion: "Wellington",
-      streetPostalCode: "6011",
-      streetCountry: "New Zealand",
-      postalAddressLine1: "1 Main Rd",
-      postalCity: "Wellington",
-      postalRegion: "Wellington",
-      postalPostalCode: "6011",
-      postalCountry: "New Zealand",
-    }
-
-    it("returns an empty array when all required fields are present", () => {
-      expect(getMissingFieldsForXeroCreate(completeForm)).toEqual([])
-    })
-
-    it("flags missing first and last names", () => {
-      expect(
-        getMissingFieldsForXeroCreate({ ...completeForm, firstName: "", lastName: "" })
-      ).toContain("First Name")
-      expect(
-        getMissingFieldsForXeroCreate({ ...completeForm, firstName: "", lastName: "" })
-      ).toContain("Last Name")
-    })
-
-    it("requires all three phone parts", () => {
-      expect(
-        getMissingFieldsForXeroCreate({ ...completeForm, phoneAreaCode: "" })
-      ).toContain("Phone")
-    })
-
-    it("flags missing physical and postal addresses", () => {
-      const missing = getMissingFieldsForXeroCreate({
-        ...completeForm,
-        streetAddressLine1: "",
-        postalCity: "",
-      })
-      expect(missing).toContain("Physical Address")
-      expect(missing).toContain("Postal Address")
     })
   })
 

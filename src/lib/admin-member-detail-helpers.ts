@@ -54,27 +54,6 @@ export interface PromoCodeBenefitSource {
   fixedNightlyMode?: "SET_PRICE" | "CAP_ONLY" | null
 }
 
-export interface XeroCreateFormFields {
-  firstName: string
-  lastName: string
-  email: string
-  phoneCountryCode: string
-  phoneAreaCode: string
-  phoneNumber: string
-  dateOfBirth: string
-  joinedDate: string
-  streetAddressLine1: string
-  streetCity: string
-  streetRegion: string
-  streetPostalCode: string
-  streetCountry: string
-  postalAddressLine1: string
-  postalCity: string
-  postalRegion: string
-  postalPostalCode: string
-  postalCountry: string
-}
-
 // Storage keys are member-agnostic on purpose: an admin's expanded/collapsed
 // choices follow them from one member page to the next. Keys retired by the
 // grouped-layout redesign (subs/bookings/xero/audit) are left stale in
@@ -224,42 +203,6 @@ export type NullableMemberAddress = Record<keyof MemberAddressValues, string | n
 
 export function memberUsesSamePostalAddress(member: NullableMemberAddress) {
   return shouldDefaultPostalSameAsPhysical(member)
-}
-
-export function getMissingFieldsForXeroCreate(
-  form: XeroCreateFormFields
-): string[] {
-  const missing: string[] = []
-
-  if (!form.firstName.trim()) missing.push("First Name")
-  if (!form.lastName.trim()) missing.push("Last Name")
-  if (!form.email.trim()) missing.push("Email")
-  if (
-    !form.phoneCountryCode.trim() ||
-    !form.phoneAreaCode.trim() ||
-    !form.phoneNumber.trim()
-  )
-    missing.push("Phone")
-  if (!form.dateOfBirth) missing.push("Date of Birth")
-  if (!form.joinedDate) missing.push("Joined Date")
-  if (
-    !form.streetAddressLine1.trim() ||
-    !form.streetCity.trim() ||
-    !form.streetRegion.trim() ||
-    !form.streetPostalCode.trim() ||
-    !form.streetCountry.trim()
-  )
-    missing.push("Physical Address")
-  if (
-    !form.postalAddressLine1.trim() ||
-    !form.postalCity.trim() ||
-    !form.postalRegion.trim() ||
-    !form.postalPostalCode.trim() ||
-    !form.postalCountry.trim()
-  )
-    missing.push("Postal Address")
-
-  return missing
 }
 
 export function formatMemberDateNz(value: string) {
