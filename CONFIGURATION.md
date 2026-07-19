@@ -956,15 +956,20 @@ group fields and the membership-type Xero rules.
   | Mode | Behaviour |
   |---|---|
   | `None` | The sync is a total no-op. Existing Xero group memberships are left untouched — never added, never removed — including on the membership-cancellation path. |
-  | `Membership Type` | Only type-keyed rules apply. Tier-bearing rules are inert (shown but not applied). |
-  | `Membership Type + Age` | Most-specific `MANAGED` match wins: type+tier > type-only > tier-only. `ACCEPTED` groups are the union of matching accepted rules plus the matched managed group. |
+  | `Membership Type` | Only type-keyed rules apply. Tier-bearing rules (a non-empty `ageTiers` set) are inert (shown but not applied). |
+  | `Membership Type + Age` | Most-specific `MANAGED` match wins: `type + tiers` > `type-only` > `tiers-only`; among tiered rules **fewer tiers is more specific**, and an "all age tiers" (`[]`) rule is the **least** specific. Exact ties break deterministically by `sortOrder` then group id. `ACCEPTED` groups are the union of matching accepted rules plus the matched managed group. |
 
-- **Rules** (`XeroContactGroupRule`): each rule is a (membership type?, age
-  tier?, `MANAGED`/`ACCEPTED`, group) tuple. `MANAGED` is the group the sync
-  adds; `ACCEPTED` is a group the sync tolerates and never removes. Duplicate
-  rule shapes are rejected. The effective membership type is resolved at the
-  current season year (the same resolver as pricing, but pricing resolves per
-  stay-night season and grouping resolves at "now").
+- **Rules** (`XeroContactGroupRule`): each rule is a (membership type?, **age
+  tier set**, `MANAGED`/`ACCEPTED`, group) tuple. The tier set (`ageTiers`) may
+  name any subset of tiers; an **empty set means "all age tiers"** (the wildcard,
+  displayed "All age tiers") — this is the migrated null "Any age" semantics.
+  Sets are stored canonical-sorted and a full-tier selection collapses to the
+  empty set, so `[ADULT, YOUTH] == [YOUTH, ADULT]` is one shape. `MANAGED` is the
+  group the sync adds; `ACCEPTED` is a group the sync tolerates and never removes.
+  Duplicate rule shapes are rejected (app-side for a friendly error and by a DB
+  partial unique index over the canonical array). The effective membership type
+  is resolved at the current season year (the same resolver as pricing, but
+  pricing resolves per stay-night season and grouping resolves at "now").
 - **Managed universe / never delete:** the sync only ever adds/removes a
   contact's membership of groups referenced by active rules. It **never deletes
   a Xero contact group**, and never touches a group no active rule references.
@@ -976,10 +981,16 @@ group fields and the membership-type Xero rules.
   the system. Members re-group on their next trigger (age-tier change,
   current-season membership-type change, cron age-up) or via the explicit bulk
   re-sync.
+- **Refresh from Xero + last synced:** a lightweight **"Refresh from Xero"**
+  button re-pulls the contact-group cache (the same full refresh as the
+  members-list "Refresh Xero Groups" button) and a prominent **"Last synced"**
+  header shows when the cache was last refreshed. Refreshing moves the
+  `CONTACT_GROUP_FULL_REFRESH` cursor, so it also invalidates any prior dry-run.
 - **Dry-run + bulk re-sync:** the surface shows a cache-based dry-run diff
   (counts, per-member add/remove, an estimated Xero call budget, and members
   skipped because they have no Xero contact) before any run. The bulk re-sync is
-  admin-triggered, chunked, resumable, and rate-limited; it never advances the
+  the heavyweight, admin-triggered, chunked, resumable, rate-limited action
+  (distinct from the lightweight refresh above); it never advances the
   CONTACT delta-sync watermark. See
   `docs/XERO_MEMBER_GROUPING_RUNBOOK.md` for the Tokoroa cutover procedure.
 - Existing age-configured installs migrate to `Membership Type + Age` with

@@ -16,6 +16,19 @@ scheduled maintenance window.
   `Membership Type + Age` — controls whether members are auto-grouped in Xero.
 - One rule table (`XeroContactGroupRule`): `MANAGED` rules are the group the
   sync adds; `ACCEPTED` rules are tolerated and never removed.
+- Each rule targets a **set of age tiers** (`ageTiers`, #2093). Ticking **no
+  tiers** means the rule applies to **every** age tier and displays as
+  **"All age tiers"** — this is the old null "Any age" wildcard, so existing
+  rules migrate with zero behaviour change (`ageTier = X` → `[X]`, `null` → `[]`).
+  A rule can now target any subset, e.g. Youth + Child in one rule. Tier sets are
+  stored canonical-sorted, and ticking every tier collapses to the "all tiers"
+  empty set so there is exactly one canonical shape.
+- **Overlap resolution — most specific wins (D-B4).** The ladder is
+  `type + tiers` > `type-only` > `tiers-only` > `neither`. Among tier-bearing
+  rules on the same rung, **fewer tiers is more specific** (a rule naming just
+  `ADULT` beats one naming `ADULT, YOUTH`). An **"all age tiers" (`[]`) rule is
+  the LEAST specific** in the tier dimension — a rule naming any specific tier
+  always beats it. Exact ties break deterministically by `sortOrder` then group id.
 - The E8 migration backfills existing age-tier group config into **tier-only
   rules** and sets the mode to `Membership Type + Age` when any age-tier group
   config existed, else `None`. Tier-only rules resolve identically to the
@@ -25,14 +38,18 @@ scheduled maintenance window.
 
 ## Pre-checks (do these first, read-only)
 
-1. **Refresh the Xero group cache.** In `/admin/xero`, run "Refresh Xero
-   Groups" so the local `XeroContactGroupMembershipCache` reflects current Xero
-   truth. The dry-run recomputes from this cache; a stale cache gives a
-   misleading diff. Confirm the cache-staleness indicator shows a recent
-   refresh. **This refresh is mandatory:** until a `CONTACT_GROUP_FULL_REFRESH`
-   has run at least once there is no cursor to anchor dry-run freshness to, so the
-   dry-run returns **no `dryRunId`** and a bulk re-sync is impossible — the
-   pre-check refresh is what first unlocks the re-sync.
+1. **Refresh the Xero group cache.** On the **Xero member grouping** surface,
+   click **"Refresh from Xero"** (top-right) — the lightweight action that
+   re-pulls the contact-group cache (the same full refresh as the members-list
+   "Refresh Xero Groups" button). The **"Last synced"** header shows when the
+   cache was last refreshed; confirm it now reads a recent time. The dry-run
+   recomputes from this cache, so a stale cache gives a misleading diff. **This
+   refresh is mandatory:** until a `CONTACT_GROUP_FULL_REFRESH` has run at least
+   once there is no cursor to anchor dry-run freshness to, so the dry-run returns
+   **no `dryRunId`** and a bulk re-sync is impossible — the pre-check refresh is
+   what first unlocks the re-sync. (Because "Refresh from Xero" moves the
+   `CONTACT_GROUP_FULL_REFRESH` cursor, running it also **invalidates any prior
+   dry-run**; re-run the dry-run after refreshing.)
 2. **Verify the migration produced the expected rules.** On the **Xero member
    grouping** admin surface, confirm:
    - the mode is **Membership Type + Age**;
@@ -124,6 +141,13 @@ scheduled maintenance window.
 - **Deleting a rule does not remove members** already in that group — it only
   shrinks the managed universe. The admin UI states this at the point of
   deletion.
+- **Multi-tier rules and dry-run freshness (#2093).** Widening or narrowing a
+  rule's tier set changes the grouping fingerprint the freshness check compares,
+  so it invalidates any prior dry-run exactly like any other rule edit. The
+  fingerprint is back-compatible for the migrated shapes: a migrated `[]`
+  ("all tiers") rule and a migrated single-tier `[X]` rule fingerprint
+  **identically** to the old null / scalar values, so the **first post-deploy
+  resync sees no spurious churn** — only genuinely new 2+-tier rules move it.
 - **`None` mode is a total no-op.** Selecting `None` leaves every existing Xero
   group membership untouched and stops all managed adds/removes, including on
   the membership-cancellation path.
