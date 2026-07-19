@@ -205,7 +205,7 @@ export function MinimumNightStaySection() {
         </CardHeader>
         <CardContent className="space-y-4">
           {!canEdit && (
-            <AdminViewOnlyNotice>
+            <AdminViewOnlyNotice canEdit={canEdit}>
               Your admin role can view minimum-stay policies but cannot change
               them. Bookings edit access is required.
             </AdminViewOnlyNotice>

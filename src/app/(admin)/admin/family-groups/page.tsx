@@ -408,7 +408,7 @@ export default function FamilyGroupsPage() {
           ) : (
             <>
               {!canEditMembership && (
-                <AdminViewOnlyNotice className="mb-4">
+                <AdminViewOnlyNotice canEdit={canEditMembership} className="mb-4">
                   Your admin role can view family group requests but cannot
                   approve or reject them.
                 </AdminViewOnlyNotice>

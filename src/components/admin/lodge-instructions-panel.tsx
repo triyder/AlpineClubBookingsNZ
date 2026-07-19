@@ -283,7 +283,7 @@ export function LodgeInstructionsPanel() {
       />
 
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view lodge instructions but cannot change them.
           The editors below are read-only.
         </AdminViewOnlyNotice>
@@ -340,6 +340,7 @@ export function LodgeInstructionsPanel() {
                     placeholder={`Write the ${doc.title.toLowerCase()} instructions...`}
                     tokenHelpContext="lodge-instructions"
                     readOnly={!canEdit}
+                    resolvingAccess={canEdit === undefined}
                   />
                   <div className="flex flex-wrap items-center justify-end gap-3">
                     {scopeIsLodge && pendingOverride[doc.key] ? (

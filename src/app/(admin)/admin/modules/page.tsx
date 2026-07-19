@@ -264,7 +264,7 @@ export default function AdminModulesPage() {
       </div>
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view the module settings but cannot change them.
           Support edit access is required.
         </AdminViewOnlyNotice>

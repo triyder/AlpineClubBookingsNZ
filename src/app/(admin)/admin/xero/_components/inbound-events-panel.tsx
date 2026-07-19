@@ -211,7 +211,7 @@ export function InboundEventsPanel({
     >
       <div className="space-y-4">
         {!canEdit ? (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Your admin role can view Xero inbound events but cannot replay them.
           </AdminViewOnlyNotice>
         ) : null}

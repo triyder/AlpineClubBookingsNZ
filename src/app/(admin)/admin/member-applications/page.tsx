@@ -522,7 +522,7 @@ export default function MemberApplicationsPage() {
       </div>
 
       {!canEditMembership && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEditMembership}>
           Your admin role can view member applications but cannot approve,
           decline, or otherwise act on them.
         </AdminViewOnlyNotice>

@@ -111,7 +111,7 @@ export function AllocationChip({
         type="button"
         aria-label={`Drag ${allocation.guestName} to another bed or night`}
         disabled={!canEdit}
-        title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+        title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
         className="cursor-grab touch-none rounded p-0.5 text-muted-foreground hover:bg-accent active:cursor-grabbing"
         {...attributes}
         {...listeners}
@@ -177,7 +177,7 @@ export function AllocationChip({
             className="h-5 w-5 shrink-0"
             aria-label={`Manage allocation for ${allocation.guestName}`}
             disabled={pending || !canEdit}
-            title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+            title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
           >
             <X className="h-3 w-3" />
           </Button>

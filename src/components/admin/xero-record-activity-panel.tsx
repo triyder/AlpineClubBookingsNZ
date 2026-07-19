@@ -85,7 +85,7 @@ function OperationItem({
   compact: boolean
   onRetry: (operationId: string) => Promise<void>
   retrying: boolean
-  canEdit: boolean
+  canEdit: boolean | undefined
 }) {
   return (
     <div className={cn("rounded-md border p-3", compact ? "space-y-2" : "space-y-3")}>
@@ -323,7 +323,7 @@ export function XeroRecordActivityPanel({
             </div>
           )}
           {!canEdit && (
-            <AdminViewOnlyNotice>
+            <AdminViewOnlyNotice canEdit={canEdit}>
               Your admin role can view Xero activity but cannot retry or replay
               operations. Finance edit access is required.
             </AdminViewOnlyNotice>
@@ -432,7 +432,7 @@ export function XeroRecordActivityPanel({
             </div>
           )}
           {!canEdit && (
-            <AdminViewOnlyNotice>
+            <AdminViewOnlyNotice canEdit={canEdit}>
               Your admin role can view Xero activity but cannot retry or replay
               operations. Finance edit access is required.
             </AdminViewOnlyNotice>

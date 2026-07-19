@@ -192,7 +192,7 @@ export function PasswordPolicyCard() {
       </CardHeader>
       <CardContent className="space-y-4">
         {!canEdit ? (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Your admin role can view login &amp; security settings but cannot change
             them. Support edit access is required.
           </AdminViewOnlyNotice>

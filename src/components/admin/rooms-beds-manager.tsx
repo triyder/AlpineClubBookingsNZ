@@ -714,7 +714,7 @@ export function RoomsBedsManager({
     <div className="space-y-6">
       {confirmDialog}
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view rooms and beds but cannot change them. Bookings
           edit access is required to add, edit, or delete rooms and beds.
         </AdminViewOnlyNotice>

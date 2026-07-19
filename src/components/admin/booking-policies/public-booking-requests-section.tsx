@@ -153,7 +153,7 @@ export function PublicBookingRequestsSection() {
       />
 
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view the public booking request settings but cannot
           change them. Bookings edit access is required.
         </AdminViewOnlyNotice>

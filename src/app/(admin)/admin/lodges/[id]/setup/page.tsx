@@ -499,7 +499,7 @@ export default function LodgeSetupWizardPage() {
       </ol>
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view the lodge setup wizard but cannot change
           anything. Lodge edit access is required.
         </AdminViewOnlyNotice>

@@ -104,7 +104,7 @@ export function InductionSettingsPanel() {
       </CardHeader>
       <CardContent className="space-y-5">
         {!canEdit ? (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Your admin role can view the nomination gate settings but cannot
             change them. Membership edit access is required.
           </AdminViewOnlyNotice>

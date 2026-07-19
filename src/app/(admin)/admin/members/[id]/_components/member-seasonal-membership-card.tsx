@@ -373,7 +373,7 @@ export function MemberSeasonalMembershipCard({
       </CardHeader>
       <CardContent className="space-y-4">
         {!canEdit ? (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Your admin role can view the seasonal membership type but cannot
             preview or change it.
           </AdminViewOnlyNotice>

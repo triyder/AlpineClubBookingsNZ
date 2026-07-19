@@ -248,7 +248,7 @@ export default function AgeTierSettingsPage() {
           ) : null}
 
           {!canEdit && (
-            <AdminViewOnlyNotice>
+            <AdminViewOnlyNotice canEdit={canEdit}>
               Your admin role can view the age tier settings but cannot change
               them. Bookings edit access is required.
             </AdminViewOnlyNotice>

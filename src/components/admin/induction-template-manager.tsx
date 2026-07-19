@@ -352,7 +352,7 @@ export function InductionTemplateManager() {
       </CardHeader>
       <CardContent className="space-y-6">
         {!canEdit ? (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Your admin role can view induction templates but cannot change them.
             Membership edit access is required.
           </AdminViewOnlyNotice>

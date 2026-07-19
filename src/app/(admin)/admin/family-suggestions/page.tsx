@@ -193,7 +193,7 @@ export default function FamilySuggestionsPage() {
       />
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view family group suggestions but cannot create,
           hide, or reset them.
         </AdminViewOnlyNotice>

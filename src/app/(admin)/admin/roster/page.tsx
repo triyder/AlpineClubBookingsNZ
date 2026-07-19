@@ -500,7 +500,7 @@ export default function RosterPage() {
       </div>
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view the chore roster but cannot change it. Lodge
           edit access is required.
         </AdminViewOnlyNotice>

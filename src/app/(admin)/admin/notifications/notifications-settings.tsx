@@ -138,7 +138,7 @@ export function AdminNotificationSettings({
   return (
     <div className="space-y-4">
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view admin notification preferences but cannot
           change them. Support edit access is required.
         </AdminViewOnlyNotice>

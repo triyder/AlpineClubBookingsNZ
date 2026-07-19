@@ -1498,7 +1498,7 @@ export function PublicBookingRequestsPanel({
                       ) : null}
                     </div>
                     ) : (
-                      <AdminViewOnlyNotice>
+                      <AdminViewOnlyNotice canEdit={canEdit}>
                         Your admin role can view this request but cannot price,
                         hold, approve, decline, or change its linked contact.
                       </AdminViewOnlyNotice>

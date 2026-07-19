@@ -330,14 +330,14 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
       </CardHeader>
       <CardContent className="space-y-6">
         {forbidden && (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={false}>
             You don&apos;t have permission to view this section. Hut fees are managed by
             bookings admins; ask a bookings admin if you need to see nightly rates.
           </AdminViewOnlyNotice>
         )}
 
         {!forbidden && !canEdit && (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Bookings view access can inspect hut fees. Bookings edit access is required to change nightly rates or seasons.
           </AdminViewOnlyNotice>
         )}

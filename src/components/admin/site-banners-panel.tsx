@@ -333,7 +333,7 @@ export function SiteBannersPanel() {
     <div className="space-y-6">
       {confirmDialog}
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view site banners but cannot change them.
         </AdminViewOnlyNotice>
       ) : null}

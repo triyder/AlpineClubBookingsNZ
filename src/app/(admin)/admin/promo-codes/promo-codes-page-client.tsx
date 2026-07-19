@@ -801,7 +801,7 @@ export function PromoCodesPageClient({
       </div>
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view promo codes but cannot change them. Bookings
           edit access is required.
         </AdminViewOnlyNotice>

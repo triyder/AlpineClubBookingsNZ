@@ -326,7 +326,7 @@ export function OperationsPanel({
       <div className="space-y-4">
         {confirmDialog}
         {!canEdit ? (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Your admin role can view Xero operations but cannot retry, reset, or
             resolve them.
           </AdminViewOnlyNotice>

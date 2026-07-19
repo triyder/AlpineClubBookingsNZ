@@ -101,7 +101,7 @@ export function GuestChip({
           type="button"
           aria-label={`Drag ${group.guestName} to a bed`}
           disabled={!canEdit}
-          title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+          title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
           className="mt-0.5 cursor-grab touch-none rounded p-1 text-muted-foreground hover:bg-accent active:cursor-grabbing"
           {...attributes}
           {...listeners}
@@ -162,7 +162,7 @@ export function GuestChip({
           disabled={
             !canEdit || pending || !selectedBedId || selectedBedId === "none"
           }
-          title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+          title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
         >
           Allocate
         </Button>

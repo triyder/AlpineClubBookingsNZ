@@ -253,7 +253,7 @@ export default function AdminDisplayDevicesPage() {
       </div>
 
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view the lobby display devices but cannot change
           them. Lodge edit access is required to create, pair, revoke, or
           re-template a screen.

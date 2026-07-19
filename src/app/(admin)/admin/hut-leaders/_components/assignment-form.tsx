@@ -77,7 +77,7 @@ interface AssignmentFormProps {
   onConfirm: () => void;
   // Lodge edit gating (#1940): a lodge:view admin can view the picker but the
   // Confirm-assignment write is disabled.
-  canEdit: boolean;
+  canEdit: boolean | undefined;
   // Optional lodge picker (multi-lodge, ADR-002): renders in step 1 above the
   // date inputs. It renders nothing while fewer than two lodges exist.
   lodgeSelector?: ReactNode;

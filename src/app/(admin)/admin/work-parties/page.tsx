@@ -292,7 +292,7 @@ export default function AdminWorkPartiesPage() {
       />
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view work parties but cannot change them. Lodge
           edit access is required.
         </AdminViewOnlyNotice>

@@ -445,7 +445,7 @@ export default function AdminDisplayTemplatesPage() {
       </div>
 
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view the lobby display templates but cannot change
           them. Lodge edit access is required to author, edit, or delete a
           template. Preview stays available.

@@ -203,7 +203,7 @@ export function LodgeCapacityCard() {
           loading={lodgesLoading}
         />
         {!canEdit ? (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Your admin role can view the lodge capacity settings but cannot
             change them. Lodge edit access is required.
           </AdminViewOnlyNotice>

@@ -153,7 +153,7 @@ export default function DisplayBuilderPage() {
       </div>
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view the visual builder but cannot save. Lodge edit
           access is required to author a board.
         </AdminViewOnlyNotice>

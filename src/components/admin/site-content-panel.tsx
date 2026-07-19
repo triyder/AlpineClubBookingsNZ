@@ -180,7 +180,7 @@ export function SiteContentPanel() {
   return (
     <div className="space-y-6">
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view site content but cannot change it. The
           editors below are read-only.
         </AdminViewOnlyNotice>
@@ -209,6 +209,7 @@ export function SiteContentPanel() {
               placeholder={`Write the ${section.title.toLowerCase()} content...`}
               tokenHelpContext="site-footer"
               readOnly={!canEdit}
+              resolvingAccess={canEdit === undefined}
             />
             <div className="flex justify-end">
               <ViewOnlyActionButton

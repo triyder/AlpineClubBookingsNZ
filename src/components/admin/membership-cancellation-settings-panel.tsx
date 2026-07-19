@@ -192,7 +192,7 @@ export function MembershipCancellationSettingsPanel() {
   return (
     <div className="space-y-6">
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view membership cancellation settings but cannot
           change them. Membership edit access is required.
         </AdminViewOnlyNotice>

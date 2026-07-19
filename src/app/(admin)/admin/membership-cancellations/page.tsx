@@ -473,7 +473,7 @@ export default function MembershipCancellationsPage() {
           </h1>
           <p className="mt-1 text-sm text-slate-500">{pendingSummary}</p>
           {!canEditMembership && (
-            <AdminViewOnlyNotice className="mt-3">
+            <AdminViewOnlyNotice canEdit={canEditMembership} className="mt-3">
               Your admin role can view membership cancellations but cannot
               approve or reject them.
             </AdminViewOnlyNotice>

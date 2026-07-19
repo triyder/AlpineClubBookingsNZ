@@ -82,7 +82,7 @@ export function NotificationDeliveryPolicySettings({
   return (
     <div className="space-y-4">
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view notification delivery rules but cannot change
           them. Support &amp; System edit access is required.
         </AdminViewOnlyNotice>

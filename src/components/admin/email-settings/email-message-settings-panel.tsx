@@ -253,7 +253,7 @@ export function EmailMessageSettingsPanel() {
   return (
     <div className="space-y-8">
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view email settings and templates but cannot change
           them. Support &amp; System edit access is required.
         </AdminViewOnlyNotice>

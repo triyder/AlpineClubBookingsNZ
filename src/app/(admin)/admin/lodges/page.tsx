@@ -239,7 +239,7 @@ export default function AdminLodgesPage() {
       </div>
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view the lodge properties but cannot change them.
           Lodge edit access is required.
         </AdminViewOnlyNotice>

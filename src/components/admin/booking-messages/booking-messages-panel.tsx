@@ -184,7 +184,7 @@ export function BookingMessagesPanel() {
   return (
     <div className="space-y-6">
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view booking messages but cannot change them.
           Support &amp; System edit access is required.
         </AdminViewOnlyNotice>
