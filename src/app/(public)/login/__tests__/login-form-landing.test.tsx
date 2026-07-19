@@ -110,6 +110,29 @@ describe("LoginForm — post-auth landing navigation (#2090)", () => {
     );
   });
 
+  it("passes an abort signal to the resolver fetch so a hung request times out", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const body = url.startsWith("/api/auth/post-login-landing")
+        ? { path: "/admin/dashboard" }
+        : { required: false };
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(body),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderForm();
+    await submit();
+
+    await waitFor(() => expect(assignMock).toHaveBeenCalledWith("/admin/dashboard"));
+    const resolverCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).startsWith("/api/auth/post-login-landing"),
+    );
+    expect(resolverCall?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("forwards a genuinely explicit callbackUrl to the resolver", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
