@@ -8,6 +8,8 @@ interface FamilyGroupEditorDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onChanged?: () => void;
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined;
 }
 
 export function FamilyGroupEditorDialog({
@@ -15,6 +17,7 @@ export function FamilyGroupEditorDialog({
   open,
   onOpenChange,
   onChanged,
+  canEdit,
 }: FamilyGroupEditorDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -30,6 +33,7 @@ export function FamilyGroupEditorDialog({
             groupId={groupId}
             onClose={() => onOpenChange(false)}
             onChanged={onChanged}
+            canEdit={canEdit}
           />
         )}
       </DialogContent>

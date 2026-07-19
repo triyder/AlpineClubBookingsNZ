@@ -104,7 +104,7 @@ export function InternetBankingSettingsPanel() {
   return (
     <div className="space-y-6">
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view Internet Banking settings but cannot change
           them. Finance edit access is required.
         </AdminViewOnlyNotice>

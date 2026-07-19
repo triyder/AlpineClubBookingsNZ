@@ -295,7 +295,7 @@ export function SubscriptionLockoutSettingsPanel({
   return (
     <div className="space-y-6">
       {!membershipCanEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={membershipCanEdit}>
           Your admin role can view the subscription lockout settings but cannot
           change them.
         </AdminViewOnlyNotice>
@@ -433,7 +433,7 @@ export function SubscriptionLockoutSettingsPanel({
         </CardHeader>
         <CardContent className="space-y-5">
           {!financeCanEdit ? (
-            <AdminViewOnlyNotice>
+            <AdminViewOnlyNotice canEdit={financeCanEdit}>
               Your admin role can view the paid-subscription detection settings
               but cannot change them.
             </AdminViewOnlyNotice>

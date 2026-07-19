@@ -349,7 +349,7 @@ export default function LockersPage() {
       />
 
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view lockers but cannot change them. Membership
           edit access is required.
         </AdminViewOnlyNotice>

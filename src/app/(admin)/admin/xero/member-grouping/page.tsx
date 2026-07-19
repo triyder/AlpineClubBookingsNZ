@@ -237,7 +237,7 @@ export default function XeroMemberGroupingPage() {
         title="Xero member grouping"
         description="Choose how members are auto-sorted into Xero contact groups, and manage the grouping rules."
       />
-      {!canEdit ? <AdminViewOnlyNotice /> : null}
+      {!canEdit ? <AdminViewOnlyNotice canEdit={canEdit} /> : null}
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
       <Card>

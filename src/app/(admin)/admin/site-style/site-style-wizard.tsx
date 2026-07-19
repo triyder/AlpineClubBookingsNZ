@@ -322,7 +322,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
       </CardHeader>
       <CardContent className="space-y-6">
         {!canEdit ? (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Your admin role can view the site style but cannot change it. The
             controls below are read-only.
           </AdminViewOnlyNotice>

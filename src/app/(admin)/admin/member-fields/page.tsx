@@ -214,7 +214,7 @@ export default function AdminMemberFieldsPage() {
       </div>
 
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view member fields but cannot change them.
           Membership edit access is required.
         </AdminViewOnlyNotice>

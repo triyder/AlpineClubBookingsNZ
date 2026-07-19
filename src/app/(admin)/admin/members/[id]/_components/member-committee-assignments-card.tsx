@@ -350,7 +350,7 @@ export function MemberCommitteeAssignmentsCard({
       </CardHeader>
       <CardContent className="space-y-4">
         {!canEdit ? (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Your admin role can view committee assignments but cannot add, edit,
             or remove them.
           </AdminViewOnlyNotice>

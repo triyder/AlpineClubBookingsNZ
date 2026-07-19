@@ -302,7 +302,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
 
   if (forbidden) {
     return <div className="space-y-6">
-      <AdminViewOnlyNotice>
+      <AdminViewOnlyNotice canEdit={false}>
         You don&apos;t have permission to view this section. Joining fees and annual
         membership fees are managed by finance admins; ask a finance admin if you need
         to see fee schedules.

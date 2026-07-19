@@ -312,7 +312,7 @@ interface MembershipTypeEditorDialogProps {
   draft: DraftMembershipType;
   availableAgeTiers: AgeTier[];
   saving: boolean;
-  canEdit: boolean;
+  canEdit: boolean | undefined;
   error: string;
   onDraftChange: (patch: Partial<DraftMembershipType>) => void;
   onSave: () => void;
@@ -702,7 +702,7 @@ interface MembershipTypeMergeDialogProps {
   targetId: string;
   merging: boolean;
   error: string;
-  canEdit: boolean;
+  canEdit: boolean | undefined;
   onTargetChange: (targetId: string) => void;
   onCancel: () => void;
   onConfirm: () => void;
@@ -832,7 +832,7 @@ interface MembershipTypeListProps {
   savingId: string | null;
   deletingId: string | null;
   reordering: boolean;
-  canEdit: boolean;
+  canEdit: boolean | undefined;
   onEdit: (type: MembershipType) => void;
   onMove: (index: number, direction: -1 | 1) => void;
   onSetActive: (type: MembershipType, isActive: boolean) => void;
@@ -1553,7 +1553,7 @@ export default function AdminMembershipTypesPage() {
       </div>
 
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view membership types but cannot change them.
           Membership edit access is required.
         </AdminViewOnlyNotice>

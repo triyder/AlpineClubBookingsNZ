@@ -467,7 +467,7 @@ export function FinanceReportMappingsPanel() {
       </CardHeader>
       <CardContent className="space-y-5">
         {!canEdit ? (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Your admin role can view the finance report mappings but cannot change
             them. Finance edit access is required.
           </AdminViewOnlyNotice>

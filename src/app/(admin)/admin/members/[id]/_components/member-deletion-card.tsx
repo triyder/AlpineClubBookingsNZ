@@ -22,7 +22,8 @@ interface MemberDeletionCardProps {
     action: "approve" | "reject"
   ) => void
   /** Whether the actor may act (membership edit, #1997). */
-  canEdit?: boolean
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined
   className?: string
 }
 
@@ -40,7 +41,7 @@ export function MemberDeletionCard({
   canReviewPendingDeleteRequest,
   onOpenRequestDialog,
   onOpenReviewDialog,
-  canEdit = true,
+  canEdit,
   className,
 }: MemberDeletionCardProps) {
   const deleteBlockers = deleteEligibility.blockers

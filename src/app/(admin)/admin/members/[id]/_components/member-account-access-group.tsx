@@ -43,7 +43,8 @@ interface MemberAccountAccessGroupProps {
   edit: MemberGroupEditState<MemberAccountEditForm>;
   inheritEmail: ReturnType<typeof useInheritEmailSearch>;
   /** Whether the actor may edit account/access details (membership edit, #1997). */
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined;
 }
 
 export function MemberAccountAccessGroup({
@@ -53,7 +54,7 @@ export function MemberAccountAccessGroup({
   memberLifecycleLocked,
   edit,
   inheritEmail,
-  canEdit = true,
+  canEdit,
 }: MemberAccountAccessGroupProps) {
   const roleOptions = useAccessRoleOptions();
   const loginBadge = getLoginBadge(member.canLogin);

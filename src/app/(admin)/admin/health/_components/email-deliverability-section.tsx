@@ -119,7 +119,7 @@ export function EmailDeliverabilitySection({
     <div className="space-y-6">
       {confirmDialog}
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view email deliverability but cannot clear
           suppressions, reissue, or archive failed emails.
         </AdminViewOnlyNotice>
@@ -192,7 +192,7 @@ export function EmailDeliverabilitySection({
                       disabled={
                         clearingSuppressionId === suppression.id || !canEdit
                       }
-                      title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+                      title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                       className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
                     >
                       <CheckCircle className="h-3.5 w-3.5" />
@@ -270,7 +270,7 @@ export function EmailDeliverabilitySection({
                     <button
                       onClick={() => reissueTokenEmail(failure.id, failure.to)}
                       disabled={reissuingTokenEmailId === failure.id || !canEdit}
-                      title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+                      title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                       className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
                     >
                       <Mail className="h-3.5 w-3.5" />
@@ -354,7 +354,7 @@ export function EmailDeliverabilitySection({
                     <button
                       onClick={() => archiveEmailFailure(failure.id, failure.to)}
                       disabled={reviewingEmailFailureId === failure.id || !canEdit}
-                      title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+                      title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                       className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
                     >
                       <CheckCircle className="h-3.5 w-3.5" />

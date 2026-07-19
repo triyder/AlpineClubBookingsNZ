@@ -97,7 +97,7 @@ export function ClubIdentityPanel() {
       </p>
       {!canEdit ? (
         <div id={viewOnlyReasonId}>
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Content view access can inspect club identity. Content edit access is
             required to change it.
           </AdminViewOnlyNotice>

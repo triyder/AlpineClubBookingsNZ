@@ -49,7 +49,10 @@ interface RoomTableProps {
   highlightedBookingId: string;
   activeDragDates?: Set<string>;
   registerScroller?: (element: HTMLDivElement) => () => void;
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the client session resolves. The
+  // `!canEdit` idiom below treats that as disabled (the neutral resolving
+  // state), so it must never default to `true`.
+  canEdit: boolean | undefined;
 }
 
 export function RoomTable({
@@ -64,7 +67,7 @@ export function RoomTable({
   highlightedBookingId,
   activeDragDates = new Set(),
   registerScroller,
-  canEdit = true,
+  canEdit,
 }: RoomTableProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const activeBeds = room.beds.filter((bed) => bed.active);

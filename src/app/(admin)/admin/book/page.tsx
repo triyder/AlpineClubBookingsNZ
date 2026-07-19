@@ -487,7 +487,7 @@ export default function AdminBookPage() {
       <h1 className="text-3xl font-bold">Book on Behalf of Member</h1>
 
       {!canEditBookings && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEditBookings}>
           Your admin role can view booking tools but cannot create bookings on
           behalf of members.
         </AdminViewOnlyNotice>

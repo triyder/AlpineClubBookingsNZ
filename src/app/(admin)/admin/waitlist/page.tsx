@@ -422,7 +422,7 @@ export default function AdminWaitlistPage() {
       />
 
       {!canEditBookings && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEditBookings}>
           Your admin role can view the waitlist but cannot force-confirm
           bookings.
         </AdminViewOnlyNotice>

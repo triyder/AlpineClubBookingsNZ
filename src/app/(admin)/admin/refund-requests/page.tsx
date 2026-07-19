@@ -339,7 +339,7 @@ export default function RefundRequestsPage() {
       </div>
 
       {!canEditFinance ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEditFinance}>
           Your admin role can view refund appeals and credit approvals but cannot
           approve, reject, or process them.
         </AdminViewOnlyNotice>

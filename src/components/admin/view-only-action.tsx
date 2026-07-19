@@ -6,7 +6,12 @@ import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-acces
 import { cn } from "@/lib/utils";
 
 interface ViewOnlyActionButtonProps extends ButtonProps {
-  canEdit: boolean;
+  // Tri-state (#2065): `undefined` while the session is resolving. Neutral
+  // treatment for that window = disabled WITHOUT the view-only reason, so an
+  // edit-capable admin never flashes the reason and a view-only admin never
+  // flashes an enabled control. The read-only reason is only exposed once we
+  // know the admin is view-only (`canEdit === false`).
+  canEdit: boolean | undefined;
   readOnlyReason?: string;
 }
 
@@ -20,13 +25,17 @@ export function ViewOnlyActionButton({
   ...props
 }: ViewOnlyActionButtonProps) {
   const reasonId = useId();
-  const isReadOnly = !canEdit;
+  // Only a resolved view-only admin gets the read-only reason/affordance…
+  const isReadOnly = canEdit === false;
+  // …but the button stays disabled until we positively know editing is allowed,
+  // so the resolving window (undefined) is a neutral disabled state.
+  const isDisabled = canEdit !== true || disabled;
 
   return (
     <>
       <Button
         {...props}
-        disabled={isReadOnly || disabled}
+        disabled={isDisabled}
         title={isReadOnly ? readOnlyReason : title}
         aria-describedby={isReadOnly ? reasonId : ariaDescribedBy}
       >
@@ -72,10 +81,25 @@ export function AdminForbiddenSaveNotice({
 export function AdminViewOnlyNotice({
   className,
   children = ADMIN_VIEW_ONLY_ACTION_REASON,
+  canEdit,
 }: {
   className?: string;
   children?: ReactNode;
+  /**
+   * Tri-state edit access for the gated area (#2065). The banner renders only
+   * once we positively know the admin is view-only (`canEdit === false`). While
+   * the session is resolving (`undefined`) — or if the admin can edit
+   * (`true`) — it renders nothing, so the "view only" banner never flashes
+   * during the post-hydration session fetch. This prop is REQUIRED at every
+   * call site: there is deliberately no default, because a default would fire
+   * on an explicitly-passed `undefined` (the resolving state) and wrongly show
+   * the banner. Panels whose edit flag is server/prop-computed pass that
+   * boolean directly (it is never `undefined`).
+   */
+  canEdit: boolean | undefined;
 }) {
+  if (canEdit !== false) return null;
+
   return (
     <p
       className={cn(

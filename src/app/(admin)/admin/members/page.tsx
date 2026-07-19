@@ -298,7 +298,7 @@ export default function MembersPage() {
       />
 
       {!canEditMembership && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEditMembership}>
           Your admin role can view membership records but cannot create, edit,
           import, or bulk-update members.
         </AdminViewOnlyNotice>

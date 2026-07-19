@@ -117,7 +117,7 @@ interface DisplayBuilderProps {
   initialCssOverrides: string;
   /** Built-in pair → Save is disabled in favour of duplicate-to-customise. */
   isBuiltIn: boolean;
-  canEdit: boolean;
+  canEdit: boolean | undefined;
   lodges: { id: string; name: string }[];
   onDuplicate: () => void;
   defaultCssCustomised?: boolean;
@@ -718,7 +718,7 @@ function PaletteChip({ item, disabled }: { item: PaletteItem; disabled: boolean 
 
 interface ZoneGridProps {
   model: BuilderModel;
-  canEdit: boolean;
+  canEdit: boolean | undefined;
   onOpen: (index: number) => void;
   onRemove: (index: number) => void;
   onMove: (from: number, to: number) => void;
@@ -879,7 +879,7 @@ function ZoneCell(
 interface ZoneDrawerProps {
   zone: BuilderZone;
   zoneIndex: number;
-  canEdit: boolean;
+  canEdit: boolean | undefined;
   conditions: ReturnType<typeof listDisplayConditions>;
   modules: ReturnType<typeof listPaletteDisplayModules>;
   onClose: () => void;
@@ -973,7 +973,7 @@ function ZoneDrawer(props: ZoneDrawerProps) {
 function RotatorEditor(props: {
   zone: Extract<BuilderZone, { kind: "rotator" }>;
   zoneIndex: number;
-  canEdit: boolean;
+  canEdit: boolean | undefined;
   conditions: ReturnType<typeof listDisplayConditions>;
   modules: ReturnType<typeof listPaletteDisplayModules>;
   setModel: React.Dispatch<React.SetStateAction<BuilderModel>>;
@@ -1080,7 +1080,7 @@ function RotatorEditor(props: {
 
 function ContentEditor(props: {
   content: BuilderContent;
-  canEdit: boolean;
+  canEdit: boolean | undefined;
   modules: ReturnType<typeof listPaletteDisplayModules>;
   onSetModule: (m: DisplayModuleName) => void;
   onSetHtml: (html: string) => void;
@@ -1153,7 +1153,7 @@ function ContentEditor(props: {
 function ModuleOptions(props: {
   moduleName: DisplayModuleName;
   options: Record<string, string | number | boolean>;
-  canEdit: boolean;
+  canEdit: boolean | undefined;
   onSetOption: (key: string, value: string | number | boolean) => void;
 }) {
   const meta = useMemo(

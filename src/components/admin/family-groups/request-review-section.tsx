@@ -35,7 +35,8 @@ export interface FamilyGroupRequestReviewSectionProps {
   onReviewed: () => void | Promise<void>;
   idPrefix?: string;
   /** Whether the actor may approve/reject requests (membership edit, #1997). */
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined;
   showSearchGuidance?: boolean;
   /**
    * Noun used in the "create a new non-login <noun>" guard message. The admin
@@ -55,7 +56,7 @@ export function FamilyGroupRequestReviewSection({
   requests,
   onReviewed,
   idPrefix,
-  canEdit = true,
+  canEdit,
   showSearchGuidance = false,
   createMemberNoun = "member",
 }: FamilyGroupRequestReviewSectionProps) {

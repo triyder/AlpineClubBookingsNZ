@@ -212,6 +212,14 @@ export const WysiwygEditor = forwardRef<
      * toggle, token help) stay available.
      */
     readOnly?: boolean;
+    /**
+     * True while the admin's edit access is still resolving (#2065). When the
+     * editor is read-only ONLY because the session has not resolved yet, the
+     * caption must stay neutral rather than asserting "View only — your admin
+     * role cannot edit", which would flash for a privileged admin. The editor
+     * still renders as non-editable during this window (the correct neutral).
+     */
+    resolvingAccess?: boolean;
   }
 >(function WysiwygEditor(
   {
@@ -222,6 +230,7 @@ export const WysiwygEditor = forwardRef<
     wrapperClassName,
     tokenHelpContext,
     readOnly = false,
+    resolvingAccess = false,
   },
   ref,
 ) {
@@ -792,7 +801,12 @@ export const WysiwygEditor = forwardRef<
       <div className="sticky top-0 z-30 rounded-md border border-slate-200 bg-slate-50/95 px-3 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-slate-50/90">
         <p className="text-sm text-slate-600">
           {readOnly
-            ? "View only — your admin role cannot edit this content."
+            ? resolvingAccess
+              ? // Neutral while permissions resolve (#2065): don't assert
+                // "view only" — the editor is non-editable but we don't yet
+                // know whether this admin can edit.
+                " "
+              : "View only — your admin role cannot edit this content."
             : showHtmlFallback
               ? "HTML editor mode is active."
               : "Visual editor mode is active."}
@@ -1679,7 +1693,7 @@ export function PageContentPanel() {
   return (
     <>
       {!canEdit ? (
-        <AdminViewOnlyNotice className="mb-4">
+        <AdminViewOnlyNotice canEdit={canEdit} className="mb-4">
           Your admin role can view page content but cannot change it. Pages open
           read-only and no save control is available.
         </AdminViewOnlyNotice>
@@ -2085,6 +2099,7 @@ export function PageContentPanel() {
                     placeholder="Short intro text shown under the title"
                     editorClassName="min-h-28"
                     readOnly={!canEdit}
+                    resolvingAccess={canEdit === undefined}
                   />
                 </div>
               </div>
@@ -2100,6 +2115,7 @@ export function PageContentPanel() {
                 editorClassName="min-h-[320px]"
                 tokenHelpContext="page-content-body"
                 readOnly={!canEdit}
+                resolvingAccess={canEdit === undefined}
               />
 
               <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">

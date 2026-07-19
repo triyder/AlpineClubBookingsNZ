@@ -373,7 +373,7 @@ export function BookingApprovalsPanel({
                         id={`notes-${booking.id}`}
                         value={notesById[booking.id] ?? ""}
                         disabled={!canEdit}
-                        title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+                        title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                         onChange={(event) =>
                           setNotesById((prev) => ({ ...prev, [booking.id]: event.target.value }))
                         }

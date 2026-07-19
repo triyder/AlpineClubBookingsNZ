@@ -247,7 +247,7 @@ export function MountainConditionsPanel() {
   return (
     <>
       {!canEdit ? (
-        <AdminViewOnlyNotice className="mb-4">
+        <AdminViewOnlyNotice canEdit={canEdit} className="mb-4">
           Your admin role can view mountain conditions but cannot change them.
         </AdminViewOnlyNotice>
       ) : null}

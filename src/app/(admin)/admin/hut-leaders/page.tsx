@@ -475,7 +475,7 @@ export default function HutLeadersPage() {
       )}
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view {hutLeaderLabel.toLowerCase()} assignments but
           cannot change them. Lodge edit access is required.
         </AdminViewOnlyNotice>

@@ -38,7 +38,8 @@ interface MemberContactGroupProps {
   actorIsFullAdmin: boolean;
   edit: MemberGroupEditState<MemberContactEditForm>;
   /** Whether the actor may edit contact details (membership edit, #1997). */
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined;
 }
 
 function addressLines(input: {
@@ -77,7 +78,7 @@ export function MemberContactGroup({
   isSelf,
   actorIsFullAdmin,
   edit,
-  canEdit = true,
+  canEdit,
 }: MemberContactGroupProps) {
   const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
   // Mirror of the server-side Full Admin gate: only a Full Admin may change a

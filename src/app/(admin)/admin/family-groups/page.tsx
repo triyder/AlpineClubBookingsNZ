@@ -11,8 +11,11 @@ import { Trash2, Plus, Users, X, Edit2, Search } from "lucide-react";
 import { FamilyGroupEditor } from "@/components/admin/family-group-editor";
 import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import { FamilyGroupRequestReviewSection } from "@/components/admin/family-groups/request-review-section";
-import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
-import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import {
+  ADMIN_VIEW_ONLY_ACTION_REASON,
+  useAdminAreaEditAccess,
+} from "@/hooks/use-admin-area-edit-access";
 import {
   type FamilyGroupRequest,
   type FamilyGroupSummary,
@@ -177,6 +180,7 @@ export default function FamilyGroupsPage() {
   }
 
   function openCreateForm() {
+    if (!canEditMembership) return;
     setEditingGroup(null);
     setFormName("");
     setSelectedMembers([]);
@@ -211,12 +215,14 @@ export default function FamilyGroupsPage() {
   }, [fetchData, openEditForm, searchParams]);
 
   function addMember(member: MemberOption) {
+    if (!canEditMembership) return;
     setSelectedMembers((prev) => [...prev, member]);
     setMemberSearch("");
     setSearchResults([]);
   }
 
   function removeMember(id: string) {
+    if (!canEditMembership) return;
     setSelectedMembers((prev) => prev.filter((m) => m.id !== id));
   }
 
@@ -233,6 +239,7 @@ export default function FamilyGroupsPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!canEditMembership) return;
     setError("");
     if (selectedMembers.length < 1) {
       setError("At least one member is required");
@@ -272,6 +279,7 @@ export default function FamilyGroupsPage() {
   }
 
   async function handleDelete(id: string) {
+    if (!canEditMembership) return;
     if (!confirm("Delete this family group? Members will be unlinked.")) return;
     const res = await fetch(`/api/admin/family-groups/${id}`, { method: "DELETE" });
     if (res.ok) {
@@ -317,10 +325,10 @@ export default function FamilyGroupsPage() {
             Link primary members together so they appear in each other&apos;s booking quick-add lists
           </p>
         </div>
-        <Button onClick={openCreateForm}>
+        <ViewOnlyActionButton canEdit={canEditMembership} onClick={openCreateForm}>
           <Plus className="h-4 w-4 mr-2" />
           New Group
-        </Button>
+        </ViewOnlyActionButton>
       </div>
 
       {/* P3.1: Search and filter bar */}
@@ -408,7 +416,7 @@ export default function FamilyGroupsPage() {
           ) : (
             <>
               {!canEditMembership && (
-                <AdminViewOnlyNotice className="mb-4">
+                <AdminViewOnlyNotice canEdit={canEditMembership} className="mb-4">
                   Your admin role can view family group requests but cannot
                   approve or reject them.
                 </AdminViewOnlyNotice>
@@ -509,6 +517,7 @@ export default function FamilyGroupsPage() {
             onChanged={() => {
               void fetchData();
             }}
+            canEdit={canEditMembership}
           />
         ) : (
           <Card>
@@ -525,6 +534,7 @@ export default function FamilyGroupsPage() {
                     onChange={(e) => setFormName(e.target.value)}
                     placeholder='e.g., "Smith Family"'
                     required
+                    disabled={canEditMembership !== true}
                   />
                 </div>
 
@@ -542,7 +552,9 @@ export default function FamilyGroupsPage() {
                           <button
                             type="button"
                             onClick={() => removeMember(m.id)}
-                            className="ml-1 hover:text-red-600"
+                            disabled={canEditMembership !== true}
+                            title={canEditMembership === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+                            className="ml-1 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-current"
                           >
                             <X className="h-3 w-3" />
                           </button>
@@ -555,6 +567,7 @@ export default function FamilyGroupsPage() {
                       value={memberSearch}
                       onChange={(e) => setMemberSearch(e.target.value)}
                       placeholder="Search members by name or email..."
+                      disabled={canEditMembership !== true}
                     />
                     {searching && (
                       <div className="absolute right-3 top-2.5 text-xs text-slate-400">
@@ -568,7 +581,8 @@ export default function FamilyGroupsPage() {
                             key={m.id}
                             type="button"
                             onClick={() => addMember(m)}
-                            className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm"
+                            disabled={canEditMembership !== true}
+                            className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <span className="font-medium">
                               {m.firstName} {m.lastName}
@@ -587,9 +601,13 @@ export default function FamilyGroupsPage() {
                 {error && <p className="text-sm text-red-600">{error}</p>}
 
                 <div className="flex gap-2">
-                  <Button type="submit" disabled={submitting || selectedMembers.length < 1}>
+                  <ViewOnlyActionButton
+                    canEdit={canEditMembership}
+                    type="submit"
+                    disabled={submitting || selectedMembers.length < 1}
+                  >
                     {submitting ? "Saving..." : "Create Group"}
-                  </Button>
+                  </ViewOnlyActionButton>
                   <Button type="button" variant="outline" onClick={closeForm}>
                     Cancel
                   </Button>
@@ -668,21 +686,29 @@ export default function FamilyGroupsPage() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex justify-end gap-1">
+                          {/* Edit opens the editor, which is itself edit-gated
+                              internally (#2065). Opening it stays available so a
+                              view-only membership admin can browse the group —
+                              mirroring the members/[id] "open editor" trigger,
+                              which is an ungated Button. */}
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => openEditForm(g)}
+                            aria-label={`Edit ${g.name || "Unnamed Group"}`}
                           >
                             <Edit2 className="h-4 w-4" />
                           </Button>
-                          <Button
+                          <ViewOnlyActionButton
+                            canEdit={canEditMembership}
                             variant="ghost"
                             size="sm"
                             onClick={() => handleDelete(g.id)}
                             className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            aria-label={`Delete ${g.name || "Unnamed Group"}`}
                           >
                             <Trash2 className="h-4 w-4" />
-                          </Button>
+                          </ViewOnlyActionButton>
                         </div>
                       </td>
                     </tr>

@@ -18,7 +18,8 @@ interface MemberParentLinksCardProps {
   onOpenParentLinkDialog: () => void
   onUnlinkParent: (parentId: string, dependentId: string, dependentName: string) => void
   /** Whether the actor may act (membership edit, #1997). */
-  canEdit?: boolean
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined
   className?: string
 }
 
@@ -29,7 +30,7 @@ export function MemberParentLinksCard({
   unlinkingDependentId,
   onOpenParentLinkDialog,
   onUnlinkParent,
-  canEdit = true,
+  canEdit,
   className,
 }: MemberParentLinksCardProps) {
   const router = useRouter()

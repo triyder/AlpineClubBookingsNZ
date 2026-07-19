@@ -50,7 +50,7 @@ function AccountCard({
   lodges: Array<{ id: string; name: string }>;
   showLodgeControls: boolean;
   defaultLodgeName: string | null;
-  canEdit: boolean;
+  canEdit: boolean | undefined;
   onSaved: () => void;
 }) {
   const [email, setEmail] = useState(account.email);
@@ -405,7 +405,7 @@ export default function AdminLodgePage() {
       </p>
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view the lodge kiosk accounts but cannot change
           them. Lodge edit access is required.
         </AdminViewOnlyNotice>

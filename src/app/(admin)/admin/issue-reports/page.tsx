@@ -210,7 +210,7 @@ export default function AdminIssueReportsPage() {
       </div>
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view issue reports but cannot resolve, reopen, or
           delete their screenshots.
         </AdminViewOnlyNotice>

@@ -428,7 +428,7 @@ export default function LodgeConfigurationHubPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {!canEdit && (
-            <AdminViewOnlyNotice>
+            <AdminViewOnlyNotice canEdit={canEdit}>
               Your admin role can view this lodge&apos;s capacity but cannot
               change it. Lodge edit access is required.
             </AdminViewOnlyNotice>

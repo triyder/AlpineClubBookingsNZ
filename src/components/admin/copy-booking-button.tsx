@@ -99,7 +99,7 @@ export function CopyBookingButton({
         <Button
           variant="outline"
           disabled={!canEdit}
-          title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+          title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
         >
           <Copy className="mr-2 h-4 w-4" />
           Copy Booking

@@ -162,7 +162,7 @@ export default function SeasonsPage() {
       />
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Bookings view access can inspect season windows. Bookings edit access is required to change them.
         </AdminViewOnlyNotice>
       )}

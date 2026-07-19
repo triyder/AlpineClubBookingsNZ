@@ -245,7 +245,7 @@ export function MappingsPanel({
           ) : null}
           {saved ? <p className="text-sm text-success">Account mappings saved.</p> : null}
           {!canEdit ? (
-            <AdminViewOnlyNotice>
+            <AdminViewOnlyNotice canEdit={canEdit}>
               Your admin role can view the Xero account mappings but cannot change
               them. Finance edit access is required.
             </AdminViewOnlyNotice>

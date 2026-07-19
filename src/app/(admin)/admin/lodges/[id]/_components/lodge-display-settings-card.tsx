@@ -116,7 +116,7 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
       </CardHeader>
       <CardContent className="space-y-4">
         {!canEdit ? (
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Your admin role can view the lobby display settings but cannot change
             them. Lodge edit access is required.
           </AdminViewOnlyNotice>

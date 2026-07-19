@@ -34,7 +34,9 @@ interface GuestChipProps {
   onAllocate: () => void;
   pending: boolean;
   highlighted?: boolean;
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the client session resolves; the
+  // `!canEdit` idiom treats that as disabled, so no truthy default here.
+  canEdit: boolean | undefined;
 }
 
 export function GuestChip({
@@ -46,7 +48,7 @@ export function GuestChip({
   onAllocate,
   pending,
   highlighted,
-  canEdit = true,
+  canEdit,
 }: GuestChipProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
@@ -101,7 +103,7 @@ export function GuestChip({
           type="button"
           aria-label={`Drag ${group.guestName} to a bed`}
           disabled={!canEdit}
-          title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+          title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
           className="mt-0.5 cursor-grab touch-none rounded p-1 text-muted-foreground hover:bg-accent active:cursor-grabbing"
           {...attributes}
           {...listeners}
@@ -162,7 +164,7 @@ export function GuestChip({
           disabled={
             !canEdit || pending || !selectedBedId || selectedBedId === "none"
           }
-          title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+          title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
         >
           Allocate
         </Button>

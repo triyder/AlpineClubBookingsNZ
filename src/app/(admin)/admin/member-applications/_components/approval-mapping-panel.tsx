@@ -114,14 +114,15 @@ function candidateLabel(candidate: Candidate) {
 export default function ApprovalMappingPanel({
   application,
   submitting,
-  canEdit = true,
+  canEdit,
   onRequestReview,
   onError,
 }: {
   application: PanelApplication;
   submitting: boolean;
   /** Whether the actor may approve/decline (membership edit, #1997). */
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined;
   onRequestReview: (payload: ReviewRequestPayload) => void;
   onError: (message: string) => void;
 }) {

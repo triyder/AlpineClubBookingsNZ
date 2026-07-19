@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import type { ComponentProps } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import {
@@ -14,11 +14,17 @@ import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-acces
 // useAdminAreaEditAccess reads the merged matrix off the session user; drive it
 // per-test so the panels see a content:edit vs content:view admin.
 let sessionMatrix: AdminPermissionMatrix | null = null;
+// Resolution state of the client session. Defaults to "authenticated" so every
+// existing case behaves as fully-resolved; the #2065 resolving-state cases set
+// it to "loading" to exercise the tri-state neutral rendering.
+let sessionStatus: "loading" | "authenticated" | "unauthenticated" =
+  "authenticated";
 vi.mock("next-auth/react", () => ({
   useSession: () => ({
     data: sessionMatrix
       ? { user: { id: "u1", adminPermissionMatrix: sessionMatrix } }
       : null,
+    status: sessionStatus,
   }),
 }));
 
@@ -148,6 +154,8 @@ import { MemberDeletionCard } from "@/app/(admin)/admin/members/[id]/_components
 import { MemberCreditCard } from "@/app/(admin)/admin/members/[id]/_components/member-credit-card";
 import { MemberParentLinksCard } from "@/app/(admin)/admin/members/[id]/_components/member-parent-links-card";
 import { MemberDependentsCard } from "@/app/(admin)/admin/members/[id]/_components/member-dependents-card";
+import { FamilyGroupEditor } from "@/components/admin/family-group-editor";
+import FamilyGroupsPage from "@/app/(admin)/admin/family-groups/page";
 import { MemberBillingFamilyCard } from "@/app/(admin)/admin/members/[id]/_components/member-billing-family-card";
 import { MemberLodgeAccessCard } from "@/app/(admin)/admin/members/[id]/_components/member-lodge-access-card";
 import { MemberPartnerLinkCard } from "@/app/(admin)/admin/members/[id]/_components/member-partner-link-card";
@@ -2835,6 +2843,173 @@ describe("MemberDependentsCard view-only gating (#1997, membership)", () => {
   });
 });
 
+describe("FamilyGroupEditor view-only gating (#2065, membership)", () => {
+  const GROUP = {
+    id: "g1",
+    name: "Kea Family",
+    members: [
+      {
+        id: "mem1",
+        firstName: "Pat",
+        lastName: "Kea",
+        email: "pat@example.com",
+        ageTier: "ADULT",
+        active: true,
+        canLogin: true,
+        hasPassword: true,
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    sessionMatrix = null;
+    stubFetchRoutes({
+      "/api/admin/family-groups/requests": { requests: [] },
+      "/api/admin/family-groups/g1": GROUP,
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const props = {
+    groupId: "g1",
+    onClose: vi.fn(),
+    onChanged: vi.fn(),
+  } as const;
+
+  it("disables the mutation controls and exposes the read-only reason for a view-only admin", async () => {
+    render(<FamilyGroupEditor {...props} canEdit={false} />);
+
+    const del = await screen.findByRole("button", { name: /^Delete$/ });
+    expect(del).toBeDisabled();
+    expect(del).toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    expect(
+      screen.getByRole("button", { name: /Update Group/i }),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Group Name")).toBeDisabled();
+    expect(
+      screen.getByText(/can view this family group but cannot change/i),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps controls disabled but shows no read-only reason while the session is resolving", async () => {
+    render(<FamilyGroupEditor {...props} canEdit={undefined} />);
+
+    const del = await screen.findByRole("button", { name: /^Delete$/ });
+    expect(del).toBeDisabled();
+    // Neutral resolving state: disabled WITHOUT the view-only reason/banner.
+    expect(del).not.toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    expect(
+      screen.getByRole("button", { name: /Update Group/i }),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Group Name")).toBeDisabled();
+    expect(
+      screen.queryByText(/can view this family group but cannot change/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the mutation controls live for an edit-capable admin", async () => {
+    render(<FamilyGroupEditor {...props} canEdit={true} />);
+
+    const del = await screen.findByRole("button", { name: /^Delete$/ });
+    expect(del).toBeEnabled();
+    expect(del).not.toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    // One member is loaded, so Update Group is not gated by the empty-set rule.
+    expect(screen.getByRole("button", { name: /Update Group/i })).toBeEnabled();
+    expect(screen.getByLabelText("Group Name")).toBeEnabled();
+    expect(
+      screen.queryByText(/can view this family group but cannot change/i),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("FamilyGroupsPage row-action view-only gating (#2065, membership)", () => {
+  const SUMMARY = {
+    id: "g1",
+    name: "Kea Family",
+    members: [],
+    memberCount: 0,
+    inactiveCount: 0,
+    pendingRequests: 0,
+    createdAt: "2026-07-01T00:00:00.000Z",
+  };
+
+  beforeEach(() => {
+    sessionMatrix = null;
+    sessionStatus = "authenticated";
+    stubFetchRoutes({
+      "/api/admin/family-groups/requests": { requests: [] },
+      "/api/admin/family-groups/partner-invites": { invites: [] },
+      "/api/admin/family-groups": { familyGroups: [SUMMARY] },
+    });
+  });
+  afterEach(async () => {
+    // The shared useSearchParams mock returns a fresh object each render, so the
+    // page's mount effect re-fires and can leave an in-flight fetchData in the
+    // microtask queue. Unmount and drain it while the stub is still active, so
+    // no request lands on the real fetch after the global stub is torn down.
+    cleanup();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    sessionStatus = "authenticated";
+  });
+
+  it("disables New Group and row Delete but keeps row Edit open for a membership:view admin", async () => {
+    sessionMatrix = matrix("view", { membership: "view" });
+    render(<FamilyGroupsPage />);
+
+    const del = await screen.findByRole("button", { name: /Delete Kea Family/i });
+    expect(del).toBeDisabled();
+    expect(del).toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    const newGroup = screen.getByRole("button", { name: /New Group/i });
+    expect(newGroup).toBeDisabled();
+    expect(newGroup).toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    // Edit opens the (internally edit-gated) editor, so it stays available for
+    // read-only browsing — mirroring the members/[id] open-editor trigger.
+    expect(
+      screen.getByRole("button", { name: /Edit Kea Family/i }),
+    ).toBeEnabled();
+  });
+
+  it("keeps New Group and row Delete disabled without a read-only reason while the session is resolving", async () => {
+    sessionStatus = "loading";
+    sessionMatrix = matrix("edit", { membership: "edit" });
+    render(<FamilyGroupsPage />);
+
+    const del = await screen.findByRole("button", { name: /Delete Kea Family/i });
+    expect(del).toBeDisabled();
+    expect(del).not.toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    const newGroup = screen.getByRole("button", { name: /New Group/i });
+    expect(newGroup).toBeDisabled();
+    expect(newGroup).not.toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+  });
+
+  it("enables New Group and the create form (and row Delete) for a membership:edit admin", async () => {
+    sessionMatrix = matrix("view", { membership: "edit" });
+    render(<FamilyGroupsPage />);
+
+    expect(
+      await screen.findByRole("button", { name: /Delete Kea Family/i }),
+    ).toBeEnabled();
+    const newGroup = screen.getByRole("button", { name: /New Group/i });
+    expect(newGroup).toBeEnabled();
+
+    // Opening the create form surfaces a live group-name input, and Create Group
+    // carries no read-only reason (its disabled state is only the empty-member
+    // rule, not edit gating).
+    fireEvent.click(newGroup);
+    expect(await screen.findByLabelText("Group Name")).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: /Create Group/i }),
+    ).not.toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+  });
+});
+
 describe("MemberBillingFamilyCard view-only gating (#1997, finance)", () => {
   afterEach(() => {
     sessionMatrix = null;
@@ -3076,6 +3251,32 @@ describe("MemberContactGroup view-only gating (#1997, membership)", () => {
     );
     expect(screen.getByRole("button", { name: /^Edit$/i })).toBeEnabled();
   });
+
+  // #2065 regression pin: this child previously carried a truthy `canEdit = true`
+  // default, so a parent forwarding the raw tri-state hook value during the
+  // resolution window (`undefined`) coerced it to `true` and briefly flashed an
+  // ENABLED Edit control to a would-be view-only admin. With the default removed
+  // and the prop required, `undefined` flows through to the neutral disabled
+  // state — disabled, but WITHOUT the resolved view-only reason (that is reserved
+  // for `canEdit === false`).
+  it("renders the neutral disabled Edit state (not enabled) while access resolves", () => {
+    render(
+      <MemberContactGroup
+        member={member}
+        isSelf={false}
+        actorIsFullAdmin
+        edit={readOnlyEdit}
+        canEdit={undefined}
+      />,
+    );
+    const editButton = screen.getByRole("button", { name: /^Edit$/i });
+    expect(editButton).toBeDisabled();
+    // Neutral, not resolved-view-only: no read-only reason is advertised yet.
+    expect(editButton).not.toHaveAttribute(
+      "title",
+      ADMIN_VIEW_ONLY_ACTION_REASON,
+    );
+  });
 });
 
 describe("MemberDetailHeader view-only gating (#1997, membership + finance)", () => {
@@ -3192,6 +3393,97 @@ describe("FamilySuggestionsPage view-only gating (#1997, membership)", () => {
       screen.queryByText(
         /can view family group suggestions but cannot create, hide, or reset/i,
       ),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #2065: session-resolution neutral state. Before the client session resolves,
+// useAdminAreaEditAccess returns `undefined`, and every consumer must render a
+// NEUTRAL state — no "view only" banner, no read-only editor caption, and
+// controls disabled (never flashing enabled for a would-be view-only admin,
+// never flashing the banner for a would-be editor). SiteContentPanel is the
+// representative consumer (banner + read-only WysiwygEditor + ViewOnlyActionButton
+// Save). Once resolved, behaviour is identical to today (covered by the
+// SiteContentPanel #1927 block above and asserted again here both ways).
+// ---------------------------------------------------------------------------
+
+describe("SiteContentPanel session-resolution neutral state (#2065)", () => {
+  beforeEach(() => {
+    sessionMatrix = null;
+    sessionStatus = "authenticated";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ documents: SITE_CONTENT_DOCUMENTS }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    sessionStatus = "authenticated";
+  });
+
+  it("shows no banner or read-only caption and keeps Save disabled while resolving", async () => {
+    // Session still resolving: matrix is irrelevant, status drives undefined.
+    sessionStatus = "loading";
+    sessionMatrix = matrix("edit");
+    render(<SiteContentPanel />);
+
+    const saveButtons = await screen.findAllByRole("button", {
+      name: /Save Footer/i,
+    });
+    expect(saveButtons.length).toBeGreaterThan(0);
+    // Neutral: controls disabled (a would-be view-only admin never sees them
+    // enabled), and NO view-only banner / read-only editor caption.
+    for (const button of saveButtons) {
+      expect(button).toBeDisabled();
+    }
+    expect(
+      screen.queryByText(/can view site content but cannot change/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/View only — your admin role cannot edit/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the banner and disabled Save once resolved to a view-only admin", async () => {
+    sessionStatus = "authenticated";
+    sessionMatrix = matrix("view");
+    render(<SiteContentPanel />);
+
+    const saveButtons = await screen.findAllByRole("button", {
+      name: /Save Footer/i,
+    });
+    for (const button of saveButtons) {
+      expect(button).toBeDisabled();
+    }
+    expect(
+      screen.getAllByText(/View only — your admin role cannot edit/i).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("shows enabled Save and no banner once resolved to an edit-capable admin", async () => {
+    sessionStatus = "authenticated";
+    sessionMatrix = matrix("edit");
+    render(<SiteContentPanel />);
+
+    const saveButtons = await screen.findAllByRole("button", {
+      name: /Save Footer/i,
+    });
+    for (const button of saveButtons) {
+      expect(button).toBeEnabled();
+    }
+    expect(
+      screen.queryByText(/can view site content but cannot change/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/View only — your admin role cannot edit/i),
     ).not.toBeInTheDocument();
   });
 });

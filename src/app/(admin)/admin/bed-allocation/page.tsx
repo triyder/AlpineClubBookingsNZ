@@ -1021,7 +1021,7 @@ export default function AdminBedAllocationPage() {
       </p>
 
       {!canEditBookings ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEditBookings}>
           Your admin role can view bed allocation but cannot move, allocate,
           approve, or save assignments.
         </AdminViewOnlyNotice>

@@ -374,7 +374,7 @@ export default function CommitteePage() {
       ) : null}
 
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view committee roles and assignments but cannot
           change them. Membership edit access is required.
         </AdminViewOnlyNotice>

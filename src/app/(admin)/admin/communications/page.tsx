@@ -129,7 +129,7 @@ export default function CommunicationsPage() {
       </div>
 
       {!canEdit && (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view communications but cannot send bulk emails to
           members.
         </AdminViewOnlyNotice>
