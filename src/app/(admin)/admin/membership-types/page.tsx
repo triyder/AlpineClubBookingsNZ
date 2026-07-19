@@ -119,9 +119,19 @@ const subscriptionBehaviorLabels: Record<SubscriptionBehavior, string> = {
   BASED_ON_AGE_TIER: "Subscription required based on age tier",
 };
 
-const knownAgeTierOrder = ["INFANT", "CHILD", "YOUTH", "ADULT"];
+// Selectable age tiers, in display order. "N/A (no age)" (NOT_APPLICABLE) is the
+// explicit age-exempt option for organisation/school types and always sorts last
+// (#2069).
+const knownAgeTierOrder = ["INFANT", "CHILD", "YOUTH", "ADULT", "NOT_APPLICABLE"];
+
+// The tiers a brand-new membership type pre-checks. N/A is opt-in, so it is never
+// part of this default even though it is selectable (#2069).
+const defaultNewTypeAgeTiers = ["INFANT", "CHILD", "YOUTH", "ADULT"];
 
 function formatAgeTierLabel(ageTier: AgeTier) {
+  if (ageTier === "NOT_APPLICABLE") {
+    return "N/A (no age)";
+  }
   return ageTier
     .toLowerCase()
     .split("_")
@@ -257,7 +267,10 @@ function rollForwardExceptionLabel(exception: RollForwardException) {
 
 function collectAvailableAgeTiers(types: readonly MembershipType[]) {
   const fromTypes = types.flatMap((type) => [...type.allowedAgeTiers]);
-  return sortAgeTiers(fromTypes.length > 0 ? fromTypes : knownAgeTierOrder);
+  // Always offer the full selectable set (including "N/A (no age)") so the
+  // dialog can add N/A even when no existing type uses it yet, plus any extra
+  // tiers already configured on a type (#2069).
+  return sortAgeTiers([...knownAgeTierOrder, ...fromTypes]);
 }
 
 function replaceOrAppendDraft(
@@ -992,7 +1005,7 @@ export default function AdminMembershipTypesPage() {
   const [membershipTypes, setMembershipTypes] = useState<MembershipType[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftMembershipType>>({});
   const [newDraft, setNewDraft] = useState<DraftMembershipType>(() =>
-    createEmptyDraft(knownAgeTierOrder),
+    createEmptyDraft(defaultNewTypeAgeTiers),
   );
   const [editorTarget, setEditorTarget] = useState<EditorTarget | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1050,13 +1063,6 @@ export default function AdminMembershipTypesPage() {
     editorTarget?.mode === "edit" && editingType
       ? (drafts[editingType.id] ?? draftFromType(editingType))
       : newDraft;
-
-  useEffect(() => {
-    setNewDraft((current) => {
-      if (isNewDirty(current)) return current;
-      return createEmptyDraft(availableAgeTiers);
-    });
-  }, [availableAgeTiers]);
 
   async function loadMembershipTypes() {
     setLoading(true);
@@ -1121,7 +1127,7 @@ export default function AdminMembershipTypesPage() {
 
   function openNewEditor() {
     setNewDraft((current) =>
-      isNewDirty(current) ? current : createEmptyDraft(availableAgeTiers),
+      isNewDirty(current) ? current : createEmptyDraft(defaultNewTypeAgeTiers),
     );
     setEditorTarget({ mode: "new" });
     setError("");
@@ -1141,7 +1147,7 @@ export default function AdminMembershipTypesPage() {
     if (editorTarget?.mode === "edit" && editingType) {
       setDrafts((current) => replaceOrAppendDraft(current, editingType));
     } else {
-      setNewDraft(createEmptyDraft(availableAgeTiers));
+      setNewDraft(createEmptyDraft(defaultNewTypeAgeTiers));
     }
     setEditorTarget(null);
   }
@@ -1178,7 +1184,7 @@ export default function AdminMembershipTypesPage() {
       }
       setMembershipTypes((current) => [...current, body.membershipType]);
       setDrafts((current) => replaceOrAppendDraft(current, body.membershipType));
-      setNewDraft(createEmptyDraft(availableAgeTiers));
+      setNewDraft(createEmptyDraft(defaultNewTypeAgeTiers));
       setEditorTarget({ mode: "edit", membershipTypeId: body.membershipType.id });
       setSavedMessage("Membership type created.");
     } catch (createError) {
