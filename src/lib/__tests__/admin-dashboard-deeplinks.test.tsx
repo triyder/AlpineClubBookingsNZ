@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { count: vi.fn() },
+    member: { count: vi.fn(), findUnique: vi.fn() },
     booking: { count: vi.fn(), findMany: vi.fn() },
     payment: { aggregate: vi.fn() },
     refundRequest: { count: vi.fn() },
@@ -15,11 +15,16 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/lib/auth", () => ({
+  auth: vi.fn(),
+}));
+
 vi.mock("@/lib/hut-leader-coverage", () => ({
   getUnassignedHutLeaderDates: vi.fn(),
 }));
 
 import AdminDashboardPage from "@/app/(admin)/admin/dashboard/page";
+import { auth } from "@/lib/auth";
 import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
@@ -37,17 +42,27 @@ function mockDashboardCounts({
   unpaidFinishedStays?: number;
   unsettledAdditionalFinishedStays?: number;
 }) {
+  // A Full Admin actor so every permission-gated officer card renders (#2091).
+  vi.mocked(auth).mockResolvedValue({ user: { id: "admin-1" } } as any);
+  vi.mocked(prisma.member.findUnique).mockResolvedValue({
+    id: "admin-1",
+    canLogin: true,
+    accessRoles: [{ role: "ADMIN" }],
+  } as any);
   vi.mocked(prisma.member.count).mockResolvedValue(0);
   // booking.count call order mirrors getStats(): totalBookings,
   // activeBookings, upcomingCheckIns, unpaidFinishedStays,
-  // unsettledAdditionalFinishedStays, pendingBookingReviews.
+  // unsettledAdditionalFinishedStays, pendingBookingReviews,
+  // rosterStaysNeedingRoster, bedAllocationStaysAwaiting.
   vi.mocked(prisma.booking.count)
     .mockResolvedValueOnce(0)
     .mockResolvedValueOnce(0)
     .mockResolvedValueOnce(0)
     .mockResolvedValueOnce(unpaidFinishedStays)
     .mockResolvedValueOnce(unsettledAdditionalFinishedStays)
-    .mockResolvedValueOnce(pendingBookingReviews);
+    .mockResolvedValueOnce(pendingBookingReviews)
+    .mockResolvedValueOnce(0)
+    .mockResolvedValueOnce(0);
   vi.mocked(prisma.payment.aggregate).mockResolvedValue({
     _sum: { amountCents: 0 },
   } as any);
