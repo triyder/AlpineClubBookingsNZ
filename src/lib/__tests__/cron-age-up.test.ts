@@ -541,6 +541,37 @@ describe("checkAgeUpMembers", () => {
     expect(mockedUpdate).not.toHaveBeenCalled();
   });
 
+  it("does not age-up a member concurrently flipped to N/A (#2106 MINOR-7)", async () => {
+    const member = {
+      id: "m-na",
+      email: "na@example.com",
+      firstName: "Nora",
+      lastName: "Na",
+      dateOfBirth: dobForAge(18),
+      inheritEmailFromId: null,
+      inheritEmailFrom: null,
+    };
+
+    mockedFindMany.mockResolvedValue([member] as any);
+    mockedEmailLogFind.mockResolvedValue(null);
+    // The in-transaction re-read sees a member who was flipped to N/A after the
+    // batch selection — the re-check must short-circuit and leave them alone.
+    mockTxMemberFindUnique.mockResolvedValue({
+      canLogin: false,
+      ageTier: "NOT_APPLICABLE",
+      inheritEmailFromId: null,
+      inheritParentEmail: false,
+      parentMemberId: null,
+    });
+
+    const result = await checkAgeUpMembers();
+
+    expect(result.upgraded).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(mockedUpdate).not.toHaveBeenCalled();
+    expect(mockTriggerGroupSync).not.toHaveBeenCalled();
+  });
+
   it("should count failed members when update throws", async () => {
     const member = {
       id: "m5",

@@ -12,6 +12,7 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     member: {
       findUnique: vi.fn(),
       findFirst: vi.fn(),
@@ -25,7 +26,12 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(),
     },
     booking: { findMany: vi.fn().mockResolvedValue([]) },
-    bookingGuest: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    bookingGuest: {
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      // #2106: the N/A-flip linked-guest block queries future linked-guest
+      // bookings; default to none.
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     accessRoleDefinition: { findMany: vi.fn().mockResolvedValue([]) },
     memberAccessRole: {
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -309,6 +315,86 @@ describe("#1756 bulk deactivate — POST /api/admin/members/bulk-update", () => 
     expect(res.status).toBe(200);
     expect(prisma.bedAllocation.findMany).not.toHaveBeenCalled();
     expect(sendAdminPartnerShareSweptAlert).not.toHaveBeenCalled();
+  });
+});
+
+// #2106 (MAJOR-5b): a bulk set-role ORG grant that would flip a non-N/A member
+// TO N/A is blocked while they hold future linked-guest bookings on someone
+// else's booking. The member is reported as a per-member failure (like
+// notFound) and the rest of the batch still applies.
+describe("#2106 bulk set-role ORG grant — linked-guest N/A block", () => {
+  const futureLinkedGuestRow = {
+    id: "bg-uma",
+    bookingId: "booking-other",
+    stayStart: FUTURE_NIGHT,
+    stayEnd: FUTURE_NIGHT,
+    booking: {
+      id: "booking-other",
+      memberId: "member-owner",
+      checkIn: FUTURE_NIGHT,
+      checkOut: FUTURE_NIGHT,
+    },
+  };
+
+  it("blocks the ORG grant and reports the member without touching their role", async () => {
+    vi.mocked(prisma.member.findMany).mockResolvedValue([userTarget] as never);
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([
+      futureLinkedGuestRow,
+    ] as never);
+
+    const res = await bulkUpdate(
+      jsonRequest("http://localhost/api/admin/members/bulk-update", {
+        ids: ["user2"],
+        action: "set-role",
+        role: "SCHOOL",
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.updated).toBe(0);
+    expect(body.blockedLinkedGuests).toEqual([
+      expect.objectContaining({
+        memberId: "user2",
+        memberName: "Uma User",
+        linkedGuestCount: 1,
+      }),
+    ]);
+    // The blocked member's role/tier was never written.
+    expect(prisma.member.update).not.toHaveBeenCalled();
+    expect(prisma.bedAllocation.deleteMany).not.toHaveBeenCalled();
+    expect(sendAdminPartnerShareSweptAlert).not.toHaveBeenCalled();
+  });
+
+  it("proceeds with the ORG grant (forcing N/A) when there are no linked-guest bookings", async () => {
+    vi.mocked(prisma.member.findMany).mockResolvedValue([userTarget] as never);
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...userTarget,
+      role: "SCHOOL",
+      ageTier: "NOT_APPLICABLE",
+    } as never);
+    mockSharedDoubleForUser2();
+
+    const res = await bulkUpdate(
+      jsonRequest("http://localhost/api/admin/members/bulk-update", {
+        ids: ["user2"],
+        action: "set-role",
+        role: "SCHOOL",
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.updated).toBe(1);
+    expect(body.blockedLinkedGuests).toEqual([]);
+    // ORG grant forces N/A; leaving ADULT sweeps the future shared-double.
+    expect(prisma.member.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ ageTier: "NOT_APPLICABLE" }),
+      }),
+    );
+    expect(prisma.bedAllocation.deleteMany).toHaveBeenCalled();
   });
 });
 

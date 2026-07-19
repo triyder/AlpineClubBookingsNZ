@@ -644,6 +644,16 @@ function MembershipTypeEditorDialog({
                   );
                 })}
               </div>
+              <p className="text-xs text-slate-500">
+                Ticking only &ldquo;N/A (no age)&rdquo; makes the type
+                age-exempt: every member on it becomes N/A instead of an age
+                tier (only valid when this type&apos;s subscription behaviour is
+                &ldquo;not required&rdquo;). Ticking &ldquo;N/A (no age)&rdquo;
+                alongside person tiers lets admins hand-pick N/A for individual
+                members while everyone else keeps a real age tier. Leaving
+                &ldquo;N/A (no age)&rdquo; unticked means no member on this type
+                can be N/A.
+              </p>
             </section>
           </div>
 

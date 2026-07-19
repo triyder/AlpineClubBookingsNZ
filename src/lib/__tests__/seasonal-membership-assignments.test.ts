@@ -12,6 +12,27 @@ vi.mock("@/lib/xero-contact-groups", () => ({
     mockTriggerGroupSync(...args),
 }));
 
+// #2106: the age-tier reconciliation depends on these; mock them so the tier
+// logic can be asserted without a live sweep/DB.
+const mockSweep = vi.fn().mockResolvedValue([]);
+vi.mock("@/lib/bed-allocation-lifecycle", () => ({
+  sweepFuturePartnerSharedAllocations: (...args: unknown[]) => mockSweep(...args),
+  describePartnerSharedSweepReason: vi.fn(() => "age tier changed"),
+  partnerShareSweepCounterpartNames: vi.fn(() => "Partner"),
+  partnerShareSweepNights: vi.fn(() => 0),
+}));
+vi.mock("@/lib/email", () => ({
+  sendAdminPartnerShareSweptAlert: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/logger", () => ({
+  default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+}));
+const mockComputeAgeTier = vi.fn().mockResolvedValue("ADULT");
+vi.mock("@/lib/age-tier", () => ({
+  computeAgeTier: (...args: unknown[]) => mockComputeAgeTier(...args),
+  getSeasonStartDate: vi.fn(() => new Date("2026-04-01")),
+}));
+
 import { getSeasonYear } from "@/lib/utils";
 
 import {
@@ -20,6 +41,7 @@ import {
   saveSeasonalMembershipAssignment,
   SEASONAL_MEMBERSHIP_ASSIGNMENT_CHANGED_ACTION,
   SEASONAL_MEMBERSHIP_ASSIGNMENTS_ROLLED_FORWARD_ACTION,
+  SEASONAL_MEMBERSHIP_ROLL_FORWARD_TIERS_RECONCILED_ACTION,
 } from "@/lib/seasonal-membership-assignments";
 
 const fullType = {
@@ -115,20 +137,51 @@ function makePreviewDb() {
     },
   ];
 
-  const db = {
+  // Person tiers only → DISALLOWED exemption unless a test overrides it.
+  const personAllowedAgeTiers = [
+    { ageTier: "INFANT" },
+    { ageTier: "CHILD" },
+    { ageTier: "YOUTH" },
+    { ageTier: "ADULT" },
+  ];
+
+  const db: any = {
     member: {
-      findUnique: vi.fn().mockResolvedValue({ id: "member-1" }),
+      findUnique: vi.fn().mockResolvedValue({
+        id: "member-1",
+        ageTier: "ADULT",
+        dateOfBirth: null,
+        role: "USER",
+        canLogin: true,
+        accessRoles: [{ role: "USER" }],
+        firstName: "Member",
+        lastName: "One",
+      }),
       findMany: vi.fn(),
+      update: vi.fn().mockResolvedValue({}),
     },
     membershipType: {
       findUnique: vi.fn().mockImplementation(async ({ where }: any) => {
-        if (where.id === "type-associate") return associateType;
-        if (where.id === "type-inactive") return inactiveType;
-        return fullType;
+        if (where.id === "type-associate")
+          return { ...associateType, allowedAgeTiers: personAllowedAgeTiers };
+        if (where.id === "type-inactive")
+          return { ...inactiveType, allowedAgeTiers: personAllowedAgeTiers };
+        // Age-exempt (FORCED) type used by the #2106 tests.
+        if (where.id === "type-exempt")
+          return {
+            ...associateType,
+            id: "type-exempt",
+            key: "EXEMPT",
+            name: "Age Exempt",
+            subscriptionBehavior: "NOT_REQUIRED",
+            allowedAgeTiers: [{ ageTier: "NOT_APPLICABLE" }],
+          };
+        return { ...fullType, allowedAgeTiers: personAllowedAgeTiers };
       }),
     },
     seasonalMembershipAssignment: {
       findUnique: vi.fn().mockResolvedValue(previousAssignment()),
+      findUniqueOrThrow: vi.fn().mockResolvedValue(previousAssignment()),
       findMany: vi.fn(),
       upsert: vi.fn().mockResolvedValue({
         ...previousAssignment(),
@@ -146,6 +199,9 @@ function makePreviewDb() {
         if (where.status?.in?.includes("WAITLISTED")) return waitlistBookings;
         return confirmedBookings;
       }),
+    },
+    bookingGuest: {
+      findMany: vi.fn().mockResolvedValue([]),
     },
     memberSubscription: {
       findMany: vi.fn().mockResolvedValue(subscriptions),
@@ -430,6 +486,186 @@ describe("seasonal membership assignment preview and save", () => {
     );
   });
 
+  it("#2106 forces N/A, sweeps ADULT shares and audits old/new tier on a FORCED flip", async () => {
+    const db = makePreviewDb();
+    const previewResult = await getSeasonalMembershipChangePreview({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-exempt",
+      now: new Date("2026-07-01T00:00:00.000Z"),
+      db: db as never,
+    });
+    const preview = (
+      previewResult.body as {
+        preview: { previewToken: string; resultingAgeTier: string; ageTierChanged: boolean };
+      }
+    ).preview;
+    expect(preview.resultingAgeTier).toBe("NOT_APPLICABLE");
+    expect(preview.ageTierChanged).toBe(true);
+
+    const result = await saveSeasonalMembershipAssignment({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-exempt",
+      adminMemberId: "admin-1",
+      reason: "moved to age-exempt type",
+      previewToken: preview.previewToken,
+      db: db as never,
+    });
+
+    expect(result.init?.status).toBeUndefined();
+    expect(db.member.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "member-1" },
+        data: { ageTier: "NOT_APPLICABLE" },
+      }),
+    );
+    expect(mockSweep).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: "member-1", reason: "member_age_tier_changed" }),
+    );
+    expect(db.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          metadata: expect.objectContaining({
+            previousAgeTier: "ADULT",
+            newAgeTier: "NOT_APPLICABLE",
+            ageTierChanged: true,
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("#2106 repairs a drifted age tier on an otherwise-unchanged save without rewriting the assignment", async () => {
+    const db = makePreviewDb();
+    // Member wrongly holds N/A while assigned to a person-only (DISALLOWED) type.
+    db.member.findUnique.mockResolvedValue({
+      id: "member-1",
+      ageTier: "NOT_APPLICABLE",
+      dateOfBirth: null,
+      role: "USER",
+      canLogin: true,
+      accessRoles: [{ role: "USER" }],
+      firstName: "Member",
+      lastName: "One",
+    });
+
+    const previewResult = await getSeasonalMembershipChangePreview({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-full",
+      applyFrom: "2026-05-15",
+      now: new Date("2026-07-01T00:00:00.000Z"),
+      db: db as never,
+    });
+    const preview = (
+      previewResult.body as { preview: { previewToken: string; resultingAgeTier: string } }
+    ).preview;
+    expect(preview.resultingAgeTier).toBe("ADULT");
+
+    const result = await saveSeasonalMembershipAssignment({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-full",
+      applyFrom: "2026-05-15",
+      adminMemberId: "admin-1",
+      reason: "repair drifted tier",
+      previewToken: preview.previewToken,
+      db: db as never,
+    });
+
+    expect((result.body as { changed: boolean }).changed).toBe(true);
+    expect(db.seasonalMembershipAssignment.upsert).not.toHaveBeenCalled();
+    expect(db.seasonalMembershipAssignment.findUniqueOrThrow).toHaveBeenCalled();
+    expect(db.member.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { ageTier: "ADULT" } }),
+    );
+  });
+
+  it("#2106 blocks a flip to N/A while the member is a future linked guest on others' bookings", async () => {
+    const db = makePreviewDb();
+    db.bookingGuest.findMany.mockResolvedValue([
+      {
+        id: "guest-1",
+        bookingId: "booking-x",
+        stayStart: new Date("2099-08-01T00:00:00.000Z"),
+        stayEnd: new Date("2099-08-03T00:00:00.000Z"),
+        booking: {
+          id: "booking-x",
+          memberId: "someone-else",
+          checkIn: new Date("2099-08-01T00:00:00.000Z"),
+          checkOut: new Date("2099-08-03T00:00:00.000Z"),
+        },
+      },
+    ]);
+
+    const previewResult = await getSeasonalMembershipChangePreview({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-exempt",
+      now: new Date("2026-07-01T00:00:00.000Z"),
+      db: db as never,
+    });
+    const preview = (
+      previewResult.body as {
+        preview: { previewToken: string; linkedGuestBookings: { count: number } };
+      }
+    ).preview;
+    expect(preview.linkedGuestBookings.count).toBe(1);
+
+    const result = await saveSeasonalMembershipAssignment({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-exempt",
+      adminMemberId: "admin-1",
+      reason: "moved to age-exempt type",
+      previewToken: preview.previewToken,
+      db: db as never,
+    });
+
+    expect(result.init?.status).toBe(409);
+    expect((result.body as { error: string }).error).toMatch(/linked guest/i);
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("#2106 invalidates a preview token when the resulting age tier drifts", async () => {
+    const db = makePreviewDb();
+    const previewResult = await getSeasonalMembershipChangePreview({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-associate",
+      now: new Date("2026-07-01T00:00:00.000Z"),
+      db: db as never,
+    });
+    const preview = (previewResult.body as { preview: { previewToken: string } }).preview;
+
+    // The member becomes an organisation after the preview: the save recomputes
+    // resultingAgeTier = N/A, so the ADULT-bound token no longer verifies.
+    db.member.findUnique.mockResolvedValue({
+      id: "member-1",
+      ageTier: "ADULT",
+      dateOfBirth: null,
+      role: "SCHOOL",
+      canLogin: true,
+      accessRoles: [{ role: "ORG" }],
+      firstName: "Member",
+      lastName: "One",
+    });
+
+    const result = await saveSeasonalMembershipAssignment({
+      memberId: "member-1",
+      seasonYear: 2026,
+      membershipTypeId: "type-associate",
+      adminMemberId: "admin-1",
+      reason: "member changed category",
+      previewToken: preview.previewToken,
+      db: db as never,
+    });
+
+    expect(result.init?.status).toBe(409);
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
   it("fires the Xero contact-group trigger only for current-season saves", async () => {
     const currentSeason = getSeasonYear();
 
@@ -637,5 +873,224 @@ describe("seasonal membership assignment roll-forward", () => {
       createdByMemberId: "admin-1",
       reason: "seasonal_membership_roll_forward",
     });
+  });
+
+  // #2106 (MAJOR-3/4): current-season roll-forward reconciles tiers post-copy,
+  // in chunks, and writes a critical reconcile summary audit.
+  it("reconciles copied members' tiers post-copy and writes the reconcile summary audit", async () => {
+    mockSweep.mockResolvedValueOnce([
+      { bookingId: "bk-1", stayDate: new Date("2099-08-01") },
+    ]);
+    const currentSeason = getSeasonYear();
+    const priorSeason = currentSeason - 1;
+    const personTiers = [
+      { ageTier: "INFANT" },
+      { ageTier: "CHILD" },
+      { ageTier: "YOUTH" },
+      { ageTier: "ADULT" },
+    ];
+    const candidateMembers = [
+      {
+        id: "member-forced",
+        firstName: "Fay",
+        lastName: "Forced",
+        email: "forced@example.test",
+        active: true,
+        archivedAt: null,
+        cancelledAt: null,
+      },
+      {
+        id: "member-keep",
+        firstName: "Kay",
+        lastName: "Keep",
+        email: "keep@example.test",
+        active: true,
+        archivedAt: null,
+        cancelledAt: null,
+      },
+    ];
+    const candidates = candidateMembers.map((member) => ({
+      id: `a-${member.id}`,
+      memberId: member.id,
+      seasonYear: priorSeason,
+      membershipTypeId: member.id === "member-forced" ? "type-exempt" : "type-full",
+      member,
+      membershipType: { ...fullType, isActive: true },
+    }));
+    const freshById: Record<string, unknown> = {
+      "member-forced": {
+        id: "member-forced",
+        ageTier: "ADULT",
+        dateOfBirth: null,
+        role: "USER",
+        accessRoles: [{ role: "USER" }],
+        firstName: "Fay",
+        lastName: "Forced",
+        email: "forced@example.test",
+      },
+      "member-keep": {
+        id: "member-keep",
+        ageTier: "ADULT",
+        dateOfBirth: null,
+        role: "USER",
+        accessRoles: [{ role: "USER" }],
+        firstName: "Kay",
+        lastName: "Keep",
+        email: "keep@example.test",
+      },
+    };
+    const exemptionByMember: Record<string, Array<{ ageTier: string }>> = {
+      "member-forced": [{ ageTier: "NOT_APPLICABLE" }],
+      "member-keep": personTiers,
+    };
+
+    const db: any = {
+      seasonalMembershipAssignment: {
+        findMany: vi.fn().mockImplementation(async ({ where }: any) => {
+          if (where.memberId?.in) {
+            return where.memberId.in.map((id: string) => ({
+              memberId: id,
+              membershipType: { allowedAgeTiers: exemptionByMember[id] },
+            }));
+          }
+          if (where.seasonYear === priorSeason) return candidates;
+          return [];
+        }),
+        createMany: vi.fn().mockResolvedValue({ count: 2 }),
+      },
+      member: {
+        findMany: vi.fn().mockImplementation(async ({ where }: any) => {
+          if (where?.id?.in) {
+            return where.id.in.map((id: string) => freshById[id]);
+          }
+          return candidateMembers;
+        }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+      $transaction: vi.fn(async (callback: any) => callback(db)),
+    };
+
+    const result = await rollForwardSeasonalMembershipAssignments({
+      fromSeasonYear: priorSeason,
+      toSeasonYear: currentSeason,
+      adminMemberId: "admin-1",
+      db: db as never,
+    });
+
+    expect(result.body).toMatchObject({ copiedCount: 2 });
+    // The FORCED-type member flips ADULT -> N/A; the person-tier member is left.
+    expect(db.member.update).toHaveBeenCalledWith({
+      where: { id: "member-forced" },
+      data: { ageTier: "NOT_APPLICABLE" },
+    });
+    expect(db.member.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "member-keep" } }),
+    );
+
+    const reconcileAudit = db.auditLog.create.mock.calls.find(
+      ([arg]: [any]) =>
+        arg.data.action === SEASONAL_MEMBERSHIP_ROLL_FORWARD_TIERS_RECONCILED_ACTION,
+    );
+    expect(reconcileAudit).toBeTruthy();
+    expect(reconcileAudit[0].data.severity).toBe("critical");
+    expect(reconcileAudit[0].data.metadata).toMatchObject({
+      ageTierReconciledCount: 1,
+      partnerSharesSweptCount: 1,
+      ageTierReconciled: [
+        {
+          memberId: "member-forced",
+          previousAgeTier: "ADULT",
+          newAgeTier: "NOT_APPLICABLE",
+        },
+      ],
+    });
+  });
+
+  it("continues past a failed reconcile chunk without rolling back the copy", async () => {
+    const currentSeason = getSeasonYear();
+    const priorSeason = currentSeason - 1;
+    const ids = Array.from({ length: 30 }, (_, i) => `member-${i}`);
+    const candidateMembers = ids.map((id) => ({
+      id,
+      firstName: id,
+      lastName: "M",
+      email: `${id}@example.test`,
+      active: true,
+      archivedAt: null,
+      cancelledAt: null,
+    }));
+    const candidates = candidateMembers.map((member) => ({
+      id: `a-${member.id}`,
+      memberId: member.id,
+      seasonYear: priorSeason,
+      membershipTypeId: "type-exempt",
+      member,
+      membershipType: { ...fullType, isActive: true },
+    }));
+    const freshById = Object.fromEntries(
+      ids.map((id) => [
+        id,
+        {
+          id,
+          ageTier: "ADULT",
+          dateOfBirth: null,
+          role: "USER",
+          accessRoles: [{ role: "USER" }],
+          firstName: id,
+          lastName: "M",
+          email: `${id}@example.test`,
+        },
+      ]),
+    );
+
+    const db: any = {
+      seasonalMembershipAssignment: {
+        findMany: vi.fn().mockImplementation(async ({ where }: any) => {
+          if (where.memberId?.in) {
+            return where.memberId.in.map((id: string) => ({
+              memberId: id,
+              membershipType: { allowedAgeTiers: [{ ageTier: "NOT_APPLICABLE" }] },
+            }));
+          }
+          if (where.seasonYear === priorSeason) return candidates;
+          return [];
+        }),
+        createMany: vi.fn().mockResolvedValue({ count: 30 }),
+      },
+      member: {
+        findMany: vi.fn().mockImplementation(async ({ where }: any) => {
+          if (where?.id?.in) {
+            return where.id.in.map((id: string) => freshById[id]);
+          }
+          return candidateMembers;
+        }),
+        // The first chunk (members 0-24) throws when it reaches member-0; the
+        // second chunk (25-29) must still reconcile.
+        update: vi.fn().mockImplementation(async ({ where }: any) => {
+          if (where.id === "member-0") throw new Error("update failed");
+          return {};
+        }),
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+      $transaction: vi.fn(async (callback: any) => callback(db)),
+    };
+
+    const result = await rollForwardSeasonalMembershipAssignments({
+      fromSeasonYear: priorSeason,
+      toSeasonYear: currentSeason,
+      adminMemberId: "admin-1",
+      db: db as never,
+    });
+
+    // The copy is untouched by the failed chunk.
+    expect(result.body).toMatchObject({ copiedCount: 30 });
+    const reconcileAudit = db.auditLog.create.mock.calls.find(
+      ([arg]: [any]) =>
+        arg.data.action === SEASONAL_MEMBERSHIP_ROLL_FORWARD_TIERS_RECONCILED_ACTION,
+    );
+    expect(reconcileAudit).toBeTruthy();
+    // Only the surviving second chunk's 5 members reconciled.
+    expect(reconcileAudit[0].data.metadata.ageTierReconciledCount).toBe(5);
   });
 });

@@ -1920,9 +1920,12 @@ Built-in membership types can never be deleted or merged. A custom type may be
 deleted only when it has zero `SeasonalMembershipAssignment` rows; a custom type
 that still has assignments must be merged into another type first. A merge
 requires an active (non-archived) target that is not the source and whose
-allowed age tiers cover every affected member's current age tier
-(`NOT_APPLICABLE`/organisation members are exempt because they are excluded from
-all age-tier policy); it reassigns every source assignment to the target and
+allowed age tiers cover every affected member's current age tier. A member on
+`NOT_APPLICABLE` merges cleanly only when the target type also allows N/A
+(`membershipTypeAgeExemption` FORCED or ALLOWED); the sole exception is
+organisation members, whose N/A is a global org force independent of the type's
+tiers, so they merge onto any target (#2106). It reassigns every source
+assignment to the target and
 deletes the source in one transaction, writing both a `MEMBERSHIP_TYPE_MERGED`
 and a `MEMBERSHIP_TYPE_DELETED` audit record. Because reassigning an
 assignment's membership type never changes its `(memberId, seasonYear)`, the
@@ -1931,20 +1934,74 @@ other seasonal assignment change) do not synchronously resync Xero contact
 groups; reassigned members reconcile through the existing periodic/mismatch Xero
 tooling, and the admin is warned before confirming when the source and target
 Xero rules differ.
-Organisation-type members (the `ORG` access role or the legacy `SCHOOL` role)
-always carry the `NOT_APPLICABLE` age tier, and no other member may hold it —
-the server forces it on every org create/update, rejects it for people, and
-restores a DOB-derived tier when a member is reclassified away from
-Organisation. `NOT_APPLICABLE` never has an `AgeTierSetting` row: it has no
-age range, is displayed as "N/A", and is excluded from every age-based
-automation — the season age-up cron, age-tier Xero contact-group sync (orgs
-are never added to a managed age group; a leftover membership is surfaced as
-a mismatch instead), and age-based subscription requirements. Organisations
-are also exempt from membership entrance fees: both Xero entrance-fee
-invoice paths (direct and outbox) skip N/A members before any amount —
-including an explicit override — is considered. Booking guests
-are always people: `NOT_APPLICABLE` is not a bookable tier, and organisation
-accounts cannot be linked as booking guests.
+The `NOT_APPLICABLE` age tier is the single "no age" classification, driven by
+two independent forces resolved by one shared helper
+(`resolveEnforcedAgeTier`, `src/lib/age-tier-enforcement.ts`) applied at each of
+the enumerated `Member.ageTier` write sites: admin member edit, self-service
+profile, delegated family details, seasonal-assignment save, roll-forward into
+the current season, and bulk set-role. (The Xero member-import creates are a
+separate write path handled by #2108, not this helper.) Precedence, highest
+first:
+
+1. **Org force.** Organisation-type members (the `ORG` access role or the legacy
+   `SCHOOL` role) always carry `NOT_APPLICABLE`, on every create/update.
+2. **Type force.** A member's CURRENT-season membership type is age-exempt when
+   its configured `allowedAgeTiers` (`MembershipTypeAgeTier`, #2069) classify as
+   `membershipTypeAgeExemption(...)`: **FORCED** = the set is exactly
+   `{NOT_APPLICABLE}` — every member on the type is N/A, like an org; **ALLOWED**
+   = N/A appears alongside real person tiers, so an admin may hand-pick N/A per
+   member while others keep a real tier; **DISALLOWED** = N/A is absent and no
+   member on the type may hold it. `ageGroupsApply` (a pricing-shape flag) is
+   deliberately NOT consulted.
+3. **Manual N/A.** Only accepted when the type is ALLOWED; a previously
+   hand-picked N/A is preserved when a later edit submits no tier. A manual N/A
+   is rejected for any other member.
+4. **DOB-derived restore.** Otherwise the member holds a real person tier: the
+   DOB-derived tier via `computeAgeTier` when a DOB exists, else `ADULT`. This is
+   what un-forces a member reclassified away from org, or moved onto a
+   DISALLOWED type.
+
+Configuration and lifecycle guards:
+
+- Age-exempt config (any `allowedAgeTiers` containing `NOT_APPLICABLE`, FORCED or
+  ALLOWED) is valid ONLY on types whose subscription behaviour is
+  `NOT_REQUIRED`, so N/A can never bypass the subscription lockout on a paying
+  type. Enforced on type create/edit.
+- A type allowed-tiers edit is blocked while it would strand a
+  current/future-season assignee: either becoming FORCED while a person-tier
+  member is assigned, or removing `NOT_APPLICABLE` while a NON-ORG member is
+  still on N/A (org members are exempt — the global org force keeps them N/A
+  regardless of the type). This mirrors the merge coverage rule; the admin
+  reassigns/reclassifies those members first. The offending-assignee check is
+  repeated inside the config-write transaction so a concurrent change cannot slip
+  a stranded member past the guard (#2106).
+- A change that flips a member TO N/A is blocked while they are still a linked
+  guest on someone else's future booking. This block is uniform across every
+  N/A-flip site: the seasonal-assignment save (the change preview lists those
+  bookings for removal first), the admin member edit (manual N/A pick and org
+  grant), and the bulk set-role ORG grant (blocked members are reported as
+  per-member failures — like not-found ids — so the rest of the batch still
+  applies). A FORCED/org flip that leaves `ADULT` sweeps the member's future
+  shared-double placements (#1756). The seasonal-assignment save surfaces the
+  old/new age tier in its critical audit record, and binds the resulting tier
+  into the preview's HMAC token so a tier-relevant drift is stale-detected.
+- Roll-forward into the current season reconciles each copied member's age tier
+  AFTER the copy commits, in bounded chunks (one transaction per chunk, each
+  re-reading member + type state) so no single transaction spans the whole
+  membership; a failed chunk is logged and skipped (the enforcement sites
+  self-heal). The reconcile phase writes one critical summary audit row with the
+  reconciled/swept counts and a bounded per-member before/after sample (#2106).
+
+`NOT_APPLICABLE` never has an `AgeTierSetting` row: it has no age range, is
+displayed as "N/A", and is excluded from every age-based automation — the season
+age-up cron, age-tier Xero contact-group sync (N/A members are never added to a
+managed age group; a leftover membership is surfaced as a mismatch instead), and
+age-based subscription requirements. N/A members are also exempt from membership
+entrance fees: both Xero entrance-fee invoice paths (direct and outbox) skip them
+before any amount — including an explicit override — is considered. Booking
+guests are always people with a real age tier: `NOT_APPLICABLE` is not a bookable
+tier, and an N/A account (organisation or age-exempt human) cannot be linked as a
+booking guest.
 Committee assignment controls public committee/contact presentation
 only. Do not add committee positions to access roles or `Member.role`.
 `CommitteeRole` master records and `CommitteeAssignment` member links can be

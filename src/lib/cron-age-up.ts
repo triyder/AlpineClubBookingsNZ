@@ -359,6 +359,10 @@ export async function checkAgeUpMembers(): Promise<{
           !currentMember ||
           currentMember.canLogin ||
           currentMember.ageTier === "ADULT" ||
+          // #2106 (MINOR-7): a member concurrently flipped to age-exempt (N/A)
+          // must never be aged-up over — N/A is not a real person tier, so
+          // re-check it inside the transaction alongside the ADULT short-circuit.
+          currentMember.ageTier === "NOT_APPLICABLE" ||
           currentMember.inheritEmailFromId ||
           (currentMember.inheritParentEmail && currentMember.parentMemberId)
         ) {

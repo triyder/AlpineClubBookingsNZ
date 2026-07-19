@@ -7,6 +7,10 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import { serializeMembershipType } from "@/lib/membership-types";
+import {
+  isOrganisationMember,
+  resolveAccessRoleTokens,
+} from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -148,17 +152,24 @@ export async function POST(
   }
 
   // Age-tier compatibility: every affected member's current age tier must be
-  // allowed by the target type. Members whose own tier is NOT_APPLICABLE
-  // (organisations) are exempt — orgs are excluded from every age-based rule
-  // (see docs/DOMAIN_INVARIANTS.md) — even though "N/A (no age)" is itself a
-  // configurable allowed tier on the type since #2069.
+  // allowed by the target type. #2106: a member whose own tier is N/A merges
+  // cleanly ONLY if the target type also allows N/A (FORCED or ALLOWED). The
+  // sole exception is organisation members — their N/A is a GLOBAL org force
+  // (#1440), independent of the type's allowed tiers, so they merge onto any
+  // target regardless of whether it lists N/A.
   const sourceAssignments = await prisma.seasonalMembershipAssignment.findMany({
     where: { membershipTypeId: sourceId },
     select: {
       id: true,
       memberId: true,
       seasonYear: true,
-      member: { select: { ageTier: true } },
+      member: {
+        select: {
+          ageTier: true,
+          role: true,
+          accessRoles: { select: { role: true } },
+        },
+      },
     },
   });
 
@@ -169,6 +180,20 @@ export async function POST(
   for (const assignment of sourceAssignments) {
     const ageTier = assignment.member.ageTier;
     if (ageTier === "NOT_APPLICABLE") {
+      // A target that permits N/A accepts any N/A member (org or not).
+      if (targetAllowedAgeTiers.has("NOT_APPLICABLE")) {
+        continue;
+      }
+      // Target does not permit N/A: org members are still exempt (their N/A is a
+      // global org force, independent of the type's tiers); a non-org N/A member
+      // is stranded and blocks the merge.
+      const isOrg = isOrganisationMember({
+        accessRoleTokens: resolveAccessRoleTokens(assignment.member),
+        legacyRole: assignment.member.role,
+      });
+      if (!isOrg) {
+        offendingAgeTiers.add("NOT_APPLICABLE");
+      }
       continue;
     }
     if (!targetAllowedAgeTiers.has(ageTier)) {
@@ -176,7 +201,9 @@ export async function POST(
     }
   }
   if (offendingAgeTiers.size > 0) {
-    const offending = [...offendingAgeTiers].join(", ");
+    const offending = [...offendingAgeTiers]
+      .map((tier) => (tier === "NOT_APPLICABLE" ? "N/A" : tier))
+      .join(", ");
     return NextResponse.json(
       {
         error: `Target type "${target.name}" does not allow age tier(s) ${offending} held by affected members. Add the tier(s) to the target's allowed age tiers or reassign those members before merging.`,

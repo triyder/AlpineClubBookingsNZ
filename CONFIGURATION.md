@@ -912,10 +912,14 @@ Xero contact-group rules, and committee assignment are separate axes:
   a dedicated editor for identity fields, booking behavior (`MEMBER_RATE`,
   `NON_MEMBER_RATE`, `BLOCK_BOOKING`), subscription behavior (`REQUIRED`,
   `NOT_REQUIRED`), and allowed age tiers. New types default to the four age
-  tiers (Infant/Child/Youth/Adult); an explicit **N/A (no age)**
-  (`NOT_APPLICABLE`) tier is also selectable for age-exempt organisation/school
-  types and can stand alone, but at least one tier must always be selected.
-  Xero contact-group rules are no longer
+  tiers (Infant/Child/Youth/Adult); the explicit **N/A (no age)**
+  (`NOT_APPLICABLE`) tier makes a type *age-exempt* — ticked **alone** every
+  member on the type becomes N/A (like an organisation); ticked **alongside**
+  person tiers admins may hand-pick N/A per member. Age-exempt config (N/A ticked
+  in either shape) is only valid when subscription behavior is `NOT_REQUIRED`
+  (N/A must never bypass subscription lockout), and an edit that turns N/A-only
+  on or off is blocked while incompatible current/future-season members exist. At
+  least one tier must always be selected. Xero contact-group rules are no longer
   edited here — they live on the single **Xero member grouping** surface (see
   below). Display names must be unique: creating or renaming a type to a
   case-insensitive exact match of an existing name is rejected.

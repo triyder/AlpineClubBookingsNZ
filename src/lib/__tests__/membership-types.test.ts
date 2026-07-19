@@ -9,6 +9,8 @@ import {
   canonicalMembershipTypeKey,
   defaultMembershipTypeKeyForRole,
   ensureBuiltInMembershipTypes,
+  membershipTypeAgeExemption,
+  membershipTypeForcedEditOffendingTiers,
   normalizeMembershipTypeAgeTiers,
   normalizeMembershipTypeKey,
   validateMembershipTypeRuleConfiguration,
@@ -232,5 +234,141 @@ describe("built-in membership type seed helpers", () => {
         allowedAgeTiers: ["NOT_APPLICABLE"],
       }),
     ).toBeNull();
+  });
+});
+
+describe("#2106 — membershipTypeAgeExemption classification", () => {
+  it("classifies an N/A-only set as FORCED", () => {
+    expect(membershipTypeAgeExemption(["NOT_APPLICABLE"])).toBe("FORCED");
+  });
+
+  it("classifies N/A alongside person tiers as ALLOWED", () => {
+    expect(membershipTypeAgeExemption(["ADULT", "NOT_APPLICABLE"])).toBe(
+      "ALLOWED",
+    );
+    expect(
+      membershipTypeAgeExemption(["INFANT", "CHILD", "YOUTH", "ADULT", "NOT_APPLICABLE"]),
+    ).toBe("ALLOWED");
+  });
+
+  it("classifies a person-only set (or an empty/undefined set) as DISALLOWED", () => {
+    expect(membershipTypeAgeExemption(["INFANT", "CHILD", "YOUTH", "ADULT"])).toBe(
+      "DISALLOWED",
+    );
+    expect(membershipTypeAgeExemption([])).toBe("DISALLOWED");
+    expect(membershipTypeAgeExemption(undefined)).toBe("DISALLOWED");
+  });
+});
+
+describe("#2106 — subscription-behaviour restriction on age-exempt config", () => {
+  it("rejects N/A in the allowed tiers when subscription behaviour is not NOT_REQUIRED", () => {
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["NOT_APPLICABLE"],
+        subscriptionBehavior: "REQUIRED",
+      }),
+    ).toMatch(/not required/i);
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        subscriptionBehavior: "BASED_ON_AGE_TIER",
+      }),
+    ).toMatch(/not required/i);
+  });
+
+  it("accepts N/A when subscription behaviour is NOT_REQUIRED", () => {
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["NOT_APPLICABLE"],
+        subscriptionBehavior: "NOT_REQUIRED",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not gate person-only sets on subscription behaviour", () => {
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["ADULT"],
+        subscriptionBehavior: "REQUIRED",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("#2106 — allowed-tiers edit stranding guard", () => {
+  it("blocks becoming FORCED while a person-tier member is assigned", () => {
+    const offending = membershipTypeForcedEditOffendingTiers({
+      previousAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+      nextAllowedAgeTiers: ["NOT_APPLICABLE"],
+      affectedMembers: [
+        { ageTier: "ADULT", isOrganisation: false },
+        { ageTier: "NOT_APPLICABLE", isOrganisation: false },
+      ],
+    });
+    expect(offending).toEqual(["ADULT"]);
+  });
+
+  it("blocks leaving FORCED (dropping N/A) while a non-org N/A member is assigned", () => {
+    const offending = membershipTypeForcedEditOffendingTiers({
+      previousAllowedAgeTiers: ["NOT_APPLICABLE"],
+      nextAllowedAgeTiers: ["ADULT"],
+      affectedMembers: [{ ageTier: "NOT_APPLICABLE", isOrganisation: false }],
+    });
+    expect(offending).toEqual(["NOT_APPLICABLE"]);
+  });
+
+  it("allows a FORCED transition when every affected member is covered", () => {
+    expect(
+      membershipTypeForcedEditOffendingTiers({
+        previousAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        nextAllowedAgeTiers: ["NOT_APPLICABLE"],
+        affectedMembers: [{ ageTier: "NOT_APPLICABLE", isOrganisation: false }],
+      }),
+    ).toEqual([]);
+  });
+
+  it("allows FORCED -> ALLOWED (N/A retained), stranding nobody", () => {
+    expect(
+      membershipTypeForcedEditOffendingTiers({
+        previousAllowedAgeTiers: ["NOT_APPLICABLE"],
+        nextAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        affectedMembers: [{ ageTier: "NOT_APPLICABLE", isOrganisation: false }],
+      }),
+    ).toEqual([]);
+  });
+
+  // MAJOR-1(b): ALLOWED -> DISALLOWED (removing N/A) now strands non-org N/A
+  // holders — this guard is no longer limited to FORCED transitions.
+  it("blocks ALLOWED -> DISALLOWED while a non-org N/A member is assigned", () => {
+    expect(
+      membershipTypeForcedEditOffendingTiers({
+        previousAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        nextAllowedAgeTiers: ["ADULT"],
+        affectedMembers: [{ ageTier: "NOT_APPLICABLE", isOrganisation: false }],
+      }),
+    ).toEqual(["NOT_APPLICABLE"]);
+  });
+
+  it("exempts org members from the N/A-removal block (global org force keeps them N/A)", () => {
+    expect(
+      membershipTypeForcedEditOffendingTiers({
+        previousAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        nextAllowedAgeTiers: ["ADULT"],
+        affectedMembers: [
+          { ageTier: "NOT_APPLICABLE", isOrganisation: true },
+          { ageTier: "ADULT", isOrganisation: false },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("ignores an ordinary person-tier narrowing that neither creates FORCED nor removes N/A", () => {
+    expect(
+      membershipTypeForcedEditOffendingTiers({
+        previousAllowedAgeTiers: ["YOUTH", "ADULT"],
+        nextAllowedAgeTiers: ["ADULT"],
+        affectedMembers: [{ ageTier: "YOUTH", isOrganisation: false }],
+      }),
+    ).toEqual([]);
   });
 });

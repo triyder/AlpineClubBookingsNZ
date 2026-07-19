@@ -24,6 +24,14 @@ import {
 } from "@/lib/member-profile-completeness";
 import logger from "@/lib/logger";
 import { nameField } from "@/lib/zod-helpers";
+import {
+  isOrganisationMember,
+  resolveAccessRoleTokens,
+} from "@/lib/access-roles";
+import {
+  loadMemberCurrentSeasonTypeExemption,
+  resolveEnforcedAgeTier,
+} from "@/lib/age-tier-enforcement";
 
 const delegatedDetailsSchema = z.object({
   firstName: nameField({ required: "First name required" }),
@@ -192,7 +200,29 @@ export async function PUT(
   }
 
   const now = new Date();
-  const ageTier = await computeAgeTier(dob, getSeasonStartDate(getSeasonYear()));
+  // #2106: recompute the tier from the DOB, then apply enforcement so a FORCED
+  // membership type (or an org account) keeps N/A and an ALLOWED-type manual N/A
+  // is preserved. The delegate never submits a tier directly.
+  const dobDerivedTier = await computeAgeTier(
+    dob,
+    getSeasonStartDate(getSeasonYear())
+  );
+  const typeExemption = await loadMemberCurrentSeasonTypeExemption(
+    prisma,
+    target.id,
+    getSeasonYear()
+  );
+  const enforced = resolveEnforcedAgeTier({
+    isOrganisation: isOrganisationMember({
+      accessRoleTokens: resolveAccessRoleTokens(target),
+      legacyRole: target.role,
+    }),
+    typeExemption,
+    currentAgeTier: target.ageTier,
+    restorePersonTier: dobDerivedTier,
+  });
+  // Only an explicit manual N/A request can fail; delegates never send one.
+  const ageTier = enforced.ok ? enforced.ageTier : dobDerivedTier;
 
   const updated = await prisma.member.update({
     where: { id: target.id },

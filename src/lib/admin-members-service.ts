@@ -17,6 +17,7 @@ import {
 import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { getSeasonYear } from "@/lib/utils";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
+import { membershipTypeAgeExemption } from "@/lib/membership-types";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
@@ -702,6 +703,8 @@ export async function listAdminMembers(
             name: true,
             isActive: true,
             subscriptionBehavior: true,
+            // #2106: drives the edit dialog's N/A age-tier control.
+            allowedAgeTiers: { select: { ageTier: true } },
           },
         },
       },
@@ -801,6 +804,12 @@ export async function listAdminMembers(
             key: currentMembershipType.key,
             name: currentMembershipType.name,
             isActive: currentMembershipType.isActive,
+            // #2106: age-exemption so the edit dialog can force/allow/omit N/A.
+            ageExemption: membershipTypeAgeExemption(
+              (currentMembershipType.allowedAgeTiers ?? []).map(
+                (tier) => tier.ageTier,
+              ),
+            ),
           }
         : null,
       familyGroups: m.familyGroupMemberships.map((fg) => ({

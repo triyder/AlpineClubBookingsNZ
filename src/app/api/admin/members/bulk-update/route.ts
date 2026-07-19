@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -9,12 +10,21 @@ import {
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
   isFullAdmin,
+  isOrganisationMember,
   legacyRoleFromAccessRoles,
   memberHoldsPrivilegedRole,
   normalizeAssignableAccessRoleTokens,
   resolveAccessRoleTokens,
   storedAccessRolesForFullAdminGate,
 } from "@/lib/access-roles";
+import {
+  loadFutureLinkedGuestBookingsForMember,
+  loadMemberCurrentSeasonTypeExemption,
+  resolveEnforcedAgeTier,
+} from "@/lib/age-tier-enforcement";
+import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
+import { getTodayDateOnly } from "@/lib/date-only";
+import { getSeasonYear } from "@/lib/utils";
 import {
   AdminAccountGuardError,
   LAST_FULL_ADMIN_BULK_GUARD_MESSAGE,
@@ -133,6 +143,8 @@ export async function POST(req: NextRequest) {
         canLogin: true,
         cancelledAt: true,
         archivedAt: true,
+        ageTier: true,
+        dateOfBirth: true,
         accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
       },
     });
@@ -173,13 +185,13 @@ export async function POST(req: NextRequest) {
     }
 
     // Filter out current user for self-protection
-    const idsToUpdate = [...existingIds].filter((id) => {
+    let idsToUpdate = [...existingIds].filter((id) => {
       if (action === "deactivate" && id === currentUserId) return false;
       if (action === "set-role" && !selfAdminAccessPreserved && id === currentUserId) return false;
       return true;
     });
 
-    const setRoleTargets =
+    let setRoleTargets =
       action === "set-role"
         ? existingMembers
             .filter((candidate) => idsToUpdate.includes(candidate.id))
@@ -253,10 +265,101 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // #1756: shared-double placements swept by a deactivate, collected inside
-    // the transaction and alerted on after commit.
+    // #2106: a bulk set-role that grants or revokes ORG must reconcile the
+    // member's age tier. Granting ORG forces N/A (and sweeps future
+    // shared-double placements when leaving ADULT, #1756); revoking ORG restores
+    // a DOB-derived tier (else ADULT) unless a FORCED/ALLOWED current-season
+    // membership type keeps N/A. Computed here (reads) and applied inside the
+    // transaction.
+    const ageTierReconById = new Map<string, AgeTier>();
+    // #2106 owner decision (MAJOR-5b): an ORG grant that flips a non-N/A member
+    // TO N/A is blocked while they are a linked guest on someone else's future
+    // booking (N/A members are not bookable guests). Reported as a per-member
+    // failure (like `notFound`) so the rest of the batch still applies, rather
+    // than failing the whole request.
+    const blockedLinkedGuestMembers: Array<{
+      memberId: string;
+      memberName: string;
+      linkedGuestCount: number;
+    }> = [];
+    if (action === "set-role") {
+      const today = getTodayDateOnly();
+      for (const { member, nextAccessRoles } of setRoleTargets) {
+        const wasOrg = isOrganisationMember({
+          accessRoleTokens: resolveAccessRoleTokens(member),
+          legacyRole: member.role,
+        });
+        const willBeOrg = isOrganisationMember({
+          accessRoleTokens: nextAccessRoles,
+          legacyRole:
+            accessRoles !== undefined
+              ? legacyRoleFromAccessRoles(nextAccessRoles)
+              : role!,
+        });
+        if (wasOrg === willBeOrg) {
+          continue;
+        }
+        const typeExemption = await loadMemberCurrentSeasonTypeExemption(
+          prisma,
+          member.id,
+          getSeasonYear(),
+        );
+        const dobDerivedTier = member.dateOfBirth
+          ? await computeAgeTier(
+              member.dateOfBirth,
+              getSeasonStartDate(getSeasonYear()),
+            )
+          : "ADULT";
+        const resolved = resolveEnforcedAgeTier({
+          isOrganisation: willBeOrg,
+          typeExemption,
+          currentAgeTier: member.ageTier,
+          restorePersonTier: dobDerivedTier,
+        });
+        if (resolved.ok && resolved.ageTier !== member.ageTier) {
+          if (
+            member.ageTier !== "NOT_APPLICABLE" &&
+            resolved.ageTier === "NOT_APPLICABLE"
+          ) {
+            const linkedGuestBookings =
+              await loadFutureLinkedGuestBookingsForMember(
+                prisma,
+                member.id,
+                today,
+              );
+            if (linkedGuestBookings.length > 0) {
+              blockedLinkedGuestMembers.push({
+                memberId: member.id,
+                memberName:
+                  `${member.firstName} ${member.lastName}`.trim() ||
+                  member.email,
+                linkedGuestCount: linkedGuestBookings.length,
+              });
+              continue;
+            }
+          }
+          ageTierReconById.set(member.id, resolved.ageTier);
+        }
+      }
+    }
+
+    // Drop the linked-guest-blocked members from the batch entirely — like a
+    // not-found id, they are simply not acted on and reported back to the caller.
+    if (blockedLinkedGuestMembers.length > 0) {
+      const blockedIds = new Set(
+        blockedLinkedGuestMembers.map((entry) => entry.memberId),
+      );
+      idsToUpdate = idsToUpdate.filter((id) => !blockedIds.has(id));
+      setRoleTargets = setRoleTargets.filter(
+        (target) => !blockedIds.has(target.member.id),
+      );
+    }
+
+    // #1756: shared-double placements swept by a deactivate or an ORG grant that
+    // leaves ADULT, collected inside the transaction and alerted on after commit.
     const sweptSharesByMember: Array<{
       memberId: string;
+      reason: "member_deactivated" | "member_age_tier_changed";
       swept: SweptPartnerSharedAllocation[];
     }> = [];
 
@@ -282,6 +385,7 @@ export async function POST(req: NextRequest) {
             });
       if (action === "set-role") {
         for (const { member, nextAccessRoles } of setRoleTargets) {
+          const reconciledAgeTier = ageTierReconById.get(member.id);
           await tx.member.update({
             where: { id: member.id },
             data: {
@@ -303,8 +407,33 @@ export async function POST(req: NextRequest) {
                   : role === "LODGE"
                     ? "NONE"
                     : member.financeAccessLevel,
+              // #2106: force N/A on ORG grant / restore a person tier on revoke.
+              ...(reconciledAgeTier !== undefined
+                ? { ageTier: reconciledAgeTier }
+                : {}),
             },
           });
+          // #1756: an ORG grant that moves the member off ADULT breaks the
+          // double-bed sharing precondition, so sweep their future shared-double
+          // placements in the same transaction.
+          if (
+            reconciledAgeTier !== undefined &&
+            member.ageTier === "ADULT" &&
+            reconciledAgeTier !== "ADULT"
+          ) {
+            const swept = await sweepFuturePartnerSharedAllocations({
+              memberId: member.id,
+              reason: "member_age_tier_changed",
+              db: tx,
+            });
+            if (swept.length > 0) {
+              sweptSharesByMember.push({
+                memberId: member.id,
+                reason: "member_age_tier_changed",
+                swept,
+              });
+            }
+          }
           const assignmentRows = accessRoleAssignmentRowsFromTokens(
             nextAccessRoles,
             roleDefinitions,
@@ -348,24 +477,28 @@ export async function POST(req: NextRequest) {
             db: tx,
           });
           if (swept.length > 0) {
-            sweptSharesByMember.push({ memberId, swept });
+            sweptSharesByMember.push({
+              memberId,
+              reason: "member_deactivated",
+              swept,
+            });
           }
         }
       }
       return updateResult;
     });
 
-    for (const { memberId, swept } of sweptSharesByMember) {
+    for (const { memberId, reason, swept } of sweptSharesByMember) {
       const member = existingMembers.find((m) => m.id === memberId);
       // Post-commit, fire-and-forget: a failed alert only loses the nudge —
-      // the sweep committed with the deactivation and both bookings carry
+      // the sweep committed with the member update and both bookings carry
       // audit rows.
       sendAdminPartnerShareSweptAlert({
         memberName: member
           ? `${member.firstName} ${member.lastName}`.trim()
           : memberId,
         partnerName: partnerShareSweepCounterpartNames(swept, memberId),
-        reason: describePartnerSharedSweepReason("member_deactivated"),
+        reason: describePartnerSharedSweepReason(reason),
         nights: partnerShareSweepNights(swept),
       }).catch((err) => {
         logger.error(
@@ -390,6 +523,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       updated: result.count,
       notFound,
+      // #2106 (MAJOR-5b): members skipped because an ORG grant would make them
+      // N/A while they hold future linked-guest bookings. Empty when none.
+      blockedLinkedGuests: blockedLinkedGuestMembers,
     });
   } catch (error) {
     if (error instanceof AdminAccountGuardError) {
