@@ -1,6 +1,7 @@
 "use client";
 
 import type { AgeTier } from "@prisma/client";
+import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +22,8 @@ import {
   useAdminAreaViewAccess,
 } from "@/hooks/use-admin-area-edit-access";
 import { formatAgeTierName } from "@/lib/use-age-tier-options";
+import { canonicalizeAgeTiers } from "@/lib/age-tier-schema";
+import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups";
 
 type GroupingMode = "NONE" | "MEMBERSHIP_TYPE" | "MEMBERSHIP_TYPE_AND_AGE";
 type RuleKind = "MANAGED" | "ACCEPTED";
@@ -30,13 +33,21 @@ type Rule = {
   id: string;
   membershipTypeId: string | null;
   membershipTypeName: string | null;
-  ageTier: AgeTier | null;
+  ageTiers: AgeTier[];
   mode: RuleKind;
   groupId: string;
   groupName: string | null;
   isActive: boolean;
   sortOrder: number;
 };
+
+/** Human label for a rule's tier set: the tier names, or "All age tiers". */
+function formatRuleAgeTiers(ageTiers: AgeTier[]): string {
+  if (!ageTiers || ageTiers.length === 0) {
+    return "All age tiers";
+  }
+  return ageTiers.map(formatAgeTierName).join(", ");
+}
 
 type Config = {
   mode: GroupingMode;
@@ -130,9 +141,13 @@ export default function XeroMemberGroupingPage() {
 
   // New-rule draft
   const [draftTypeId, setDraftTypeId] = useState<string>(ANY);
-  const [draftTier, setDraftTier] = useState<string>(ANY);
+  const [draftTiers, setDraftTiers] = useState<AgeTier[]>([]);
   const [draftMode, setDraftMode] = useState<RuleKind>("MANAGED");
   const [draftGroupId, setDraftGroupId] = useState<string>("");
+  // "Refresh from Xero" busy state (re-pulls the contact-group cache, same
+  // operation as the members-list "Refresh Xero Groups" button, #2093).
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -147,6 +162,31 @@ export default function XeroMemberGroupingPage() {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // Re-pull the Xero contact-group cache (the same full refresh the members-list
+  // "Refresh Xero Groups" button runs), then reload the config so the "Last
+  // synced" header and the group picker reflect the new cache immediately. This
+  // also moves the CONTACT_GROUP_FULL_REFRESH cursor that the dry-run's
+  // freshness check anchors to, so an in-flight reviewed diff correctly
+  // invalidates. Inline status callbacks — no toast lib (#2093, D-B3).
+  const refreshFromXero = useCallback(async () => {
+    setRefreshing(true);
+    setError(null);
+    setRefreshStatus(null);
+    try {
+      const result = await loadAdminXeroContactGroups({ refreshFromXero: true });
+      await load();
+      setRefreshStatus(
+        result.groups.length > 0
+          ? "Refreshed from Xero."
+          : "Refreshed from Xero. No active contact groups were returned.",
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refresh from Xero");
+    } finally {
+      setRefreshing(false);
+    }
   }, [load]);
 
   const run = useCallback(
@@ -236,7 +276,29 @@ export default function XeroMemberGroupingPage() {
       <AdminPageHeader
         title="Xero member grouping"
         description="Choose how members are auto-sorted into Xero contact groups, and manage the grouping rules."
+        actions={
+          <ViewOnlyActionButton
+            canEdit={canView}
+            readOnlyReason="Your admin role cannot view Xero member grouping."
+            variant="outline"
+            size="sm"
+            disabled={refreshing || busy}
+            onClick={() => void refreshFromXero()}
+          >
+            <RefreshCw className={`mr-1 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "Refreshing…" : "Refresh from Xero"}
+          </ViewOnlyActionButton>
+        }
       />
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium">Last synced:</span>
+        <span className="text-muted-foreground">
+          {config.lastRefreshedAt
+            ? new Date(config.lastRefreshedAt).toLocaleString("en-NZ")
+            : "never — refresh from Xero to populate the contact-group cache"}
+        </span>
+      </div>
+      {refreshStatus ? <p className="text-sm text-success">{refreshStatus}</p> : null}
       {!canEdit ? <AdminViewOnlyNotice canEdit={canEdit} /> : null}
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
@@ -278,8 +340,8 @@ export default function XeroMemberGroupingPage() {
         <CardContent className="space-y-4">
           <p className="text-xs text-muted-foreground">
             {config.lastRefreshedAt
-              ? `Xero group list cached ${new Date(config.lastRefreshedAt).toLocaleString("en-NZ")}.`
-              : "The Xero contact-group cache has not been refreshed yet — refresh it from the Xero Sync page."}
+              ? "The Xero group picker below uses the cached contact-group list (see “Last synced” above). Use “Refresh from Xero” to update it."
+              : "The Xero contact-group cache has not been refreshed yet — use “Refresh from Xero” above to populate it."}
           </p>
 
           {config.rules.length === 0 ? (
@@ -300,8 +362,8 @@ export default function XeroMemberGroupingPage() {
                       ) : null}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {rule.membershipTypeName ?? "Any type"} · {rule.ageTier ? formatAgeTierName(rule.ageTier) : "Any age"}
-                      {config.mode === "MEMBERSHIP_TYPE" && rule.ageTier
+                      {rule.membershipTypeName ?? "Any type"} · {formatRuleAgeTiers(rule.ageTiers)}
+                      {config.mode === "MEMBERSHIP_TYPE" && rule.ageTiers.length > 0
                         ? " · (inert in Membership Type mode)"
                         : ""}
                     </div>
@@ -357,16 +419,30 @@ export default function XeroMemberGroupingPage() {
                 </Select>
               </div>
               <div>
-                <Label className="text-xs">Age tier</Label>
-                <Select value={draftTier} onValueChange={setDraftTier}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ANY}>Any age</SelectItem>
-                    {config.ageTiers.map((tier) => (
-                      <SelectItem key={tier} value={tier}>{formatAgeTierName(tier)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label className="text-xs">Age tiers</Label>
+                <div className="mt-1 space-y-1 rounded-md border p-2">
+                  {config.ageTiers.map((tier) => (
+                    <label key={tier} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={draftTiers.includes(tier)}
+                        onChange={(e) =>
+                          setDraftTiers((prev) =>
+                            e.target.checked
+                              ? [...prev, tier]
+                              : prev.filter((t) => t !== tier),
+                          )
+                        }
+                      />
+                      {formatAgeTierName(tier)}
+                    </label>
+                  ))}
+                  <p className="text-xs text-muted-foreground">
+                    {draftTiers.length === 0
+                      ? "None ticked = all age tiers."
+                      : "Ticked tiers only."}
+                  </p>
+                </div>
               </div>
               <div>
                 <Label className="text-xs">Rule kind</Label>
@@ -399,7 +475,10 @@ export default function XeroMemberGroupingPage() {
                       {
                         action: "create-rule",
                         membershipTypeId: draftTypeId === ANY ? null : draftTypeId,
-                        ageTier: draftTier === ANY ? null : (draftTier as AgeTier),
+                        // Empty = "all age tiers"; the server canonical-sorts and
+                        // collapses a full-tier selection. Canonicalize here too
+                        // so the button never sends a redundant shape.
+                        ageTiers: canonicalizeAgeTiers(draftTiers),
                         mode: draftMode,
                         groupId: draftGroupId,
                         groupName: groupName(draftGroupId),
@@ -407,6 +486,7 @@ export default function XeroMemberGroupingPage() {
                       (json) => {
                         setConfig(json as Config);
                         setDraftGroupId("");
+                        setDraftTiers([]);
                       },
                     )
                   }
@@ -421,12 +501,14 @@ export default function XeroMemberGroupingPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Dry-run &amp; bulk re-sync</CardTitle>
+          <CardTitle>Bulk re-sync (advanced)</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Always preview the diff before re-syncing. The dry-run reads the local cache only and
-            never calls Xero.
+            This is the heavyweight tool for re-grouping the whole membership at once — separate
+            from the lightweight “Refresh from Xero” above, which only re-pulls the cached group
+            list. Always preview the diff before re-syncing. The dry-run reads the local cache only
+            and never calls Xero.
           </p>
           <div className="flex flex-wrap gap-2">
             <ViewOnlyActionButton
