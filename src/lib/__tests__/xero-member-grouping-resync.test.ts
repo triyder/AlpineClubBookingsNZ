@@ -1,5 +1,10 @@
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MemberGroupingResolution } from "@/lib/xero-member-grouping";
+import type {
+  MemberGroupingResolution,
+  XeroGroupingContext,
+  XeroGroupingRule,
+} from "@/lib/xero-member-grouping";
 
 const mocks = vi.hoisted(() => ({
   cursorFindUnique: vi.fn(),
@@ -46,6 +51,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
+  computeXeroGroupingRulesFingerprint,
   getXeroMemberGroupingSnapshot,
   recordXeroMemberGroupingDryRun,
   runXeroMemberGroupingBulkResyncChunk,
@@ -480,6 +486,118 @@ describe("runXeroMemberGroupingBulkResyncChunk — server-side dry-run freshness
       "m3",
       expect.anything(),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fingerprint compatibility across the scalar->array migration (#2093, D-B5).
+// ---------------------------------------------------------------------------
+
+describe("computeXeroGroupingRulesFingerprint — migration byte-identity (D-B5)", () => {
+  // Faithful replica of the PRE-#2093 fingerprint algorithm, keyed on the
+  // SCALAR rule.ageTier. Byte-identity between this and the array-based function
+  // for the migrated cases is exactly what stops the first post-deploy resync
+  // from seeing every existing rule churn.
+  function legacyFingerprint(
+    mode: string,
+    legacyRules: Array<{
+      membershipTypeId: string | null;
+      ageTier: string | null;
+      kind: string;
+      groupId: string;
+      sortOrder: number;
+    }>,
+  ): string {
+    const rules = legacyRules
+      .map(
+        (r) =>
+          [r.membershipTypeId, r.ageTier, r.kind, r.groupId, r.sortOrder] as const,
+      )
+      .map((tuple) => JSON.stringify(tuple))
+      .sort();
+    return createHash("sha256")
+      .update(JSON.stringify([mode, rules]))
+      .digest("hex");
+  }
+
+  function ctx(activeRules: XeroGroupingRule[]): XeroGroupingContext {
+    return { mode: "MEMBERSHIP_TYPE_AND_AGE", activeRules };
+  }
+
+  it("migrated NULL 'Any age' rule ([] tiers) is byte-identical to the old scalar-null fingerprint", () => {
+    const newFp = computeXeroGroupingRulesFingerprint(
+      ctx([
+        {
+          membershipTypeId: "life",
+          ageTiers: [],
+          kind: "MANAGED",
+          groupId: "g-life",
+          groupName: "Life",
+          sortOrder: 2,
+        },
+      ]),
+    );
+    const oldFp = legacyFingerprint("MEMBERSHIP_TYPE_AND_AGE", [
+      { membershipTypeId: "life", ageTier: null, kind: "MANAGED", groupId: "g-life", sortOrder: 2 },
+    ]);
+    expect(newFp).toBe(oldFp);
+  });
+
+  it("migrated single-tier rule ([X]) is byte-identical to the old scalar-X fingerprint", () => {
+    const newFp = computeXeroGroupingRulesFingerprint(
+      ctx([
+        {
+          membershipTypeId: null,
+          ageTiers: ["ADULT"],
+          kind: "MANAGED",
+          groupId: "g-adult",
+          groupName: "Adults",
+          sortOrder: 0,
+        },
+      ]),
+    );
+    const oldFp = legacyFingerprint("MEMBERSHIP_TYPE_AND_AGE", [
+      { membershipTypeId: null, ageTier: "ADULT", kind: "MANAGED", groupId: "g-adult", sortOrder: 0 },
+    ]);
+    expect(newFp).toBe(oldFp);
+  });
+
+  it("a realistic migrated Tokoroa rule set is byte-identical to the old fingerprint", () => {
+    const newFp = computeXeroGroupingRulesFingerprint(
+      ctx([
+        { membershipTypeId: null, ageTiers: ["ADULT"], kind: "MANAGED", groupId: "g-adult", groupName: "A", sortOrder: 0 },
+        { membershipTypeId: null, ageTiers: ["YOUTH"], kind: "MANAGED", groupId: "g-youth", groupName: "Y", sortOrder: 1 },
+        { membershipTypeId: "life", ageTiers: [], kind: "MANAGED", groupId: "g-life", groupName: "L", sortOrder: 2 },
+      ]),
+    );
+    const oldFp = legacyFingerprint("MEMBERSHIP_TYPE_AND_AGE", [
+      { membershipTypeId: null, ageTier: "ADULT", kind: "MANAGED", groupId: "g-adult", sortOrder: 0 },
+      { membershipTypeId: null, ageTier: "YOUTH", kind: "MANAGED", groupId: "g-youth", sortOrder: 1 },
+      { membershipTypeId: "life", ageTier: null, kind: "MANAGED", groupId: "g-life", sortOrder: 2 },
+    ]);
+    expect(newFp).toBe(oldFp);
+  });
+
+  it("a genuinely new 2+-tier rule moves the fingerprint (canonical-sorted, order-insensitive)", () => {
+    const single = computeXeroGroupingRulesFingerprint(
+      ctx([
+        { membershipTypeId: null, ageTiers: ["ADULT"], kind: "MANAGED", groupId: "g", groupName: "g", sortOrder: 0 },
+      ]),
+    );
+    const multi = computeXeroGroupingRulesFingerprint(
+      ctx([
+        { membershipTypeId: null, ageTiers: ["ADULT", "YOUTH"], kind: "MANAGED", groupId: "g", groupName: "g", sortOrder: 0 },
+      ]),
+    );
+    expect(multi).not.toBe(single);
+    // Order-insensitive: the serializer canonical-sorts, so a reversed set is
+    // the same fingerprint (storage is canonical too, this is belt-and-braces).
+    const multiReversed = computeXeroGroupingRulesFingerprint(
+      ctx([
+        { membershipTypeId: null, ageTiers: ["YOUTH", "ADULT"], kind: "MANAGED", groupId: "g", groupName: "g", sortOrder: 0 },
+      ]),
+    );
+    expect(multiReversed).toBe(multi);
   });
 });
 
