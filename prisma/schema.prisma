@@ -1166,23 +1166,13 @@ model MembershipAnnualFeeComponent {
   @@index([membershipAnnualFeeId, sortOrder])
 }
 
-// RETAINED UNUSED (#1931, E5): the joining-fee re-key (JoiningFee, keyed by
-// membership type x optional age tier) supersedes this category-keyed table.
-// The migration copies every EntranceFee window into JoiningFee, and no runtime
-// code reads EntranceFee any more. The deferred contract issue (E13) drops it
-// after a release soak.
-model EntranceFee {
-  id            String              @id @default(cuid())
-  category      EntranceFeeCategory
-  amountCents   Int
-  effectiveFrom DateTime            @db.Date
-  effectiveTo   DateTime?           @db.Date
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-
-  @@unique([category, effectiveFrom])
-  @@index([category, effectiveFrom, effectiveTo])
-}
+// EntranceFee (the category-keyed one-off fee table) was dropped by the E13
+// contract migration 20260720120000 (#1939): the joining-fee re-key (JoiningFee,
+// keyed by membership type x optional age tier) superseded it in E5 (#1931) and
+// no runtime code reads it. The `EntranceFeeCategory` enum is deliberately
+// RETAINED — it still keys XeroItemCodeMapping.entranceFeeCategory for the live
+// JOINING_FEE item-code mappings (the E5 re-key carried those rows forward under
+// category "JOINING_FEE" but kept the physical column + enum names).
 
 // Joining-fee schedule keyed by membership type x optional age tier (#1931,
 // E5). Renames + re-keys the legacy category-keyed EntranceFee: an age-keyed
@@ -4118,27 +4108,21 @@ model AgeTierSetting {
   label                                 String // e.g. "Child (under 10)"
   subscriptionRequiredForBooking        Boolean                           @default(true)
   familyGroupRequestCreateMemberAllowed Boolean                           @default(false)
+  // xeroContactGroupId / xeroContactGroupName are legacy single-group columns
+  // superseded by XeroContactGroupRule (E8, #1934). They are RETAINED for now:
+  // the currently-deployed runtime still SELECTs them (getAgeTierSettings does a
+  // no-`select` findMany), so dropping the columns is not blue/green safe until a
+  // runtime-prep release stops selecting them. Tracked for a follow-up contract
+  // step (#1939 report). The AgeTierXeroAcceptedContactGroup child table, which
+  // no deployed code queries or joins, WAS dropped in the E13 contract migration
+  // 20260720120000 (#1939).
   xeroContactGroupId                    String?
   xeroContactGroupName                  String?
-  xeroAcceptedContactGroups             AgeTierXeroAcceptedContactGroup[]
   sortOrder                             Int                               @default(0)
   createdAt                             DateTime                          @default(now())
   updatedAt                             DateTime                          @updatedAt
 
   @@index([sortOrder])
-}
-
-model AgeTierXeroAcceptedContactGroup {
-  id               String   @id @default(cuid())
-  ageTierSettingId String
-  groupId          String   @unique
-  groupName        String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  ageTierSetting AgeTierSetting @relation(fields: [ageTierSettingId], references: [id], onDelete: Cascade)
-
-  @@index([ageTierSettingId])
 }
 
 // ---------------------------------------------------------------------------
