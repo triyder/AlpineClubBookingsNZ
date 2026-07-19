@@ -38,6 +38,20 @@ isn't there.
    tiles to jump to Members, Seasons, Bookings, Promo Codes, or the Chore
    Roster.
 
+### Find any page fast (command palette)
+
+The admin panel has around ninety pages across ten sidebar sections, so you
+don't have to remember which section hides a feature.
+
+- Press **Ctrl + K** (Windows/Linux) or **⌘ + K** (Mac) from any admin page, or
+  click the **Search…** button at the top of the sidebar.
+- Start typing a page name — or a related word, such as "accounting" for Xero
+  Sync or "permissions" for Access Roles — then use the **arrow keys** to move,
+  **Enter** to open the highlighted page, and **Escape** to close.
+- The palette only ever lists pages **you** can open: it uses exactly the same
+  visibility rules as the sidebar, so a page you aren't permitted to see never
+  appears here.
+
 ## Settings reference
 
 The dashboard has no settings — it is read-only. The cards it can show:

@@ -436,6 +436,18 @@ endpoint (`src/lib/admin-pending-counts.ts`), whose per-queue where-clauses
 mirror the individual queue routes. Sidebar sections render expanded by
 default; a per-section collapse preference persists in localStorage.
 
+The admin command palette (#2092, `src/components/admin-command-palette.tsx`)
+opens on Ctrl/Cmd-K or the sidebar header "Search…" button (wired through a
+window event in `src/lib/admin-command-palette-events.ts`) and lets admins jump
+to any page they can access. Its index is derived at runtime by
+`getAdminFeatureSearchIndex`, which **reuses** `getVisibleAdminNavSections` and
+de-duplicates by href — so the palette applies exactly the sidebar's four
+visibility rules (module flag, `fullAdminOnly`, `orAccess`, permission matrix)
+plus the hut-leader relabel, and can never surface an href the sidebar would
+hide. There is no second registry to drift: `navSections` remains the single
+source of truth, optionally enriched with a per-entry `keywords` field that only
+widens palette matching.
+
 `src/lib/token-catalogue.ts` is the client-safe single source of truth for the
 `{{token}}` placeholders supported in admin HTML content (page bodies and lodge
 instructions); the embed/text matching regexes in `src/lib/page-content-embeds.ts`
