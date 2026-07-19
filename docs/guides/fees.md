@@ -54,6 +54,17 @@ date-only.
 2. Each fee is split into **invoice-line components** — each becomes its own
    GST-inclusive Xero invoice line, optionally coded to its own account/item and
    with its own proration flag. The components must sum exactly to the fee amount.
+   - **Account** and **Item** are dropdowns backed by the live Xero chart of
+     accounts and item list: Account lists only active income (revenue) accounts,
+     Item lists only sales-invoice items. Leave a field empty to use the resolved
+     default — the picker shows it (e.g. "Default: 203 — Subscriptions Income",
+     or "Default: no item" for items). If Xero is disconnected the editor shows an
+     amber notice and lets you type account/item codes by hand, so a save is never
+     blocked.
+   - The per-component **Prorate** opt-in only appears when the fee's **Proration**
+     is set to *Remaining months*. A *Full annual fee* charges every component in
+     full, so saved fees display the fee-level rule and never label a component
+     "prorated" when the rule is *Full annual fee*.
 
 ### Set family billing members
 
@@ -80,6 +91,7 @@ date-only.
 | "You don't have permission to view this section" on joining/annual fees | You have bookings access but not finance | Ask a finance admin — those are managed by finance admins |
 | A section is read-only | You have view but not edit for that area | Ask an admin with edit access for that area (bookings for hut fees, finance for the rest) |
 | An annual-fee save is rejected | The invoice-line components do not sum to the fee total, or effective ranges overlap | Reconcile the components to the total; make effective ranges non-overlapping |
+| The component Account/Item dropdowns are empty and show an amber notice | Xero is not connected, so the live account/item lists cannot be loaded | Type the account/item codes manually for now; reconnect Xero (see [Xero](xero.md)) to pick from the live lists |
 | A per-family fee can't be invoiced | The club bills members individually, but a schedule still uses the per-family basis | Change that schedule to per-member or no-invoice (see [Subscriptions](subscriptions.md)) |
 | A family has no billing member | No invoice recipient is set | Set the family's billing member (here or on the member's detail Family card) |
 

@@ -127,6 +127,16 @@ describe("fee configuration route", () => {
     await expect((await GET()).json()).resolves.toMatchObject({ canEdit: false });
   });
 
+  it("surfaces only an EXPLICITLY-configured default income account code (#2068, F1)", async () => {
+    // No xeroAccountMapping row -> subscriptionIncome is not explicitly
+    // configured, so the invoice build would refuse to bill. The editor must NOT
+    // advertise the hard-coded "203" fallback; it surfaces null instead.
+    await expect((await GET()).json()).resolves.toMatchObject({ defaultInvoiceAccountCode: null });
+    // An explicitly configured mapping is surfaced as-is.
+    mocks.accountMappingFindUnique.mockResolvedValueOnce({ code: "215", itemCode: null });
+    await expect((await GET()).json()).resolves.toMatchObject({ defaultInvoiceAccountCode: "215" });
+  });
+
   it("creates and audits a membership schedule, then invalidates public pages", async () => {
     const response = await post({
       action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", amountCents: 12345,
