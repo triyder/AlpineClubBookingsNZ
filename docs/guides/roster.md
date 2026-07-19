@@ -48,7 +48,9 @@ module is on.
    dialog lets you choose to **email** (which issues each guest a fresh 48-hour
    chore link) or **not email** (which sends nothing and leaves any previously
    sent chore links valid). Guests who opted out of chore-roster emails are always
-   skipped. Both choices are recorded in the audit log.
+   skipped. Only the **suppression** choice is written to the audit log (as
+   "Admin suppressed the chore-roster email send"); an ordinary send leaves no
+   audit record, by design.
 3. Use **Print Roster** (top right) for a printable sheet for the lodge wall.
 
 ## Settings reference
@@ -60,7 +62,7 @@ module is on.
 | Regenerate Roster | Auto-suggests assignments for the night | Overwrites a confirmed roster only after you confirm |
 | Guest dropdown / Remove / + Add Person | Reassigns, removes, or adds an assignment | Requires lodge edit |
 | Confirm Roster | Marks all suggested assignments final | Assignments then read CONFIRMED |
-| Email Roster to Guests | Emails each affected guest their chores | Issues fresh 48-hour chore links; opted-out guests skipped; choice audited |
+| Email Roster to Guests | Emails each affected guest their chores | Issues fresh 48-hour chore links; opted-out guests skipped; only the suppress choice is audited (a send is not) |
 | Print Roster | Opens a printable roster for the date | Opens in a new tab; respects the lodge filter |
 | Lodge selector | Which lodge's roster you see | Only shown with more than one active lodge |
 

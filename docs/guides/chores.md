@@ -8,10 +8,10 @@ The library of chore definitions a lodge rosters from: breakfast dishes, firewoo
 bathrooms, and the like, each with how many people it needs, an age rule, when in
 the day it happens, and how often. These templates are what the daily
 [Chore Roster](roster.md) auto-suggests assignments from. Find it at
-**Admin → Setup & Configuration → Lodges →** a lodge **→ Chores**
-(`/admin/chores`). It has **no direct sidebar entry** — chores are lodge-scoped
-(ADR-005), so you open it from the **lodge configuration hub**'s **Chores** card,
-which opens it already filtered to that lodge.
+`/admin/chores`. It has **no direct sidebar entry** — chores are lodge-scoped
+(ADR-005), so you reach this page from the **lodge configuration hub**'s
+**Chores** card (**Admin → Setup & Configuration → Lodges →** a lodge **→
+Chores**), which opens it already filtered to that lodge.
 
 Chore templates are a **lodge** permission area: lodge view to read, lodge
 **edit** to add, change, or delete. The page appears only when the `chores`

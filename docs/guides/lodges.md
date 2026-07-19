@@ -7,8 +7,9 @@ Audience: Operator
 The list of the club's lodge **properties**: their names, whether each is active,
 and the address/door-code/travel-note that feed booking emails and the public
 site. From here you add a lodge, edit its identity, deactivate it, or open its
-**configuration hub** (rooms/beds, lockers, seasons & rates, chores, and per-lodge
-display). Find it at **Admin → Setup & Configuration → Lodges** (`/admin/lodges`).
+**configuration hub** (rooms/beds, lockers, seasons & rates, and chores as cards,
+plus per-lodge display settings as a section when the `lobbyDisplay` module is on).
+Find it at **Admin → Setup & Configuration → Lodges** (`/admin/lodges`).
 
 Lodges are a **lodge** permission area: lodge view to read, lodge **edit** to add,
 edit, or deactivate. Member-facing screens only change once a **second active
@@ -48,8 +49,10 @@ lodge** exists — a single-lodge club sees no lodge pickers.
 
 1. Click **Configure** to open the lodge's hub (`/admin/lodges/[id]`), which cards
    through to [Rooms & Beds](rooms-beds.md), [Lockers](lockers.md), Seasons &
-   Rates (in [Fees](fees.md)), [Chores](chores.md), and the per-lodge display
-   settings.
+   Rates (in [Fees](fees.md)), and [Chores](chores.md). The **per-lodge display
+   settings** are **not** a hub card — they appear as a separate section on this
+   page only when the `lobbyDisplay` module is on (it is **off by default**; enable
+   it under **Admin → Setup → Modules**). See [Lobby Display](display.md).
 
 ### Deactivate a lodge
 
@@ -67,7 +70,7 @@ lodge** exists — a single-lodge club sees no lodge pickers.
 | Door code | The lodge access code | — | Optional; appears in that lodge's booking/pre-arrival emails (up to 80 chars) |
 | Travel note | Directions / arrival notes | — | Optional; appears in booking/pre-arrival emails (up to 2000 chars) |
 | Active | Whether the lodge takes new bookings | on | At least one lodge must stay active; inactive lodges are kept for history |
-| Configure | Opens the per-lodge configuration hub | — | Rooms/beds, lockers, seasons & rates, chores, per-lodge display |
+| Configure | Opens the per-lodge configuration hub | — | Hub cards: rooms/beds, lockers, seasons & rates, chores. Per-lodge display is a separate section, shown only when the `lobbyDisplay` module is on (off by default) |
 
 ## Troubleshooting
 
