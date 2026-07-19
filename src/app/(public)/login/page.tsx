@@ -54,11 +54,28 @@ export default async function LoginPage({
     if (session.user.forcePasswordChange) {
       redirect("/change-password");
     }
-    // Resolve the landing from the live session so an admin's preference / role
-    // default is honoured on this self-heal path (and, notably, this is where a
-    // Google sign-in with no explicit deep link lands to be resolved). The
-    // resolved landing is materialised into the 2FA detour's callbackUrl — per
-    // D-D4 that materialised value is not re-read as explicit anywhere.
+    // When a 2FA challenge is still open, hand off to the verify/enroll detour.
+    // Determinism (#2090): the detour's callbackUrl carries ONLY a genuinely
+    // explicit deep link — never the resolved default landing. The default is
+    // re-resolved at /login/verify and /login/enroll from the fully-authed
+    // session, so every entry into the detour resolves the default the SAME way
+    // and a flow-materialised default is never re-read as explicit (D-D4).
+    if (session.user.twoFactorRequired && !session.user.twoFactorVerified) {
+      const query = new URLSearchParams();
+      if (explicitCallbackUrl) {
+        query.set("callbackUrl", explicitCallbackUrl);
+      }
+      const suffix = query.toString() ? `?${query.toString()}` : "";
+      redirect(
+        session.user.twoFactorEnrolled && session.user.twoFactorMethod
+          ? `/login/verify${suffix}`
+          : `/login/enroll${suffix}`,
+      );
+    }
+    // No detour: resolve the landing from the live session so an admin's
+    // preference / role default is honoured on this self-heal path (and,
+    // notably, this is where a Google sign-in with no explicit deep link lands
+    // to be resolved).
     const landing = resolvePostLoginLandingPath({
       explicitCallbackUrl,
       landingPreference: session.user.postLoginLanding,
@@ -66,14 +83,6 @@ export default async function LoginPage({
         adminPermissionMatrix: session.user.adminPermissionMatrix,
       },
     });
-    if (session.user.twoFactorRequired && !session.user.twoFactorVerified) {
-      const query = new URLSearchParams({ callbackUrl: landing });
-      redirect(
-        session.user.twoFactorEnrolled && session.user.twoFactorMethod
-          ? `/login/verify?${query.toString()}`
-          : `/login/enroll?${query.toString()}`,
-      );
-    }
     redirect(landing);
   }
 

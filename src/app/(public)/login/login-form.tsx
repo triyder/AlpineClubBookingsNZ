@@ -101,10 +101,16 @@ export function LoginForm({
     }
   }
 
-  // The resolved landing becomes the callbackUrl the 2FA detour returns to, so
-  // the preference / role default survives the verify/enroll hop. That
-  // materialised value is never re-read as an explicit callbackUrl (D-D4).
-  async function resolveTwoFactorPath(landing: string) {
+  // Build the 2FA detour URL (verify/enroll) when the challenge is still open,
+  // else null. Determinism note (#2090): the detour's callbackUrl carries ONLY a
+  // genuinely explicit deep link — never the resolved default landing. The
+  // default (preference / admin role default) is re-resolved server-side at the
+  // /login/enroll and /login/verify pages from the fully-authed session, so it
+  // no longer depends on a post-signIn resolver fetch that could race or fail and
+  // silently bake the wrong /dashboard default into the detour (the alice/bob
+  // asymmetry). A flow-materialised default is thus never written here, so it can
+  // never be re-read as an explicit choice (D-D4).
+  async function resolveTwoFactorPath() {
     const response = await fetch("/api/auth/2fa/status", {
       credentials: "same-origin",
     });
@@ -124,10 +130,15 @@ export function LoginForm({
       return null;
     }
 
-    const params = new URLSearchParams({ callbackUrl: landing });
+    const params = new URLSearchParams();
+    if (explicitCallbackUrl) {
+      params.set("callbackUrl", explicitCallbackUrl);
+    }
+    const query = params.toString();
+    const suffix = query ? `?${query}` : "";
     return status.enrolled
-      ? `/login/verify?${params.toString()}`
-      : `/login/enroll?${params.toString()}`;
+      ? `/login/verify${suffix}`
+      : `/login/enroll${suffix}`;
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -160,11 +171,19 @@ export function LoginForm({
         // user to /login with no error — the silent login loop (#1669).
         // A hard load always sends the fresh session cookie and starts the
         // authenticated app from a clean router state. `loading` stays true
-        // so the button cannot be re-submitted while the page unloads. Resolve
-        // the landing first; the 2FA detour (if any) returns to it, else
-        // navigate straight there.
-        const landing = await resolvePostAuthLanding();
-        window.location.assign((await resolveTwoFactorPath(landing)) ?? landing);
+        // so the button cannot be re-submitted while the page unloads.
+        //
+        // Check the 2FA gate FIRST (#2090). When a challenge is open we hand off
+        // to /login/enroll or /login/verify, which re-resolve the default landing
+        // server-side from the fully-authed session — so we skip the client
+        // landing resolver on the detour path entirely, removing the race that
+        // could bake a stale /dashboard default into the detour. Only when no
+        // detour is needed do we resolve the landing here and navigate straight
+        // to it.
+        const twoFactorPath = await resolveTwoFactorPath();
+        window.location.assign(
+          twoFactorPath ?? (await resolvePostAuthLanding()),
+        );
       }
     } catch {
       setError("Something went wrong. Please try again.");

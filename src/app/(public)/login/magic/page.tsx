@@ -48,9 +48,12 @@ async function resolvePostAuthLanding(): Promise<string> {
 
 // Mirror the password login's post-login navigation so a 2FA-enabled member is
 // still challenged after a magic-link sign-in. Returns the 2FA / change-password
-// path, or null to fall through to the resolved landing. The resolved landing
-// is the callbackUrl the 2FA detour returns to, so the preference survives it.
-async function resolveTwoFactorPath(landing: string): Promise<string | null> {
+// detour path, or null when no challenge is open (navigate to the resolved
+// landing instead). Determinism (#2090): a magic link never carries an explicit
+// deep link, so the detour carries NO callbackUrl — the default landing is
+// re-resolved server-side at /login/enroll and /login/verify from the
+// fully-authed session, never a raced post-signIn resolver fetch.
+async function resolveTwoFactorPath(): Promise<string | null> {
   const response = await fetch("/api/auth/2fa/status", {
     credentials: "same-origin",
   });
@@ -70,10 +73,7 @@ async function resolveTwoFactorPath(landing: string): Promise<string | null> {
     return null;
   }
 
-  const params = new URLSearchParams({ callbackUrl: landing });
-  return twoFactorStatus.enrolled
-    ? `/login/verify?${params.toString()}`
-    : `/login/enroll?${params.toString()}`;
+  return twoFactorStatus.enrolled ? "/login/verify" : "/login/enroll";
 }
 
 type Status = "verifying" | "error" | "password-change";
@@ -123,13 +123,16 @@ function MagicSignIn() {
           return;
         }
 
-        // Signed in. Mirror the password login's post-login navigation so a
-        // 2FA-enabled member is still challenged, and honour the landing
-        // preference / admin role default (#2090). Full document navigation
-        // (never router.push) sends the fresh session cookie and avoids the
-        // logged-out RSC cache bounce (#1669).
-        const landing = await resolvePostAuthLanding();
-        window.location.assign((await resolveTwoFactorPath(landing)) ?? landing);
+        // Signed in. Check the 2FA gate FIRST (#2090): when a challenge is open
+        // the detour (/login/enroll or /login/verify) re-resolves the default
+        // landing server-side, so we skip the client landing resolver on that
+        // path. Only a directly-authenticated member (no challenge) resolves the
+        // landing here. Full document navigation (never router.push) sends the
+        // fresh session cookie and avoids the logged-out RSC cache bounce (#1669).
+        const twoFactorPath = await resolveTwoFactorPath();
+        window.location.assign(
+          twoFactorPath ?? (await resolvePostAuthLanding()),
+        );
       } catch {
         setStatus("error");
       }
