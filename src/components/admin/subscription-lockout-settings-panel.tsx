@@ -53,7 +53,11 @@ interface LockoutSettings {
   enabled: boolean;
   financialYearEndMonthOverride: number | null;
   textFallbackEnabled: boolean;
+  useFeeScheduleItemCodes: boolean;
 }
+
+const ITEM_CODE_MODE_SINGLE = "single";
+const ITEM_CODE_MODE_FEE_SCHEDULE = "fee-schedule";
 
 interface XeroCode {
   code: string;
@@ -97,6 +101,10 @@ export function SubscriptionLockoutSettingsPanel({
   >(null);
   const [accounts, setAccounts] = useState<XeroCode[] | null>(null);
   const [items, setItems] = useState<XeroCode[] | null>(null);
+  // #2109 fee-schedule look-through preview, computed server-side from the fee
+  // schedule and the other fee configs.
+  const [feeScheduleItemCodes, setFeeScheduleItemCodes] = useState<string[]>([]);
+  const [overlappingCodes, setOverlappingCodes] = useState<string[]>([]);
   const [xeroYearEndMonth, setXeroYearEndMonth] = useState<number | null>(null);
   const [ageTiers, setAgeTiers] = useState<AgeTierRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -162,6 +170,12 @@ export function SubscriptionLockoutSettingsPanel({
         if (lockoutBody?.settings) {
           setSettings(lockoutBody.settings as LockoutSettings);
         }
+        if (lockoutBody) {
+          setFeeScheduleItemCodes(
+            (lockoutBody.feeScheduleItemCodes as string[]) ?? [],
+          );
+          setOverlappingCodes((lockoutBody.overlappingCodes as string[]) ?? []);
+        }
 
         const mappingsBody = mappingsRes?.ok ? await mappingsRes.json() : null;
         if (mappingsBody?.subscriptionIncome) {
@@ -221,6 +235,7 @@ export function SubscriptionLockoutSettingsPanel({
               financialYearEndMonthOverride:
                 settings.financialYearEndMonthOverride,
               textFallbackEnabled: settings.textFallbackEnabled,
+              useFeeScheduleItemCodes: settings.useFeeScheduleItemCodes,
             }),
           },
         );
@@ -231,6 +246,14 @@ export function SubscriptionLockoutSettingsPanel({
         }
         if (lockoutBody.settings) {
           setSettings(lockoutBody.settings as LockoutSettings);
+        }
+        if (lockoutBody.feeScheduleItemCodes !== undefined) {
+          setFeeScheduleItemCodes(
+            (lockoutBody.feeScheduleItemCodes as string[]) ?? [],
+          );
+        }
+        if (lockoutBody.overlappingCodes !== undefined) {
+          setOverlappingCodes((lockoutBody.overlappingCodes as string[]) ?? []);
         }
       }
 
@@ -296,8 +319,8 @@ export function SubscriptionLockoutSettingsPanel({
     <div className="space-y-6">
       {!membershipCanEdit ? (
         <AdminViewOnlyNotice canEdit={membershipCanEdit}>
-          Your admin role can view the subscription lockout settings but cannot
-          change them.
+          Your admin role can view the membership booking-lockout settings but
+          cannot change them.
         </AdminViewOnlyNotice>
       ) : null}
       <Card>
@@ -433,8 +456,12 @@ export function SubscriptionLockoutSettingsPanel({
         </CardHeader>
         <CardContent className="space-y-5">
           {!financeCanEdit ? (
+            // Scoped to the finance-gated fields only (the subscription account
+            // and item codes). A membership-edit admin can still change the
+            // item-code matching mode and the invoice-text fallback in this card,
+            // so the notice must not claim they cannot change anything here.
             <AdminViewOnlyNotice canEdit={financeCanEdit}>
-              Your admin role can view the paid-subscription detection settings
+              Your admin role can view the subscription account and item codes
               but cannot change them.
             </AdminViewOnlyNotice>
           ) : null}
@@ -501,10 +528,109 @@ export function SubscriptionLockoutSettingsPanel({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              An invoice line using this Xero item also counts, even if its
-              account code differs.
+              {settings.useFeeScheduleItemCodes
+                ? "Fallback item code — always included in matching, alongside every membership fee item code below."
+                : "An invoice line using this Xero item also counts, even if its account code differs."}
             </p>
           </div>
+
+          {/* Item-code matching mode (#2109). This is a membership setting saved
+              via the membership-lockout-settings route, so it is gated on
+              membership edit even though it sits in the finance detection card
+              (same as the text fallback below). */}
+          <div className="space-y-1.5">
+            <Label htmlFor="item-code-mode">Item code matching</Label>
+            <Select
+              value={
+                settings.useFeeScheduleItemCodes
+                  ? ITEM_CODE_MODE_FEE_SCHEDULE
+                  : ITEM_CODE_MODE_SINGLE
+              }
+              disabled={!membershipCanEdit}
+              onValueChange={(value) =>
+                update({
+                  useFeeScheduleItemCodes:
+                    value === ITEM_CODE_MODE_FEE_SCHEDULE,
+                })
+              }
+            >
+              <SelectTrigger
+                id="item-code-mode"
+                className="w-full sm:w-[360px]"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ITEM_CODE_MODE_SINGLE}>
+                  Single item code
+                </SelectItem>
+                <SelectItem value={ITEM_CODE_MODE_FEE_SCHEDULE}>
+                  Use membership fee item codes (per type + age tier)
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              With look-through on, an invoice also counts when a line uses any
+              item code from your{" "}
+              <Link
+                href="/admin/fee-configuration"
+                className="font-medium underline"
+              >
+                fee configuration
+              </Link>{" "}
+              (every membership type and age tier, across all seasons). The
+              fallback item code above is always included.
+            </p>
+          </div>
+
+          {settings.useFeeScheduleItemCodes && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">
+                Membership fee item codes matched as paid
+              </p>
+              {feeScheduleItemCodes.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {feeScheduleItemCodes.map((code) => (
+                    <span
+                      key={code}
+                      className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${
+                        overlappingCodes.includes(code)
+                          ? "border-amber-300 bg-amber-50 text-amber-900"
+                          : "border-border bg-muted text-foreground"
+                      }`}
+                    >
+                      {code}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  No item codes are configured on your fee schedule yet, so only
+                  the fallback item code and account code above are matched. Add
+                  item codes on the{" "}
+                  <Link
+                    href="/admin/fee-configuration"
+                    className="font-medium underline"
+                  >
+                    fee configuration
+                  </Link>{" "}
+                  page.
+                </p>
+              )}
+              {overlappingCodes.length > 0 && (
+                <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  <span className="font-medium">Overlap warning:</span> the item
+                  code{overlappingCodes.length > 1 ? "s" : ""}{" "}
+                  {overlappingCodes.join(", ")} also identif
+                  {overlappingCodes.length > 1 ? "y" : "ies"} a hut-fee, joining-fee,
+                  or promo line. With look-through on, an unpaid invoice using{" "}
+                  {overlappingCodes.length > 1 ? "one of these" : "this"} could be
+                  mistaken for a paid subscription. Give subscriptions their own
+                  dedicated item codes to avoid false matches.
+                </div>
+              )}
+            </div>
+          )}
 
           <label className="flex items-start gap-3">
             <Checkbox

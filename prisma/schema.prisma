@@ -4629,6 +4629,12 @@ model MembershipLockoutSettings {
   // When true, an invoice whose reference/description text reads like a
   // membership subscription also counts, in addition to account/item code.
   textFallbackEnabled           Boolean  @default(true)
+  // When true (#2109), paid detection matches ANY item code stamped on the fee
+  // schedule (distinct MembershipAnnualFeeComponent.xeroItemCode) in addition to
+  // the single subscriptionIncome item code, so clubs that bill one item code
+  // per membership type + age tier are still recognised as paid. Default false =
+  // single-code behaviour byte-for-byte.
+  useFeeScheduleItemCodes       Boolean  @default(false)
   updatedByMemberId             String?
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt

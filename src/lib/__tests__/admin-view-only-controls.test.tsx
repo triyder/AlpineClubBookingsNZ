@@ -756,12 +756,12 @@ describe("SubscriptionLockoutSettingsPanel view-only gating (#1940, membership +
     }
     expect(
       screen.getByText(
-        /can view the subscription lockout settings but cannot change/i,
+        /can view the membership booking-lockout settings but cannot change/i,
       ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /can view the paid-subscription detection settings but cannot change/i,
+        /can view the subscription account and item codes but cannot change/i,
       ),
     ).toBeInTheDocument();
   });
@@ -784,12 +784,12 @@ describe("SubscriptionLockoutSettingsPanel view-only gating (#1940, membership +
     }
     expect(
       screen.queryByText(
-        /can view the subscription lockout settings but cannot change/i,
+        /can view the membership booking-lockout settings but cannot change/i,
       ),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByText(
-        /can view the paid-subscription detection settings but cannot change/i,
+        /can view the subscription account and item codes but cannot change/i,
       ),
     ).not.toBeInTheDocument();
   });
@@ -818,12 +818,12 @@ describe("SubscriptionLockoutSettingsPanel view-only gating (#1940, membership +
     // …while the finance detection card advertises its read-only state.
     expect(
       screen.getByText(
-        /can view the paid-subscription detection settings but cannot change/i,
+        /can view the subscription account and item codes but cannot change/i,
       ),
     ).toBeInTheDocument();
     expect(
       screen.queryByText(
-        /can view the subscription lockout settings but cannot change/i,
+        /can view the membership booking-lockout settings but cannot change/i,
       ),
     ).not.toBeInTheDocument();
   });

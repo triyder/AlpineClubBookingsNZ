@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -13,6 +14,10 @@ import {
   loadPersistedMembershipLockoutSettings,
   normalizeMembershipLockoutSettings,
 } from "@/lib/membership-lockout-settings";
+import {
+  getNonSubscriptionFeeItemCodes,
+  getSubscriptionItemCodes,
+} from "@/lib/xero-mappings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -27,8 +32,47 @@ const settingsSchema = z
       .nullable()
       .optional(),
     textFallbackEnabled: z.boolean().optional(),
+    useFeeScheduleItemCodes: z.boolean().optional(),
   })
   .strict();
+
+/**
+ * Compute the fee-schedule detection preview (#2109): the resolved item-code set
+ * paid detection would match under look-through, plus the subset of those codes
+ * that also identify a non-subscription fee (hut/joining/promo) — an overlap
+ * that would let an unpaid fee invoice masquerade as a subscription in the
+ * widened set, surfaced as a settings warning.
+ */
+async function buildFeeScheduleItemCodePreview(): Promise<{
+  feeScheduleItemCodes: string[];
+  overlappingCodes: string[];
+}> {
+  const [feeScheduleItemCodes, nonSubscriptionCodes] = await Promise.all([
+    getSubscriptionItemCodes(),
+    getNonSubscriptionFeeItemCodes(),
+  ]);
+  const nonSubscriptionSet = new Set(nonSubscriptionCodes);
+  const overlappingCodes = feeScheduleItemCodes.filter((code) =>
+    nonSubscriptionSet.has(code)
+  );
+  return { feeScheduleItemCodes, overlappingCodes };
+}
+
+/**
+ * The fee-schedule code lists are finance-domain data — they enumerate Xero
+ * item codes — so the preview is gated on finance VIEW (#2109 FIX-4b). A
+ * membership-only admin receives the settings WITHOUT the code lists; the panel
+ * hides the finance detection card for them and defaults the absent fields to
+ * `[]`, so omitting the keys is safe.
+ */
+async function buildFeeScheduleItemCodePreviewForViewer(
+  user: Parameters<typeof hasAdminAreaAccess>[0]
+): Promise<{ feeScheduleItemCodes: string[]; overlappingCodes: string[] } | null> {
+  if (!hasAdminAreaAccess(user, { area: "finance", level: "view" })) {
+    return null;
+  }
+  return buildFeeScheduleItemCodePreview();
+}
 
 export async function GET() {
   const guard = await requireAdmin({
@@ -38,10 +82,14 @@ export async function GET() {
 
   const persisted = await loadPersistedMembershipLockoutSettings();
   const financialYear = await getFinancialYearResolution();
+  const preview = await buildFeeScheduleItemCodePreviewForViewer(
+    guard.session.user
+  );
   return NextResponse.json({
     settings: normalizeMembershipLockoutSettings(persisted),
     financialYear,
     persisted,
+    ...(preview ?? {}),
   });
 }
 
@@ -79,6 +127,10 @@ export async function PUT(request: NextRequest) {
         : (before?.financialYearEndMonthOverride ?? null),
     textFallbackEnabled:
       parsed.data.textFallbackEnabled ?? before?.textFallbackEnabled ?? true,
+    useFeeScheduleItemCodes:
+      parsed.data.useFeeScheduleItemCodes ??
+      before?.useFeeScheduleItemCodes ??
+      false,
     updatedByMemberId: session.user.id,
   };
 
@@ -110,9 +162,13 @@ export async function PUT(request: NextRequest) {
   );
 
   const financialYear = await getFinancialYearResolution();
+  const preview = await buildFeeScheduleItemCodePreviewForViewer(
+    session.user
+  );
   return NextResponse.json({
     settings: normalizeMembershipLockoutSettings(record),
     financialYear,
     persisted: record,
+    ...(preview ?? {}),
   });
 }

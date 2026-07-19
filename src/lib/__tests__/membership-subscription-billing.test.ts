@@ -7,6 +7,13 @@ const mocks = vi.hoisted(() => ({
   members: { findMany: vi.fn() },
   membershipTypes: { findMany: vi.fn() },
   charges: { findMany: vi.fn() },
+  // #2109 FIX-4d: the closed-loop test runs the REAL getSubscriptionItemCodes
+  // resolver over these fee-component rows. getSubscriptionItemCodes folds in the
+  // flat subscriptionIncome item code via the module-INTERNAL
+  // getResolvedAccountMapping (which reads xeroAccountMapping directly, not the
+  // mocked export), so the resolver's item code is supplied here.
+  feeComponents: { findMany: vi.fn() },
+  accountMapping: { findUnique: vi.fn() },
   effectiveFee: vi.fn(),
   familyMode: vi.fn(),
   mapping: vi.fn(),
@@ -16,9 +23,16 @@ vi.mock("@/lib/authoritative-fees", () => ({
   getEffectiveMembershipAnnualFee: mocks.effectiveFee,
   getFamilyBillingMode: mocks.familyMode,
 }));
-vi.mock("@/lib/xero-mappings", () => ({
-  getResolvedAccountMapping: mocks.mapping,
-}));
+// Keep getResolvedAccountMapping mocked (billing relies on the mock), but expose
+// the REAL getSubscriptionItemCodes so the #2109 FIX-4d closed-loop test can
+// assert the codes billing stamps are a subset of the detection resolver output.
+vi.mock("@/lib/xero-mappings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/xero-mappings")>();
+  return {
+    ...actual,
+    getResolvedAccountMapping: mocks.mapping,
+  };
+});
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -28,6 +42,8 @@ vi.mock("@/lib/prisma", () => ({
     member: mocks.members,
     membershipType: mocks.membershipTypes,
     membershipSubscriptionCharge: mocks.charges,
+    membershipAnnualFeeComponent: mocks.feeComponents,
+    xeroAccountMapping: mocks.accountMapping,
   },
 }));
 
@@ -36,6 +52,7 @@ import {
   buildSubscriptionBillingPreview,
   calculateMembershipCharge,
 } from "@/lib/membership-subscription-billing";
+import { getSubscriptionItemCodes } from "@/lib/xero-mappings";
 import {
   __setFinancialYearEndMonthForTesting,
   DEFAULT_FINANCIAL_YEAR_END_MONTH,
@@ -129,10 +146,56 @@ describe("membership subscription billing", () => {
     mocks.members.findMany.mockResolvedValue([]);
     mocks.membershipTypes.findMany.mockResolvedValue([]);
     mocks.charges.findMany.mockResolvedValue([]);
+    mocks.feeComponents.findMany.mockResolvedValue([]);
     mocks.effectiveFee.mockResolvedValue(fee());
     mocks.familyMode.mockResolvedValue("BILL_FAMILY_VIA_BILLING_MEMBER");
     mocks.mapping.mockResolvedValue({ code: "203", itemCode: "SUB", codeExplicitlyConfigured: true });
     __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
+  });
+
+  // #2109 FIX-4d closed loop: drive the REAL billing line-builder for a type +
+  // components fixture, collect the item codes it stamps onto invoice lines, and
+  // assert every one is in the detection resolver's output (derived from the
+  // same fee-component data) — so look-through detection can never miss a code
+  // billing can stamp. Replaces the former hardcoded-array assertion.
+  it("stamps only item codes the detection resolver also matches (closed loop)", async () => {
+    const componentCodes = ["FULL-ADULT", "FULL-YOUTH"];
+    const annual = fee({
+      components: [
+        comp({ label: "Adult", amountCents: 9_000, xeroItemCode: "FULL-ADULT", sortOrder: 0 }),
+        comp({ label: "Youth", amountCents: 3_000, xeroItemCode: "FULL-YOUTH", sortOrder: 1 }),
+      ],
+    });
+    mocks.effectiveFee.mockResolvedValue(annual);
+    mocks.mapping.mockResolvedValue({ code: "203", itemCode: "SUBS", codeExplicitlyConfigured: true });
+    mocks.members.findMany.mockResolvedValue([member("m1")]);
+    // The same component codes + flat fallback back the detection resolver.
+    mocks.feeComponents.findMany.mockResolvedValue(
+      componentCodes.map((xeroItemCode) => ({ xeroItemCode })),
+    );
+    mocks.accountMapping.findUnique.mockResolvedValue({ code: "203", itemCode: "SUBS" });
+
+    const preview = await buildSubscriptionBillingPreview({
+      seasonYear: 2026,
+      decisionDate: new Date("2026-04-01T00:00:00.000Z"),
+    });
+
+    // Codes the billing pipeline actually stamped — the entry-level flat code
+    // and every component-line code (both get persisted onto Xero lines).
+    const stamped = new Set<string>();
+    for (const entry of preview.entries) {
+      if (entry.xeroItemCode) stamped.add(entry.xeroItemCode);
+      for (const component of entry.components) {
+        if (component.xeroItemCode) stamped.add(component.xeroItemCode);
+      }
+    }
+    // The component overrides plus the flat fallback must all appear.
+    expect(stamped).toEqual(new Set([...componentCodes, "SUBS"]));
+
+    const detectionSet = new Set(await getSubscriptionItemCodes());
+    for (const code of stamped) {
+      expect(detectionSet.has(code)).toBe(true);
+    }
   });
 
   it("handles January-start full-year and inclusive proration bounds", () => {

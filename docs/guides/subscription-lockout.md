@@ -15,8 +15,9 @@ the [Membership & Members setup hub](membership-setup.md).
 admitted under the support permission area, and an admin without it is
 redirected away even though the hub card is still visible. Once inside, the
 sections span three further permission areas: the lockout switch, financial
-year, and text-match fallback are **membership** settings; the Xero
-account/item detection codes are **finance** settings; and the per-age-tier
+year, text-match fallback, and item-code matching mode are **membership**
+settings; the Xero account/item detection codes are **finance** settings; and
+the per-age-tier
 requirement is a read-only view of the **bookings** age-tier settings. You only
 see and can edit the sections your role covers, and **Save** only writes the
 parts you can change.
@@ -55,9 +56,32 @@ parts you can change.
 1. In **Paid-subscription detection**, pick the **Subscription account code**
    (an invoice line posted to it counts as a subscription; defaults to 203 Annual
    Subs when unset) and optionally a **Subscription item code**.
-2. Tick **Match on invoice text as well** to also count invoices whose reference
+2. Choose an **Item code matching** mode:
+   - **Single item code** (default): only the one subscription item code above
+     is matched — today's behaviour, unchanged.
+   - **Use membership fee item codes (per type + age tier)**: turns on
+     *look-through*. An invoice also counts when a line uses **any** item code
+     from your [fee configuration](fees.md) — every membership type
+     and age tier, across every season (older seasons were billed under fee rows
+     you may since have retired). This is for clubs that bill one Xero item code
+     per membership type + tier (e.g. "Full Member – Adult") rather than a single
+     shared subscription item. The single item code above is relabelled the
+     **fallback** and is *always* included in matching.
+3. When look-through is on, the panel lists the resolved item codes it will
+   match. If any of them **also** identifies a hut-fee, joining-fee, or promo
+   line, an **overlap warning** highlights those codes — an unpaid invoice using
+   a shared code could otherwise be mistaken for a paid subscription. Give
+   subscriptions their own dedicated item codes to avoid false matches.
+4. Tick **Match on invoice text as well** to also count invoices whose reference
    or line description reads like a subscription (a safety net that can cause
    false matches — leave off for strict code-only matching).
+
+When several invoices in a season could match (for example a paid subscription
+and an earlier unpaid invoice that shares a code), the system prefers a **paid**
+invoice over an unpaid one, and a match on the account code or fallback item code
+over a match on a shared fee-schedule code only — so a member who has genuinely
+paid is never marked unpaid by an overlapping code, and a manual "mark paid"
+stays intact.
 
 ### Review the age-tier rule
 
@@ -74,7 +98,8 @@ parts you can change.
 | Financial year-end month | Membership | The subscription season window | Follow Xero (→ March) | Override changes all seasons; records not migrated |
 | Match on invoice text as well | Membership | Text fallback for detecting a paid subscription | from server | Can cause false matches |
 | Subscription account code | Finance | Which Xero account counts as a subscription | 203 (Annual Subs) when unset | Requires Xero connected |
-| Subscription item code (optional) | Finance | A Xero item that also counts | none | Requires Xero connected |
+| Subscription item code (optional) | Finance | A Xero item that also counts (the *fallback* code when look-through is on) | none | Requires Xero connected |
+| Item code matching | Membership | Single item code, or look-through to every fee-schedule item code | Single item code | Look-through resolves codes from [fee configuration](fees.md); overlap with other fee codes is warned |
 | Age-tier requirement | Bookings | Which age tiers must have a paid subscription | (read-only here) | Edit on [Age Groups](age-tier-settings.md) |
 
 ## Troubleshooting

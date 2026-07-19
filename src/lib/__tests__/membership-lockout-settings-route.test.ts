@@ -37,7 +37,13 @@ import {
 } from "@/app/api/admin/membership-lockout-settings/route";
 
 const session = {
-  user: { id: "admin-1", adminPermissionMatrix: { membership: "edit" } },
+  user: {
+    id: "admin-1",
+    // Finance view is required for the fee-schedule preview (#2109 FIX-4b); the
+    // default session holds it so the preview assertions below see the code
+    // lists. A finance-less admin is covered by its own case.
+    adminPermissionMatrix: { membership: "edit", finance: "view" },
+  },
 };
 
 function request(body: unknown) {
@@ -61,6 +67,7 @@ describe("membership lockout settings route guards (#1940)", () => {
       enabled: true,
       financialYearEndMonthOverride: null,
       textFallbackEnabled: true,
+      useFeeScheduleItemCodes: false,
     });
     mocks.auditLogCreate.mockResolvedValue({});
     mocks.getFinancialYearResolution.mockResolvedValue({});
@@ -97,5 +104,58 @@ describe("membership lockout settings route guards (#1940)", () => {
     expect(response.status).toBe(200);
     expect(mocks.upsert).toHaveBeenCalledTimes(1);
     expect(mocks.auditLogCreate).toHaveBeenCalled();
+  });
+
+  it("accepts and persists useFeeScheduleItemCodes (#2109)", async () => {
+    const response = await putLockoutSettings(
+      request({ useFeeScheduleItemCodes: true }),
+    );
+
+    expect(response.status).toBe(200);
+    const upsertArgs = mocks.upsert.mock.calls[0][0];
+    expect(upsertArgs.update).toEqual(
+      expect.objectContaining({ useFeeScheduleItemCodes: true }),
+    );
+    expect(upsertArgs.create).toEqual(
+      expect.objectContaining({ useFeeScheduleItemCodes: true }),
+    );
+  });
+
+  it("rejects an unknown field via the strict schema", async () => {
+    const response = await putLockoutSettings(request({ bogusField: true }));
+    expect(response.status).toBe(400);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("GET returns the fee-schedule detection preview for a finance-view admin (#2109)", async () => {
+    const response = await getLockoutSettings();
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    // The resolver/overlap reads degrade to [] under the route's minimal prisma
+    // mock, but the preview keys are present for a finance-view admin.
+    expect(body).toEqual(
+      expect.objectContaining({
+        feeScheduleItemCodes: expect.any(Array),
+        overlappingCodes: expect.any(Array),
+      }),
+    );
+  });
+
+  it("GET omits the fee-schedule preview for an admin without finance view (#2109 FIX-4b)", async () => {
+    // A membership-only admin gets the settings without the finance-domain code
+    // lists; the panel hides the detection card for them and defaults to [].
+    mocks.requireAdmin.mockResolvedValueOnce({
+      ok: true,
+      session: {
+        user: { id: "admin-1", adminPermissionMatrix: { membership: "edit" } },
+      },
+    });
+
+    const response = await getLockoutSettings();
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.settings).toBeDefined();
+    expect(body.feeScheduleItemCodes).toBeUndefined();
+    expect(body.overlappingCodes).toBeUndefined();
   });
 });

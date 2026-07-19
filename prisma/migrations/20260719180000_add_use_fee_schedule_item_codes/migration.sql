@@ -1,0 +1,22 @@
+-- Opt-in subscription paid-detection look-through (#2109, epic #2100). Additive
+-- and expand-only: a single NOT NULL BOOLEAN column with a DEFAULT false on the
+-- single-row MembershipLockoutSettings config table. When true, paid detection
+-- also matches any item code stamped on the fee schedule
+-- (MembershipAnnualFeeComponent.xeroItemCode), so a club that bills one Xero
+-- item code per membership type + age tier is still recognised as paid. Default
+-- false reproduces today's single-item-code behaviour byte-for-byte, so no
+-- existing row's detection outcome changes on migrate.
+--
+-- Old-colour compatible: the previously deployed Prisma client has no
+-- `MembershipLockoutSettings.useFeeScheduleItemCodes` field and never reads or
+-- writes it. The ADD COLUMN carries a constant DEFAULT, so on Postgres 11+ it is
+-- a metadata-only catalog change (no table rewrite) and, because the table holds
+-- at most one row (id = "default"), it is trivially cheap regardless. No
+-- backfill, no provider call, no destructive SQL. Safe at any traffic level.
+--
+-- Timestamp note: slotted at 20260719180000 so it sorts AFTER every migration
+-- committed on main at authoring time (latest was
+-- 20260719170000_xero_grouping_age_tiers_multiselect).
+
+-- AlterTable
+ALTER TABLE "MembershipLockoutSettings" ADD COLUMN     "useFeeScheduleItemCodes" BOOLEAN NOT NULL DEFAULT false;

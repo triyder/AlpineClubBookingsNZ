@@ -99,6 +99,95 @@ async function getItemCodeMapping(key: string): Promise<string | null> {
   return mapping.itemCode;
 }
 
+/**
+ * The full set of Xero item codes that mark an invoice line as a membership
+ * subscription when fee-schedule look-through is enabled (#2109). It is the
+ * distinct non-null `MembershipAnnualFeeComponent.xeroItemCode` values (every
+ * historical fee row contributes — prior seasons were billed under retired fee
+ * rows) UNION the single configured `subscriptionIncome.itemCode`, sorted for a
+ * stable preview. Closed-loop invariant: because billing stamps exactly those
+ * component codes onto each invoice line, this detection set is a superset of
+ * every code the billing pipeline can stamp.
+ *
+ * The single `subscriptionIncome.itemCode` is always folded in so the flat
+ * "fallback item code" stays in the matching set even when no fee row carries
+ * an item code. Safe-fallback error style mirrors `getResolvedAccountMapping`:
+ * a read failure degrades to whatever the mapping lookup could still resolve
+ * rather than throwing into the caller's Xero round-trip.
+ */
+export async function getSubscriptionItemCodes(
+  store: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<string[]> {
+  const codes = new Set<string>();
+  try {
+    const rows = await store.membershipAnnualFeeComponent.findMany({
+      where: { xeroItemCode: { not: null } },
+      select: { xeroItemCode: true },
+      distinct: ["xeroItemCode"],
+    });
+    for (const row of rows) {
+      if (row.xeroItemCode) codes.add(row.xeroItemCode);
+    }
+  } catch {
+    // Fee-schedule read failed: fall back to whatever the single mapping resolves
+    // below so the flat item code still participates in matching.
+  }
+  const mapping = await getResolvedAccountMapping("subscriptionIncome", store);
+  if (mapping.itemCode) codes.add(mapping.itemCode);
+  return Array.from(codes).sort();
+}
+
+/**
+ * The distinct non-null Xero item codes configured for NON-subscription fees —
+ * hut-fee income, hut fees, joining fees, and promo codes (#2109). Used by the
+ * settings preview
+ * to warn when a fee-schedule subscription code also identifies one of these,
+ * which would let an unpaid hut/promo invoice masquerade as a subscription in
+ * the widened (union) detection set. Best-effort: a read failure yields an empty
+ * set (no warning) rather than blocking the settings read.
+ */
+export async function getNonSubscriptionFeeItemCodes(
+  store: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<string[]> {
+  const codes = new Set<string>();
+  try {
+    const [itemCodeRows, accountMappingRows, promoRows] = await Promise.all([
+      store.xeroItemCodeMapping.findMany({
+        where: { itemCode: { not: null } },
+        select: { itemCode: true },
+        distinct: ["itemCode"],
+      }),
+      store.xeroAccountMapping.findMany({
+        where: {
+          key: {
+            in: [
+              "hutFeeItem",
+              "hutFeeRefundItem",
+              "entranceFeeItem",
+              "hutFeesIncome",
+            ],
+          },
+          itemCode: { not: null },
+        },
+        select: { itemCode: true },
+      }),
+      store.promoCode.findMany({
+        where: { xeroItemCode: { not: null } },
+        select: { xeroItemCode: true },
+        distinct: ["xeroItemCode"],
+      }),
+    ]);
+    for (const row of itemCodeRows) if (row.itemCode) codes.add(row.itemCode);
+    for (const row of accountMappingRows)
+      if (row.itemCode) codes.add(row.itemCode);
+    for (const row of promoRows)
+      if (row.xeroItemCode) codes.add(row.xeroItemCode);
+  } catch {
+    // Best-effort overlap detection only; degrade to no warning on read failure.
+  }
+  return Array.from(codes).sort();
+}
+
 // Resolver for hut-fee Xero item codes keyed by membership type (#1930, E4).
 // `byKey` is `${membershipTypeId}_${seasonType}_${ageTier|"FLAT"}` ->
 // itemCode. A guest's code is resolved from its BookingGuest.rateMembershipType

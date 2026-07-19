@@ -53,6 +53,10 @@ const mocks = vi.hoisted(() => ({
   getAuthenticatedXeroClient: vi.fn(),
   withXeroRetry: vi.fn(),
   checkMembershipStatus: vi.fn(),
+  // #2109 FIX-3: the inbound reconciler now gates the "looks like a
+  // subscription" decision on a STRONG match via hasStrongSubscriptionInvoiceMatch.
+  hasStrongSubscriptionInvoiceMatch: vi.fn(),
+  buildSubscriptionInvoiceMatchOptions: vi.fn(),
   getAccountMapping: vi.fn(),
   lodgeFindFirst: vi.fn(),
   checkCapacity: vi.fn(),
@@ -257,14 +261,13 @@ vi.mock("@/lib/xero-membership-sync", async (importOriginal) => {
     ...actual,
     checkMembershipStatus: mocks.checkMembershipStatus,
     refreshAllMembershipStatuses: mocks.refreshAllMembershipStatuses,
-    findSubscriptionInvoice: (
-      invoices: Array<{ lineItems?: Array<{ accountCode?: string }>; reference?: string }>
-    ) =>
-      invoices.find(
-        (invoice) =>
-          invoice.lineItems?.some((lineItem) => lineItem.accountCode === "203") ||
-          (invoice.reference ?? "").toLowerCase().includes("annual member subscription")
-      ) ?? null,
+    // #2109 FIX-3: the inbound reconciler resolves match options then gates on a
+    // STRONG match. Both are mocked; the default (set in beforeEach) mirrors the
+    // legacy account-203 / text detection, and the FIX-3 tests swap in the REAL
+    // hasStrongSubscriptionInvoiceMatch with controlled options to exercise the
+    // union-only gate.
+    buildSubscriptionInvoiceMatchOptions: mocks.buildSubscriptionInvoiceMatchOptions,
+    hasStrongSubscriptionInvoiceMatch: mocks.hasStrongSubscriptionInvoiceMatch,
   };
 });
 
@@ -393,6 +396,32 @@ describe("processStoredXeroInboundEvents", () => {
       })
     );
     mocks.getAccountMapping.mockResolvedValue("203");
+    // #2109 FIX-3 defaults: options resolve to the single-code (off) set, and
+    // the strong-match gate mirrors the legacy account-203 / text detection so
+    // every existing invoice test keeps its behaviour.
+    mocks.buildSubscriptionInvoiceMatchOptions.mockResolvedValue({
+      accountCode: "203",
+      itemCodes: [],
+      primaryItemCode: null,
+      textFallbackEnabled: true,
+    });
+    mocks.hasStrongSubscriptionInvoiceMatch.mockImplementation(
+      (
+        invoices: Array<{
+          lineItems?: Array<{ accountCode?: string }>;
+          reference?: string;
+        }>,
+      ) =>
+        invoices.some(
+          (invoice) =>
+            invoice.lineItems?.some(
+              (lineItem) => lineItem.accountCode === "203",
+            ) ||
+            (invoice.reference ?? "")
+              .toLowerCase()
+              .includes("annual member subscription"),
+        ),
+    );
     mocks.refreshAllMembershipStatuses.mockResolvedValue({
       seasonYear: 2026,
       cursorFrom: null,
@@ -784,6 +813,158 @@ describe("processStoredXeroInboundEvents", () => {
         }),
       }),
     });
+  });
+
+  // #2109 FIX-3: a member-less invoice matched ONLY via a union-only
+  // fee-schedule code (no account-203, no primary/fallback code, no text match)
+  // must NOT be treated as a subscription — so it writes no SUBSCRIPTION_INVOICE
+  // audit rows and triggers no per-member checkMembershipStatus refresh. Uses
+  // the REAL hasStrongSubscriptionInvoiceMatch with union options.
+  it("does not treat a union-only inbound invoice as a subscription (no audit rows, no member refresh)", async () => {
+    const { hasStrongSubscriptionInvoiceMatch } = await vi.importActual<
+      typeof import("@/lib/xero-membership-sync")
+    >("@/lib/xero-membership-sync");
+    mocks.hasStrongSubscriptionInvoiceMatch.mockImplementation(
+      hasStrongSubscriptionInvoiceMatch,
+    );
+    mocks.buildSubscriptionInvoiceMatchOptions.mockResolvedValue({
+      accountCode: "203",
+      itemCodes: ["FULL-ADULT", "SUBS"],
+      primaryItemCode: "SUBS",
+      textFallbackEnabled: false,
+    });
+
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_union",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_union",
+        correlationKey: "corr_union",
+        payload: { resourceId: "inv_union" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_union" });
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.memberFindMany.mockResolvedValue([]);
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_union",
+              invoiceNumber: "INV-UNION",
+              date: "2026-04-10",
+              status: "AUTHORISED",
+              reference: "Hut booking",
+              contact: { contactID: "contact_1" },
+              // Union-only: a shared fee-schedule/hut code, no account-203 or
+              // primary/fallback code, no subscription text.
+              lineItems: [{ accountCode: "200", itemCode: "FULL-ADULT" }],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.checkMembershipStatus).not.toHaveBeenCalled();
+    expect(mocks.auditLogCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: "xero.subscription.reconciled" }),
+      }),
+    );
+  });
+
+  // #2109 FIX-3: an account-203 invoice IS a strong match, so it still writes the
+  // SUBSCRIPTION_INVOICE audit link and refreshes the member as before.
+  it("still treats an account-203 inbound invoice as a subscription (links + member refresh)", async () => {
+    const { hasStrongSubscriptionInvoiceMatch } = await vi.importActual<
+      typeof import("@/lib/xero-membership-sync")
+    >("@/lib/xero-membership-sync");
+    mocks.hasStrongSubscriptionInvoiceMatch.mockImplementation(
+      hasStrongSubscriptionInvoiceMatch,
+    );
+    mocks.buildSubscriptionInvoiceMatchOptions.mockResolvedValue({
+      accountCode: "203",
+      itemCodes: ["FULL-ADULT", "SUBS"],
+      primaryItemCode: "SUBS",
+      textFallbackEnabled: false,
+    });
+
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_203",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_203",
+        correlationKey: "corr_203",
+        payload: { resourceId: "inv_203" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_203" });
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.memberFindMany.mockResolvedValue([{ id: "mem_1" }]);
+    mocks.checkMembershipStatus.mockResolvedValue({
+      status: "PAID",
+      xeroInvoiceId: "inv_203",
+    });
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_203",
+              invoiceNumber: "INV-203",
+              date: "2026-04-10",
+              status: "AUTHORISED",
+              reference: "Renewal",
+              contact: { contactID: "contact_1" },
+              lineItems: [{ accountCode: "203" }],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026);
+    expect(mocks.auditLogCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: "xero.subscription.reconciled",
+          subjectMemberId: "mem_1",
+          entityType: "Member",
+          metadata: expect.objectContaining({ role: "SUBSCRIPTION_INVOICE" }),
+        }),
+      }),
+    );
   });
 
   it("marks Internet Banking bookings paid when the linked Xero invoice is paid", async () => {
@@ -5014,6 +5195,30 @@ describe("runXeroInboundReconciliationCycle", () => {
     mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
     mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
     mocks.processedCreate.mockRejectedValue({ code: "P2002" });
+    // #2109 FIX-3 defaults (see the processStored describe for rationale).
+    mocks.buildSubscriptionInvoiceMatchOptions.mockResolvedValue({
+      accountCode: "203",
+      itemCodes: [],
+      primaryItemCode: null,
+      textFallbackEnabled: true,
+    });
+    mocks.hasStrongSubscriptionInvoiceMatch.mockImplementation(
+      (
+        invoices: Array<{
+          lineItems?: Array<{ accountCode?: string }>;
+          reference?: string;
+        }>,
+      ) =>
+        invoices.some(
+          (invoice) =>
+            invoice.lineItems?.some(
+              (lineItem) => lineItem.accountCode === "203",
+            ) ||
+            (invoice.reference ?? "")
+              .toLowerCase()
+              .includes("annual member subscription"),
+        ),
+    );
     mocks.syncContactsFromXero.mockResolvedValue({
       created: [],
       updated: [{ memberId: "mem_1" }],
@@ -5331,6 +5536,30 @@ describe("replayStoredXeroInboundEvent", () => {
       })
     );
     mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_replay" });
+    // #2109 FIX-3 defaults (see the processStored describe for rationale).
+    mocks.buildSubscriptionInvoiceMatchOptions.mockResolvedValue({
+      accountCode: "203",
+      itemCodes: [],
+      primaryItemCode: null,
+      textFallbackEnabled: true,
+    });
+    mocks.hasStrongSubscriptionInvoiceMatch.mockImplementation(
+      (
+        invoices: Array<{
+          lineItems?: Array<{ accountCode?: string }>;
+          reference?: string;
+        }>,
+      ) =>
+        invoices.some(
+          (invoice) =>
+            invoice.lineItems?.some(
+              (lineItem) => lineItem.accountCode === "203",
+            ) ||
+            (invoice.reference ?? "")
+              .toLowerCase()
+              .includes("annual member subscription"),
+        ),
+    );
   });
 
   it("replays a stored inbound event and clears the previous dedupe claim", async () => {
