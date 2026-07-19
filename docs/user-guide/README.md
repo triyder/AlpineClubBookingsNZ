@@ -4,12 +4,12 @@ Audience: Member, Guest
 
 Plain-English, step-by-step guides for the people who **use** the club — members
 signing in to book a stay, and guests staying without a login. These pages
-are readable in two places — this folder and the
-[project wiki](https://github.com/thatskiff33/AlpineClubBookingsNZ/wiki),
-which mirrors it automatically (`scripts/sync-user-guide-wiki.mjs`, run by
-the `Wiki sync` workflow on every push to `main`). This folder is the source
-of truth; propose changes by pull request, as direct wiki edits are
-overwritten. If you run the
+live in the repository under `docs/user-guide/` — the source of truth — and
+are automatically mirrored to the
+[project wiki](https://github.com/thatskiff33/AlpineClubBookingsNZ/wiki) for
+easy reading (`scripts/sync-user-guide-wiki.mjs`, run by the `Wiki sync`
+workflow on every push to `main`). Propose changes by pull request; direct
+wiki edits are overwritten. If you run the
 club day to day, you want the [operator guides](../guides/) instead; if you are
 evaluating or configuring a fork, start at the [documentation hub](../README.md).
 

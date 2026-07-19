@@ -74,6 +74,13 @@ describe("wiki sync transforms", () => {
     expect(() => rewriteTarget("../../../etc/passwd", ctx())).toThrow(/escapes/);
   });
 
+  it("rewrites reference-style link definitions", () => {
+    const c = ctx({ "booking-a-stay.md": "Booking-a-stay" });
+    expect(transformContent("[book]: booking-a-stay.md\n[deep]: ../CANCELLATIONS.md#refund-policy", c)).toBe(
+      `[book]: Booking-a-stay\n[deep]: https://github.com/${SLUG}/blob/main/docs/CANCELLATIONS.md#refund-policy`,
+    );
+  });
+
   it("transforms every link and image in a page body", () => {
     const c = ctx({ "your-account.md": "Managing-your-account" });
     const out = transformContent(
@@ -140,7 +147,7 @@ describe("wiki sync transforms", () => {
     const wiki = buildWiki(sources, SLUG);
     expect(wiki.size).toBe(Object.keys(sources).length + 2); // pages + sidebar + footer
     for (const [name, content] of wiki) {
-      expect(content, name).not.toMatch(/\]\((\.\.\/|[a-z0-9-]+\.md)/);
+      expect(content, name).not.toMatch(/\](\(|:\s*)(\.\.?\/|[A-Za-z0-9-]+\.md)/);
     }
   });
 

@@ -100,12 +100,25 @@ export function rewriteTarget(target, { slug, pageMap }) {
   return `https://github.com/${slug}/${kind}/${BRANCH}/${repoPath}${anchor}`;
 }
 
-/** Rewrite every markdown link/image target in a page. */
+/**
+ * Rewrite every markdown link/image target in a page.
+ *
+ * Deliberately fence-blind: anything link-shaped is rewritten, including
+ * inside code fences or backticks. No user-guide page puts link-shaped text
+ * in code (a STYLE_GUIDE convention for this folder); a fence-aware parser is
+ * not worth the complexity until a page actually needs one.
+ */
 export function transformContent(source, ctx) {
-  return source.replace(
-    /(!?\[[^\]]*\]\()([^)\s]+)(\))/g,
-    (_all, open, target, close) => `${open}${rewriteTarget(target, ctx)}${close}`,
-  );
+  return source
+    .replace(
+      /(!?\[[^\]]*\]\()([^)\s]+)(\))/g,
+      (_all, open, target, close) => `${open}${rewriteTarget(target, ctx)}${close}`,
+    )
+    .replace(
+      // Reference-style definitions: `[label]: target` at line start.
+      /^(\s*\[[^\]^]+\]:\s*)(\S+)/gm,
+      (_all, open, target) => `${open}${rewriteTarget(target, ctx)}`,
+    );
 }
 
 export function banner(sourceFile, slug) {

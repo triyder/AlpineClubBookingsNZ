@@ -61,12 +61,16 @@ location, and #2050 agents must place guides there.
 
 Member guides live in **`docs/user-guide/`** and are additionally
 **auto-mirrored to the GitHub wiki** (`scripts/sync-user-guide-wiki.mjs`, run
-by the `Wiki sync` workflow on every push to `main`; `npm run docs:wiki-sync`
-locally). The folder is the single source of truth: the mirror rewrites
-relative links to absolute repo URLs, stamps every page with a
-mirrored-do-not-edit banner, and deletes orphaned mirrored pages. Never edit
-the wiki directly, and never link *to* wiki pages from in-repo docs — the CI
-link check cannot see them.
+by the `Wiki sync` workflow on every push to `main`; locally, clone the wiki
+repo and run `npm run docs:wiki-sync -- --out <wiki-clone-dir>`). The folder
+is the single source of truth: the mirror rewrites relative links to absolute
+repo URLs, stamps every page with a mirrored-do-not-edit banner, and deletes
+orphaned mirrored pages. Never edit the wiki directly, and never link to
+*individual* wiki pages from in-repo docs — page names are rename-fragile and
+the CI link check cannot see them (the wiki's stable **root URL** is the one
+allowed exception). Because the mirror rewrites anything link-shaped,
+user-guide pages must not put link-shaped text (`[x](y)`) inside code fences
+or backticks.
 
 ## Operator-guide page skeleton (required)
 
