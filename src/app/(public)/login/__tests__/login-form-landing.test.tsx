@@ -4,9 +4,11 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 // Post-login landing resolution on the credential form (#2090): after a
-// successful sign-in the form asks the server where to land (preference / admin
-// role default), then navigates there — via the 2FA detour when required, so
-// the resolved landing survives the verify/enroll hop.
+// successful sign-in the form checks the 2FA gate first. When a challenge is
+// open it hands off to the verify/enroll detour (which re-resolves the default
+// landing server-side, so the detour carries only a genuine explicit deep link);
+// otherwise it asks the server where to land (preference / admin role default)
+// and navigates straight there.
 const { mockSignIn } = vi.hoisted(() => ({ mockSignIn: vi.fn() }));
 vi.mock("next-auth/react", () => ({ signIn: mockSignIn }));
 vi.mock("@/components/club-identity-provider", () => ({
@@ -90,22 +92,55 @@ describe("LoginForm — post-auth landing navigation (#2090)", () => {
     await waitFor(() => expect(assignMock).toHaveBeenCalledWith("/admin/dashboard"));
   });
 
-  it("materialises the resolved landing into the 2FA detour callbackUrl", async () => {
-    mockFetch({
-      "/api/auth/post-login-landing": { path: "/admin/dashboard" },
-      "/api/auth/2fa/status": {
-        required: true,
-        verified: false,
-        enrolled: true,
-      },
+  it("hands off to the 2FA detour WITHOUT baking a default landing into it", async () => {
+    // Determinism (#2090): with no explicit deep link, the detour carries no
+    // callbackUrl at all — the default landing is re-resolved server-side at
+    // /login/verify, so a raced/failed post-signIn resolver can never strand an
+    // admin-access member on /dashboard.
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const body = url.startsWith("/api/auth/2fa/status")
+        ? { required: true, verified: false, enrolled: true }
+        : { path: "/admin/dashboard" };
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(body),
+      } as Response);
     });
+    vi.stubGlobal("fetch", fetchMock);
 
     renderForm();
     await submit();
 
     await waitFor(() =>
+      expect(assignMock).toHaveBeenCalledWith("/login/verify"),
+    );
+    // The landing resolver is never consulted on the detour path — the detour
+    // page owns the resolution, so there is nothing to race.
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).startsWith("/api/auth/post-login-landing"),
+      ),
+    ).toBe(false);
+  });
+
+  it("carries a genuinely explicit deep link into the 2FA detour callbackUrl", async () => {
+    // An explicit deep link must survive the detour so it can win post-verify
+    // (D-D4). Only genuine deep links are ever written to the detour callbackUrl.
+    mockFetch({
+      "/api/auth/2fa/status": {
+        required: true,
+        verified: false,
+        enrolled: false,
+      },
+    });
+
+    renderForm({ explicitCallbackUrl: "/nominations/tok" });
+    await submit();
+
+    await waitFor(() =>
       expect(assignMock).toHaveBeenCalledWith(
-        "/login/verify?callbackUrl=%2Fadmin%2Fdashboard",
+        "/login/enroll?callbackUrl=%2Fnominations%2Ftok",
       ),
     );
   });

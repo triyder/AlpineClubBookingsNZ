@@ -186,6 +186,39 @@ describe("LoginPage authenticated self-heal", () => {
     ).rejects.toThrow("redirect:/login/enroll?callbackUrl=%2Fbookings");
   });
 
+  it("sends an admin with no deep link into the detour WITHOUT baking a landing", async () => {
+    // Determinism (#2090): the self-heal must not materialise the resolved
+    // admin landing into the detour callbackUrl. With no explicit deep link the
+    // detour carries no callbackUrl at all; /login/enroll re-resolves the same
+    // default, so every entry into the detour lands identically.
+    mockAuth.mockResolvedValue(
+      sessionUser({
+        twoFactorRequired: true,
+        twoFactorEnrolled: false,
+        postLoginLanding: null,
+        adminPermissionMatrix: matrix({ finance: "view" }),
+      })
+    );
+
+    await expect(runLoginPage()).rejects.toThrow("redirect:/login/enroll");
+  });
+
+  it("still carries a genuine deep link into the detour callbackUrl", async () => {
+    mockAuth.mockResolvedValue(
+      sessionUser({
+        twoFactorRequired: true,
+        twoFactorEnrolled: true,
+        twoFactorMethod: "totp",
+        postLoginLanding: null,
+        adminPermissionMatrix: matrix({ finance: "view" }),
+      })
+    );
+
+    await expect(
+      runLoginPage({ callbackUrl: "/nominations/tok" })
+    ).rejects.toThrow("redirect:/login/verify?callbackUrl=%2Fnominations%2Ftok");
+  });
+
   it("redirects a verified two-factor session to the callbackUrl", async () => {
     mockAuth.mockResolvedValue(
       sessionUser({
