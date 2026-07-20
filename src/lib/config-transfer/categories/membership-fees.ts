@@ -67,15 +67,17 @@ import { RowValidator, nz, readCsvRows } from "../values";
 // place (validatePostMergeComponentInvariant). A bundle that renames a component
 // label would otherwise leave the old row behind and silently double-bill.
 //
-// PRECEDENCE over the #1931 legacy materialisation: when a bundle carries this
-// category's joining-fees.csv AND the membership-fees category is actually being
-// applied, the fee amounts are authoritative here, so the xero-config legacy
-// item-code-amount fan-out (which invents JoiningFee windows from a pre-#1931
-// bundle's dead amountCents column) must NOT also run — it would duplicate or
-// skew the schedule. Old-format bundles (no joining-fees.csv), or a new-format
-// bundle imported with membership-fees DESELECTED, keep the legacy path per the
-// E13 compat window. See bundleCarriesJoiningFeeSchedule (consumed by
-// xero-config, gated there on the category selection).
+// PRECEDENCE over the #1931 item-code-amount materialisation: when a bundle
+// carries this category's joining-fees.csv AND the membership-fees category is
+// actually being applied, the fee amounts are authoritative here, so the
+// xero-config item-code-amount fan-out (which materialises JoiningFee windows
+// from the item-code amountCents column) must NOT also run — it would duplicate
+// or skew the schedule. A bundle without joining-fees.csv, or one imported with
+// membership-fees DESELECTED, keeps the fan-out so its joining fees are not
+// silently dropped. (Genuinely old pre-#1931 bundles — ENTRANCE_FEE category /
+// isMember key — are rejected upstream since #2131.) See
+// bundleCarriesJoiningFeeSchedule (consumed by xero-config, gated there on the
+// category selection).
 
 const JOINING_FEES_FILE = "membership-fees/joining-fees.csv";
 const ANNUAL_FEES_FILE = "membership-fees/annual-fees.csv";
@@ -114,10 +116,11 @@ const DEFAULT_PRORATION_RULE = "NONE";
 
 /**
  * True when a bundle carries the first-class joining-fee schedule (#1941). It
- * SUPERSEDES the #1931 legacy joining-fee materialisation in xero-config, but
- * ONLY when the membership-fees category is actually being applied — xero-config
- * gates on that (an import that deselects membership-fees must keep the legacy
- * path or joining fees silently vanish). Consumed by xero-config.
+ * SUPERSEDES the #1931 item-code-amount joining-fee materialisation in
+ * xero-config, but ONLY when the membership-fees category is actually being
+ * applied — xero-config gates on that (an import that deselects membership-fees
+ * must keep the fan-out or joining fees silently vanish). Consumed by
+ * xero-config.
  */
 export function bundleCarriesJoiningFeeSchedule(
   files: Map<string, Uint8Array>,

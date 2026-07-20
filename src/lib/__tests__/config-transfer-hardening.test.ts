@@ -141,7 +141,7 @@ describe("plan-time validation blocks apply", () => {
   it("flags a blank or garbage price instead of writing 0 cents", async () => {
     const zip = lodgeBundle({
       seasonsCsv: "name,type,startDate,endDate,active\nWinter,WINTER,2026-06-01,2026-09-01,true\n",
-      ratesCsv: "seasonName,ageTier,isMember,pricePerNightCents\nWinter,ADULT,true,4S50\n",
+      ratesCsv: "seasonName,membershipTypeKey,ageTier,pricePerNightCents\nWinter,FULL,ADULT,4S50\n",
     });
     const plan = await buildImportPlan(lodgeDb(), zip, { mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(/pricePerNightCents.*4S50/);
