@@ -222,7 +222,19 @@ export async function getHutFeeItemCodeMap(): Promise<HutFeeItemCodeResolver> {
   const byKey = new Map<string, string>();
 
   const [rows, builtInTypes, legacyItemCode] = await Promise.all([
-    prisma.xeroItemCodeMapping.findMany({ where: { category: "HUT_FEE" } }),
+    // Blue/green runtime-prep (#2130): name ONLY the columns this mapper reads
+    // so the deployed client stops SELECTing XeroItemCodeMapping.isMember before
+    // the #2130 contract migration drops that legacy key column. The loop below
+    // consumes exactly these four fields, so return values are unchanged.
+    prisma.xeroItemCodeMapping.findMany({
+      where: { category: "HUT_FEE" },
+      select: {
+        membershipTypeId: true,
+        seasonType: true,
+        ageTier: true,
+        itemCode: true,
+      },
+    }),
     prisma.membershipType.findMany({
       where: { key: { in: ["FULL", "NON_MEMBER"] } },
       select: { id: true, key: true },

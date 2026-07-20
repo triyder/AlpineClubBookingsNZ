@@ -1,5 +1,5 @@
 import type { AgeTier } from "@prisma/client";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { buildEntranceFeeLineItem, buildInvoiceLineItems } from "../xero";
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -335,6 +335,50 @@ describe("buildInvoiceLineItems with per-guest membership-type item codes (#1930
       expect(item.itemCode).toBeUndefined();
       expect(item.accountCode).toBe("200");
     }
+  });
+});
+
+// ─── getHutFeeItemCodeMap query shape (#2130 runtime-prep) ────────────────────
+
+describe("getHutFeeItemCodeMap query shape (#2130 runtime-prep)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it("selects ONLY the consumed columns, never the doomed isMember column", async () => {
+    // Blue/green safety pin: the deployed client must stop naming
+    // XeroItemCodeMapping.isMember in generated SQL one release BEFORE the
+    // #2130 contract migration drops it. Guards against someone removing the
+    // explicit select and reintroducing a no-select findMany that names every
+    // column. Inspects the mock call args.
+    const findMany = vi.fn().mockResolvedValue([]);
+    const membershipTypeFindMany = vi.fn().mockResolvedValue([]);
+    const xeroAccountFindUnique = vi.fn().mockResolvedValue(null);
+    vi.doMock("../prisma", () => ({
+      prisma: {
+        xeroItemCodeMapping: { findMany },
+        membershipType: { findMany: membershipTypeFindMany },
+        xeroAccountMapping: { findUnique: xeroAccountFindUnique },
+      },
+    }));
+
+    const { getHutFeeItemCodeMap } = await import("../xero-mappings");
+    await getHutFeeItemCodeMap();
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+    const args = findMany.mock.calls[0][0] as {
+      where?: unknown;
+      select?: Record<string, unknown>;
+    };
+    expect(args.where).toEqual({ category: "HUT_FEE" });
+    expect(args.select).toEqual({
+      membershipTypeId: true,
+      seasonType: true,
+      ageTier: true,
+      itemCode: true,
+    });
+    expect(args.select).not.toHaveProperty("isMember");
   });
 });
 

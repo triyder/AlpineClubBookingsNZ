@@ -84,23 +84,83 @@ as a red flag and check the release notes before deploying.
 
 ---
 
-## Unreleased
+## v0.12.1 → v0.12.2
 
-The unreleased range adds the per-member **post-login landing** with a changed
-admin default (#2090). Its single migration
-(`20260719150000_add_post_login_landing`) is additive/expand-only — a new
-`PostLoginLanding` enum plus a **nullable** `Member.postLoginLanding` column with
-**no default** — and carries an `old_code_compatible=yes` ledger row. A normal
-deploy window is sufficient; the `ADD COLUMN` is a metadata-only catalog change
-even on the hot `Member` table (no default → no row scan, no rewrite).
+`v0.12.2` is a patch release with **four migrations — two expand/additive and
+two breaking `contract` migrations** (one of them destructive). This is the
+first release since the expand/migrate/contract series began that carries a
+destructive contract migration, so it needs more deployment care than `v0.12.1`.
+It fixes the production Xero lock-date 503, adds a Xero lock-date error taxonomy
+and a connection-health probe, brings the age-exempt (N/A) membership-type
+lifecycle (single-source enforcement, bulk assignment, Xero Setup import, opt-in
+fee item-code paid-detection), multi-select age tiers for Xero member-grouping,
+a changed admin post-login landing default, and a batch of admin/booking UX
+fixes. Read the full inventory in `docs/releases/v0.12.2.md` and the `0.12.2`
+changelog section before starting.
 
 ### Before deployment
 
-1. **Take and restore-test a fresh backup**, as always.
-2. **Nothing stored changes any member's landing on migrate.** Every existing
-   row keeps `postLoginLanding = NULL` (follow the role default). The old colour
-   has no `postLoginLanding` field and never reads it, so it is fully
-   old-colour compatible through the migrate→cutover window.
+1. **Take and restore-test a fresh backup — this release drops schema.** As
+   always take a fresh `pg_dump` immediately before migrating and confirm it
+   restores, but treat it as mandatory here: `20260720120000_contract_drop_...`
+   issues `DROP TABLE`s that cannot be undone by rolling the app back (there is
+   no down-migration). Restore is your only recovery for the dropped data.
+2. **Two of the four migrations are breaking `contract` migrations and need the
+   `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` acknowledgement.** The blue/green
+   validator refuses a breaking migration without it; set it (with the
+   acknowledgement as the override reason) for this deploy only:
+   - `20260719170000_xero_grouping_age_tiers_multiselect` backfills the scalar
+     `XeroContactGroupRule.ageTier` into a new `ageTiers` array (`X → [X]`,
+     `null → []` = "all tiers") and then **drops the scalar column**. It is
+     `old_code_compatible=yes` but **window-bounded and admin-only**: between
+     migrate and cutover the old colour's grouping/membership-admin reads still
+     name `ageTier` and error with column-does-not-exist. The live grouping sync
+     fails **closed** (a member edit/age-up that would re-group errors and is
+     retried post-cutover — no partial write, no money, no booking capacity).
+     **Deploy with grouping/membership-admin traffic idle (a quiet admin window)
+     and cut over promptly.** No member is re-grouped in Xero by the migration.
+   - `20260720120000_contract_drop_entrance_fee_and_agetier_xero_group` (E13,
+     the blue/green-safe subset of #1939) drops the dead `EntranceFee` and
+     `AgeTierXeroAcceptedContactGroup` tables and deletes the orphaned
+     `entranceFeeAmountCents` account-mapping row. It is `old_code_compatible=yes`
+     — an independent drop-proof review re-verified **zero readers against the
+     `v0.12.1` tag** (the colour draining during this deploy): the current
+     runtime issues no SQL naming those structures and there is no FK/cascade
+     trap — so the draining old colour keeps working. The acknowledgement is
+     required only because a `DROP` is breaking by class, not because the old
+     colour breaks. Deliberately **kept/deferred** (still read by the current
+     runtime): the `EntranceFeeCategory` enum, `SeasonRate` (the live public
+     `{{hut-fees}}` embed), `MembershipTypeAgeTier`, and the
+     `XeroItemCodeMapping.isMember` / `AgeTierSetting.xeroContactGroup*` columns
+     — follow-ups #2129/#2130/#2131.
+3. **The two additive migrations need no special handling.**
+   `20260719150000_add_post_login_landing` adds a `PostLoginLanding` enum plus a
+   nullable `Member.postLoginLanding` column with no default (metadata-only
+   catalog change even on the hot `Member` table; ledgered
+   `old_code_compatible=yes`). `20260719180000_add_use_fee_schedule_item_codes`
+   adds a single flagged-**off** boolean on the cold single-row
+   `MembershipLockoutSettings` table (additive, constant default, ledger-exempt
+   under the same policy as v0.12.1's `add_login_security_setting`).
+4. **Know what is opt-in vs behaviour-changing.** The new **fee item-code**
+   subscription paid-detection mode is **off by default** — nothing changes until
+   an admin enables "Use membership fee item codes", and it is config-only (its
+   migration only adds the flag). The **age-exempt (N/A) membership types**
+   feature is config-only too — no migration; it takes effect only when an admin
+   sets a type's allowed age tiers to include or restrict to N/A. The one genuine
+   **behaviour change** is admin **post-login landing** (below): it is applied by
+   the application, not by stored data, so it takes effect at the first login
+   after cutover with no migration flag to set.
+
+**Rollback boundary.** A validator or pre-migration failure aborts the deploy
+before any schema change: the old colour is untouched and keeps serving. A failed
+cutover auto-restores traffic to the old colour, which then runs against the
+migrated schema — every migration this release is old-colour compatible (the two
+additive ones trivially; the grouping drop only under the quiet-admin-window rule
+above; the E13 drops because nothing in the old colour reads the dropped
+structures), so the old colour keeps working. Roll forward (fix and redeploy the
+new colour — the preferred path) or restore the pre-upgrade backup, losing all
+writes since it was taken. **There is no down-migration, and the E13 `DROP TABLE`s
+are irreversible without that backup.**
 
 ### Post-upgrade actions
 
@@ -109,23 +169,45 @@ even on the hot `Member` table (no default → no row scan, no rewrite).
    has set no preference lands on their **admin area** (their first accessible
    admin page) instead of `/dashboard`. This applies to **every** member whose
    role resolves to an accessible admin page — not just full admins, but also
-   **read-only admins** and **finance-only viewers**, who will now land on their
-   first accessible admin page (for example, a finance-only viewer lands on
-   `/admin/payments`). This default is applied by the application, not by stored
-   data. A plain member is unaffected; a member with no accessible admin area —
-   including a demoted ex-admin — still lands on `/dashboard`, never a
-   permission-denied loop.
-2. **Point admins who prefer the member view at the new toggle.** The profile
-   **Account Information** card now shows an "After sign-in, take me to" control
-   for members with an accessible admin page: **Use my role default** (the new
-   behaviour), **Member dashboard**, or **Admin dashboard**. A genuinely
-   deep-linked `callbackUrl` (e.g. an emailed link) still always wins over the
-   preference.
+   **read-only admins** and **finance-only viewers** (for example, a finance-only
+   viewer lands on `/admin/payments`). It is applied by the application, not by
+   stored data. A plain member is unaffected; a member with no accessible admin
+   area — including a demoted ex-admin holding a stale preference — still lands on
+   `/dashboard`, never a permission-denied loop. Point admins who prefer the
+   member view at the new "After sign-in, take me to" control on the profile
+   **Account Information** card.
+2. **Verify Xero is healthy and past-dated bookings work.** Open Admin → Xero and
+   confirm the new connection-health chip shows Connected (click the probe if
+   needed); if it shows reconnect-required, reconnect from Setup. Confirm that
+   creating a retroactive (past-dated) booking no longer returns the 503 lock-date
+   error when the org has lock dates set.
+3. **Check member-grouping rules survived the multi-select migration.** Each
+   former single-tier rule should now show that one tier and each former
+   "Any age" rule should show "all tiers"; run the admin "Refresh from Xero" and
+   confirm no unexpected full regroup. Create per-tier annual-fee rows only if you
+   are on the new colour (the v0.12.1 caveat still stands).
+4. **Decide on the opt-in membership tooling.** If you bill one Xero item code per
+   membership type + age tier, you can now enable "Use membership fee item codes"
+   for subscription paid-detection (default off). The members-page **bulk set
+   membership type** tool and the Xero **Setup import** mapping modes (age tiers /
+   membership types / both) are available; imports never overwrite an existing
+   current-season assignment and report what they skip.
+5. **Confirm age-exempt types behave as intended.** For any membership type whose
+   allowed age tiers restrict to or include **N/A (no age)**, check that holders
+   resolve to `NOT_APPLICABLE` as expected and that N/A members remain
+   non-bookable as linked guests.
+6. **Note the in-stay extension semantics.** A member already at the lodge can
+   extend night-by-night from the booking edit panel; minimum-stay is now
+   evaluated against the **whole contiguous stay** (a one-night extension of an
+   already-valid stay is no longer wrongly rejected) and surfaced as an advisory
+   warning on the quote. Adopters with clubs mid-stay get this new evaluation
+   immediately.
 
-**Rollback boundary.** A pre-migration failure aborts before any schema change;
-the old colour is untouched. A failed cutover auto-restores the old colour, which
-runs against the migrated schema — the new column is nullable and unread by the
-old colour, so it keeps working. There is no down-migration.
+No one-off data backfill command is required after a successful migration. Apart
+from the E13 drops, the migrations write no rows; all new feature behaviour is
+opt-in through admin surfaces except the admin post-login landing default.
+
+---
 
 ## v0.12.0 → v0.12.1
 

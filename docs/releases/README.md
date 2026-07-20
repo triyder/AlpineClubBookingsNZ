@@ -7,6 +7,7 @@ drafts that accompany a release. Newest first.
 
 ## Published release notes
 
+- [v0.12.2](v0.12.2.md) — 2026-07-20 patch public reference release.
 - [v0.12.1](v0.12.1.md) — 2026-07-19 patch public reference release.
 - [v0.12.0](v0.12.0.md) — 2026-07-18 minor public reference release.
 - [v0.11.0](v0.11.0.md) — 2026-07-13 minor public reference release.

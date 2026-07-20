@@ -115,6 +115,16 @@ vi.mock("@/lib/xero-organisation", async (importOriginal) => {
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
+// #2124: a member in-progress check-out extension now validates minimum-stay
+// over the whole contiguous range, so the route reaches booking-policies for
+// the member (USER) cases below. This suite is about the override/Xero-lock
+// behaviour, not minimum-stay, so stub a benign "no violations" verdict.
+vi.mock("@/lib/booking-policies", () => ({
+  validateMinimumStay: vi.fn().mockResolvedValue({ valid: true, violations: [] }),
+  formatViolationsDetail: (violations: unknown[]) =>
+    `minimum-stay violations: ${violations.length}`,
+  formatViolationMessage: () => "minimum-stay violation",
+}));
 
 import { POST } from "@/app/api/bookings/[id]/modify-quote/route";
 

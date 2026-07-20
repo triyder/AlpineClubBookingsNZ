@@ -213,6 +213,72 @@ describe("getAgeTierSettings fallback", () => {
     expect(result).toEqual(defaults);
   });
 
+  it("selects ONLY the consumed columns, never the doomed xeroContactGroup* columns (#2130 runtime-prep)", async () => {
+    // Blue/green safety pin: the deployed client must stop naming
+    // AgeTierSetting.xeroContactGroupId / xeroContactGroupName in generated SQL
+    // one release BEFORE the #2130 contract migration drops them. Guards against
+    // someone removing the explicit select and reintroducing a no-select
+    // findMany that names every column. Inspects the mock call args.
+    const findMany = vi.fn().mockResolvedValue([
+      {
+        tier: "INFANT",
+        minAge: 0,
+        maxAge: 4,
+        label: "Infant (under 5)",
+        subscriptionRequiredForBooking: false,
+        familyGroupRequestCreateMemberAllowed: true,
+        sortOrder: 0,
+      },
+      {
+        tier: "CHILD",
+        minAge: 5,
+        maxAge: 9,
+        label: "Child (5-9)",
+        subscriptionRequiredForBooking: false,
+        familyGroupRequestCreateMemberAllowed: true,
+        sortOrder: 1,
+      },
+      {
+        tier: "YOUTH",
+        minAge: 10,
+        maxAge: 17,
+        label: "Youth (10-17)",
+        subscriptionRequiredForBooking: true,
+        familyGroupRequestCreateMemberAllowed: false,
+        sortOrder: 2,
+      },
+      {
+        tier: "ADULT",
+        minAge: 18,
+        maxAge: null,
+        label: "Adult (18+)",
+        subscriptionRequiredForBooking: true,
+        familyGroupRequestCreateMemberAllowed: false,
+        sortOrder: 3,
+      },
+    ]);
+    vi.doMock("../prisma", () => ({
+      prisma: { ageTierSetting: { findMany } },
+    }));
+
+    const { getAgeTierSettings } = await import("../age-tier");
+    await getAgeTierSettings();
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+    const args = findMany.mock.calls[0][0] as { select?: Record<string, unknown> };
+    expect(args.select).toEqual({
+      tier: true,
+      minAge: true,
+      maxAge: true,
+      label: true,
+      subscriptionRequiredForBooking: true,
+      familyGroupRequestCreateMemberAllowed: true,
+      sortOrder: true,
+    });
+    expect(args.select).not.toHaveProperty("xeroContactGroupId");
+    expect(args.select).not.toHaveProperty("xeroContactGroupName");
+  });
+
   it("normalizes the legacy 3-tier DB rows to the INFANT-aware defaults", async () => {
     vi.doMock("../prisma", () => ({
       prisma: {
