@@ -303,7 +303,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                           </div>
                         </div>
                       ) : (
-                        <ViewOnlyActionButton canEdit={canEditFinance} type="button" size="sm" variant="outline" className="mt-2" disabled={working} onClick={() => { setMarkingFamilyGroupId(entry.familyGroupId); setMarkNote(""); }}>Mark family as already invoiced</ViewOnlyActionButton>
+                        <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" size="sm" variant="outline" className="mt-2" disabled={working} onClick={() => { setMarkingFamilyGroupId(entry.familyGroupId); setMarkNote(""); }}>Mark family as already invoiced</ViewOnlyActionButton>
                       )
                     ) : null}
                   </div>
@@ -378,7 +378,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                               : `${row.xeroInvoiceNumber ?? "No Xero number"}${row.status ? ` · ${row.status.replaceAll("_", " ")}` : ""}`}
                           </span>
                           {row.operatorMarked ? (
-                            <ViewOnlyActionButton canEdit={canEditFinance} type="button" size="sm" variant="outline" disabled={working} onClick={() => void unmarkFamily(row.familyGroupId)}>Unmark</ViewOnlyActionButton>
+                            <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" size="sm" variant="outline" disabled={working} onClick={() => void unmarkFamily(row.familyGroupId)}>Unmark</ViewOnlyActionButton>
                           ) : null}
                         </span>
                       </li>

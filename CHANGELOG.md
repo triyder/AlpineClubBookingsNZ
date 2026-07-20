@@ -14,7 +14,7 @@ All notable public reference-release changes should be recorded here.
   screen built from several sections — Security, or Booking Requests — shows it
   once per section, three times in those two cases. This is the
   pattern Booking Policies adopted in #2142 (above), now applied across most of
-  the admin tree: about four out of five gated buttons (201 of 254) are now
+  the admin tree: about four out of five gated buttons (203 of 256) are now
   explained by a banner instead of individually. **Nothing about who can do what
   has changed** — the same
   people can edit the same things, every button is gated exactly as it was, and
