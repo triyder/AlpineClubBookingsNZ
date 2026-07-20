@@ -21,8 +21,24 @@ export async function GET() {
     where: { id: "default" },
   });
 
+  // `configured` reports whether a row is actually PERSISTED, because the body
+  // below is SYNTHESISED from the built-in defaults when it is not (#2142).
+  // Without it the admin card cannot tell the two apart: its draft would equal
+  // its snapshot on a club that has never saved this policy, so the #2143 dirty
+  // gate would leave Save permanently greyed out and creating the row would be
+  // unreachable. Creating the row is a real event, so the audit entry the PUT
+  // then writes is accurate — it is a no-op re-PUT of an EXISTING row that
+  // #2143 rules out, not the first save.
   return NextResponse.json(
-    setting || { id: "default", minGroupSize: 5, summerOnly: true, enabled: false }
+    setting
+      ? { ...setting, configured: true }
+      : {
+          id: "default",
+          minGroupSize: 5,
+          summerOnly: true,
+          enabled: false,
+          configured: false,
+        },
   );
 }
 

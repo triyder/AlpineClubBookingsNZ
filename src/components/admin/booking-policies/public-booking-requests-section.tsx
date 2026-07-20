@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
-import { ADMIN_FORBIDDEN_SAVE_REASON, AdminViewOnlyNotice } from "@/components/admin/view-only-action"
+import { ADMIN_FORBIDDEN_SAVE_REASON, AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { PolicyFeedback } from "./policy-feedback"
 
 interface BookingRequestSettings {
@@ -236,14 +236,24 @@ export function PublicBookingRequestsSection() {
             </p>
           </div>
 
-          <button
+          {/*
+            #2142: these two Saves were already gated correctly, but as raw
+            <button> elements they could not carry the reason — a disabled
+            control with nothing said about why. `ViewOnlyActionButton` adds the
+            `title`, the `aria-describedby`, and the sr-only reason line, and
+            keeps the resolving (`undefined`) window neutral. The existing
+            `!canEdit` term is now redundant with the wrapper's own
+            `canEdit !== true` check; it is kept so the gate is legible here
+            rather than only inside the wrapper.
+          */}
+          <ViewOnlyActionButton
             type="button"
+            canEdit={canEdit}
             onClick={handleSaveQuoteTiming}
             disabled={saving || !timingDirty || !canEdit}
-            className="rounded bg-brand-charcoal px-3 py-1.5 text-sm font-medium text-brand-snow disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save quote timing"}
-          </button>
+          </ViewOnlyActionButton>
         </CardContent>
       </Card>
 
@@ -293,14 +303,14 @@ export function PublicBookingRequestsSection() {
             </p>
           </div>
 
-          <button
+          <ViewOnlyActionButton
             type="button"
+            canEdit={canEdit}
             onClick={handleSaveAttendeeTiming}
             disabled={saving || !attendeeTimingDirty || !canEdit}
-            className="rounded bg-brand-charcoal px-3 py-1.5 text-sm font-medium text-brand-snow disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save attendee prompts"}
-          </button>
+          </ViewOnlyActionButton>
         </CardContent>
       </Card>
     </div>

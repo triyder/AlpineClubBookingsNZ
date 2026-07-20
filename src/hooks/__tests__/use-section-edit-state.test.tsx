@@ -169,8 +169,10 @@ describe("useSectionEditState", () => {
     });
     expect(guarded.save).not.toHaveBeenCalled();
 
-    // group-discount-section leaves Save enabled while pristine, so an
-    // unchanged draft must still re-PUT.
+    // `allowPristineSave` has no adopter (#2143 removed the last one) but is
+    // retained as an escape hatch for a future card whose endpoint is an action
+    // rather than a state update. Pinning it here keeps the opt-in honest, so
+    // whoever reaches for it gets the behaviour the option advertises.
     const pristine = renderSection({ allowPristineSave: true });
     await act(async () => {
       await pristine.result.current.save();

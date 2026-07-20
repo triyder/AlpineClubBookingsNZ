@@ -26,7 +26,24 @@ import { GroupDiscountSection } from "../group-discount-section";
 
 const ENDPOINT = "/api/admin/booking-policies/group-discount";
 
-const LOADED = { minGroupSize: 6, summerOnly: true, enabled: false };
+// `configured: true` is what the GET reports for a club with a persisted row
+// (#2142); the synthesised no-row body reports `false` — see UNCONFIGURED below.
+const LOADED = {
+  minGroupSize: 6,
+  summerOnly: true,
+  enabled: false,
+  configured: true,
+};
+
+// What the route synthesises when `findUnique` misses: the built-in defaults,
+// flagged as not persisted.
+const UNCONFIGURED = {
+  id: "default",
+  minGroupSize: 5,
+  summerOnly: true,
+  enabled: false,
+  configured: false,
+};
 
 function enabledBox() {
   return screen.getByLabelText("Enabled") as HTMLInputElement;
@@ -231,6 +248,89 @@ describe("GroupDiscountSection (#2136)", () => {
     expect(
       fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT"),
     ).toHaveLength(0);
+  });
+
+  it("a club with NO persisted row can save the defaults as-is (#2142)", async () => {
+    // The GET synthesises the defaults when there is no row, so draft === saved
+    // from the first render. Gating Save on that comparison alone would leave an
+    // admin who is happy with every default permanently unable to create the
+    // row, and the setup checklist stuck on "using defaults" forever.
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        return new Response(
+          JSON.stringify({ id: "default", minGroupSize: 5, summerOnly: true, enabled: false }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify(UNCONFIGURED), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(saveButton().disabled).toBe(false);
+
+    fireEvent.click(saveButton());
+    await waitFor(() =>
+      expect(screen.getByText(/Group discount settings saved/i)).toBeTruthy(),
+    );
+
+    const putCalls = fetchMock.mock.calls.filter(
+      ([, init]) => init?.method === "PUT",
+    );
+    expect(putCalls).toHaveLength(1);
+    // `configured` is a client-side view of the GET, never part of the write.
+    expect(JSON.parse(String(putCalls[0][1]?.body))).toEqual({
+      minGroupSize: 5,
+      summerOnly: true,
+      enabled: false,
+    });
+  });
+
+  it("after that first save the row exists, so a second pristine save is blocked (#2142/#2143)", async () => {
+    // The PUT response is the row itself and carries no `configured` flag —
+    // reaching it means the row now exists, so the escape hatch must close and
+    // the ordinary #2143 dirty gate must take over.
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        return new Response(
+          JSON.stringify({ id: "default", minGroupSize: 5, summerOnly: true, enabled: false }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify(UNCONFIGURED), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(saveButton());
+    await waitFor(() =>
+      expect(screen.getByText(/Group discount settings saved/i)).toBeTruthy(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(saveButton().disabled).toBe(true);
+
+    fireEvent.click(saveButton());
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT"),
+      ).toHaveLength(1),
+    );
+  });
+
+  it("a FAILED load leaves Save gated, so it cannot blind-write the defaults (#2142)", async () => {
+    // The failed-load fallback is the same defaults object, but we know nothing
+    // about the stored row there. Treating it as "no row yet" would let a
+    // pristine Save overwrite a real configured policy with the defaults.
+    const fetchMock = vi.fn(async () => new Response("nope", { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await renderLoaded();
+
+    expect(screen.getByText(/Failed to fetch group discount/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(saveButton().disabled).toBe(true);
   });
 
   it("permissions narrowing mid-edit disables Save and exposes the reason (#2142)", async () => {

@@ -25,6 +25,7 @@ vi.mock("@/components/lodge-select", () => ({
 import { BookingPeriodsSection } from "../booking-periods-section";
 import { DefaultCancellationPolicySection } from "../default-cancellation-policy-section";
 import { MinimumNightStaySection } from "../minimum-night-stay-section";
+import { PublicBookingRequestsSection } from "../public-booking-requests-section";
 
 // #2142: every booking-policies section's Save is wrapped in
 // `ViewOnlyActionButton`, matching the security cards and the sections' own
@@ -236,5 +237,98 @@ describe("DefaultCancellationPolicySection Save gating (#2142)", () => {
     await startEditing();
     narrowTo(undefined, () => bumpHoldDays("9"));
     expectNeutralDisabled(saveButton());
+  });
+});
+
+describe("PublicBookingRequestsSection Save gating (#2142)", () => {
+  const LOADED = {
+    showPricingToNonMembers: false,
+    quoteResponseTtlDays: 14,
+    quoteReminderLeadDays: 3,
+    attendeeConfirmationLeadDays: 14,
+    attendeeConfirmationReminderDays: 3,
+  };
+
+  // This section was already gated correctly on `!canEdit` by hand, so these
+  // are not correctness fixes — they pin the a11y affordance the raw <button>
+  // could not carry (`title` + `aria-describedby` + the sr-only reason), which
+  // is what "unified" in #2142 actually means. Its own dirty tracking
+  // (`timingDirty` / `attendeeTimingDirty`) is preserved untouched.
+  async function loadSection() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(LOADED)),
+    );
+    render(<PublicBookingRequestsSection />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Save quote timing" }),
+      ).toBeTruthy(),
+    );
+  }
+
+  function quoteButton() {
+    return screen.getByRole("button", {
+      name: "Save quote timing",
+    }) as HTMLButtonElement;
+  }
+
+  function attendeeButton() {
+    return screen.getByRole("button", {
+      name: "Save attendee prompts",
+    }) as HTMLButtonElement;
+  }
+
+  function dirtyQuoteTiming(value: string) {
+    fireEvent.change(screen.getByLabelText("Quote response window (days)"), {
+      target: { value },
+    });
+  }
+
+  function dirtyAttendeeTiming(value: string) {
+    fireEvent.change(
+      screen.getByLabelText("First prompt (days before check-in)"),
+      { target: { value } },
+    );
+  }
+
+  it("keeps both Saves disabled while pristine", async () => {
+    await loadSection();
+    expect(quoteButton().disabled).toBe(true);
+    expect(attendeeButton().disabled).toBe(true);
+  });
+
+  it("enables each Save independently once its own fields are dirty", async () => {
+    await loadSection();
+    dirtyQuoteTiming("20");
+    expect(quoteButton().disabled).toBe(false);
+    // The two cards track dirtiness separately; one must not enable the other.
+    expect(attendeeButton().disabled).toBe(true);
+
+    dirtyAttendeeTiming("21");
+    expect(attendeeButton().disabled).toBe(false);
+  });
+
+  it("disables both Saves with the spoken reason when the actor is narrowed mid-edit", async () => {
+    await loadSection();
+    dirtyQuoteTiming("20");
+    dirtyAttendeeTiming("21");
+    expect(quoteButton().disabled).toBe(false);
+
+    narrowTo(false, () => dirtyQuoteTiming("21"));
+
+    expectViewOnly(quoteButton());
+    expectViewOnly(attendeeButton());
+  });
+
+  it("disables both Saves neutrally while access is resolving", async () => {
+    await loadSection();
+    dirtyQuoteTiming("20");
+    dirtyAttendeeTiming("21");
+
+    narrowTo(undefined, () => dirtyQuoteTiming("21"));
+
+    expectNeutralDisabled(quoteButton());
+    expectNeutralDisabled(attendeeButton());
   });
 });

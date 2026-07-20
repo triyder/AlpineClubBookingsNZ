@@ -175,6 +175,44 @@ All notable public reference-release changes should be recorded here.
   can be widened. Chart hex colours are unaffected — they remain the documented
   #1801 SVG-presentation-attribute carve-out.
 
+- **Booking-policies Save buttons: unified view-only gating, and no more no-op
+  group-discount saves (#2142, #2143).** Two carry-forwards from #2136. First,
+  every Save/Create button across the five **Booking Policies** sections — group
+  discount, booking periods, minimum night stay, default cancellation policy,
+  and public booking requests — now goes through `ViewOnlyActionButton`, the same
+  wrapper the security cards and these sections' own Edit buttons already used.
+  The behaviour change is narrow but real: `useAdminAreaEditAccess` is tri-state
+  and can narrow **after** the form was opened (a session refetch reducing the
+  actor's permissions mid-edit), and in that window Save previously stayed
+  clickable and the admin walked into a 403 mapped to the "not saved" notice.
+  It now disables immediately and carries the reason as a `title` and an
+  `aria-describedby` sr-only line, so a screen-reader user is told why rather
+  than meeting a silently dead control. While access is still *resolving*
+  (`undefined`) the button is disabled **neutrally**, with no reason shown, so an
+  admin who turns out to be edit-capable never sees a "view only" message flash.
+  No security consequence either way — Save only ever rendered behind the
+  already-gated Edit, and each write route enforces `bookings:edit`
+  independently. The two public-booking-request Saves were also raw `<button>`
+  elements styled with brand utilities; they now use the shared themed `Button`
+  like the other four sections, so they follow the club theme.
+
+  Second, the group discount card's Save is no longer clickable while the form
+  is unchanged. Opening **Edit** and clicking **Save** without touching a field
+  used to re-PUT, and the route writes its `group-discount.update` audit entry
+  and busts the public-page cache unconditionally — so the audit trail collected
+  entries asserting policy changes that never happened. There is one deliberate
+  exception, because the GET **synthesises** the default values when no row has
+  ever been saved: on such a club the form can never differ from its snapshot,
+  so gating on that comparison alone would have made creating the row
+  unreachable and left the setup checklist reporting "Group discount: using
+  defaults" forever. The GET now reports whether a row is actually persisted,
+  and the card treats "no row yet" as savable — a first save is a genuine
+  creation, so its audit entry is accurate. A **failed** load deliberately does
+  not get that exception: the fallback shown in the form is the same defaults
+  object, and treating it as "no row yet" would let one click overwrite a real
+  configured policy. No pricing behaviour changed — a missing row and a disabled
+  row were already equivalent to every pricing reader.
+
 ## 0.12.2 - 2026-07-20
 
 - Release classification: patch public reference release. As with `v0.12.1`, the

@@ -82,7 +82,10 @@ rules — see
    which the whole booking is charged at member rates), and optionally
    **Summer seasons only**. Click **Save Group Discount**. The Save button stays
    greyed out until you actually change something, so opening **Edit** and
-   closing it again never records a policy change you did not make.
+   clicking **Save** without touching a field never records a policy change you
+   did not make. On a club that has never saved this policy, Save is available
+   straight away so you can commit the defaults once and have the setup
+   checklist show the group discount as configured.
 
 ### Minimum Night Stay
 
@@ -132,6 +135,7 @@ rules — see
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Every field is read-only | Your admin role is view-only for bookings | Ask a full admin for bookings edit access |
+| A **Save** button is greyed out | Either you have not changed anything yet, or your bookings access was reduced while you had the form open | Change a field to enable Save. If hovering the button says your role can only view this area, reload the page and ask a full admin for bookings edit access |
 | A "Public copy may be out of date" banner | Your Terms/FAQ still describe the old non-member hold | Click **Edit public pages** and update the copy to match the current policy |
 | A period's rules are not applying | The booking's check-in is outside the period, or the period is inactive | Check the dates and the Active toggle on the period card |
 | Group discount never triggers | It is disabled, the group is under the minimum, or it is summer-only and the stay is in winter | Enable it, lower the minimum group size, or untick Summer seasons only |

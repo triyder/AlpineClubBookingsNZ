@@ -226,13 +226,22 @@ describe("database theme app-shell contract", () => {
     );
     expect(wizard).not.toContain("bg-brand-gold/20 text-brand-charcoal");
 
+    // This section's two Save buttons used to be raw <button> elements painted
+    // with `bg-brand-charcoal text-brand-snow`, and the pin here existed to keep
+    // the foreground on `text-brand-snow` rather than raw `text-white`. #2142
+    // moved them onto the shared `ViewOnlyActionButton`/`Button`, whose default
+    // variant is `bg-primary text-primary-foreground` — semantic tokens that
+    // follow the club theme, which is strictly what the old pin was reaching
+    // for. The pin is therefore restated as the stronger property: no raw brand
+    // fill is hand-painted onto a control in this file at all.
     const publicRequests = readRepoFile(
       "src/components/admin/booking-policies/public-booking-requests-section.tsx",
     );
-    expect(publicRequests.match(/bg-brand-charcoal[^"\n]*text-brand-snow/g)).toHaveLength(
-      2,
-    );
-    expect(publicRequests).not.toMatch(/bg-brand-charcoal[^"\n]*text-white/);
+    expect(publicRequests).not.toMatch(/bg-brand-charcoal/);
+    expect(publicRequests).not.toMatch(/text-white/);
+    expect(
+      publicRequests.match(/<ViewOnlyActionButton\b/g),
+    ).toHaveLength(2);
   });
 
   it("keeps text-bearing calendar states off interpolated brand fills", () => {
