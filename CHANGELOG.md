@@ -16,16 +16,21 @@ All notable public reference-release changes should be recorded here.
   narrowed — the admin item-code-mappings route, the admin age-tier-settings
   route, config-transfer's Xero import, the setup wizard, and the seed — each to
   the minimal projection its (discarded) result needs. Regression pins assert
-  the `select` on each mutation. The raw-SQL audit script
+  the `select` on each mutation, and a static source-scan guard (modelled on the
+  existing `ClubModuleSettings` select guard) fails CI on any future call site
+  on either model that forgets its `select` — across `src/`, `prisma/seed.ts`
+  and `scripts/` — so the narrowing cannot silently regress before the drop.
+  As defensive cleanup, the already-retired raw-SQL audit script
   `audit-access-role-membership-cleanup.ts` also stopped naming the age-tier
-  Xero-group columns; its `managedAgeTierSettings` metric and paired
-  "Managed Xero age-tier rules backfilled" check were removed, because the
-  expected value came from the very column being dropped (it was the backfill's
-  own input, so it cannot be re-sourced from `XeroContactGroupRule` — the
-  "before" snapshot predates that table). **No schema change and no migration in
-  this release**: it is runtime-prep only. After it deploys, `isMember` (with its
-  old `@@unique`) and the two `xeroContactGroup*` columns are fully drop-eligible
-  by the next release's contract migration.
+  Xero-group columns (its `managedAgeTierSettings` metric and paired "Managed
+  Xero age-tier rules backfilled" check were removed). That script never
+  executes — it returns early now that the `20260720120000` contraction
+  migration exists — so no live audit coverage was lost and it was never part of
+  the blue/green gap. **No schema change and no migration in this release**: it
+  is runtime-prep only. Only **after this release has itself deployed** are
+  `isMember` (with its old `@@unique`) and the two `xeroContactGroup*` columns
+  drop-eligible, by a *later* release's contract migration — never the same
+  release as this prep.
 
 ## 0.12.2 - 2026-07-20
 

@@ -175,9 +175,10 @@ export async function PUT(request: NextRequest) {
             liveGuests,
           );
         }
-        // Guarded above, in-tx: no person is classified into these tiers.
-        // Deleting the row cascades its Xero group aliases
-        // (AgeTierXeroAcceptedContactGroup).
+        // Guarded above, in-tx: no person is classified into these tiers, so
+        // the row can go. (It used to cascade Xero group aliases via
+        // AgeTierXeroAcceptedContactGroup; that table was dropped by the E13
+        // contract migration 20260720120000 in v0.12.2 — #1939.)
         await tx.ageTierSetting.deleteMany({
           where: { tier: { in: removedTiers } },
         });
