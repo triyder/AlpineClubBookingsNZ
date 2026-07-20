@@ -17,21 +17,21 @@ function listSourceFiles(path: string): string[] {
   });
 }
 
-// Files where a literal Tailwind `teal-*` utility is a deliberate categorical /
-// status colour, NOT the brand accent. These render a fixed hue that must stay
-// stable across every admin-configured theme (audit categories, the "teal"
-// status swatch, calendar legend, dashboard tile). Everything else must reach
-// the accent through semantic tokens (`--primary`, etc.) or the `--hue-*`
-// system so it follows the saved site colours.
+// The ONLY file where a literal Tailwind `teal-*` utility is still allowed
+// (#2137). The admin booking calendar paints each status as a SOLID swatch
+// (`WAITLIST_OFFERED: bg-teal-500`) with no tinted background / accent text
+// pairing, and the `--hue-*` system is defined only as such a pair — so there
+// is no clean token equivalent for a standalone solid fill.
+//
+// Every other categorical teal (the waitlist-offered chip, the audit `family`
+// badge, the family-group GROUP_CREATE badge, the dashboard Chore Roster tile)
+// now reaches its hue through `CHIP_TONE_CLASSES.teal` / the `--hue-teal`
+// tokens. Everything else must reach the brand accent through semantic tokens
+// (`--primary`, etc.) so it follows the saved site colours.
 const CATEGORICAL_TEAL_ALLOWLIST = new Set(
-  [
-    "src/lib/status-colors.ts",
-    "src/lib/admin-family-group-ui-helpers.ts",
-    "src/components/audit-timeline.tsx",
-    "src/components/admin-booking-calendar.tsx",
-    "src/app/(admin)/admin/dashboard/page.tsx",
-    "src/app/(admin)/admin/audit-log/page.tsx",
-  ].map((path) => path.replaceAll("\\", "/")),
+  ["src/components/admin-booking-calendar.tsx"].map((path) =>
+    path.replaceAll("\\", "/"),
+  ),
 );
 
 describe("brand accent source contract", () => {

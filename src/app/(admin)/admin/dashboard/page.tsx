@@ -788,8 +788,10 @@ export default async function AdminDashboardPage() {
           <Card className="hover:shadow-md transition-shadow">
             <CardHeader>
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-50">
-                  <ClipboardList className="h-5 w-5 text-teal-600" />
+                {/* Chore Roster tile uses the shared `--hue-*` teal pair
+                    (#2137) so the icon tint dark-adapts with the chip system. */}
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-hue-teal-muted">
+                  <ClipboardList className="h-5 w-5 text-hue-teal" />
                 </div>
                 <div>
                   <CardTitle className="text-base">Chore Roster</CardTitle>

@@ -26,7 +26,13 @@ interface CalendarBooking {
   guestCount: number;
 }
 
-const STATUS_COLORS: Record<string, string> = {
+// Solid calendar swatches: one saturated -400/-500 fill per status, with no
+// paired tinted background or accent text. The `--hue-*` token system is a
+// muted-bg / accent-text PAIR, so it has no equivalent for a standalone solid
+// fill — `WAITLIST_OFFERED: bg-teal-500` therefore stays a literal Tailwind
+// utility and remains the sole entry in the categorical-teal allowlist in
+// `src/lib/__tests__/brand-color-source-contract.test.ts` (#2137).
+export const STATUS_COLORS: Record<string, string> = {
   DRAFT: "bg-gray-300",
   PENDING: "bg-yellow-400",
   PAYMENT_PENDING: "bg-amber-500",

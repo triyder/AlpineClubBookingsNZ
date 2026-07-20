@@ -3,6 +3,8 @@
  * Every status must have a unique colour within its category.
  */
 
+import { CHIP_TONE_CLASSES } from "@/lib/chip-tones";
+
 // test seam
 export const bookingStatusClasses: Record<string, string> = {
   DRAFT:     "bg-gray-100 text-gray-700",
@@ -15,7 +17,10 @@ export const bookingStatusClasses: Record<string, string> = {
   CANCELLED: "bg-red-100 text-red-800",
   BUMPED:          "bg-orange-100 text-orange-800",
   WAITLISTED:      "bg-purple-100 text-purple-800",
-  WAITLIST_OFFERED: "bg-teal-100 text-teal-800",
+  // Routed through the shared `--hue-*` chip tones (#2137) instead of a literal
+  // Tailwind `teal-*` pair, so the swatch dark-adapts with the rest of the chip
+  // system rather than relying on the globals.css colored-callout re-tint.
+  WAITLIST_OFFERED: CHIP_TONE_CLASSES.teal,
 };
 
 // test seam
