@@ -1,8 +1,8 @@
 # ADR-001: Member photos — storage, visibility, and merge handling
 
-**Status:** Accepted
+**Status:** Accepted — implemented across MP1–MP5 (epic delivered on `feature/member-photos`, 2026-07-21)
 **Issue:** fork [#189](https://github.com/hoppers99/AlpineClubBookingsNZ/issues/189) (MP1), epic [#171](https://github.com/hoppers99/AlpineClubBookingsNZ/issues/171)
-**Deciders:** fork owner (Daniel — design decisions on epic #171, 2026-07-15), implementation agent (MP1)
+**Deciders:** fork owner (Daniel — design decisions on epic #171, 2026-07-15; client-side resize decision 2026-07-16), implementation agent (MP1–MP6)
 
 ## Context
 
@@ -159,3 +159,39 @@ in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`.
 - Member merge is photo-correct: master-wins, no orphan, DMMF guard green.
 - Follow-up children (#190–#194) implement serving, UI, and the committee page;
   MP6 (#194) finalises docs and this ADR's downstream references.
+
+## Implementation status (as built, MP1–MP5)
+
+Delivered on `feature/member-photos`. The decisions above hold as built, with
+these clarifications where the implementation refined a forward-looking note:
+
+- **Resize (refines decision 7).** The owner chose **client-side resize with no
+  new server dependency** (2026-07-16). As built: the crop UI (MP3/MP4)
+  downscales to a **512×512 square** on an in-browser canvas and uploads that;
+  the server (MP2) validates (magic-byte JPEG/PNG/WebP allowlist, 2 MB cap,
+  4096 px backstop) and stores the bytes verbatim. There is **no server-side
+  image library, no server downscale, and no per-usage resized variants** — the
+  single stored square is rendered at CSS sizes (circular/square via
+  `border-radius`). Decision 7's "server downscale / cached variants" language is
+  superseded by this.
+- **Crop UI is shared (MP3 + MP4).** `MemberPhotoEditor`
+  (`src/components/member-photo-editor.tsx`) is the one crop/upload/remove
+  component, used self-service on the profile page and by admins (on behalf,
+  gated on `membership:edit`, fail-closed on the loading tri-state) on the
+  member-detail page. `ProfilePhotoSection` is a thin self-mode wrapper.
+- **Serving authz (MP2).** Public exposure requires the member be **active** and
+  hold an active, published `CommitteeAssignment` — kept in lockstep with
+  `/api/committee` (a deactivated member with a stale published assignment is
+  **not** public). 404 is preferred over 403 so a private photo's existence is
+  never confirmed. Full matrix in `SECURITY-ATTACK-SURFACE.md`.
+- **Committee roster display (MP5).** A `PublicContentSettings.committeePhotoDisplay`
+  setting (`NONE` default / `CIRCLE` / `SQUARE`) governs whether the public
+  committee roster renders photos and their shape. This is **presentational**:
+  it gates the roster render and whether `/api/committee` emits per-member photo
+  metadata; it does **not** change the serving rule (a published committee
+  member's photo remains servable through the scoped endpoint). `NONE` is a
+  privacy-safe opt-in; members without a photo show an initials placeholder.
+- **Migration.** Shipped as `20260721110000_add_member_photos` (re-timestamped
+  during the upstream sync to append after the merged history), plus
+  `20260721120000_add_committee_photo_display` (MP5). Both expand-only with
+  blue/green ledger rows.

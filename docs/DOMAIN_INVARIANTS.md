@@ -2065,6 +2065,14 @@ only. Do not add committee positions to access roles or `Member.role`.
 `CommitteeRole` master records and `CommitteeAssignment` member links can be
 active/inactive independently of access role and seasonal membership type, and
 newly linked assignments are hidden until explicitly published by an admin.
+A member photo (`Member.photoImageId` → a `kind = MEMBER_PHOTO` `MediaImage`) is
+served only through the scoped `/api/members/[id]/photo` endpoint, never the
+public `/api/images/[id]` content path, and is public **only** when the member
+is active and holds an active, published `CommitteeAssignment` — the same
+predicate `/api/committee` uses; otherwise it is visible solely to the member or
+a `membership:view` admin. Whether the public committee roster renders those
+photos is a separate presentational opt-in (`PublicContentSettings.committeePhotoDisplay`,
+default `NONE`) and never widens the serving rule.
 Committee contact routing is chosen per assignment via
 `CommitteeAssignment.contactEmailMode` (`ROLE`, `MEMBER`, or `CUSTOM`, default
 `ROLE`). `ROLE` uses the role email alias stored on `CommitteeRole`, `MEMBER`

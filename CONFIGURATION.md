@@ -1052,6 +1052,47 @@ and hidden assignments from legacy rows remain in place for installs that ran
 them. Assignment changes and master role changes are audited with before/after
 metadata.
 
+## Member Photos
+
+Members can have a profile photo (epic #171). There is nothing to configure at
+deploy time — no environment variables, no image service — but the visibility
+model matters for privacy.
+
+- **Storage.** A photo is a `MediaImage` row (`kind = MEMBER_PHOTO`, bytes in
+  Postgres so it survives redeploys) referenced by `Member.photoImageId`. It is
+  kept out of the website content picker (`/api/admin/image-library`, which lists
+  `kind = CONTENT` only) and is never served through the public
+  `/api/images/[id]` content path.
+- **Who can set it.** A member uploads/replaces/removes **their own** photo from
+  their profile page; a `membership:edit` admin can do the same on a member's
+  behalf from the member-detail page (a read-only admin sees it but cannot
+  change it). Uploads are cropped and downscaled in the browser to a 512×512
+  square; the server validates content type (JPEG/PNG/WebP), a 2 MB cap, and a
+  4096 px backstop, then stores the bytes verbatim. Every admin change is
+  audited (`member_photo.upload` / `member_photo.remove`, with the on-behalf
+  flag).
+- **Who can see it.** The photo is served through a scoped, member-keyed
+  endpoint (`/api/members/[id]/photo`). It is **public only** when the member is
+  active and holds an active, **published** `CommitteeAssignment` — in lockstep
+  with `/api/committee`. Otherwise only the member themselves or a
+  `membership:view` admin can see it; everyone else gets a 404 (the endpoint
+  prefers 404 over 403 so a private photo's existence is never confirmed).
+- **Consent.** Implied by self-upload; the enforced boundary is control (who can
+  set / remove / see). Removal is always permitted.
+- **Committee roster display.** Whether the public committee roster
+  (`{{committee-members-cards}}`) actually shows photos is a separate opt-in on
+  `PublicContentSettings.committeePhotoDisplay`, set from the Page Content admin:
+  - `NONE` (default) — text-only roster; no photos are shown even for members
+    who have one.
+  - `CIRCLE` / `SQUARE` — show each published member's photo in that shape, with
+    an initials placeholder for members without one.
+
+  This setting is presentational: it controls the roster render and whether
+  `/api/committee` emits photo metadata, but it does not change the serving rule
+  above. See `docs/member-photos/decisions/ADR-001-member-photos.md` for the
+  full design and `docs/SECURITY-ATTACK-SURFACE.md` for the serving/upload
+  authorisation matrix.
+
 Booking and subscription enforcement is season-aware:
 
 - `MEMBER_RATE` keeps normal member pricing for linked member guests.
