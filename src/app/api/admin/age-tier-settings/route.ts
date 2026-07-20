@@ -205,6 +205,12 @@ export async function PUT(request: NextRequest) {
               s.familyGroupRequestCreateMemberAllowed,
             sortOrder: s.sortOrder,
           },
+          // Blue/green runtime-prep (#2130): without a `select` Prisma emits
+          // RETURNING over every scalar, which still names the legacy
+          // xeroContactGroupId/Name columns the next release drops. The result
+          // is discarded here (the route re-reads the full set below), so the
+          // minimal `tier` projection matches config-self-heal.ts.
+          select: { tier: true },
         });
       }
     });
