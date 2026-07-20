@@ -55,6 +55,18 @@ type BillingData = {
       xeroInvoiceNumber: string | null;
       status: string;
     }>;
+    // #2147 FINDING 1: family groups suppressed from a second PER_FAMILY charge
+    // because a group member already holds a live season invoice or an active
+    // coverage claim. Shown in the same "Already invoiced" section, labelled as
+    // covering the whole family group, never re-billed.
+    alreadyInvoicedFamilies?: Array<{
+      familyGroupId: string;
+      holderMemberId: string;
+      holderName: string;
+      xeroInvoiceNumber: string | null;
+      status: string | null;
+      membersCovered: number;
+    }>;
   };
   charges: Array<{
     id: string;
@@ -250,24 +262,38 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                 </ul>
               </details>
             ) : null}
-            {(data.preview.alreadyInvoiced ?? []).length > 0 ? (
+            {((data.preview.alreadyInvoiced ?? []).length + (data.preview.alreadyInvoicedFamilies ?? []).length) > 0 ? (
               <details className="rounded-md border p-3 text-sm">
                 <summary className="cursor-pointer font-medium">
-                  Already invoiced ({(data.preview.alreadyInvoiced ?? []).length}) — suppressed to avoid double-billing
+                  Already invoiced ({(data.preview.alreadyInvoiced ?? []).length + (data.preview.alreadyInvoicedFamilies ?? []).length}) — suppressed to avoid double-billing
                 </summary>
                 <p className="mt-1 text-muted-foreground">
                   These members already have a Xero invoice for this season, so they are not re-billed. Record payment against the existing invoice in Xero (or void it there to re-bill).
                 </p>
-                <ul className="mt-2 space-y-1">
-                  {(data.preview.alreadyInvoiced ?? []).map((row) => (
-                    <li key={row.memberId} className="flex flex-wrap items-center justify-between gap-2">
-                      <span>{row.memberName}</span>
-                      <span className="tabular-nums text-muted-foreground">
-                        {row.xeroInvoiceNumber ?? "No Xero number"} · {row.status.replaceAll("_", " ")}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                {(data.preview.alreadyInvoiced ?? []).length > 0 ? (
+                  <ul className="mt-2 space-y-1">
+                    {(data.preview.alreadyInvoiced ?? []).map((row) => (
+                      <li key={row.memberId} className="flex flex-wrap items-center justify-between gap-2">
+                        <span>{row.memberName}</span>
+                        <span className="tabular-nums text-muted-foreground">
+                          {row.xeroInvoiceNumber ?? "No Xero number"} · {row.status.replaceAll("_", " ")}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {(data.preview.alreadyInvoicedFamilies ?? []).length > 0 ? (
+                  <ul className="mt-2 space-y-1">
+                    {(data.preview.alreadyInvoicedFamilies ?? []).map((row) => (
+                      <li key={row.familyGroupId} className="flex flex-wrap items-center justify-between gap-2">
+                        <span>{row.holderName}&rsquo;s family — covers the whole family group ({row.membersCovered} {row.membersCovered === 1 ? "member" : "members"})</span>
+                        <span className="tabular-nums text-muted-foreground">
+                          {row.xeroInvoiceNumber ?? "No Xero number"}{row.status ? ` · ${row.status.replaceAll("_", " ")}` : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </details>
             ) : null}
             {visibleExceptions.length > 0 ? (
