@@ -37,6 +37,15 @@ type BillingData = {
       coveredMembers: Array<{ id: string; name: string }>;
     }>;
     exceptions: Array<{ fingerprint: string; message: string }>;
+    // #2148 (D1): members exempt from a subscription by their age tier (no fee
+    // required by design). Shown in a collapsed informational "Exempt" section,
+    // never raised as MISSING_FEE_SCHEDULE. Optional so an older cached response
+    // without the field still renders.
+    exemptMembers?: Array<{
+      memberId: string;
+      memberName: string;
+      ageTier: string | null;
+    }>;
     // #2147 (D3): members suppressed from the preview because their season
     // subscription already holds a live Xero invoice. Shown in a collapsed
     // "Already invoiced" section with their invoice number, never re-billed.
@@ -130,6 +139,18 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     }
   }
 
+  // #2148 (D2): the Refresh button reconciles stale persisted exceptions for a
+  // finance-EDIT user via the edit-gated POST action, and stays a plain
+  // read-only reload for a finance-VIEW user. Mount-time and post-action reloads
+  // always go through the read-only GET (load), so the view never mutates.
+  async function refreshPreview() {
+    if (canEditFinance) {
+      await post({ action: "REFRESH_PREVIEW", seasonYear, decisionDate });
+    } else {
+      await load();
+    }
+  }
+
   async function confirmBatch() {
     if (!data || data.preview.seasonYear !== seasonYear || data.preview.decisionDate !== decisionDate) return;
     const accepted = await confirm({
@@ -159,7 +180,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
         </p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1"><Label htmlFor="subscription-decision-date">Decision date</Label><Input id="subscription-decision-date" type="date" value={decisionDate} onChange={(event) => { setData(null); setDecisionDate(event.target.value); }} /></div>
-          <Button type="button" variant="outline" onClick={() => void load()} disabled={loading || working}><RefreshCw className="mr-1 h-4 w-4" /> Refresh preview</Button>
+          <Button type="button" variant="outline" onClick={() => void refreshPreview()} disabled={loading || working}><RefreshCw className="mr-1 h-4 w-4" /> Refresh preview</Button>
           <div className="space-y-1"><Label htmlFor="subscription-due-days">Invoice due days</Label><Input id="subscription-due-days" className="w-28" type="number" min={1} max={365} value={dueDays} disabled={!canEditFinance} onChange={(event) => setDueDays(event.target.value)} /></div>
           <ViewOnlyActionButton canEdit={canEditFinance} type="button" variant="outline" disabled={working || Number(dueDays) < 1 || Number(dueDays) > 365} onClick={() => void post({ action: "UPDATE_SETTINGS", invoiceDueDays: Number(dueDays) })}>Save due days</ViewOnlyActionButton>
         </div>
@@ -209,6 +230,26 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                 <ViewOnlyActionButton canEdit={canEditFinance} type="button" onClick={() => void confirmBatch()} disabled={working}>Confirm and queue annual batch</ViewOnlyActionButton>
               </div>
             ) : <Alert variant="info">No new charges are available for this preview. Existing immutable coverage is not regenerated.</Alert>}
+            {(data.preview.exemptMembers ?? []).length > 0 ? (
+              <details className="rounded-md border p-3 text-sm">
+                <summary className="cursor-pointer font-medium">
+                  Exempt ({(data.preview.exemptMembers ?? []).length}) — no subscription required by age tier
+                </summary>
+                <p className="mt-1 text-muted-foreground">
+                  These members are in an age tier that does not require a paid subscription, so no annual fee is charged and no MISSING_FEE_SCHEDULE exception is raised. Confirming the batch records a NOT_REQUIRED subscription for the season.
+                </p>
+                <ul className="mt-2 space-y-1">
+                  {(data.preview.exemptMembers ?? []).map((row) => (
+                    <li key={row.memberId} className="flex flex-wrap items-center justify-between gap-2">
+                      <span>{row.memberName}</span>
+                      <span className="tabular-nums text-muted-foreground">
+                        {row.ageTier ? row.ageTier.replaceAll("_", " ") : "No age tier"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
             {(data.preview.alreadyInvoiced ?? []).length > 0 ? (
               <details className="rounded-md border p-3 text-sm">
                 <summary className="cursor-pointer font-medium">
