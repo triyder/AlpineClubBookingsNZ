@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   charges: { findMany: vi.fn() },
   exceptions: { findMany: vi.fn() },
   settings: { findUnique: vi.fn(), upsert: vi.fn() },
+  familyGroup: { findUnique: vi.fn() },
+  familyMarker: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   transaction: vi.fn(),
 }));
 
@@ -34,6 +36,8 @@ vi.mock("@/lib/prisma", () => ({
     membershipSubscriptionCharge: mocks.charges,
     membershipBillingException: mocks.exceptions,
     membershipSubscriptionBillingSettings: mocks.settings,
+    familyGroup: mocks.familyGroup,
+    familyGroupSeasonInvoiceMarker: mocks.familyMarker,
     $transaction: mocks.transaction,
   },
 }));
@@ -75,7 +79,11 @@ describe("admin subscription billing route", () => {
     mocks.charges.findMany.mockResolvedValue([]);
     mocks.exceptions.findMany.mockResolvedValue([]);
     mocks.settings.findUnique.mockResolvedValue(null);
-    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => callback({ membershipSubscriptionBillingSettings: mocks.settings }));
+    mocks.familyGroup.findUnique.mockResolvedValue({ id: "family-1" });
+    mocks.familyMarker.findFirst.mockResolvedValue(null);
+    mocks.familyMarker.create.mockResolvedValue({ id: "marker-1" });
+    mocks.familyMarker.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => callback({ membershipSubscriptionBillingSettings: mocks.settings, familyGroupSeasonInvoiceMarker: mocks.familyMarker }));
   });
 
   it("requires finance-view permission for previews", async () => {
@@ -260,5 +268,57 @@ describe("admin subscription billing route", () => {
     const response = await POST(request({ action: "REFRESH_PREVIEW", seasonYear: 2026, decisionDate: "13-07-2026" }));
     expect(response.status).toBe(400);
     expect(mocks.reconcile).not.toHaveBeenCalled();
+  });
+
+  // #2161 (D2): mark/unmark family invoice markers.
+  it("MARK_FAMILY_INVOICED is finance-edit gated, creates a marker, and audits", async () => {
+    const response = await POST(request({ action: "MARK_FAMILY_INVOICED", seasonYear: 2026, familyGroupId: "family-1", note: "  INV-9  " }));
+    expect(response.status).toBe(200);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "finance", level: "edit" } });
+    // The note is trimmed before persistence.
+    expect(mocks.familyMarker.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ familyGroupId: "family-1", seasonYear: 2026, note: "INV-9", markedByMemberId: "admin-1" }),
+    }));
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "membership-subscription-billing.mark-family" }));
+  });
+
+  it("MARK_FAMILY_INVOICED is idempotent — an already-active marker is a no-op success (no create, no audit)", async () => {
+    mocks.familyMarker.findFirst.mockResolvedValue({ id: "existing-marker" });
+    const response = await POST(request({ action: "MARK_FAMILY_INVOICED", seasonYear: 2026, familyGroupId: "family-1" }));
+    expect(response.status).toBe(200);
+    expect(mocks.familyMarker.create).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "membership-subscription-billing.mark-family" }));
+  });
+
+  it("MARK_FAMILY_INVOICED returns 404 for an unknown family group", async () => {
+    mocks.familyGroup.findUnique.mockResolvedValue(null);
+    const response = await POST(request({ action: "MARK_FAMILY_INVOICED", seasonYear: 2026, familyGroupId: "ghost" }));
+    expect(response.status).toBe(404);
+    expect(mocks.familyMarker.create).not.toHaveBeenCalled();
+  });
+
+  it("UNMARK_FAMILY_INVOICED releases the active marker and audits", async () => {
+    const response = await POST(request({ action: "UNMARK_FAMILY_INVOICED", seasonYear: 2026, familyGroupId: "family-1" }));
+    expect(response.status).toBe(200);
+    expect(mocks.familyMarker.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { familyGroupId: "family-1", seasonYear: 2026, releasedAt: null },
+      data: expect.objectContaining({ releasedByMemberId: "admin-1" }),
+    }));
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "membership-subscription-billing.unmark-family" }));
+  });
+
+  it("UNMARK_FAMILY_INVOICED is idempotent — releasing an unmarked family is a no-op success (no audit)", async () => {
+    mocks.familyMarker.updateMany.mockResolvedValue({ count: 0 });
+    const response = await POST(request({ action: "UNMARK_FAMILY_INVOICED", seasonYear: 2026, familyGroupId: "family-1" }));
+    expect(response.status).toBe(200);
+    expect(mocks.audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "membership-subscription-billing.unmark-family" }));
+  });
+
+  it("mark/unmark require the edit guard — a denied guard blocks the write", async () => {
+    mocks.requireAdmin.mockResolvedValue({ ok: false, response: NextResponse.json({ error: "Forbidden" }, { status: 403 }) });
+    const response = await POST(request({ action: "MARK_FAMILY_INVOICED", seasonYear: 2026, familyGroupId: "family-1" }));
+    expect(response.status).toBe(403);
+    expect(mocks.familyGroup.findUnique).not.toHaveBeenCalled();
+    expect(mocks.familyMarker.create).not.toHaveBeenCalled();
   });
 });

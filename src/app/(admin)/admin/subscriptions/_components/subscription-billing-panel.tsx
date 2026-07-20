@@ -31,6 +31,9 @@ type BillingData = {
       prorationRule: string;
       chargedAmountCents: number;
       coveredMonths: number;
+      // #2161 (D2): present on a PER_FAMILY entry; identifies the family group an
+      // operator can mark as already invoiced.
+      familyGroupId: string | null;
       xeroAccountCode: string | null;
       xeroItemCode: string | null;
       recipient: { name: string };
@@ -61,11 +64,20 @@ type BillingData = {
     // covering the whole family group, never re-billed.
     alreadyInvoicedFamilies?: Array<{
       familyGroupId: string;
-      holderMemberId: string;
-      holderName: string;
+      holderMemberId: string | null;
+      holderName: string | null;
       xeroInvoiceNumber: string | null;
       status: string | null;
       membersCovered: number;
+      // #2161 FINDING 1: true when the auto-detected holder suppressed the family
+      // via the fail-closed path (its own billing basis could not be resolved).
+      holderBasisUnresolvable?: boolean;
+      // #2161 (D2): true when an operator marker suppresses the family. The marker
+      // fields describe who marked it and any note.
+      operatorMarked?: boolean;
+      markerNote?: string | null;
+      markedByName?: string | null;
+      markedAt?: string | null;
     }>;
   };
   charges: Array<{
@@ -91,6 +103,10 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
   const [familyBillingMode, setFamilyBillingMode] = useState<FamilyBillingMode>("BILL_FAMILY_VIA_BILLING_MEMBER");
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  // #2161 (D2): the family entry whose "mark as already invoiced" note editor is
+  // open, and the draft note. null = no editor open.
+  const [markingFamilyGroupId, setMarkingFamilyGroupId] = useState<string | null>(null);
+  const [markNote, setMarkNote] = useState("");
   const [loadFeedback, setLoadFeedback] = useState<{ kind: "error"; text: string } | null>(null);
   const [mutationFeedback, setMutationFeedback] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const loadGeneration = useRef(0);
@@ -161,6 +177,26 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     } else {
       await load();
     }
+  }
+
+  // #2161 (D2): mark a family as already invoiced (suppresses its PER_FAMILY
+  // charge). The inline note editor IS the confirm step; the optional note is
+  // sent only when non-empty.
+  async function markFamily(familyGroupId: string) {
+    const note = markNote.trim();
+    setMarkingFamilyGroupId(null);
+    setMarkNote("");
+    await post({ action: "MARK_FAMILY_INVOICED", seasonYear, familyGroupId, ...(note ? { note } : {}) });
+  }
+
+  async function unmarkFamily(familyGroupId: string) {
+    const accepted = await confirm({
+      title: "Unmark this family?",
+      description: "The family will be billed again in the next preview. Only do this if the family was not actually invoiced for this season.",
+      confirmLabel: "Unmark family",
+    });
+    if (!accepted) return;
+    await post({ action: "UNMARK_FAMILY_INVOICED", seasonYear, familyGroupId });
   }
 
   async function confirmBatch() {
@@ -237,6 +273,23 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                   <div key={entry.key} className="rounded-md border p-3 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{entry.membershipTypeName} · {entry.recipient.name}</span><span className="tabular-nums">{formatCents(entry.chargedAmountCents)}</span></div>
                     <p className="text-muted-foreground">{entry.billingBasis.replaceAll("_", " ")} · {entry.coveredMonths}/12 months · covers {entry.coveredMembers.map((member) => member.name).join(", ")}{entry.xeroAccountCode ? ` · Xero ${entry.xeroAccountCode}${entry.xeroItemCode ? ` / ${entry.xeroItemCode}` : ""}` : ""}</p>
+                    {/* #2161 (D2): a PER_FAMILY charge can be marked as already
+                        invoiced when the operator knows an ambiguous legacy
+                        invoice already covered the family. */}
+                    {entry.billingBasis === "PER_FAMILY" && entry.familyGroupId ? (
+                      markingFamilyGroupId === entry.familyGroupId ? (
+                        <div className="mt-2 space-y-2 rounded-md border border-dashed p-2">
+                          <Label htmlFor={`mark-note-${entry.familyGroupId}`}>Note (optional) — e.g. the covering invoice number</Label>
+                          <Input id={`mark-note-${entry.familyGroupId}`} value={markNote} onChange={(event) => setMarkNote(event.target.value)} placeholder="INV-…" maxLength={500} />
+                          <div className="flex flex-wrap gap-2">
+                            <Button type="button" size="sm" disabled={working} onClick={() => void markFamily(entry.familyGroupId!)}>Confirm — mark as already invoiced</Button>
+                            <Button type="button" size="sm" variant="outline" disabled={working} onClick={() => { setMarkingFamilyGroupId(null); setMarkNote(""); }}>Cancel</Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <ViewOnlyActionButton canEdit={canEditFinance} type="button" size="sm" variant="outline" className="mt-2" disabled={working} onClick={() => { setMarkingFamilyGroupId(entry.familyGroupId); setMarkNote(""); }}>Mark family as already invoiced</ViewOnlyActionButton>
+                      )
+                    ) : null}
                   </div>
                 ))}
                 <ViewOnlyActionButton canEdit={canEditFinance} type="button" onClick={() => void confirmBatch()} disabled={working}>Confirm and queue annual batch</ViewOnlyActionButton>
@@ -283,12 +336,34 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                   </ul>
                 ) : null}
                 {(data.preview.alreadyInvoicedFamilies ?? []).length > 0 ? (
-                  <ul className="mt-2 space-y-1">
+                  <ul className="mt-2 space-y-2">
                     {(data.preview.alreadyInvoicedFamilies ?? []).map((row) => (
                       <li key={row.familyGroupId} className="flex flex-wrap items-center justify-between gap-2">
-                        <span>{row.holderName}&rsquo;s family — covers the whole family group ({row.membersCovered} {row.membersCovered === 1 ? "member" : "members"})</span>
-                        <span className="tabular-nums text-muted-foreground">
-                          {row.xeroInvoiceNumber ?? "No Xero number"}{row.status ? ` · ${row.status.replaceAll("_", " ")}` : ""}
+                        <span>
+                          {row.holderName ? `${row.holderName}’s family` : "Family"} — covers the whole family group ({row.membersCovered} {row.membersCovered === 1 ? "member" : "members"})
+                          {row.operatorMarked ? (
+                            <>
+                              {" "}
+                              <Badge variant="secondary">Operator marked</Badge>
+                              {row.markerNote ? <span className="text-muted-foreground"> · {row.markerNote}</span> : null}
+                            </>
+                          ) : null}
+                          {!row.operatorMarked && row.holderBasisUnresolvable ? (
+                            <>
+                              {" "}
+                              <Badge variant="outline" title="The invoice holder's own membership fee basis could not be resolved, so the family is suppressed conservatively. Resolve the holder's type/fee or void the invoice to re-bill.">Unresolved basis</Badge>
+                            </>
+                          ) : null}
+                        </span>
+                        <span className="flex items-center gap-2">
+                          <span className="tabular-nums text-muted-foreground">
+                            {row.operatorMarked && !row.xeroInvoiceNumber
+                              ? "Marked by operator"
+                              : `${row.xeroInvoiceNumber ?? "No Xero number"}${row.status ? ` · ${row.status.replaceAll("_", " ")}` : ""}`}
+                          </span>
+                          {row.operatorMarked ? (
+                            <ViewOnlyActionButton canEdit={canEditFinance} type="button" size="sm" variant="outline" disabled={working} onClick={() => void unmarkFamily(row.familyGroupId)}>Unmark</ViewOnlyActionButton>
+                          ) : null}
                         </span>
                       </li>
                     ))}

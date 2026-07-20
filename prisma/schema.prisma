@@ -602,6 +602,8 @@ model Member {
   memberSubscriptionsManuallyPaid            MemberSubscription[]                    @relation("MemberSubscriptionManualPaidBy")
   membershipChargesReceived                  MembershipSubscriptionCharge[]          @relation("MembershipChargeRecipient")
   membershipChargesConfirmed                 MembershipSubscriptionCharge[]          @relation("MembershipChargeConfirmer")
+  familyInvoiceMarkersMarked                 FamilyGroupSeasonInvoiceMarker[]        @relation("FamilyInvoiceMarkerMarkedBy")
+  familyInvoiceMarkersReleased               FamilyGroupSeasonInvoiceMarker[]        @relation("FamilyInvoiceMarkerReleasedBy")
   membershipBillingExceptions                MembershipBillingException[]            @relation("MembershipBillingExceptionMember")
   seasonalMembershipAssignments              SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentMember")
   seasonalMembershipAssignmentsAssigned      SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentAssignedBy")
@@ -1072,6 +1074,46 @@ model MembershipSubscriptionChargeCoverage {
   @@index([chargeId])
   @@index([subscriptionId])
   @@index([memberId, createdAt])
+}
+
+// #2161 (D2): an explicit operator "already invoiced" marker for one family
+// group in one membership season. An operator sets this when they KNOW an
+// ambiguous legacy invoice — e.g. one sitting on a member whose current resolved
+// billing basis is PER_MEMBER — actually covered the whole family. It closes the
+// double-billing window the #2161 D1 predicate refinement re-opens for
+// mixed-basis families (where a PER_MEMBER member's personal live invoice no
+// longer blocks the family fee). An ACTIVE marker (releasedAt IS NULL) suppresses
+// the family's PER_FAMILY charge in the billing preview — and therefore in the
+// in-transaction confirm re-preview — regardless of the D1 predicate. Unmark sets
+// releasedAt (the row is retained for audit, mirroring the coverage-release
+// pattern in MembershipSubscriptionChargeCoverage); a fresh mark then inserts a
+// new row. "At most one ACTIVE marker per (familyGroupId, seasonYear)" is enforced
+// by the raw-SQL partial unique index FamilyGroupSeasonInvoiceMarker_active_unique
+// (prisma/partial-unique-indexes.tsv) — Prisma cannot express a partial unique
+// index. The audit FKs are nullable + SetNull (mirroring
+// MembershipSubscriptionCharge.confirmedByMemberId) so removing the operator
+// account never deletes the marker.
+model FamilyGroupSeasonInvoiceMarker {
+  id                 String    @id @default(cuid())
+  familyGroupId      String
+  seasonYear         Int
+  markedByMemberId   String?
+  markedAt           DateTime  @default(now())
+  // Optional free text, e.g. the covering invoice number the operator knows about.
+  note               String?
+  releasedAt         DateTime?
+  releasedByMemberId String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+  markedBy    Member?     @relation("FamilyInvoiceMarkerMarkedBy", fields: [markedByMemberId], references: [id], onDelete: SetNull)
+  releasedBy  Member?     @relation("FamilyInvoiceMarkerReleasedBy", fields: [releasedByMemberId], references: [id], onDelete: SetNull)
+
+  @@index([familyGroupId, seasonYear])
+  @@index([seasonYear])
+  @@index([markedByMemberId])
+  @@index([releasedByMemberId])
 }
 
 model MembershipBillingException {
@@ -3961,6 +4003,8 @@ model FamilyGroup {
   billingSelectedMembers Member[]        @relation("MemberBillingFamily")
   joinRequests  FamilyGroupJoinRequest[]
   partnerInviteTokens PartnerInviteToken[]
+  // #2161 (D2): operator "already invoiced" markers for this group, per season.
+  seasonInvoiceMarkers FamilyGroupSeasonInvoiceMarker[]
   billingMembershipId String?            @unique
   billingMembership   FamilyGroupMember? @relation("FamilyBillingMembership", fields: [billingMembershipId], references: [id], onDelete: SetNull)
 }
