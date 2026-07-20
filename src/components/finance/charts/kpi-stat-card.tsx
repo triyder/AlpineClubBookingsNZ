@@ -32,10 +32,14 @@ export function KpiStatCard({
       {description || footnote ? (
         <CardContent className="space-y-2">
           {description ? (
-            <p className="text-sm leading-6 text-muted-foreground">{description}</p>
+            <p className="text-sm leading-6 text-muted-foreground">
+              {description}
+            </p>
           ) : null}
           {footnote ? (
-            <p className="text-xs font-medium text-muted-foreground">{footnote}</p>
+            <p className="text-xs font-medium text-muted-foreground">
+              {footnote}
+            </p>
           ) : null}
         </CardContent>
       ) : null}
