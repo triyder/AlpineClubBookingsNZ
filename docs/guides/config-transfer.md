@@ -82,10 +82,44 @@ keys) **block** apply until fixed.
 | --- | --- | --- |
 | "available to full administrators only" | You aren't a Full Admin | Ask a Full Admin to run the transfer |
 | Apply is disabled | The plan has validation errors | Fix the named rows, **Reseal**, and re-preview |
+| Errors naming a legacy `isMember` column or an `ENTRANCE_FEE` item-code row, with Apply disabled | The bundle was exported by **v0.12.2 or earlier** — that bundle shape is no longer imported | Re-export the bundle from the source install if it is still running the current release; otherwise hand-fix the columns as below, **Reseal**, and re-preview |
+| `item-code-mappings.csv` error: "a HUT_FEE item-code row must name a membership type" | A hand-authored (or hand-edited) HUT_FEE row left `membershipTypeKey` blank | Fill in the membership type key — the exporter always emits one — then **Reseal** and re-preview |
+| A fresh install came up **unconfigured** and the logs say nothing was written | The boot-time bundle at `CONFIG_BUNDLE_IMPORT_PATH` failed validation, so the auto-import refused (`refused-invalid`) and wrote nothing — a legacy bundle is the usual cause | Read the boot log line, which names the first validation error; replace the file with a current-shape export (or hand-fix and reseal it) and reboot, or import the bundle interactively on this page |
 | "This bundle was edited since export" warning | Manifest checksums don't match the files | Advisory only — apply anyway, or **Reseal** to refresh the manifest |
 | Xero org mismatch warning | The Xero config came from a different connected org | Verify the codes, or untick the Xero category before applying |
 | A door-code change warning appears | The bundle would set/change a lodge door code | Confirm it's intended before applying |
 | A "restore" didn't remove stale rows | Import never deletes | Remove them on the owning admin page; the backup is the true rollback |
+
+### Converting a legacy bundle by hand
+
+If the install that produced an old bundle is gone and all you hold is the zip,
+you do not have to abandon it. Bundles are plain CSVs in a zip and are meant to
+be edited: unzip it, make the three substitutions below, re-zip it, upload it,
+click **Reseal edited bundle** to regenerate the manifest, and re-preview. The
+old shape used a `true`/`false` "is this a member?" column where the current
+shape names the **membership type** directly.
+
+| File | Old column / value | Change it to |
+| --- | --- | --- |
+| `lodge-config/lodges/<slug>/season-rates.csv` | `isMember` column, `true` | a `membershipTypeKey` column with `FULL` |
+| `lodge-config/lodges/<slug>/season-rates.csv` | `isMember` column, `false` | a `membershipTypeKey` column with `NON_MEMBER` |
+| `xero-config/item-code-mappings.csv` (HUT_FEE rows) | `isMember` column, `true` / `false` | a `membershipTypeKey` column with `FULL` / `NON_MEMBER` |
+| `xero-config/item-code-mappings.csv` | `category` value `ENTRANCE_FEE` | `JOINING_FEE` (the same rows, renamed) |
+
+Practical notes:
+
+- **Rename the header, not just the values.** Replace the `isMember` header cell
+  with `membershipTypeKey` and rewrite each row's `true`/`false` to `FULL` /
+  `NON_MEMBER`. A row that still carries an `isMember` value with no
+  `membershipTypeKey` is what triggers the rejection.
+- `FULL` and `NON_MEMBER` are the built-in membership type **keys**. If your club
+  renamed or replaced them, use the keys shown on **Admin → Membership Types** —
+  an unknown key is its own clear row error.
+- Leave `JOINING_FEE` rows' `membershipTypeKey` **blank**; that column keys
+  HUT_FEE rows only.
+- The dry-run is safe to repeat as often as you like — nothing is written until
+  you click **Apply import** — so fix, reseal, re-preview, and iterate until the
+  plan is clean.
 
 ## Related links
 

@@ -110,7 +110,9 @@ deeper reference for what each category contains and the import safety model.
   compat for the legacy `seasonName, ageTier, isMember, pricePerNightCents`
   shape **closed one release after the E13 contraction (#2131)**: such a bundle
   is now **rejected** on import with a clear validation error (re-export it from
-  an up-to-date install). **v0.12.2 was the last release that could import the
+  an install running the current release, or hand-fix it with the
+  [conversion recipe](../guides/config-transfer.md#converting-a-legacy-bundle-by-hand)).
+  **v0.12.2 was the last release that could import the
   legacy `isMember` shape.** Instructions
   are two-level: the top-level `lodge-config/instructions.csv` holds the
   **club-wide base** shown for every lodge, while a lodge folder's
@@ -177,8 +179,13 @@ deeper reference for what each category contains and the import safety model.
   (#2131)**: a bundle carrying the legacy `isMember` HUT_FEE column, or the
   pre-#1931 `ENTRANCE_FEE` category name, is now **rejected** on import with a
   clear validation error rather than silently mapped/normalised — **v0.12.2 was
-  the last release that could import that shape** (re-export from an up-to-date
-  install). Because the runtime no longer reads item-code-mapping `amountCents`
+  the last release that could import that shape** (re-export from an install
+  running the current release, or hand-fix it with the
+  [conversion recipe](../guides/config-transfer.md#converting-a-legacy-bundle-by-hand)).
+  Relatedly, a `HUT_FEE` row with a **blank `membershipTypeKey`** is now a
+  blocking row error too: the export always emits the key, and writing a keyless
+  row would create a frozen-legacy-shaped mapping the runtime never reads (and
+  which would re-create on every import). Because the runtime no longer reads item-code-mapping `amountCents`
   for joining fees, any imported `JOINING_FEE` amount whose category has **no
   covering `JoiningFee` window** on the target is **materialised into open
   JoiningFee windows** using the migration's D-R1 fan-out (per-tier to every
@@ -251,7 +258,12 @@ validated pipeline (`src/lib/config-transfer/bootstrap-import.ts`).
   and no audit-log row with a member actor (which catches direct-admin-editor
   configuration). Any of those present → the import is **refused** and nothing
   is written. A malformed/tampered/oversized bundle, an unreadable path, a
-  probe error, or any apply failure also refuses; boot always continues. (A
+  probe error, or any apply failure also refuses; boot always continues. This
+  includes a **legacy bundle** (#2131): it fails plan-time validation, so the
+  bootstrap refuses (`refused-invalid`), writes nothing, and the replacement
+  install comes up **unconfigured** — the only signal is the boot log line
+  naming the first validation error, so keep the bundle at
+  `CONFIG_BUNDLE_IMPORT_PATH` in the current export shape. (A
   plain "the plan has no updates" check is deliberately NOT used — the base
   seed pre-creates the config rows the bundle touches, so a legitimate
   bootstrap always shows updates; see ADR-003 "Empty-target definition".)

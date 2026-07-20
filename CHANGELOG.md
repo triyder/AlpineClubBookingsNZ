@@ -10,11 +10,18 @@ All notable public reference-release changes should be recorded here.
   `season-rates.csv` and on the Xero `item-code-mappings.csv` HUT_FEE rows, and
   the pre-#1931 `ENTRANCE_FEE` item-code category name. A bundle carrying any of
   these is now **rejected at dry-run** with a clear, row-named validation error
-  that disables Apply and points to re-exporting from an up-to-date install
-  (**v0.12.2 was the last release that could import the legacy shape**) — never
-  a silent partial import. New-bundle export/import is byte-identical, and the
-  #1931 item-code-amount joining-fee materialisation (for current `JOINING_FEE`
-  rows) is unchanged. No schema change. See `docs/config-transfer/README.md`.
+  that disables Apply and points to re-exporting from an install running the
+  current release (**v0.12.2 was the last release that could import the legacy
+  shape**) — never a silent partial import. A bundle whose source install is
+  gone can still be hand-converted: see "Converting a legacy bundle by hand" in
+  `docs/guides/config-transfer.md`. Relatedly, a `HUT_FEE` item-code row with a
+  **blank `membershipTypeKey`** is now a blocking row error rather than a
+  silently-written keyless mapping the runtime never reads — this only affects
+  hand-authored bundles, as the exporter always emits the key. New-bundle
+  export/import is byte-identical, and the #1931 item-code-amount joining-fee
+  materialisation (for current `JOINING_FEE` rows) is unchanged. No schema
+  change. Operator actions: `docs/UPGRADING.md` → Unreleased. See
+  `docs/config-transfer/README.md`.
 
 ## 0.12.2 - 2026-07-20
 
