@@ -149,13 +149,26 @@ function isDarkGated(selector: string): boolean {
   return /(^|[\s,>+~(])\.dark\b/.test(gates);
 }
 
-/** The custom-property names declared (not merely referenced) in `rules`. */
+/**
+ * The custom-property names declared (not merely referenced) in `rules`.
+ *
+ * Comments are stripped first, as `nonTokenDeclarations` does. A commented-out
+ * `--foo: …` in a light block, where a real `.dark` block declares `--foo`,
+ * would otherwise add `--foo` to the healed set — silently widening what a
+ * print-visible dark rule is allowed to assign, with nothing on paper to heal
+ * it. (The reverse direction already fails loudly: a commented-out declaration
+ * in the DARK block only ever shrinks the healed set.)
+ */
 function declaredTokens(
   rules: Array<{ selector: string; body: string }>,
 ): Set<string> {
   return new Set(
     rules.flatMap(({ body }) =>
-      [...body.matchAll(/(?:^|[;{\s])(--[a-z0-9-]+)\s*:/gi)].map((match) =>
+      [
+        ...body
+          .replaceAll(/\/\*[\s\S]*?\*\//g, "")
+          .matchAll(/(?:^|[;{\s])(--[a-z0-9-]+)\s*:/gi),
+      ].map((match) =>
         match[1].toLowerCase(),
       ),
     ),
@@ -503,12 +516,19 @@ const TAILWIND_PALETTE_FAMILIES = [
 ].join("|");
 
 const LITERAL_PALETTE_DARK_UTILITY = new RegExp(
-  // `dark:` plus any further stacked variants — named (`dark:focus:`,
-  // `dark:hover:`), the `*:`/`**:` descendant variants, and bracketed arbitrary
-  // variants (`dark:[&>tr]:`). The original `[a-z-]+:`-only form meant
-  // `dark:*:bg-slate-900` — a single character away from a plain offender —
-  // slipped straight through.
-  String.raw`\bdark:(?:(?:[a-z-]+|\*{1,2}|\[[^\]\s]*\]):)*` +
+  // `dark:` plus any further stacked variants. A variant segment is one of:
+  //   - a bare word, OPTIONALLY carrying a functional bracket
+  //     (`hover`, `focus`, `md`, but also `data-[state=open]`, `has-[:checked]`,
+  //     `supports-[backdrop-filter]`, `aria-[sort=asc]`, `group-[.open]`);
+  //   - the `*:` / `**:` descendant variants;
+  //   - a bare arbitrary variant (`[&>tr]`).
+  // The word-then-bracket case is the one two earlier cuts of this regex both
+  // missed: the alternation matched a bare word OR a bare bracket but never a
+  // word FOLLOWED BY one, so every `dark:data-[…]:` form walked through. That is
+  // not hypothetical — `src/components/ui` is a printable root and carries 78
+  // `data-[…=` occurrences across 8 files, so adding `dark:` to any one of them
+  // would have reopened #2146 with this whole suite green.
+  String.raw`\bdark:(?:(?:[a-z-]+(?:\[[^\]\s]*\])?|\*{1,2}|\[[^\]\s]*\]):)*` +
     // the colour-bearing utility prefixes
     String.raw`(?:text|bg|border|ring|shadow|from|to|via|outline|decoration|divide|fill|stroke|accent|caret)-` +
     String.raw`(?:` +
@@ -517,9 +537,24 @@ const LITERAL_PALETTE_DARK_UTILITY = new RegExp(
     // …or an ARBITRARY literal colour: `dark:bg-[#0b1220]`,
     // `dark:text-[rgb(2,6,23)]`, `dark:bg-[oklch(0.2_0_0)]`. These are exactly
     // as hazardous as a named shade and were previously invisible.
-    // `dark:bg-[var(--card)]` is deliberately NOT matched: it resolves through
-    // the light token on paper, like every other token-driven variant.
-    String.raw`|\[(?:#|(?:rgba?|hsla?|oklch|oklab|lab|lch|color)\()[^\]]*\]` +
+    //
+    // The colour test is a LOOKAHEAD for a colour-ish token ANYWHERE inside the
+    // brackets, not an anchored list of function names. The anchored form only
+    // recognised a value that STARTED with a known colour function, so a nested
+    // or newer one — `dark:bg-[color-mix(in_oklch,black,white)]`,
+    // `dark:bg-[theme(colors.slate.900)]`, `dark:bg-[light-dark(white,black)]` —
+    // slipped past while being every bit as literal.
+    //
+    // `dark:bg-[var(--card)]` still does NOT match, and must not: it resolves
+    // through the light token on paper, like every other token-driven variant.
+    // Nor do non-colour arbitrary values on a colour-bearing prefix
+    // (`dark:text-[14px]`, `dark:shadow-[0_0_0_1px_var(--ring)]`), which is why
+    // this stays a colour-token lookahead rather than "any `[…]`".
+    String.raw`|\[(?=[^\]\s]*(?:#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|oklch|oklab|lab|lch|color|color-mix|light-dark|theme)\())[^\]\s]*\]` +
+    // …and a bare named colour as the whole arbitrary value (`dark:bg-[black]`).
+    // Matched only as the ENTIRE value: a loose `\bwhite\b` would also fire
+    // inside `var(--brand-white)`, which is token-driven and legitimate.
+    String.raw`|\[(?:black|white)\]` +
     String.raw`)`,
   "g",
 );
@@ -577,14 +612,36 @@ function listComponentFiles(path: string): string[] {
 //                              above. `ui/card.tsx` is where #2146 actually
 //                              originated, so this root is not optional.
 //
-// The last three entries are individual shared components that render inside a
-// print root without living in one of the trees above:
-// `main.reports-print-root` in `(finance)/finance/layout.tsx` wraps
-// `ContextualHelpButton`, and `/admin/reports` renders `DateRangeControls` and
-// the `lodge-select` options hook. All three are `print:hidden` today, so this
-// is belt-and-braces — but "the census will catch it" is the wrong backstop for
-// a file that legitimately renders on a printable surface: the census's only
-// remedy is the non-printable allowlist, which would be a false claim here.
+// The last three entries are individual shared components that render on a
+// printable page without living in one of the trees above. They are NOT
+// equivalent to each other, and only one of them is belt-and-braces:
+//
+// - `contextual-help-button.tsx` — rendered inside `main.reports-print-root`
+//   ((finance)/finance/layout.tsx:55,73) and in the admin layout. It is the one
+//   that carries `print:hidden` itself (contextual-help-button.tsx:115), so for
+//   this entry the root really is belt-and-braces.
+// - `date-range-controls.tsx` — LOAD-BEARING, do not prune. `/admin/reports`
+//   renders it at page.tsx:334, which is OUTSIDE the `.reports-print-root` div
+//   at page.tsx:396 but still on the printed document, and it has no
+//   `print:hidden`. The print block hides its `<select>` and
+//   `input[type="date"]` by element type (globals.css:~1301) — but NOT the
+//   `<Label>` elements it renders (date-range-controls.tsx:56,73,85), which
+//   print. A literal `dark:` colour on one of those labels would print exactly
+//   as written.
+// - `lodge-select.tsx` — LOAD-BEARING for the same reason, though one step
+//   further out. `LodgeSelect` renders a `<Label>` (lodge-select.tsx:60) that no
+//   element rule hides, on admin pages including `admin/roster/page.tsx:484` —
+//   inside the already-printable `admin/roster` tree. (Note `/admin/reports`
+//   imports only `useLodgeOptions` from this module (page.tsx:9), which renders
+//   no markup; the `LodgeSelect` component itself is not used there, and the
+//   `roster/[date]/print` route takes its lodge from the URL rather than the
+//   picker. So no print root renders it *today* — but it is a shared picker one
+//   report screen away from doing so, and the cost of listing it is nil.)
+//
+// Listing them here rather than leaning on the census is deliberate: the
+// census's only remedy is `NON_PRINTABLE_DARK_UTILITY_FILES`, and adding any of
+// these three to that list would be a false claim — each renders visible markup
+// on a page an operator can print.
 const PRINTABLE_SURFACE_ROOTS = [
   "src/app/(finance)",
   "src/components/finance",
@@ -685,6 +742,24 @@ describe("#2146 no literal-palette dark: utility on a printable surface", () => 
       "dark:**:text-white",
       "dark:[&>tr]:bg-slate-900",
       "dark:hover:bg-[#0b1220]",
+      // FUNCTIONAL-BRACKET variants: a word followed by a bracket. The
+      // alternation used to accept a bare word OR a bare bracket but never a
+      // word carrying one, so this entire family evaded the check — including
+      // `data-[…]`, which `src/components/ui` (a printable root, and the tree
+      // #2146 originated in) uses 78 times.
+      "dark:data-[state=open]:bg-slate-900",
+      "dark:has-[:checked]:bg-slate-900",
+      "dark:supports-[backdrop-filter]:bg-slate-900",
+      "dark:aria-[sort=asc]:text-white",
+      "dark:group-[.open]:bg-slate-900",
+      "dark:data-[state=checked]:bg-[#0b1220]",
+      // ARBITRARY VALUES whose colour function is nested or simply was not on
+      // the enumerated list. The old branch required the value to START with a
+      // known colour function, so these read as token-driven and were allowed.
+      "dark:bg-[color-mix(in_oklch,black,white)]",
+      "dark:bg-[theme(colors.slate.900)]",
+      "dark:bg-[light-dark(white,black)]",
+      "dark:bg-[black]",
     ];
     for (const utility of previouslyEvading) {
       expect(
@@ -702,6 +777,17 @@ describe("#2146 no literal-palette dark: utility on a printable surface", () => 
       "dark:bg-[var(--card)]",
       "dark:text-[var(--foreground)]",
       "dark:*:bg-card",
+      // The widened branches must not over-reach. A functional-bracket variant
+      // is only an offender when its UTILITY carries a literal colour…
+      "dark:data-[state=open]:bg-card",
+      "dark:has-[:checked]:text-muted-foreground",
+      // …and an arbitrary value on a colour-bearing prefix is not automatically
+      // a colour. `--brand-white` in particular must stay allowed: it is a
+      // token reference, not the named colour `white`.
+      "dark:text-[14px]",
+      "dark:border-[2px]",
+      "dark:shadow-[0_0_0_1px_var(--ring)]",
+      "dark:bg-[var(--brand-white)]",
     ];
     for (const utility of stillAllowed) {
       expect(

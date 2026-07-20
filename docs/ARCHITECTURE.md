@@ -200,23 +200,39 @@ two halves with different enforcement:
 2. **In a class string, wherever it lives:** a Tailwind `dark:` utility carrying
    a **literal palette colour** — a named shade (`dark:bg-slate-900`,
    `dark:text-amber-200`) or an arbitrary value (`dark:bg-[#0b1220]`,
-   `dark:text-[rgb(2,6,23)]`), with or without stacked or `*:` / `[&>tr]:`
-   variants — must not go on a printable surface. This is the half
-   `globals.css` cannot protect: `dark:` utilities compile into Tailwind's own
-   generated stylesheet, never into `globals.css`, so no `@media not print`
-   wrapper here can ever reach them — they print exactly as written.
-   Token-driven variants (`dark:bg-input/30`, `dark:checked:bg-primary`,
-   `dark:bg-[var(--card)]`) are fine, since they resolve to `var(--token)` and
-   self-heal like the rules above. The same contract test enforces this by
-   scanning the printable trees (`(finance)`, `components/finance`,
-   `admin/reports`, `admin/roster`, `admin/induction`, `lodge-instructions`,
-   `hut-leader-instructions`, and `components/ui`, plus the shared components
-   that render inside a print root) and keeps the handful of non-printable files
-   that legitimately carry such utilities on an enumerated list. The scan covers
-   `.ts` as well as `.tsx`, because this repo already keeps palette class
-   strings in plain modules (`bed-allocation/_components/booking-accent.ts`). On
-   a printable surface, reach the colour through a semantic token or the
-   `--hue-*` pairs instead.
+   `dark:text-[rgb(2,6,23)]`) — must not go on a printable surface, whatever
+   variants are stacked in front of it. This is the half `globals.css` cannot
+   protect: `dark:` utilities compile into Tailwind's own generated stylesheet,
+   never into `globals.css`, so no `@media not print` wrapper here can ever
+   reach them — they print exactly as written. Token-driven variants
+   (`dark:bg-input/30`, `dark:checked:bg-primary`, `dark:bg-[var(--card)]`) are
+   fine, since they resolve to `var(--token)` and self-heal like the rules
+   above. The same contract test enforces this by scanning the printable trees
+   (`(finance)`, `components/finance`, `admin/reports`, `admin/roster`,
+   `admin/induction`, `lodge-instructions`, `hut-leader-instructions`, and
+   `components/ui`, plus the shared components that render on a printable page)
+   and keeps the handful of non-printable files that legitimately carry such
+   utilities on an enumerated list. The scan covers `.ts` as well as `.tsx`,
+   because this repo already keeps palette class strings in plain modules
+   (`bed-allocation/_components/booking-accent.ts`). On a printable surface,
+   reach the colour through a semantic token or the `--hue-*` pairs instead.
+
+   **What the class-string scan does and does not see.** It is a regex over
+   source text, not a Tailwind parse, so the boundary is worth stating exactly
+   rather than implying it is total. It recognises any stack of variants in
+   front of the utility — named (`dark:hover:`, `dark:md:`), the `*:` / `**:`
+   descendant variants, bare arbitrary variants (`dark:[&>tr]:`), and functional
+   bracket variants (`dark:data-[state=open]:`, `dark:has-[:checked]:`,
+   `dark:aria-[…]:`, `dark:group-[…]:`, `dark:supports-[…]:`) — and, on the
+   value side, named palette shades, `black` / `white`, and any arbitrary value
+   containing a colour token anywhere in it (hex, or `rgb`/`hsl`/`hwb`/`oklch`/
+   `oklab`/`lab`/`lch`/`color`/`color-mix`/`light-dark`/`theme(…)`, nested or
+   not). It deliberately does NOT flag arbitrary values that reach a token
+   (`dark:bg-[var(--card)]`) or that are not colours at all
+   (`dark:text-[14px]`). What it cannot see is a class name that does not exist
+   as literal text in the source: one assembled at runtime from fragments, or
+   arriving from data or a CMS field. Keep printable-surface classes written out
+   literally so this check can do its job.
 
 `e2e/print-dark-mode.spec.ts` backs the CSS and class-string halves at the
 medium the bug actually lives in: it renders `/admin/reports` and `/finance`
