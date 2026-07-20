@@ -1,7 +1,8 @@
 /**
  * Column model for the public `{{hut-fees}}` embed (#2129).
  *
- * The embed used to read the frozen member/non-member `SeasonRate` table and
+ * The embed used to read the member/non-member `SeasonRate` table (since
+ * dropped by #2129 step 2) and
  * present two fixed audiences. It now reads the authoritative
  * `MembershipTypeSeasonRate` rows, so a season's nightly rates are a grid of
  * membership type x age tier. This module turns those rows into the *columns*

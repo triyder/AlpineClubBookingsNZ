@@ -298,8 +298,8 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
       orderBy: [{ startDate: "asc" }, { id: "asc" }],
       select: { id: true, lodgeId: true, name: true, type: true, startDate: true, endDate: true, active: true },
     }),
-    // Membership-type-keyed rates (#1930, E4); the legacy SeasonRate table is
-    // frozen and no longer read/written by config transfer.
+    // Membership-type-keyed rates (#1930, E4) — the only hut-rate table; the
+    // legacy SeasonRate table was dropped by #2129 step 2.
     db.membershipTypeSeasonRate.findMany({
       where: { season: { lodgeId: { in: lodgeIds } } },
       select: {

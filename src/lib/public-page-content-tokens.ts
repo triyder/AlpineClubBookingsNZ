@@ -418,7 +418,7 @@ function transposeFeeTable(table: PublicFeeTable): PublicFeeTable {
 /**
  * Public hut nightly fees, sourced from the authoritative
  * `MembershipTypeSeasonRate` rows (#2129 — the legacy member/non-member
- * `SeasonRate` table is no longer read by anything).
+ * `SeasonRate` table was dropped in step 2).
  *
  * Each active season of each public lodge renders as one table: age tiers are
  * the rows and **membership-type rate columns** are the columns. A membership

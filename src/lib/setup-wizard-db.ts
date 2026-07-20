@@ -327,9 +327,10 @@ export async function applyWizardConfigToDatabase(
             tier.familyGroupRequestCreateMemberAllowed,
           sortOrder: tier.sortOrder,
         },
-        // Blue/green runtime-prep (#2130): narrow the implicit RETURNING so the
-        // wizard write stops naming the legacy xeroContactGroupId/Name columns
-        // the next release drops. The $transaction result is discarded.
+        // Blue/green runtime-prep (#2130): narrow the implicit RETURNING. This
+        // stopped the wizard write naming the legacy xeroContactGroupId/Name
+        // columns before the STEP 2 contract migration dropped them; keep it
+        // narrow regardless. The $transaction result is discarded.
         select: { tier: true },
       }),
     ),
