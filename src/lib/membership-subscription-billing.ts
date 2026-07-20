@@ -123,6 +123,21 @@ export type SubscriptionBillingPreview = {
     xeroInvoiceNumber: string | null;
     status: SubscriptionStatus;
   }>;
+  // #2147 FINDING 1: family groups suppressed from a (second) PER_FAMILY charge
+  // because a member of the group already holds a live season Xero invoice or an
+  // active coverage claim. Surfaced beside alreadyInvoiced so the operator can
+  // audit which member/invoice covers the whole family. Like alreadyInvoiced it
+  // is derived deterministically from persisted state (NOT part of the
+  // confirmation token — the suppressed family simply mints no entry, which the
+  // in-transaction re-preview reproduces under the per-season advisory lock).
+  alreadyInvoicedFamilies: Array<{
+    familyGroupId: string;
+    holderMemberId: string;
+    holderName: string;
+    xeroInvoiceNumber: string | null;
+    status: SubscriptionStatus | null;
+    membersCovered: number;
+  }>;
   totalCents: number;
   confirmationToken: string;
 };
@@ -231,7 +246,7 @@ export async function buildSubscriptionBillingPreview(input: {
   if (decisionDate < bounds.start || decisionDate > bounds.end) {
     throw new SubscriptionBillingError(`Decision date must fall within membership year ${input.seasonYear}.`);
   }
-  const [dueDays, familyBillingMode, alreadyCovered, alreadyPaid, existingFamilyCharges, members] = await Promise.all([
+  const [dueDays, familyBillingMode, alreadyCovered, alreadyPaid, existingFamilyCharges, familyInvoiceBlockers, members] = await Promise.all([
     getSubscriptionBillingDueDays(db),
     getFamilyBillingMode(db),
     db.membershipSubscriptionChargeCoverage.findMany({
@@ -281,6 +296,47 @@ export async function buildSubscriptionBillingPreview(input: {
         id: true,
         familyGroupId: true,
         membershipTypeId: true,
+      },
+    }),
+    // #2147 FINDING 1 (family-level dedup): every family-group membership whose
+    // member already holds a LIVE season Xero invoice (xeroInvoiceId not null)
+    // OR an ACTIVE coverage claim (releasedAt IS NULL). The per-member skip-set
+    // (coveredSet/paidSet) only suppresses the invoice-HOLDER; a family group
+    // billed PER_FAMILY would otherwise mint a SECOND family charge to the
+    // recipient because a not-yet-invoiced child (no invoice link, no coverage
+    // row) still proceeds through the PER_FAMILY branch and folds the whole
+    // family in. Deliberately UNSCOPED by input.memberIds: a scoped
+    // NEW_MEMBER_APPROVAL run for just a child must still see the billing
+    // member's live invoice on the same family group. The subset is bounded by
+    // the number of invoiced/covered members, so this stays cheap.
+    db.familyGroupMember.findMany({
+      where: {
+        member: {
+          subscriptions: {
+            some: {
+              seasonYear: input.seasonYear,
+              OR: [
+                { xeroInvoiceId: { not: null } },
+                { chargeCoverage: { some: { releasedAt: null } } },
+              ],
+            },
+          },
+        },
+      },
+      select: {
+        familyGroupId: true,
+        memberId: true,
+        member: {
+          select: {
+            firstName: true,
+            lastName: true,
+            subscriptions: {
+              where: { seasonYear: input.seasonYear },
+              take: 1,
+              select: { xeroInvoiceId: true, xeroInvoiceNumber: true, status: true },
+            },
+          },
+        },
       },
     }),
     db.member.findMany({
@@ -348,6 +404,60 @@ export async function buildSubscriptionBillingPreview(input: {
       })
     : [];
   const fallbackTypeByKey = new Map(fallbackTypes.map((type) => [type.key, type]));
+
+  // #2147 FINDING 1: family groups suppressed from generating a (second) family
+  // charge because at least one of their members is already billed for the
+  // season. familySuppressionInfo carries the representative invoice-holder for
+  // the "Already invoiced" audit surface — preferring a member who actually
+  // holds a live Xero invoice (so a real invoice number is shown), then
+  // deterministic by memberId so preview and the in-transaction confirm re-run
+  // agree byte-for-byte.
+  const suppressedFamilyGroupIds = new Set<string>();
+  const familySuppressionInfo = new Map<string, {
+    holderMemberId: string;
+    holderName: string;
+    xeroInvoiceNumber: string | null;
+    status: SubscriptionStatus | null;
+    hasLiveInvoice: boolean;
+  }>();
+  for (const row of familyInvoiceBlockers) {
+    suppressedFamilyGroupIds.add(row.familyGroupId);
+    const sub = row.member.subscriptions[0];
+    const candidate = {
+      holderMemberId: row.memberId,
+      holderName: `${row.member.firstName} ${row.member.lastName}`.trim(),
+      xeroInvoiceNumber: sub?.xeroInvoiceNumber ?? null,
+      status: sub?.status ?? null,
+      hasLiveInvoice: sub?.xeroInvoiceId != null,
+    };
+    const existing = familySuppressionInfo.get(row.familyGroupId);
+    if (
+      !existing ||
+      (candidate.hasLiveInvoice && !existing.hasLiveInvoice) ||
+      (candidate.hasLiveInvoice === existing.hasLiveInvoice &&
+        candidate.holderMemberId < existing.holderMemberId)
+    ) {
+      familySuppressionInfo.set(row.familyGroupId, candidate);
+    }
+  }
+  // Total members in each suppressed family group, so the audit line can state
+  // how many members the already-live invoice covers. One cheap grouped read,
+  // only when a suppression actually applies.
+  const familyGroupSizeById = new Map<string, number>();
+  if (suppressedFamilyGroupIds.size > 0) {
+    const sizes = await db.familyGroupMember.groupBy({
+      by: ["familyGroupId"],
+      where: { familyGroupId: { in: [...suppressedFamilyGroupIds] } },
+      _count: { memberId: true },
+    });
+    for (const size of sizes) familyGroupSizeById.set(size.familyGroupId, size._count.memberId);
+  }
+  // The suppressed family groups actually surfaced by this preview — a family is
+  // only surfaced when a not-yet-billed member of it would otherwise have minted
+  // a second charge (a fully-invoiced family's members are all skipped per-member
+  // before the family branch, and already appear in alreadyInvoiced).
+  const suppressedFamiliesSurfaced = new Set<string>();
+  const alreadyInvoicedFamilies: SubscriptionBillingPreview["alreadyInvoicedFamilies"] = [];
 
   const coveredSet = new Set(alreadyCovered.map((row) => row.memberId));
   // #1944 + #2147: members already PAID (manual or Xero) OR holding a live Xero
@@ -596,6 +706,35 @@ export async function buildSubscriptionBillingPreview(input: {
       }));
       continue;
     }
+    // #2147 FINDING 1: family-level dedup. If ANY member of this family group is
+    // already billed for the season (a live Xero invoice or an active coverage
+    // claim), the whole family is already covered — suppress the ENTIRE group
+    // from generating a second family charge and surface it (once) in the
+    // "Already invoiced" audit section, rather than minting a duplicate invoice
+    // to the recipient off a not-yet-invoiced child. familyGroupId is non-null
+    // only on the PER_FAMILY path, so per-member paths are untouched. Placed
+    // after FAMILY_ALREADY_BILLED so an existing NEW-system family charge still
+    // reports that dedicated exception; this handles the legacy shape where the
+    // live invoice lives only on MemberSubscription.xeroInvoiceId with no charge
+    // or coverage rows. Once the invoice is voided (link nulled, coverage
+    // released) no member blocks the group and it re-bills as one normal entry.
+    if (familyGroupId && suppressedFamilyGroupIds.has(familyGroupId)) {
+      if (!suppressedFamiliesSurfaced.has(familyGroupId)) {
+        suppressedFamiliesSurfaced.add(familyGroupId);
+        const info = familySuppressionInfo.get(familyGroupId);
+        if (info) {
+          alreadyInvoicedFamilies.push({
+            familyGroupId,
+            holderMemberId: info.holderMemberId,
+            holderName: info.holderName,
+            xeroInvoiceNumber: info.xeroInvoiceNumber,
+            status: info.status,
+            membersCovered: familyGroupSizeById.get(familyGroupId) ?? 0,
+          });
+        }
+      }
+      continue;
+    }
     const current = familyGroups.get(groupingKey);
     if (current) {
       current.coveredMembers.push({ id: member.id, name: memberName });
@@ -708,6 +847,8 @@ export async function buildSubscriptionBillingPreview(input: {
     alreadyCoveredMemberIds: [...coveredSet].sort(),
     exemptMemberIds: [...exemptMemberIds].sort(),
     alreadyInvoiced,
+    alreadyInvoicedFamilies: alreadyInvoicedFamilies.sort((left, right) =>
+      left.familyGroupId.localeCompare(right.familyGroupId)),
     totalCents: entries.reduce((sum, entry) => sum + entry.chargedAmountCents, 0),
     confirmationToken: digest(tokenPayload),
   };
