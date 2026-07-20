@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   AgeTier,
+  MembershipBillingExceptionResolution,
   MembershipFeeBillingBasis,
   MembershipFeeProrationRule,
   MembershipSubscriptionChargeSource,
@@ -109,6 +110,20 @@ export type SubscriptionBillingPreview = {
   // re-preview reproduces it, and clubs with no BASED_ON_AGE_TIER type keep a
   // byte-identical token (always []).
   exemptMemberIds: string[];
+  // #2148 (D1): the same exempt set as exemptMemberIds, enriched with the member
+  // name and the season-start age tier that made them exempt, for the collapsed
+  // informational "Exempt" preview section. Derived deterministically alongside
+  // exemptMemberIds, so — like exemptMemberIds — it is NOT part of the
+  // confirmation token. A member lands here when their BASED_ON_AGE_TIER
+  // season-start tier is not subscription-liable AND either no fee resolves for
+  // that tier or the resolved fee is PER_MEMBER (a PER_FAMILY fee still bills the
+  // family once, so a tier-exempt child under it is NOT exempted here — Q5 / #2148
+  // constraint 1).
+  exemptMembers: Array<{
+    memberId: string;
+    memberName: string;
+    ageTier: AgeTier | null;
+  }>;
   // #2147 (D3): members skipped because their season MemberSubscription already
   // holds a LIVE Xero invoice (xeroInvoiceId not null — PAID/UNPAID/OVERDUE).
   // The admin sees them, and their invoice number, in a collapsed "Already
@@ -399,6 +414,9 @@ export async function buildSubscriptionBillingPreview(input: {
   // only when a BASED_ON_AGE_TIER type is actually encountered) so clubs without
   // the feature pay no extra read.
   const exemptMemberIds = new Set<string>();
+  // #2148 (D1): parallel display list for the collapsed "Exempt" section — same
+  // membership as exemptMemberIds, plus name + the tier that made them exempt.
+  const exemptMembers: Array<{ memberId: string; memberName: string; ageTier: AgeTier | null }> = [];
   let ageTierSettingsCache: AgeTierSettingData[] | null = null;
   const getAgeTierSettingsMemoized = async () => {
     if (!ageTierSettingsCache) {
@@ -458,6 +476,34 @@ export async function buildSubscriptionBillingPreview(input: {
         ? seasonStartTier
         : member.ageTier;
     const fee = await getMemoizedFee(membershipType.id, feeTier);
+    // #2041 + #2148 (D1): BASED_ON_AGE_TIER defers per-member liability to the
+    // season-start age tier. The exemption gate runs BEFORE MISSING_FEE_SCHEDULE
+    // and does NOT require a resolved fee — a deliberately exempt tier
+    // (subscriptionRequiredForBooking = false, e.g. CHILD/INFANT) legitimately
+    // has no MembershipAnnualFee row, so raising MISSING_FEE_SCHEDULE for it is
+    // pure noise (#2148). A member is exempt when their season-start tier is not
+    // subscription-liable AND either NO fee resolves for that tier OR the
+    // resolved fee is PER_MEMBER. The PER_FAMILY carve-out is deliberate
+    // (#2148 constraint 1 / decision Q5): a BASED_ON_AGE_TIER PER_FAMILY fee
+    // bills the family once even when a child is tier-exempt, so a resolved
+    // PER_FAMILY fee must NOT short-circuit here — the child falls through to the
+    // family path below and stays in family coverage. NO_INVOICE fees already
+    // mint a zero charge + NOT_REQUIRED row on the entry path, so a resolved
+    // NO_INVOICE fee is also left to fall through.
+    if (membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER") {
+      const ageTierSettings = await getAgeTierSettingsMemoized();
+      if (
+        !requiresPaidSubscriptionForAgeTier(seasonStartTier, ageTierSettings) &&
+        (!fee || fee.billingBasis === "PER_MEMBER")
+      ) {
+        // Skip the charge; confirm upserts a NOT_REQUIRED season row (Q4). Join
+        // exemptMemberIds (drives the confirm NOT_REQUIRED write — constraint 2),
+        // and the display list for the collapsed "Exempt" section.
+        exemptMemberIds.add(member.id);
+        exemptMembers.push({ memberId: member.id, memberName, ageTier: feeTier });
+        continue;
+      }
+    }
     if (!fee) {
       exceptions.push(exception({
         code: "MISSING_FEE_SCHEDULE",
@@ -467,22 +513,6 @@ export async function buildSubscriptionBillingPreview(input: {
         context: { memberName, decisionDate: decisionDateOnly },
       }));
       continue;
-    }
-    // #2041: BASED_ON_AGE_TIER defers per-member liability to the season-start
-    // age tier. Only PER_MEMBER fees vary by tier — a PER_FAMILY fee bills the
-    // family once regardless of any exempt child (decision Q5), so it is left on
-    // the unchanged family path below. NO_INVOICE fees already mint a zero
-    // charge + NOT_REQUIRED row, so they need no special handling here either.
-    if (
-      membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER" &&
-      fee.billingBasis === "PER_MEMBER"
-    ) {
-      const ageTierSettings = await getAgeTierSettingsMemoized();
-      if (!requiresPaidSubscriptionForAgeTier(seasonStartTier, ageTierSettings)) {
-        // Skip the charge; confirm upserts a NOT_REQUIRED season row (Q4).
-        exemptMemberIds.add(member.id);
-        continue;
-      }
     }
     const calculated = calculateMembershipCharge({
       annualAmountCents: fee.amountCents,
@@ -707,6 +737,7 @@ export async function buildSubscriptionBillingPreview(input: {
     exceptions,
     alreadyCoveredMemberIds: [...coveredSet].sort(),
     exemptMemberIds: [...exemptMemberIds].sort(),
+    exemptMembers: [...exemptMembers].sort((left, right) => left.memberId.localeCompare(right.memberId)),
     alreadyInvoiced,
     totalCents: entries.reduce((sum, entry) => sum + entry.chargedAmountCents, 0),
     confirmationToken: digest(tokenPayload),
@@ -732,6 +763,75 @@ async function persistOpenExceptions(
       create: { ...item, source, context: item.context as Prisma.InputJsonValue },
     });
   }
+}
+
+// Resolve every OPEN MembershipBillingException for the season that a fresh
+// preview no longer regenerated (its fingerprint is not in currentFingerprints),
+// recording the resolution provenance (#2148, D2). `scopedMemberIds`:
+//  * null — whole-club scope (a whole-club confirm, or the whole-club preview
+//    refresh): every superseded OPEN exception for the season resolves, which
+//    already covers club-level null-member exceptions.
+//  * an array — partial scope (e.g. a NEW_MEMBER_APPROVAL confirm re-evaluating
+//    only some members): resolve only exceptions whose subject the preview
+//    actually re-evaluated, OR the club-level MISSING_XERO_ACCOUNT_MAPPING
+//    (memberId: null) special case that the confirm path has always folded in
+//    (#2148 constraint 4). This is the single scoping definition both the
+//    confirm and the preview-reconciliation paths reuse.
+async function resolveSupersededExceptions(
+  tx: Prisma.TransactionClient,
+  input: {
+    seasonYear: number;
+    currentFingerprints: string[];
+    resolvedVia: MembershipBillingExceptionResolution;
+    scopedMemberIds: string[] | null;
+  },
+) {
+  return tx.membershipBillingException.updateMany({
+    where: {
+      seasonYear: input.seasonYear,
+      status: "OPEN",
+      ...(input.scopedMemberIds ? {
+        OR: [
+          { memberId: { in: input.scopedMemberIds } },
+          { code: "MISSING_XERO_ACCOUNT_MAPPING", memberId: null },
+        ],
+      } : {}),
+      ...(input.currentFingerprints.length ? { fingerprint: { notIn: input.currentFingerprints } } : {}),
+    },
+    data: { status: "RESOLVED", resolvedAt: new Date(), resolvedVia: input.resolvedVia },
+  });
+}
+
+// #2148 (D2): auto-resolve stale persisted exceptions on an explicit preview
+// refresh. The refresh is whole-club (no memberIds scope), so a fresh preview
+// re-evaluates every active member; any OPEN exception it did not regenerate
+// (including club-level null-member ones) is superseded and resolved with
+// PREVIEW_RECONCILE provenance. This is the ONLY read path that mutates, and it
+// is reached exclusively through the edit-gated (finance:edit) refresh action —
+// the bare finance:view GET stays read-only (#2148 constraint 3). Runs under the
+// same per-season advisory lock as confirm so a refresh and a confirm cannot
+// race the exception ledger. Does not create or re-message OPEN exceptions
+// (refresh must not persist new rows); the live preview already renders
+// still-open exceptions in the current message format.
+export async function reconcileSubscriptionBillingExceptions(input: {
+  seasonYear: number;
+  decisionDate: Date;
+}): Promise<{ resolvedCount: number }> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`membership-subscription-billing:${input.seasonYear}`}))`;
+    const preview = await buildSubscriptionBillingPreview({
+      seasonYear: input.seasonYear,
+      decisionDate: input.decisionDate,
+      store: tx,
+    });
+    const result = await resolveSupersededExceptions(tx, {
+      seasonYear: input.seasonYear,
+      currentFingerprints: preview.exceptions.map((item) => item.fingerprint),
+      resolvedVia: "PREVIEW_RECONCILE",
+      scopedMemberIds: null,
+    });
+    return { resolvedCount: result.count };
+  });
 }
 
 export async function confirmSubscriptionBillingPreview(input: {
@@ -778,19 +878,16 @@ export async function confirmSubscriptionBillingPreview(input: {
       ...preview.exceptions.map((item) => item.memberId).filter((id): id is string => Boolean(id)),
       ...preview.alreadyCoveredMemberIds,
     ])];
-    await tx.membershipBillingException.updateMany({
-      where: {
-        seasonYear: preview.seasonYear,
-        status: "OPEN",
-        ...(input.source === "NEW_MEMBER_APPROVAL" ? {
-          OR: [
-            { memberId: { in: scopedMemberIds } },
-            { code: "MISSING_XERO_ACCOUNT_MAPPING", memberId: null },
-          ],
-        } : {}),
-        ...(currentFingerprints.length ? { fingerprint: { notIn: currentFingerprints } } : {}),
-      },
-      data: { status: "RESOLVED", resolvedAt: new Date() },
+    // #2148 (D2): resolve superseded exceptions via the shared scoping helper,
+    // stamping CONFIRM provenance. A NEW_MEMBER_APPROVAL confirm re-evaluates
+    // only its members, so it scopes to those subjects (plus the club-level
+    // null-member special case); a whole-club ANNUAL_BATCH confirm resolves every
+    // superseded exception (null scope).
+    await resolveSupersededExceptions(tx, {
+      seasonYear: preview.seasonYear,
+      currentFingerprints,
+      resolvedVia: "CONFIRM",
+      scopedMemberIds: input.source === "NEW_MEMBER_APPROVAL" ? scopedMemberIds : null,
     });
     await persistOpenExceptions(tx, input.source, preview.exceptions);
     for (const entry of preview.entries) {
