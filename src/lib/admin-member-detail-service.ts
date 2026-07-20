@@ -1359,12 +1359,20 @@ export async function updateAdminMember(params: {
       updated.xeroContactId &&
       (hasMappedContactUpdate || shouldRepairContactNameOrder),
     );
-    // Grouping-relevant changes (E8, #1934): an age-tier flip, or a role
-    // change whose role-default membership type key differs (for members
-    // without a current-season assignment the role default IS the effective
-    // membership type, so e.g. USER->SCHOOL re-groups under type-driven
-    // modes). The sync itself is a safe no-op when neither applies.
+    // Grouping-relevant changes (E8, #1934; #2149): an age-tier flip, or — ONLY
+    // for a member with no current-season membership assignment — a role change
+    // whose role-default membership type key differs. Under #2149 the membership
+    // type resolved assignment-first is the sole authority for grouping, so when
+    // an explicit current-season assignment exists the role default is NOT the
+    // effective type and a role change re-groups nothing (e.g. USER->ADMIN on an
+    // assigned member must not re-sync). Only when there is no assignment does
+    // the role default become the effective type (USER->SCHOOL re-groups under
+    // type-driven modes). `currentSeasonTypeExemption` is non-null iff such an
+    // assignment exists. The sync itself is a safe no-op when neither applies.
+    const memberHasCurrentSeasonAssignment =
+      currentSeasonTypeExemption !== null;
     const roleDefaultTypeChanged =
+      !memberHasCurrentSeasonAssignment &&
       existing.role !== updated.role &&
       defaultMembershipTypeKeyForRole(existing.role) !==
         defaultMembershipTypeKeyForRole(updated.role);

@@ -680,11 +680,13 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, xeroContactId: "xc1" } as any);
     vi.mocked(prisma.member.update).mockResolvedValue({
       ...baseMember,
-      role: "ADMIN",
+      forcePasswordChange: true,
       xeroContactId: "xc1",
     } as any);
 
-    await updateMember(makePutRequest("m1", { role: "ADMIN" }), { params: Promise.resolve({ id: "m1" }) });
+    // forcePasswordChange is a purely local field: it is neither a Xero contact
+    // field nor grouping-relevant, so it must not touch Xero at all.
+    await updateMember(makePutRequest("m1", { forcePasswordChange: true }), { params: Promise.resolve({ id: "m1" }) });
 
     expect(isXeroConnected).not.toHaveBeenCalled();
     expect(updateXeroContact).not.toHaveBeenCalled();
@@ -762,10 +764,18 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     });
   });
 
-  it("does not sync contact groups when a role change keeps the same role-default type and Xero is untouched", async () => {
+  it("does not sync contact groups when a role change leaves an explicitly-assigned member's effective type unchanged", async () => {
     const { syncManagedXeroContactGroupForMember } = await import("@/lib/xero");
 
     mockedAuth.mockResolvedValue(adminSession);
+    // #2149: membership type resolved assignment-first is the sole grouping
+    // authority. This member has an explicit current-season assignment, so the
+    // role default is NOT their effective type. A USER->ADMIN role change (which
+    // would flip the role-default type FULL->ADMIN for an unassigned member)
+    // therefore re-groups nothing and must not trigger a contact-group sync.
+    vi.mocked(prisma.seasonalMembershipAssignment.findUnique).mockResolvedValueOnce({
+      membershipType: { allowedAgeTiers: [{ ageTier: "ADULT" }] },
+    } as any);
     vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, xeroContactId: "xc1", role: "USER" } as any);
     vi.mocked(prisma.member.update).mockResolvedValue({
       ...baseMember,
@@ -773,8 +783,6 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
       xeroContactId: "xc1",
     } as any);
 
-    // USER and ADMIN both map to the FULL role-default membership type, so
-    // this role change is not grouping-relevant.
     await updateMember(makePutRequest("m1", { role: "ADMIN" }), { params: Promise.resolve({ id: "m1" }) });
 
     expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();
