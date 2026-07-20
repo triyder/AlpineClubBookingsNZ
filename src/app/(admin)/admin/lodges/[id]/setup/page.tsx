@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { buildCopiedSeasonPayload } from "@/lib/season-rate-editor";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlyNotice,
@@ -334,23 +335,12 @@ export default function LodgeSetupWizardPage() {
         const createRes = await fetch("/api/admin/seasons", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: season.name,
-            type: season.type,
-            startDate: season.startDate.slice(0, 10),
-            endDate: season.endDate.slice(0, 10),
-            active: season.active,
-            lodgeId,
-            // Membership types are global (no lodgeId), so their ids carry
-            // across lodges unchanged. POST requires `membershipTypeRates`;
-            // this used to send the legacy `rates` key, which meant every
-            // copy silently 400'd on validation (#2129).
-            membershipTypeRates: season.membershipTypeRates.map((rate) => ({
-              membershipTypeId: rate.membershipTypeId,
-              ageTier: rate.ageTier,
-              pricePerNightCents: rate.pricePerNightCents,
-            })),
-          }),
+          // Shared with the route-level test that asserts this exact body is
+          // accepted by `seasonSchema` (#2129). Membership types are global
+          // (no lodgeId), so their ids carry across lodges unchanged; POST
+          // requires `membershipTypeRates`, and this used to send the legacy
+          // `rates` key, which meant every copy silently 400'd on validation.
+          body: JSON.stringify(buildCopiedSeasonPayload(season, lodgeId)),
         });
         if (createRes.status === 403) {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
