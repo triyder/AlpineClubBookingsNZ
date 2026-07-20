@@ -68,6 +68,8 @@ interface WizardDelegate {
     where: Record<string, unknown>;
     create: Record<string, unknown>;
     update: Record<string, unknown>;
+    // Optional projection narrowing the implicit RETURNING (#2130 runtime-prep).
+    select?: Record<string, boolean>;
   }): Promise<unknown>;
   findUnique(args: {
     where: Record<string, unknown>;
@@ -325,6 +327,10 @@ export async function applyWizardConfigToDatabase(
             tier.familyGroupRequestCreateMemberAllowed,
           sortOrder: tier.sortOrder,
         },
+        // Blue/green runtime-prep (#2130): narrow the implicit RETURNING so the
+        // wizard write stops naming the legacy xeroContactGroupId/Name columns
+        // the next release drops. The $transaction result is discarded.
+        select: { tier: true },
       }),
     ),
   );

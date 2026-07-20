@@ -751,8 +751,18 @@ async function applyXeroConfig(ctx: ApplyContext): Promise<CategoryApplyResult> 
             entranceFeeCategory: parsed.identity.entranceFeeCategory as never,
             ...data,
           },
+          // Blue/green runtime-prep (#2130): narrow the implicit RETURNING so
+          // this write stops naming the doomed `isMember` column. `applyRow`
+          // types create/update as `Promise<unknown>` and discards the result,
+          // so `id` is a safe minimal projection.
+          select: { id: true },
         }),
-      update: (write) => ctx.tx.xeroItemCodeMapping.update({ where: { id: current!.id }, data: write }),
+      update: (write) =>
+        ctx.tx.xeroItemCodeMapping.update({
+          where: { id: current!.id },
+          data: write,
+          select: { id: true },
+        }),
       result,
     });
   }

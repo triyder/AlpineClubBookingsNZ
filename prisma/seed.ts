@@ -666,6 +666,9 @@ async function main() {
       where: { tier: setting.tier },
       update: {},
       create: setting,
+      // Not a deployed-runtime path, but narrowed with the rest for
+      // consistency (#2130): no caller reads the returned row.
+      select: { tier: true },
     });
   }
   console.log("Age tier settings seeded");

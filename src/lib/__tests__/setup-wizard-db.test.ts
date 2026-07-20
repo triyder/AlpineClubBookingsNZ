@@ -119,6 +119,23 @@ describe("setup-wizard-db", () => {
     expect(db.$transaction).toHaveBeenCalledTimes(1);
   });
 
+  it("narrows every age-tier upsert's RETURNING, never naming the doomed xeroContactGroup* columns (#2130 runtime-prep)", async () => {
+    // Blue/green safety pin, WRITE half. Prisma emits an implicit RETURNING
+    // over every scalar column of an upsert unless a `select` narrows it, so an
+    // unnarrowed write still names AgeTierSetting.xeroContactGroupId /
+    // xeroContactGroupName that the contract migration drops next release.
+    const db = makeDb();
+    await applyWizardConfigToDatabase(values, db);
+    const tierUpsert = db.ageTierSetting.upsert as ReturnType<typeof vi.fn>;
+    expect(tierUpsert.mock.calls.length).toBeGreaterThan(0);
+    for (const call of tierUpsert.mock.calls) {
+      const select = (call[0] as { select?: Record<string, unknown> }).select;
+      expect(select).toEqual({ tier: true });
+      expect(select).not.toHaveProperty("xeroContactGroupId");
+      expect(select).not.toHaveProperty("xeroContactGroupName");
+    }
+  });
+
   it("sets bookingsName on create only so an admin-customized value survives a re-run (W2a)", async () => {
     const db = makeDb();
     await applyWizardConfigToDatabase(values, db);

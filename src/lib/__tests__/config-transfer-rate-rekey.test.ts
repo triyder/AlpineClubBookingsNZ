@@ -30,6 +30,9 @@ const MEMBERSHIP_TYPES = [
 function makeTx(captures: {
   rateCreates: Record<string, unknown>[];
   itemCreates: Record<string, unknown>[];
+  // Optional: the FULL create args (not just `data`), so a test can assert the
+  // explicit `select` narrowing the implicit RETURNING (#2130 runtime-prep).
+  itemCreateArgs?: Record<string, unknown>[];
 }): TxDb {
   const noopDelegate = {
     findMany: async () => [],
@@ -75,8 +78,9 @@ function makeTx(captures: {
     xeroItemCodeMapping: {
       ...noopDelegate,
       findMany: async () => [],
-      create: async ({ data }: { data: Record<string, unknown> }) => {
-        captures.itemCreates.push(data);
+      create: async (args: { data: Record<string, unknown> }) => {
+        captures.itemCreates.push(args.data);
+        captures.itemCreateArgs?.push(args as Record<string, unknown>);
         return { id: "i-new" };
       },
     },
@@ -335,5 +339,35 @@ describe("config-transfer Xero HUT_FEE re-key import rejection (#2131)", () => {
       "re-export this bundle from an install running the current release",
     );
     expect(plan.items.filter((i) => i.entity === "xero-item-code-mapping")).toHaveLength(0);
+  });
+
+  it("narrows the create's RETURNING, never naming the doomed isMember column (#2130 runtime-prep)", async () => {
+    // Blue/green safety pin, WRITE half. Prisma emits an implicit RETURNING
+    // over every scalar column of a create unless a `select` narrows it, so
+    // this config-transfer import would keep naming
+    // XeroItemCodeMapping.isMember once the contract migration drops it.
+    // `applyRow` discards the result, so `{ id: true }` is the safe narrowing.
+    const captures = {
+      rateCreates: [] as Record<string, unknown>[],
+      itemCreates: [] as Record<string, unknown>[],
+      itemCreateArgs: [] as Record<string, unknown>[],
+    };
+    const files = new Map<string, Uint8Array>([
+      // Current-format bundle. The legacy `isMember`-keyed header this pin
+      // originally used is rejected outright since #2131, so it would never
+      // reach the create at all — the doomed column this guards is the DB
+      // column XeroItemCodeMapping.isMember, not a CSV field.
+      ["xero-config/item-code-mappings.csv", strToU8(
+        "category,membershipTypeKey,ageTier,seasonType,entranceFeeCategory,itemCode,amountCents\n" +
+        "HUT_FEE,FULL,ADULT,WINTER,,HUT-MEM,\n",
+      )],
+    ]);
+    await xeroConfigImporter.apply(applyCtx(files, makeTx(captures)) as never);
+
+    expect(captures.itemCreateArgs.length).toBeGreaterThan(0);
+    for (const args of captures.itemCreateArgs) {
+      expect(args.select).toEqual({ id: true });
+      expect(args.select).not.toHaveProperty("isMember");
+    }
   });
 });

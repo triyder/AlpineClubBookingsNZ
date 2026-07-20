@@ -69,6 +69,15 @@ const ITEM_CODE_MAPPING_SELECT = {
   amountCents: true,
 } as const;
 
+// Blue/green runtime-prep (#2130), WRITE half. Prisma emits `RETURNING` over
+// every scalar column of a create/update/upsert unless a `select` narrows it,
+// so an unnarrowed mutation still names `isMember` even though the reads above
+// no longer do — a draining old colour would keep issuing that SQL. Every
+// mutation in this route discards its return value, so the minimal `id`
+// projection is the correct narrowing: reusing the wider
+// ITEM_CODE_MAPPING_SELECT would name columns no caller reads.
+const ITEM_CODE_MAPPING_WRITE_SELECT = { id: true } as const;
+
 /**
  * Serialise DB rows into the response shape. Hut fees are keyed by membership
  * type (#1930, E4); the frozen legacy isMember-keyed HUT_FEE rows are hidden
@@ -272,6 +281,7 @@ export async function PUT(request: NextRequest) {
             ageTier,
             itemCode: value.itemCode,
           },
+          select: ITEM_CODE_MAPPING_WRITE_SELECT,
         });
       } else {
         const existing = await prisma.xeroItemCodeMapping.findFirst({
@@ -282,6 +292,7 @@ export async function PUT(request: NextRequest) {
           await prisma.xeroItemCodeMapping.update({
             where: { id: existing.id },
             data: { itemCode: value.itemCode },
+            select: ITEM_CODE_MAPPING_WRITE_SELECT,
           });
         } else {
           await prisma.xeroItemCodeMapping.create({
@@ -292,6 +303,7 @@ export async function PUT(request: NextRequest) {
               ageTier: null,
               itemCode: value.itemCode,
             },
+            select: ITEM_CODE_MAPPING_WRITE_SELECT,
           });
         }
       }
@@ -334,6 +346,7 @@ export async function PUT(request: NextRequest) {
             entranceFeeCategory,
             ...write,
           },
+          select: ITEM_CODE_MAPPING_WRITE_SELECT,
         });
       }
     }

@@ -4108,10 +4108,19 @@ model XeroItemCodeMapping {
   category            String // "HUT_FEE" | "ENTRANCE_FEE"
   ageTier             AgeTier? // HUT_FEE only
   seasonType          SeasonType? // HUT_FEE only
-  // Legacy member/non-member key column (#1930, E4). Retained alongside the
-  // new membershipTypeId key so day-one item-code resolution stays
-  // byte-identical; E13 drops it and the old unique after a release soak.
-  isMember            Boolean? // HUT_FEE only (legacy key, retained)
+  // Legacy member/non-member key column (#1930, E4), superseded by
+  // membershipTypeId. DROP-ELIGIBLE ONLY AFTER THE #2130 RUNTIME-PREP RELEASE
+  // HAS DEPLOYED — not before. That release (CHANGELOG `Unreleased`, the
+  // release that follows v0.12.2) is STEP 1: it narrowed every read AND write
+  // path on this model with an explicit `select`, so its runtime names only
+  // the columns it selects (Prisma otherwise emits every scalar in a
+  // mutation's implicit RETURNING). Until that release is itself the
+  // deployed/draining colour in production, the live v0.12.2 colour still
+  // names this column in SQL, and dropping it would break the blue/green
+  // deploy this two-step exists to prevent. STEP 2 — the contract migration
+  // that drops this column and the @@unique below — is legal only in a LATER
+  // release, once STEP 1 has shipped and soaked in production.
+  isMember            Boolean? // HUT_FEE only (legacy key, drop-eligible)
   // Membership-type key for HUT_FEE item codes (#1930, E4). Nullable ageTier
   // mirrors MembershipTypeSeasonRate: a per-tier type has one row per tier, a
   // flat type has a single NULL-ageTier row. A companion raw-SQL partial
@@ -4149,13 +4158,20 @@ model AgeTierSetting {
   subscriptionRequiredForBooking        Boolean                           @default(true)
   familyGroupRequestCreateMemberAllowed Boolean                           @default(false)
   // xeroContactGroupId / xeroContactGroupName are legacy single-group columns
-  // superseded by XeroContactGroupRule (E8, #1934). They are RETAINED for now:
-  // the currently-deployed runtime still SELECTs them (getAgeTierSettings does a
-  // no-`select` findMany), so dropping the columns is not blue/green safe until a
-  // runtime-prep release stops selecting them. Tracked for a follow-up contract
-  // step (#1939 report). The AgeTierXeroAcceptedContactGroup child table, which
-  // no deployed code queries or joins, WAS dropped in the E13 contract migration
-  // 20260720120000 (#1939).
+  // superseded by XeroContactGroupRule (E8, #1934). DROP-ELIGIBLE ONLY AFTER
+  // THE #2130 RUNTIME-PREP RELEASE HAS DEPLOYED — not before. That release
+  // (CHANGELOG `Unreleased`, the release that follows v0.12.2) is STEP 1: it
+  // narrowed every read AND write path on this model with an explicit `select`
+  // (getAgeTierSettings and friends; the age-tier route, setup wizard,
+  // config self-heal and seed upserts), so its runtime names only the columns
+  // it selects — Prisma otherwise emits every scalar in a mutation's implicit
+  // RETURNING. Until that release is itself the deployed/draining colour in
+  // production, the live v0.12.2 colour still names these columns in SQL, and
+  // dropping them would break the blue/green deploy this two-step exists to
+  // prevent. STEP 2 — the contract migration that drops both columns — is
+  // legal only in a LATER release, once STEP 1 has shipped and soaked in
+  // production. The AgeTierXeroAcceptedContactGroup child table was already
+  // dropped in the E13 contract migration 20260720120000 (#1939).
   xeroContactGroupId                    String?
   xeroContactGroupName                  String?
   sortOrder                             Int                               @default(0)
