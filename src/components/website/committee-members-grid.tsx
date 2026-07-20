@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Mail, Phone } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { memberPhotoServingUrl } from "@/lib/member-photo-url";
 
 type CommitteeMember = {
   id: string;
@@ -13,10 +14,25 @@ type CommitteeMember = {
   phone: string | null;
   contactKey: string | null;
   description: string | null;
+  // Present only when the club has opted the roster into photos (MP5, #171) and
+  // the member has one.
+  photo: { memberId: string; version: string | null } | null;
 };
+
+type CommitteePhotoDisplay = "NONE" | "CIRCLE" | "SQUARE";
+
+function memberInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  const first = parts[0]?.[0] ?? "";
+  const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? "") : "";
+  return `${first}${last}`.toUpperCase() || "?";
+}
 
 export function CommitteeMembersGrid() {
   const [members, setMembers] = useState<CommitteeMember[]>([]);
+  const [photoDisplay, setPhotoDisplay] =
+    useState<CommitteePhotoDisplay>("NONE");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -27,6 +43,11 @@ export function CommitteeMembersGrid() {
       .then((data) => {
         if (!cancelled) {
           setMembers(data?.members ?? []);
+          setPhotoDisplay(
+            data?.photoDisplay === "CIRCLE" || data?.photoDisplay === "SQUARE"
+              ? data.photoDisplay
+              : "NONE",
+          );
         }
       })
       .catch(() => {
@@ -67,6 +88,32 @@ export function CommitteeMembersGrid() {
           className="border-brand-ridge/20 bg-brand-snow/90 shadow-[0_20px_45px_-35px_rgba(47,47,43,0.45)]"
         >
           <CardContent className="pt-6">
+            {photoDisplay !== "NONE" ? (
+              <div
+                className={`mb-4 flex h-24 w-24 items-center justify-center overflow-hidden border border-brand-ridge/25 bg-brand-mist/40 text-xl font-semibold text-brand-deep/70 ${
+                  photoDisplay === "CIRCLE" ? "rounded-full" : "rounded-lg"
+                }`}
+                aria-hidden={member.photo ? undefined : true}
+              >
+                {member.photo ? (
+                  // Plain <img>: the scoped serving endpoint is uncacheable by the
+                  // image optimiser and gated per member.
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={memberPhotoServingUrl(
+                      member.photo.memberId,
+                      member.photo.version,
+                    )}
+                    alt={`${member.name}'s photo`}
+                    width={96}
+                    height={96}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span>{memberInitials(member.name)}</span>
+                )}
+              </div>
+            ) : null}
             <p className="mb-1 text-xs font-semibold uppercase tracking-[0.2em] text-brand-charcoal">
               {member.role}
             </p>

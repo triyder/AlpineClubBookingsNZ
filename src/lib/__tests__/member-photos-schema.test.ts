@@ -52,20 +52,24 @@ describe("member-photos schema", () => {
 });
 
 describe("member-photos migration is expand-only", () => {
-  it("sorts after every previously committed migration", () => {
+  it("has a unique, non-colliding 14-digit migration timestamp", () => {
+    // The migration was appended after the wave/upstream-sync history at
+    // creation time; it need not remain the newest (later member-photos-epic
+    // migrations, e.g. the committee-photo-display setting, legitimately sort
+    // after it). The durable safety property is a unique timestamp — no other
+    // migration shares its 14-digit prefix, so apply order is unambiguous.
     const names = readdirSync(join(process.cwd(), "prisma", "migrations"), {
       withFileTypes: true,
     })
       .filter((d) => d.isDirectory())
-      .map((d) => d.name);
+      .map((d) => d.name)
+      .filter((n) => /^\d{14}_/.test(n));
     expect(names).toContain(MIGRATION_DIR);
-    const others = names.filter((n) => n !== MIGRATION_DIR);
-    for (const other of others) {
-      expect(
-        MIGRATION_DIR > other,
-        `${MIGRATION_DIR} must sort after ${other}`,
-      ).toBe(true);
-    }
+    const prefix = MIGRATION_DIR.slice(0, 14);
+    const collisions = names.filter(
+      (n) => n !== MIGRATION_DIR && n.slice(0, 14) === prefix,
+    );
+    expect(collisions).toEqual([]);
   });
 
   it("only adds — no DROP/DELETE/TRUNCATE and no NOT NULL backfill risk", () => {

@@ -16,6 +16,7 @@ type Settings = {
   showBookNow: boolean;
   bookNowTarget: "BOOKING_FLOW" | "PAGE";
   bookNowPageId: string | null;
+  committeePhotoDisplay: "NONE" | "CIRCLE" | "SQUARE";
 };
 
 type PublishedPage = { id: string; title: string; path: string };
@@ -77,6 +78,11 @@ export function PublicContentSettingsPanel() {
         <label className="flex items-center gap-3"><input type="radio" name="bookNowTarget" checked={settings.bookNowTarget === "PAGE"} disabled={!canEdit} onChange={() => setSettings({ ...settings, bookNowTarget: "PAGE" })} /><span>Go to a content page</span></label>
         {settings.bookNowTarget === "PAGE" ? <select className="w-full rounded-md border p-2 text-sm" value={settings.bookNowPageId ?? ""} disabled={!canEdit} onChange={(event) => setSettings({ ...settings, bookNowPageId: event.target.value || null })}><option value="">Select a published page…</option>{pages.map((page) => <option key={page.id} value={page.id}>{page.title} ({page.path})</option>)}</select> : null}
       </div> : null}
+    </div>
+    <div className="space-y-2 rounded-md border p-3">
+      <p className="text-sm font-medium">Committee photos</p>
+      <p className="text-sm text-muted-foreground">Whether members&apos; photos appear on the public committee roster, and their shape. Hidden by default; members without a photo show their initials.</p>
+      <select className="w-full rounded-md border p-2 text-sm" value={settings.committeePhotoDisplay} disabled={!canEdit} aria-label="Committee photo display" aria-describedby={!canEdit ? viewOnlyReasonId : undefined} onChange={(event) => setSettings({ ...settings, committeePhotoDisplay: event.target.value as Settings["committeePhotoDisplay"] })}><option value="NONE">Don&apos;t show photos</option><option value="CIRCLE">Show photos (circular)</option><option value="SQUARE">Show photos (square)</option></select>
     </div>
     <ViewOnlyActionButton canEdit={canEdit} disabled={saving} onClick={save}>{saving ? "Saving…" : "Save visibility"}</ViewOnlyActionButton></div>;
 }

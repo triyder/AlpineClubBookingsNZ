@@ -22,6 +22,7 @@ vi.mock("@/lib/prisma", () => ({
       create: vi.fn(),
       update: vi.fn(),
     },
+    publicContentSettings: { findUnique: vi.fn() },
     auditLog: { create: vi.fn() },
   },
 }));
@@ -905,6 +906,42 @@ describe("Committee Public API - GET /api/committee", () => {
         take: 50,
       })
     );
+  });
+
+  it("emits committee photo metadata only when the club opts the roster in (MP5)", async () => {
+    const { GET } = await import("@/app/api/committee/route");
+    const withPhoto = [
+      {
+        ...sampleAssignment,
+        id: "assignP",
+        published: true,
+        member: {
+          ...sampleAssignment.member,
+          id: "mem-photo",
+          photoImageId: "img-1",
+          photoUpdatedAt: new Date("2026-07-21T00:00:00.000Z"),
+        },
+      },
+    ] as any;
+
+    // Enabled (CIRCLE): photo metadata is present; display mode is returned.
+    vi.mocked(prisma.committeeAssignment.findMany).mockResolvedValue(withPhoto);
+    vi.mocked(prisma.publicContentSettings.findUnique).mockResolvedValue({
+      committeePhotoDisplay: "CIRCLE",
+    } as any);
+    const on = await (await GET()).json();
+    expect(on.photoDisplay).toBe("CIRCLE");
+    expect(on.members[0].photo).toEqual({
+      memberId: "mem-photo",
+      version: "2026-07-21T00:00:00.000Z",
+    });
+
+    // Disabled (NONE / unset): no photo metadata is exposed at all.
+    vi.mocked(prisma.publicContentSettings.findUnique).mockResolvedValue(null);
+    const off = await (await GET()).json();
+    expect(off.photoDisplay).toBe("NONE");
+    expect(off.members[0].photo).toBeNull();
+    expect(JSON.stringify(off)).not.toContain("mem-photo");
   });
 });
 

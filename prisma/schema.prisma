@@ -4474,30 +4474,44 @@ enum BookNowTarget {
   PAGE
 }
 
+// Public committee-roster photo display (MP5, epic #171). NONE (default) shows
+// the text-only roster and renders no photos publicly even for members who have
+// one — a privacy-safe opt-in, mirroring the double-opt-in pattern used for
+// sensitive public content (annualFees). CIRCLE/SQUARE show each published
+// member's photo in that shape, with an initials placeholder for members
+// without one.
+enum CommitteePhotoDisplay {
+  NONE
+  CIRCLE
+  SQUARE
+}
+
 model PublicContentSettings {
-  id                   String        @id @default("default")
-  membershipTypes      Boolean       @default(false)
-  entranceFees         Boolean       @default(false)
-  hutFees              Boolean       @default(false)
-  bookingPolicySummary Boolean       @default(false)
-  cancellationPolicy   Boolean       @default(false)
+  id                    String                @id @default("default")
+  membershipTypes       Boolean               @default(false)
+  // Committee-roster photo display + shape (MP5, epic #171). See enum above.
+  committeePhotoDisplay CommitteePhotoDisplay @default(NONE)
+  entranceFees          Boolean               @default(false)
+  hutFees               Boolean               @default(false)
+  bookingPolicySummary  Boolean               @default(false)
+  cancellationPolicy    Boolean               @default(false)
   // Dedicated double-opt-in gate for the {{annual-fees}} embed (#1933, E7).
   // Annual membership fees are more sensitive than the entrance/joining headline
   // (D-R4), so they get their own visibility flag rather than reusing entranceFees.
-  annualFees           Boolean       @default(false)
+  annualFees            Boolean               @default(false)
   // Configurable public "Book Now" button (E3 #1929). Default preserves the
   // historical behaviour: shown, pointing at the booking flow. When target is
   // PAGE, bookNowPageId names a published PageContent; getBookNowConfig() fails
   // open to the booking flow if the page is missing/unpublished, so the button
   // is never dead. The FK is SetNull so deleting the target page reverts the
   // button to the booking flow rather than dangling.
-  showBookNow          Boolean       @default(true)
-  bookNowTarget        BookNowTarget @default(BOOKING_FLOW)
-  bookNowPageId        String?
-  bookNowPage          PageContent?  @relation("PublicContentBookNowPage", fields: [bookNowPageId], references: [id], onDelete: SetNull)
-  updatedByMemberId    String?
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
+  showBookNow           Boolean               @default(true)
+  bookNowTarget         BookNowTarget         @default(BOOKING_FLOW)
+  bookNowPageId         String?
+  bookNowPage           PageContent?          @relation("PublicContentBookNowPage", fields: [bookNowPageId], references: [id], onDelete: SetNull)
+  updatedByMemberId     String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
 
   @@index([bookNowPageId])
 }
