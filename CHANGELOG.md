@@ -4,39 +4,11 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
-- **Legacy contraction, Release B: `SeasonRate` and the doomed Xero columns are
-  dropped (#2129 step 2, #2130 STEP 2).** Two destructive contract migrations
-  finish the expand/migrate/contract series that E4 (#1930) and E8 (#1934)
-  began. `20260721120000_contract_drop_season_rate` drops the frozen
-  member/non-member boolean-keyed `SeasonRate` table; the same PR removes its
-  last references, which were seed-only and outside `src/` (the
-  `include: { rates: true }` read and the `rates: { create: … }` write in
-  `e2e/setup/seed-second-lodge.ts`, and `createMissingSeasonRates` plus its two
-  call sites in `prisma/seed.ts`). Nightly pricing, Xero hut-fee item codes and
-  the public `{{hut-fees}}` embed have all read `MembershipTypeSeasonRate` since
-  #2129 step 1, so nothing user-visible changes.
-  `20260721130000_contract_drop_ismember_and_agetier_xero_columns` deletes the
-  orphaned legacy `HUT_FEE` item-code rows that carried no `membershipTypeId`
-  (unreadable by the current runtime — both the resolver and the admin editor
-  require the key), then drops `XeroItemCodeMapping.isMember` with its old
-  `(category, ageTier, seasonType, isMember)` unique, and drops
-  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName` (their data moved
-  into `XeroContactGroupRule` at E8). The still-live partial index
-  `XeroItemCodeMapping_hutfee_flat_unique` is untouched.
+### Release A (runtime-prep — deploy first)
 
-  **These migrations are legal only on top of the preceding runtime-prep
-  releases and must not be deployed until those have shipped to production and
-  soaked** — #2129 step 1 for `SeasonRate`, and #2133 (STEP 1, shipped in
-  `v0.12.2`) plus the #2130 STEP 1.5 write-narrowing release for the columns.
-  Dropping a column while an old colour still names it in a `SELECT` or an
-  implicit `RETURNING` is exactly the blue/green break the multi-step exists to
-  prevent. Deploying requires `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and a
-  `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` recording that soak; both migrations
-  carry full rationale rows in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`. Operator
-  actions: `docs/UPGRADING.md` → Unreleased. The `#2130` select guard
-  (`doomed-column-select-guard.test.ts`) is **kept** even though its original
-  columns are gone — narrow selects remain the rule for both models and it is
-  the only repo-wide enforcement of it.
+No schema change and no migration. Safe to cut as its own version tag and
+deploy in any window; the Release B contract migrations below are only legal
+once this release is the deployed, drained colour in production.
 
 - **Config transfer: old-bundle entrance-fee/season-rate import compat dropped
   (#2131).** One release after the E13 contraction, the importer no longer
@@ -56,7 +28,6 @@ All notable public reference-release changes should be recorded here.
   materialisation (for current `JOINING_FEE` rows) is unchanged. No schema
   change. Operator actions: `docs/UPGRADING.md` → Unreleased. See
   `docs/config-transfer/README.md`.
-
 
 - **Blue/green runtime-prep for the legacy Xero column drops, write half
   (#2130).** `v0.12.2` narrowed the two READ paths (`getHutFeeItemCodeMap`,
@@ -85,8 +56,8 @@ All notable public reference-release changes should be recorded here.
   `isMember` (with its old `@@unique`) and the two `xeroContactGroup*` columns
   drop-eligible, by a *later* release's contract migration — never the same
   release as this prep. That contract migration is
-  `20260721130000_contract_drop_ismember_and_agetier_xero_columns` (STEP 2,
-  Release B — see the entry above).
+  `20260721130000_contract_drop_ismember_and_agetier_xero_columns` (STEP 2 — see
+  the **Release B** section below, which must be its own, later version tag).
 
 - **Public `{{hut-fees}}` embed now reads the authoritative per-membership-type
   rates (#2129, step 1).** The embed was the last reader of the frozen
@@ -129,40 +100,12 @@ All notable public reference-release changes should be recorded here.
   surviving references were seed-time and outside `src/` — the
   `include: { rates: true }` read and the `rates: { create: … }` write in
   `e2e/setup/seed-second-lodge.ts`, and `createMissingSeasonRates` in
-  `prisma/seed.ts` — and step 2 (Release B, above) removed all three in the same
+  `prisma/seed.ts` — and step 2 (Release B, below) removed all three in the same
   PR as the DROP migration, which is what kept the build green: `e2e/**` sits
   inside `tsconfig.json`'s `**/*.ts` include and is not excluded, so leaving the
   seeder alone would have failed `npm run typecheck`; and
   `scripts/e2e-stack.sh:92` runs that seeder under `E2E_MULTI_LODGE=1`, so the
   required **E2E multi-lodge** branch-protection check fails at seed time.
-
-- **Blue/green runtime-prep for the legacy Xero column drops, write half
-  (#2130).** `v0.12.2` narrowed the two READ paths (`getHutFeeItemCodeMap`,
-  `getAgeTierSettings`) with an explicit `select` so the deployed Prisma client
-  stopped naming `XeroItemCodeMapping.isMember` and
-  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName`. That was
-  incomplete: Prisma also emits an implicit `RETURNING` over **every** scalar
-  column of a `create`/`update`/`upsert` unless a `select` narrows it, so the
-  unnarrowed WRITE paths still named the doomed columns and a draining old
-  colour would keep issuing that SQL. Every mutation on those two models is now
-  narrowed — the admin item-code-mappings route, the admin age-tier-settings
-  route, config-transfer's Xero import, the setup wizard, and the seed — each to
-  the minimal projection its (discarded) result needs. Regression pins assert
-  the `select` on each mutation, and a static source-scan guard (modelled on the
-  existing `ClubModuleSettings` select guard) fails CI on any future call site
-  on either model that forgets its `select` — across `src/`, `prisma/seed.ts`
-  and `scripts/` — so the narrowing cannot silently regress before the drop.
-  As defensive cleanup, the already-retired raw-SQL audit script
-  `audit-access-role-membership-cleanup.ts` also stopped naming the age-tier
-  Xero-group columns (its `managedAgeTierSettings` metric and paired "Managed
-  Xero age-tier rules backfilled" check were removed). That script never
-  executes — it returns early now that the `20260720120000` contraction
-  migration exists — so no live audit coverage was lost and it was never part of
-  the blue/green gap. **No schema change and no migration in this release**: it
-  is runtime-prep only. Only **after this release has itself deployed** are
-  `isMember` (with its old `@@unique`) and the two `xeroContactGroup*` columns
-  drop-eligible, by a *later* release's contract migration — never the same
-  release as this prep.
 
 - **Shared `useSectionEditState` hook for admin settings sections (#2136).**
   The canonical settings-section pattern (`AGENTS.md`) — load read-only,
@@ -189,8 +132,66 @@ All notable public reference-release changes should be recorded here.
   gates on `canEdit === false` internally (#2065), a strictly stronger condition
   than the wrapper's, so the wrapper was a no-op in all three tri-states.
 
-  required **E2E multi-lodge** branch-protection check would have failed at seed
-  time.
+### Release B (contract drops — a separate, later deploy)
+
+> **⚠️ Do not cut Release A and Release B into the same version tag.** They are
+> two deploys, in order, with a soak between them — not one release. The
+> migrations below drop a table and three columns that the *previous* colour
+> still names in its SQL unless Release A is already the deployed colour.
+> Shipping them together (verified against `v0.12.2`) causes: anonymous public
+> **500s on every page carrying `{{hut-fees}}`** (`42P01 relation "SeasonRate"
+> does not exist`); admin seasons pages 500; Xero item-code saves 500
+> (`42703 column "isMember" does not exist`); and age-tier saves plus the
+> boot-time config self-heal failing on **every blue container start**. None of
+> it is recoverable by rolling the app back — the schema is already contracted;
+> recovery is a database restore. Cut Release A first, deploy and soak it, then
+> cut Release B as its own tag. See `docs/UPGRADING.md` → Unreleased.
+
+- **Legacy contraction, Release B: `SeasonRate` and the doomed Xero columns are
+  dropped (#2129 step 2, #2130 STEP 2).** Two destructive contract migrations
+  finish the expand/migrate/contract series that E4 (#1930) and E8 (#1934)
+  began. `20260721120000_contract_drop_season_rate` drops the frozen
+  member/non-member boolean-keyed `SeasonRate` table; the same PR removes its
+  last references, which were seed-only and outside `src/` (the
+  `include: { rates: true }` read and the `rates: { create: … }` write in
+  `e2e/setup/seed-second-lodge.ts`, and `createMissingSeasonRates` plus its two
+  call sites in `prisma/seed.ts`). Nightly pricing, Xero hut-fee item codes and
+  the public `{{hut-fees}}` embed have all read `MembershipTypeSeasonRate` since
+  #2129 step 1, so nothing user-visible changes. Because the E4 fan-out that
+  copied those rows forward was **conditional** on the install having a
+  `MEMBER_RATE`-behaviour membership type and a `NON_MEMBER`-keyed type, the
+  migration opens with a **pre-drop coverage guard**: it counts `SeasonRate`
+  rows with no `MembershipTypeSeasonRate` counterpart for the same season and
+  age tier and raises, aborting the transaction before the `DROP TABLE`, if any
+  exist. A fork whose types never matched keeps its only copy of that pricing
+  instead of losing it. `docs/UPGRADING.md` publishes the same check as a
+  read-only operator pre-flight query; if it fires, reconcile the missing rates
+  rather than forcing past it.
+
+  `20260721130000_contract_drop_ismember_and_agetier_xero_columns` deletes the
+  orphaned legacy `HUT_FEE` item-code rows that carried no `membershipTypeId`
+  (not resolvable for pricing by the current runtime — both the resolver and the
+  admin editor require the key; the only paths that still touch them count or
+  collect item codes in aggregate and name no dropped column), then drops
+  `XeroItemCodeMapping.isMember` with its old
+  `(category, ageTier, seasonType, isMember)` unique, and drops
+  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName` (their data moved
+  into `XeroContactGroupRule` at E8). The still-live partial index
+  `XeroItemCodeMapping_hutfee_flat_unique` is untouched.
+
+  **These migrations are legal only on top of the preceding runtime-prep
+  releases and must not be deployed until those have shipped to production and
+  soaked** — #2129 step 1 for `SeasonRate`, and #2133 (STEP 1, shipped in
+  `v0.12.2`) plus the #2130 STEP 1.5 write-narrowing release for the columns.
+  Dropping a column while an old colour still names it in a `SELECT` or an
+  implicit `RETURNING` is exactly the blue/green break the multi-step exists to
+  prevent. Deploying requires `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and a
+  `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` recording that soak; both migrations
+  carry full rationale rows in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`. Operator
+  actions: `docs/UPGRADING.md` → Unreleased. The `#2130` select guard
+  (`doomed-column-select-guard.test.ts`) is **kept** even though its original
+  columns are gone — narrow selects remain the rule for both models and it is
+  the only repo-wide enforcement of it.
 
 ## 0.12.2 - 2026-07-20
 
