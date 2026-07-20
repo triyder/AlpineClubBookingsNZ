@@ -122,6 +122,117 @@ migrated code inside `app-theme-scope` uses the semantic surface tokens:
 `text-muted-foreground` for secondary labels and footnotes, `bg-muted` for
 tinted rows, and `border-border` for rules.
 
+**`--muted-foreground` is a DERIVED tone, not a brand colour** (#2145). Every
+other app text token in the `.app-theme-scope` block resolves to a solid brand
+endpoint (`--foreground` is `--brand-deep` in light, `--brand-snow` in dark).
+`--muted-foreground` used to do the same — which made it byte-identical to
+`--foreground`, so `text-muted-foreground` rendered as primary text and the
+`muted` role was inert. It is now computed by `deriveAppMutedForeground` in
+`src/lib/club-theme-schema.ts` and injected as `--app-muted-foreground` /
+`--app-muted-foreground-dark` by `buildClubThemeAppCss`; `globals.css` reads
+those with a static fallback for the case where no ClubTheme stylesheet is
+injected.
+
+The derivation mixes each mode's foreground 30% toward that mode's base surface
+(the same 70/30 sRGB mix `.website-theme` already uses for its own
+`--muted-foreground`) and then steps the tone BACK toward the foreground until
+it clears WCAG AA 4.5:1 against a **named, finite list** of surfaces. The list is
+the whole substance of the guard, so it is stated here in full — it is
+`APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS` /
+`APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS` in `club-theme-schema.ts`:
+
+| Mode  | Checked surfaces |
+| ----- | ---------------- |
+| Light | `--brand-snow` (`--background`/`--card`/`--popover`), `--brand-mist` (`--muted`/`--secondary`/`--accent`), and the curated `--warning-muted` / `--info-muted` / `--success-muted` / `--danger-muted` panel fills |
+| Dark  | `--brand-deep` (`--background`), `--brand-charcoal` (`--card`/`--popover`/`--muted`/`--secondary`/`--accent`), and the same four curated `*-muted` fills in their `.dark` values |
+
+Both **brand** surfaces are checked per mode, not only the base one, because
+that is what makes the guard hold for an endpoint-crossing palette, where moving
+toward one surface moves away from the other. The four **curated** `*-muted`
+fills are checked because #1808 deliberately leaves them out of
+`app-theme-scope`: they are fixed while the derived tone slides with the brand
+ramp, which is the one pairing that can drift apart with nothing watching. They
+are genuine muted-text backgrounds — `bg-warning-muted` and friends carry
+`text-muted-foreground` footnotes in roughly 35 places across bed-allocation,
+waitlist, committee, and family-suggestions.
+
+Deliberately **not** in the list:
+
+- `--border` / `--input`. Dark mode remaps `bg-{neutral}-200` onto `--border`,
+  so a `bg-slate-200` badge would be a muted-text surface — but the only such
+  badge (`page-content-panel.tsx`) was moved to `bg-muted text-muted-foreground`
+  instead. A mid-luminance hairline colour is the wrong background for body text
+  at any weight, and clamping against it would collapse the derived tone into
+  `--foreground` for roughly 30% of gate-passing palettes rather than the ~12%
+  it does today. (Measured like-for-like over the 77 gate-passing palettes of
+  the neutral-ramp sweep in `club-theme-schema.test.ts`, counting a palette that
+  collapses in EITHER mode: 11.7% today, 29.9% with `--border` clamped. Per-mode
+  it is 5.2% → 11.7% light and 6.5% → 24.7% dark. Any single framing shows the
+  same 2.5–3× increase; quote one, not a mixture.)
+- The dark coloured hue remaps. The `-50` (`oklch(0.29 …)`) and `-100`
+  (`oklch(0.33 …)`) tiers sit at or below the `*-muted` tier already checked, so
+  in dark mode — where the derived tone is the LIGHT one — clearing AA on
+  `--success-muted` clears them too. The `-200` tier does NOT follow from that
+  reasoning and is excluded on evidence instead: `bg-{hue}-200` remaps to
+  `oklch(0.38 …)`, which is LIGHTER than the checked `oklch(0.33 …)` tier and so
+  is the HARDER background for a light tone. The default dark tone measures
+  6.10:1 on `--warning-muted` but 5.00:1 on `bg-amber-200` and 4.93:1 on
+  `bg-sky-200`. Both shipped palettes still clear 4.5:1 there, and the only
+  coloured `-200` background in the app
+  (`admin-exclusive-hold-controls.tsx`) carries `text-amber-900`, not muted
+  text — so nothing fails today. But a `bg-*-200` + `text-muted-foreground`
+  pairing is NOT covered by the guard; on a lower-headroom palette it could drop
+  below AA, so measure before shipping one.
+
+Four things about this guard are worth stating precisely, because it is easy to
+read more into it than it delivers:
+
+- **It guarantees** a TWO-BRANCH outcome, over the surfaces **in the table
+  above** and no others. Where `--foreground` itself clears 4.5:1 on a listed
+  surface, the derived tone clears 4.5:1 there too. Where `--foreground` itself
+  FAILS AA on a listed surface — an inherited failure the derivation cannot
+  repair, because #1808 pins the curated `*-muted` fills while the brand ramp
+  moves — the derived tone is no worse than `--foreground` there. It is computed
+  from the saved palette every time the app stylesheet is rendered, so it also
+  covers palettes already stored in the database — not only newly saved ones. It
+  says nothing about a surface not in the table; a new always-on background that
+  hosts muted text has to be added to the list.
+- **It is deliberately LESS readable than `--foreground`, and that is the
+  point.** Carrying measurably less contrast than the token it softens is the
+  whole feature, so no clause here should be read as parity with `--foreground`.
+  `club-theme-schema.test.ts` pins the shipped tones at 0.41 / 0.53 (default
+  light/dark) and 0.51 / 0.59 (Tokoroa) of `--foreground`'s ratio on the same
+  surface, and fails if that fraction ever climbs past 0.75 — which is what stops
+  the role being tuned back into an invisible near-copy of `--foreground`.
+- **It does not guarantee** that the tone is visually DISTINCT from
+  `--foreground`. A palette with no contrast headroom walks all the way back and
+  the two coincide again, exactly as before #2145. Accessibility wins over the
+  semantic distinction; `getBlockingContrastWarnings` is what stops a palette
+  that poor being saved at all.
+- **It says nothing about ALPHA uses of the token.** Every ratio above is
+  measured on the opaque tone. Where a call site applies an alpha — the dashed
+  `border-muted-foreground/70` and `/80` provisional-chip outlines in
+  bed-allocation, `border-muted-foreground/30` on the display-builder drop zone,
+  the `text-muted-foreground/60` empty-state icon on the member dashboard — the
+  composited colour is materially fainter than the token, and #2145 made those
+  composites fainter still (the dashed chip outline went from 4.26:1 to 2.76:1
+  in dark mode at `/50`, which is why it is now `/70`). None of them is a WCAG
+  1.4.11 failure: each is either purely decorative alongside full-strength text,
+  or redundantly encoded by border style, icon, and label — the reasoning is
+  recorded at `allocation-chip.tsx`. But do not read the opaque guarantee onto
+  an alpha variant; measure it. An opaque non-text use (the `bg-muted-foreground`
+  meter fill on a `bg-muted` track in the Xero panel, 4.77:1 / 4.63:1) does
+  inherit the stricter-than-3:1 bar.
+
+The tone is computed in TypeScript and emitted as a resolved colour rather than
+written as a CSS `color-mix()` on purpose: a mix is unmeasurable from the
+contrast gate, and "app text tokens are solid, measurable endpoints" is the same
+invariant that keeps `--foreground` / `--card-foreground` off interpolated
+values. `src/lib/__tests__/club-theme-schema.test.ts` gates the derived values
+(including a sweep over configurable neutral ramps) and
+`src/lib/__tests__/app-theme-layout-contract.test.ts` pins the `globals.css`
+wiring and its static fallback.
+
 Two contract tests in `src/lib/__tests__/brand-color-source-contract.test.ts`
 enforce this:
 
@@ -196,7 +307,21 @@ two halves with different enforcement:
    colourless but theme-dependent declaration such as `outline: none`. It
    derives the set of self-healing tokens from the stylesheet itself (declared
    by a print-visible light block AND by a `.dark`-gated block), so the set
-   cannot drift away from what this file actually declares.
+   cannot drift away from what this file actually declares. Note the
+   granularity, which pre-dates #2145 and #2146: the derived set is keyed by
+   token NAME across the whole stylesheet, not per block. A token stays
+   "healed" as long as *some* print-visible light rule and *some* `.dark` rule
+   declare it — so `--muted-foreground` would still count as healed via
+   `:root`/`.dark` even if the light `app-theme-scope` block stopped declaring
+   it, and would then quietly fall back to the `:root` value on paper without
+   the contract test objecting. A corollary that
+   bites when a token stops being a plain brand alias: the derived
+   `--muted-foreground` (#2145) reads a DIFFERENT injected variable per mode
+   (`--app-muted-foreground` vs `--app-muted-foreground-dark`), but both blocks
+   still declare `--muted-foreground` itself, so it stays a light/dark pair and
+   paper keeps the light derived tone. Splitting a paired token across two
+   differently-named declarations — light in one block, dark in the other, with
+   no shared name — would silently drop it out of the healed set.
 2. **In a class string, wherever it lives:** a Tailwind `dark:` utility carrying
    a **literal palette colour** — a named shade (`dark:bg-slate-900`,
    `dark:text-amber-200`) or an arbitrary value (`dark:bg-[#0b1220]`,

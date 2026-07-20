@@ -232,12 +232,20 @@ export function buildClubThemeCss(
 }
 
 /** Brand/font variables for app shells. Deliberately excludes rawCss so an
- * administrator's public-site CSS cannot override app or semantic tokens. */
+ * administrator's public-site CSS cannot override app or semantic tokens.
+ *
+ * Also emits the two DERIVED app muted-text tones (#2145). They are computed
+ * here rather than expressed as a CSS `color-mix()` for one reason: a mix is
+ * unmeasurable from TypeScript, and this repository's app-scope rule is that
+ * every TEXT token resolves to a solid endpoint whose contrast the gate can
+ * actually measure (see `getContrastWarnings` and the endpoint-crossing case in
+ * `club-theme-schema.test.ts`). Emitting a resolved colour keeps that true. */
 export function buildClubThemeAppCss(
   value: Partial<Record<keyof ClubThemeValues, unknown>> | null | undefined,
 ): string {
   const theme = normaliseThemeValues(value);
-  return `.app-theme-scope{${buildClubThemeDeclarations(theme)}}`;
+  const muted = deriveAppMutedForeground(theme);
+  return `.app-theme-scope{${buildClubThemeDeclarations(theme)}--app-muted-foreground:${muted.light};--app-muted-foreground-dark:${muted.dark};}`;
 }
 
 function buildClubThemeDeclarations(theme: ClubThemeValues): string {
@@ -273,13 +281,15 @@ function channelToLinear(value: number) {
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
-// WCAG relative luminance for an oklch() colour. The value field on the
-// site-style wizard accepts any schema-valid colour (hex or oklch), so contrast
-// enforcement has to measure oklch too — otherwise an admin could paste a
-// low-contrast oklch pair straight through the gate. oklch -> oklab -> linear
-// sRGB uses Björn Ottosson's matrices; the linear RGB it yields is exactly what
-// the luminance sum needs (no extra gamma step), clamped for out-of-gamut hues.
-function oklchLuminance(colour: string): number | null {
+// Linear sRGB for an oklch() colour. The value field on the site-style wizard
+// accepts any schema-valid colour (hex or oklch), so contrast enforcement has to
+// measure oklch too — otherwise an admin could paste a low-contrast oklch pair
+// straight through the gate. oklch -> oklab -> linear sRGB uses Björn Ottosson's
+// matrices; the linear RGB it yields is exactly what the luminance sum needs (no
+// extra gamma step), clamped for out-of-gamut hues.
+function oklchToLinearRgb(
+  colour: string,
+): { r: number; g: number; b: number } | null {
   const match = colour
     .trim()
     .match(/^oklch\(\s*([^\s]+)\s+([^\s]+)\s+([^\s)]+)\s*\)$/i);
@@ -313,17 +323,77 @@ function oklchLuminance(colour: string): number | null {
   const m = m_ ** 3;
   const s = s_ ** 3;
 
-  const rLin = clamp01(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s);
-  const gLin = clamp01(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s);
-  const bLin = clamp01(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s);
+  return {
+    r: clamp01(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    g: clamp01(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    b: clamp01(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+  };
+}
 
-  return clamp01(0.2126 * rLin + 0.7152 * gLin + 0.0722 * bLin);
+/** Inverse of `channelToLinear`: linear sRGB (0..1) back to an 0..255 channel. */
+function linearToChannel(value: number): number {
+  const encoded =
+    value <= 0.0031308 ? value * 12.92 : 1.055 * value ** (1 / 2.4) - 0.055;
+  return clamp01(encoded) * 255;
+}
+
+/**
+ * A schema-valid colour (hex or oklch) as gamma-encoded sRGB channels.
+ *
+ * The oklch path round-trips through `oklchToLinearRgb`, which CLAMPS
+ * out-of-gamut hues — so an oklch colour outside sRGB resolves to its clamped
+ * sRGB neighbour here. That is only used for MIXING; every contrast figure this
+ * module reports is measured on the resulting colour itself, so a clamp changes
+ * which tone is derived but never makes a reported ratio untrue.
+ */
+function colourToRgb(colour: string): { r: number; g: number; b: number } | null {
+  const rgb = hexToRgb(colour);
+  if (rgb) {
+    return rgb;
+  }
+
+  const linear = oklchToLinearRgb(colour);
+  if (!linear) {
+    return null;
+  }
+
+  return {
+    r: linearToChannel(linear.r),
+    g: linearToChannel(linear.g),
+    b: linearToChannel(linear.b),
+  };
+}
+
+/**
+ * `foreground` mixed toward `towards` in gamma-encoded sRGB, matching CSS
+ * `color-mix(in srgb, <foreground> <weight>%, <towards>)`, as a `#rrggbb` hex.
+ */
+function mixSrgb(
+  foreground: string,
+  towards: string,
+  foregroundWeight: number,
+): string | null {
+  const from = colourToRgb(foreground);
+  const to = colourToRgb(towards);
+  if (!from || !to) {
+    return null;
+  }
+
+  const channel = (a: number, b: number) =>
+    Math.round(a * foregroundWeight + b * (1 - foregroundWeight))
+      .toString(16)
+      .padStart(2, "0");
+
+  return `#${channel(from.r, to.r)}${channel(from.g, to.g)}${channel(from.b, to.b)}`;
 }
 
 function relativeLuminance(colour: string): number | null {
   const rgb = hexToRgb(colour);
   if (!rgb) {
-    return oklchLuminance(colour);
+    const linear = oklchToLinearRgb(colour);
+    return linear
+      ? clamp01(0.2126 * linear.r + 0.7152 * linear.g + 0.0722 * linear.b)
+      : null;
   }
 
   return (
@@ -347,6 +417,226 @@ export function contrastRatio(
   const lighter = Math.max(foregroundLuminance, backgroundLuminance);
   const darker = Math.min(foregroundLuminance, backgroundLuminance);
   return (lighter + 0.05) / (darker + 0.05);
+}
+
+/** The WCAG AA minimum for normal-size body text. */
+export const AA_TEXT_CONTRAST_RATIO = 4.5;
+
+/**
+ * Where the derived muted tone AIMS to land: 70% foreground, 30% surface. This
+ * mirrors the mix `.website-theme` already uses for its own `--muted-foreground`
+ * (`color-mix(in srgb, var(--brand-deep) 70%, var(--brand-snow))` in
+ * `globals.css`), so the app scope follows the existing house derivation instead
+ * of inventing a second one.
+ */
+const MUTED_FOREGROUND_TARGET_WEIGHT = 0.7;
+
+/** How far each clamp step walks the tone back toward `--foreground`. */
+const MUTED_FOREGROUND_WEIGHT_STEP = 0.02;
+
+/**
+ * The curated semantic `*-muted` surfaces, light mode, exactly as declared on
+ * `:root` in `src/app/globals.css`.
+ *
+ * These are in the clamp set because they are REAL muted-text backgrounds
+ * (`bg-warning-muted`/`bg-info-muted`/`bg-danger-muted`/`bg-success-muted`
+ * panels carry `text-muted-foreground` footnotes in ~35 places across
+ * bed-allocation, waitlist, committee, and family-suggestions) AND because
+ * #1808 deliberately does NOT override them inside `app-theme-scope`. They are
+ * therefore FIXED while the derived tone moves with the brand palette — the one
+ * combination that can drift apart silently. Every other surface muted text
+ * lands on is either a brand token the clamp already covers, or is remapped to
+ * one in dark mode (`bg-white`/`bg-*-50` -> `--card`, `bg-*-100` -> `--muted`,
+ * `hover:bg-*-50` -> `--accent`).
+ *
+ * Pinned against `globals.css` by `app-theme-layout-contract.test.ts` so the two
+ * cannot drift.
+ */
+const SEMANTIC_MUTED_SURFACES_LIGHT = [
+  "#fef9c3", // --warning-muted
+  "#dbeafe", // --info-muted
+  "#dcfce7", // --success-muted
+  "#fee2e2", // --danger-muted
+] as const;
+
+/** The `.dark` half of {@link SEMANTIC_MUTED_SURFACES_LIGHT}. */
+const SEMANTIC_MUTED_SURFACES_DARK = [
+  "oklch(0.33 0.05 75)", // --warning-muted
+  "oklch(0.33 0.05 250)", // --info-muted
+  "oklch(0.33 0.05 150)", // --success-muted
+  "oklch(0.33 0.05 27)", // --danger-muted
+] as const;
+
+/**
+ * The brand tokens whose VALUES the light clamp checks, named as they appear in
+ * `globals.css`. `--brand-snow` backs `--background`/`--card`/`--popover`;
+ * `--brand-mist` backs `--muted`/`--secondary`/`--accent`.
+ *
+ * This list is the CONTRACT, not a convenience: `docs/ARCHITECTURE.md` publishes
+ * it as "the surfaces the derived muted tone is guaranteed against", and
+ * `app-theme-layout-contract.test.ts` fails if the prose and this list disagree.
+ * Prose that claims a broader guarantee than the code delivers is the specific
+ * failure mode this pin exists to prevent.
+ */
+export const APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS = [
+  "--brand-snow",
+  "--brand-mist",
+  "--warning-muted",
+  "--info-muted",
+  "--success-muted",
+  "--danger-muted",
+] as const;
+
+/** The dark-mode counterpart of {@link APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS}. */
+export const APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS = [
+  "--brand-deep",
+  "--brand-charcoal",
+  "--warning-muted",
+  "--info-muted",
+  "--success-muted",
+  "--danger-muted",
+] as const;
+
+/**
+ * Surfaces DELIBERATELY excluded from the clamp set.
+ *
+ * `--border`/`--input` are hairline tokens. Dark mode remaps `bg-*-200` onto
+ * `--border`, so a `bg-slate-200` badge WOULD be a muted-text surface — but the
+ * only such badge (`page-content-panel.tsx`) was moved to
+ * `bg-muted text-muted-foreground` instead, because a mid-luminance rule colour
+ * is the wrong background for body text at any weight. Clamping against it
+ * instead would collapse the derived tone into `--foreground` for roughly 30% of
+ * gate-passing palettes rather than the ~12% it does today, defeating #2145 for
+ * a surface no text should sit on.
+ *
+ * Those two figures are like-for-like: both are measured over the 77
+ * gate-passing palettes of the neutral-ramp sweep in
+ * `club-theme-schema.test.ts`, counting a palette that collapses in EITHER mode
+ * (11.7% today vs 29.9% with `--border` clamped, replicating the `--border`
+ * mixes from `globals.css`). Per-mode the same comparison reads 5.2% -> 11.7%
+ * light and 6.5% -> 24.7% dark. Every framing shows the same 2.5-3x increase;
+ * quote one consistently rather than mixing a light-only figure with an
+ * either-mode one.
+ *
+ * Kept as a value rather than a comment so the docs pin can assert the
+ * exclusion is STATED, not silently assumed.
+ */
+export const APP_MUTED_FOREGROUND_EXCLUDED_SURFACES = ["--border", "--input"] as const;
+
+/**
+ * A muted tone for `foreground`, mixed toward `towards` and then clamped back
+ * toward `foreground` until it clears WCAG AA against EVERY surface it can land
+ * on.
+ *
+ * What this guarantees is TWO-BRANCH, and only over the LISTED surfaces: where
+ * `foreground` itself clears 4.5:1 on a listed surface, the returned tone clears
+ * 4.5:1 there too; where `foreground` itself FAILS AA on a listed surface (an
+ * inherited failure — a curated `*-muted` fill is fixed while the brand ramp
+ * moves), the returned tone is no worse than `foreground` there.
+ *
+ * What it does NOT guarantee is parity with `foreground`. The returned tone is
+ * deliberately LESS readable than the token it softens — that is the entire
+ * point of the role, and `club-theme-schema.test.ts` fails if the ratio it
+ * carries ever climbs back above 0.75 of `foreground`'s on a palette with
+ * headroom.
+ *
+ * What it does NOT guarantee: that the tone is DISTINCT from `foreground`. A
+ * palette with no contrast headroom (one whose own body text only just clears
+ * AA, or fails it) walks all the way back and returns `foreground` unchanged —
+ * accessibility wins over the semantic distinction, and the result is exactly
+ * today's behaviour rather than a regression. `getBlockingContrastWarnings`
+ * is what stops such a palette being saved in the first place.
+ */
+function deriveMutedTone(
+  foreground: string,
+  towards: string,
+  surfaces: readonly string[],
+): string {
+  for (
+    let weight = MUTED_FOREGROUND_TARGET_WEIGHT;
+    weight < 1;
+    weight += MUTED_FOREGROUND_WEIGHT_STEP
+  ) {
+    const candidate = mixSrgb(foreground, towards, weight);
+    if (!candidate) {
+      // Neither accepted colour format parsed; fall back to the un-muted role
+      // rather than emitting an unmeasured colour.
+      return foreground;
+    }
+    const clearsAa = surfaces.every(
+      (surface) =>
+        (contrastRatio(candidate, surface) ?? 0) >= AA_TEXT_CONTRAST_RATIO,
+    );
+    if (clearsAa) {
+      return candidate;
+    }
+  }
+
+  return foreground;
+}
+
+export type AppMutedForegroundTones = {
+  /** Value for `--muted-foreground` in the light `.app-theme-scope` block. */
+  light: string;
+  /** Value for `--muted-foreground` in the `.dark .app-theme-scope` block. */
+  dark: string;
+};
+
+/**
+ * The derived `--muted-foreground` tones for the app scope (#2145).
+ *
+ * Before this, `.app-theme-scope` set `--muted-foreground` to the same brand
+ * colour as `--foreground`, so `text-muted-foreground` — used all over the admin
+ * and finance surfaces for secondary labels and footnotes — rendered
+ * identically to primary text and the `muted` semantic role was inert.
+ *
+ * Each mode mixes its foreground 30% toward its own base surface and then
+ * clamps for AA against the SIX surfaces that mode can put muted text on —
+ * `APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS` /
+ * `APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS`:
+ *
+ * - light: `--brand-deep` toward `--brand-snow`, checked against `--brand-snow`
+ *   (`--background`/`--card`/`--popover`), `--brand-mist`
+ *   (`--muted`/`--secondary`/`--accent`), and the four curated light
+ *   `*-muted` panel fills;
+ * - dark: `--brand-snow` toward `--brand-deep`, checked against `--brand-deep`
+ *   (`--background`), `--brand-charcoal`
+ *   (`--card`/`--popover`/`--muted`/`--secondary`/`--accent`), and the four
+ *   curated dark `*-muted` panel fills.
+ *
+ * Checking both BRAND surfaces per mode rather than only the base one is what
+ * makes the guard hold for an ENDPOINT-CROSSING palette — one whose
+ * `--brand-deep` sits BETWEEN `--brand-snow` and `--brand-mist`. Mixing toward
+ * one surface moves the tone AWAY from the other, so a single-surface check
+ * would ship a sub-AA muted tone for a palette that passes the save gate today
+ * (the `#767676`/`#000000`/`#ffffff` case pinned in
+ * `club-theme-schema.test.ts`).
+ *
+ * Checking the curated `*-muted` fills as well is what makes it hold for a
+ * palette that MOVES while they stay put: they are excluded from the app scope
+ * by #1808, so a brand ramp can slide the derived tone toward them without any
+ * brand-only check noticing. See `SEMANTIC_MUTED_SURFACES_LIGHT`.
+ *
+ * `APP_MUTED_FOREGROUND_EXCLUDED_SURFACES` records what is deliberately NOT in
+ * the set, and why.
+ */
+export function deriveAppMutedForeground(
+  value: Partial<Record<keyof ClubThemeValues, unknown>> | null | undefined,
+): AppMutedForegroundTones {
+  const theme = normaliseThemeValues(value);
+
+  return {
+    light: deriveMutedTone(theme.brandDeep, theme.brandSnow, [
+      theme.brandSnow,
+      theme.brandMist,
+      ...SEMANTIC_MUTED_SURFACES_LIGHT,
+    ]),
+    dark: deriveMutedTone(theme.brandSnow, theme.brandDeep, [
+      theme.brandDeep,
+      theme.brandCharcoal,
+      ...SEMANTIC_MUTED_SURFACES_DARK,
+    ]),
+  };
 }
 
 export function getContrastWarnings(

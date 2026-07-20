@@ -510,7 +510,29 @@
   --secondary: var(--brand-mist);
   --secondary-foreground: var(--brand-deep);
   --muted: var(--brand-mist);
-  --muted-foreground: var(--brand-deep);
+  /* #2145 — `muted` is a SEMANTIC ROLE, so it must not alias `--foreground`.
+     It used to be `var(--brand-deep)`, byte-identical to `--foreground`, which
+     made every `text-muted-foreground` label across the admin and finance
+     surfaces render as primary-weight text. The value is now derived from the
+     brand palette by `deriveAppMutedForeground` in
+     `src/lib/club-theme-schema.ts`: 70% `--brand-deep` + 30% `--brand-snow`
+     (i.e. mostly foreground, softened toward the surface — NOT 70% toward
+     snow), then stepped BACK toward `--brand-deep` until it clears WCAG AA
+     4.5:1 against every light surface muted text can land on: `--brand-snow`
+     (`--background`/`--card`/`--popover`), `--brand-mist`
+     (`--muted`/`--secondary`/`--accent`), and the four curated `*-muted` panel
+     fills declared on `:root` above, which #1808 deliberately leaves out of
+     this scope and which therefore do NOT move with the brand palette.
+     NOT checked, deliberately: `--border`/`--input`. They are hairline tokens,
+     not text backgrounds — see APP_MUTED_FOREGROUND_EXCLUDED_SURFACES.
+     It is computed in TypeScript and injected as a solid colour rather than
+     written here as a `color-mix()` on purpose: a mix is unmeasurable from the
+     contrast gate, which is exactly why every other app TEXT token in this
+     block stays a solid brand endpoint. The literal fallback below is the
+     derivation of DEFAULT_CLUB_THEME_VALUES and applies only when no ClubTheme
+     stylesheet is injected; it is pinned in app-theme-layout-contract.test.ts
+     so the two cannot drift. */
+  --muted-foreground: var(--app-muted-foreground, #555f59);
   --accent: var(--brand-mist);
   --accent-foreground: var(--brand-deep);
   --app-accent-text: var(--brand-deep);
@@ -572,7 +594,14 @@
     --secondary: var(--brand-charcoal);
     --secondary-foreground: var(--brand-snow);
     --muted: var(--brand-charcoal);
-    --muted-foreground: var(--brand-snow);
+    /* #2145, the dark half of the derived muted role: 70% `--brand-snow` + 30%
+       `--brand-deep`, clamped for AA against `--brand-deep`,
+       `--brand-charcoal`, and the four curated `.dark` `*-muted` panel fills.
+       (`--border` is excluded — hairline, not a text background.)
+       The light block above restates `--muted-foreground`,
+       so excluding this block from print leaves the LIGHT derived tone standing
+       on paper — the #2146 pairing invariant is preserved. */
+    --muted-foreground: var(--app-muted-foreground-dark, #b2b8b5);
     --accent: var(--brand-charcoal);
     --accent-foreground: var(--brand-snow);
     --app-accent-text: var(--brand-snow);

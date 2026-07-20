@@ -86,6 +86,23 @@ export function AllocationChip({
   // precomputes the flag via bookingHoldsCapacity(). The signal is NOT
   // colour-only — border style, icon, and label all differ — so it survives in
   // either theme and for colour-blind staff.
+  // #2145 — why the dashed provisional outlines below use an ALPHA of the muted
+  // token, and why that is not a WCAG 1.4.11 (non-text contrast) failure.
+  // `--muted-foreground` is now a DERIVED tone, softer than `--foreground`, so
+  // every alpha composite over it got fainter: this chip's outline measured
+  // 4.26:1 in dark mode before #2145 and 2.76:1 after, at the old `/50`. The
+  // alphas were raised to `/70` here and `/80` on the badge to claw that back,
+  // but they still do not clear 3:1 on every palette, and they do not need to:
+  // "provisional" is redundantly encoded by the border STYLE (dashed vs solid),
+  // by the icon (Unlock vs Lock), and by the full-strength "Provisional" label
+  // and its title text. The outline reinforces a signal that is already carried
+  // by non-colour means alongside AA-passing text, which is exactly the
+  // "decorative / redundant" carve-out in 1.4.11 — it is not the sole means of
+  // conveying the state, and no interaction depends on perceiving it.
+  // Do NOT read the opaque token's measured ratios in `docs/ARCHITECTURE.md`
+  // ("`--muted-foreground` is a DERIVED tone") onto these alpha variants; that
+  // guarantee is stated for the opaque tone only. Re-measure if the alpha
+  // changes or the signal stops being redundantly encoded.
   const holdsCapacity = allocation.holdsCapacity;
   const accent = getBookingAccent(allocation.bookingId);
   const bookingTitle = `Booking ${allocation.bookingId}`;
@@ -100,7 +117,7 @@ export function AllocationChip({
         accent.ringClassName,
         holdsCapacity
           ? "border-border bg-card text-card-foreground"
-          : "border-dashed border-muted-foreground/50 bg-muted text-foreground",
+          : "border-dashed border-muted-foreground/70 bg-muted text-foreground",
         isDragging && "opacity-50",
         pending && "opacity-60",
       )}
@@ -142,7 +159,7 @@ export function AllocationChip({
               "gap-1 px-1 py-0 text-[10px]",
               holdsCapacity
                 ? "border-transparent bg-secondary font-semibold text-secondary-foreground"
-                : "border-dashed border-muted-foreground/60 text-muted-foreground",
+                : "border-dashed border-muted-foreground/80 text-muted-foreground",
             )}
             title={
               holdsCapacity
