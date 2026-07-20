@@ -428,6 +428,75 @@ describe("membership subscription billing", () => {
     ]);
   });
 
+  it("re-bills a new-system PER_FAMILY family once its charge is VOIDED (coverage released) (#2147)", async () => {
+    // After a NEW-system PER_FAMILY charge's Xero invoice is voided, the void
+    // handler (releaseVoidedSubscriptionInvoice) keeps the charge row with
+    // status VOIDED and familyGroupId intact for audit, releases coverage
+    // (releasedAt set) and nulls the subscription link. The existingFamilyCharges
+    // query must exclude VOIDED rows so the retained charge no longer populates
+    // billedFamilyTypes — otherwise it fires FAMILY_ALREADY_BILLED and blocks the
+    // family's re-bill forever, contradicting the void→re-bill design.
+    const annual = fee({ id: "fee-new", billingBasis: "PER_FAMILY", prorationRule: "NONE" });
+    mocks.effectiveFee.mockResolvedValue(annual);
+    // Filter-aware mock mirrors the real DB: apply the where.status filter to a
+    // fixture holding one VOIDED family charge.
+    const voidedCharge = { id: "charge-voided", familyGroupId: "family-1", membershipTypeId: "type-1", status: "VOIDED" };
+    mocks.charges.findMany.mockImplementation((args?: { where?: { status?: { not?: string } } }) => {
+      const notStatus = args?.where?.status?.not;
+      return Promise.resolve([voidedCharge].filter((charge) => (notStatus ? charge.status !== notStatus : true)));
+    });
+    mocks.coverage.findMany.mockResolvedValue([]); // released by the void
+    mocks.subscriptions.findMany.mockResolvedValue([]); // link nulled by the void
+    mocks.members.findMany.mockResolvedValue([
+      member("re-billable", { familyGroupMemberships: [familyMembership()] }),
+    ]);
+    const preview = await buildSubscriptionBillingPreview({
+      seasonYear: 2026,
+      decisionDate: new Date("2026-08-01T00:00:00.000Z"),
+    });
+    // The retained VOIDED charge is excluded, so the family re-bills as one entry.
+    expect(preview.entries).toHaveLength(1);
+    expect(preview.entries[0]).toMatchObject({
+      billingBasis: "PER_FAMILY",
+      familyGroupId: "family-1",
+      recipient: { id: "billing-1" },
+    });
+    expect(preview.exceptions.some((row) => row.code === "FAMILY_ALREADY_BILLED")).toBe(false);
+    // The query must carry the VOIDED filter that makes this correct.
+    expect(mocks.charges.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: { not: "VOIDED" } }),
+    }));
+  });
+
+  it("control: a live (non-VOIDED) PER_FAMILY charge still blocks with FAMILY_ALREADY_BILLED (#2147)", async () => {
+    // Same fixture, but the charge is live (e.g. UNPAID). The VOIDED filter keeps
+    // it in existingFamilyCharges, so a late-joining family member is correctly
+    // blocked — proving the filter narrows only VOIDED rows, not live ones.
+    const annual = fee({ id: "fee-new", billingBasis: "PER_FAMILY", prorationRule: "NONE" });
+    mocks.effectiveFee.mockResolvedValue(annual);
+    const liveCharge = { id: "charge-live", familyGroupId: "family-1", membershipTypeId: "type-1", status: "UNPAID" };
+    mocks.charges.findMany.mockImplementation((args?: { where?: { status?: { not?: string } } }) => {
+      const notStatus = args?.where?.status?.not;
+      return Promise.resolve([liveCharge].filter((charge) => (notStatus ? charge.status !== notStatus : true)));
+    });
+    mocks.members.findMany.mockResolvedValue([
+      member("late", { familyGroupMemberships: [familyMembership()] }),
+    ]);
+    const preview = await buildSubscriptionBillingPreview({
+      seasonYear: 2026,
+      decisionDate: new Date("2026-08-01T00:00:00.000Z"),
+      memberIds: ["late"],
+    });
+    expect(preview.entries).toHaveLength(0);
+    expect(preview.exceptions).toEqual([
+      expect.objectContaining({
+        code: "FAMILY_ALREADY_BILLED",
+        memberId: "late",
+        context: expect.objectContaining({ existingFamilyChargeId: "charge-live" }),
+      }),
+    ]);
+  });
+
   it("never invoices a missing or invalid family recipient", async () => {
     const annual = fee({ billingBasis: "PER_FAMILY" });
     mocks.effectiveFee.mockResolvedValue(annual);
