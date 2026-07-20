@@ -806,7 +806,7 @@ existing invoices are adopted; amount/contact/account mismatch becomes visible
 `PAID`, `OVERDUE`.
 
 ```text
-(no row) -> NOT_REQUIRED            role/policy never owes (ensureNotRequiredSubscriptionForRole, billing NO_INVOICE)
+(no row) -> NOT_REQUIRED            membership type never owes (ensureNotRequiredSubscriptionForRole, billing NO_INVOICE)
 (no row) -> NOT_INVOICED            billing sweep creates a billable-but-uninvoiced row
 NOT_INVOICED -> UNPAID              Xero subscription invoice created (xero-subscription-invoices)
 UNPAID/OVERDUE <-> PAID             Xero discovery/webhook reflects the invoice's real payment state
@@ -1020,9 +1020,14 @@ Runtime booking paths resolve the policy for the booking season. `BLOCK_BOOKING`
 stops owners or linked member guests with a structured policy error.
 `NON_MEMBER_RATE` uses non-member nightly rates while keeping the stored member
 identity. `NOT_REQUIRED` changes effective subscription lockout and display
-without deleting raw subscription, payment, or Xero invoice history. `ADMIN` and
-`LODGE` operational subscription exemptions remain governed by access-role
-helpers, separate from seasonal type policy. The optional assignment `applyFrom`
+without deleting raw subscription, payment, or Xero invoice history. Membership
+type is the sole authority for the subscription-required answer (#2149): access
+**role carries no exemption of its own**. `ADMIN` and `LODGE` accounts are exempt
+only because — with no explicit season assignment — they resolve via the
+role→default-type fallback to their own built-in `NOT_REQUIRED` types (`ADMIN` =
+BLOCK_BOOKING, `LODGE` = MEMBER_RATE so the kiosk still books); a fee-paying
+human holding the admin permission carries a normal REQUIRED type and owes a
+subscription like anyone else. The optional assignment `applyFrom`
 date is date-only metadata for mid-season changeover reporting and audit; the
 guarded preview remains the required save path and existing future bookings are
 not automatically repriced by a type or apply-from change.

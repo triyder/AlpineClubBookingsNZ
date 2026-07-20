@@ -1063,8 +1063,21 @@ Booking and subscription enforcement is season-aware:
   `NOT_REQUIRED` for that season without deleting or hiding raw Xero invoice or
   subscription history.
 
-`ADMIN` and `LODGE` operational subscription exemptions still come from
-`roleNeverRequiresSubscription()`. Seasonal membership type changes do not
+Membership type is the **sole authority** for whether a member owes a
+subscription (#2149): `subscriptionBehavior` — plus the per-age-tier flag where
+the type is `BASED_ON_AGE_TIER`. Access **role carries no subscription
+exemption** and is a pure permission concept. Operational accounts are exempt
+only because they resolve to a `NOT_REQUIRED` membership type: `ADMIN` and
+`LODGE` accounts with no explicit season assignment fall back to the built-in
+`ADMIN` (BLOCK_BOOKING, NOT_REQUIRED) and `LODGE` (MEMBER_RATE, NOT_REQUIRED)
+types, and `SCHOOL`/`NON_MEMBER` to their own NOT_REQUIRED built-ins. A real
+fee-paying human who holds the admin permission is assigned a normal membership
+type (Full etc.) and now correctly owes a subscription — the profile, admin
+members list, subscriptions list, CSV export, booking gate, and Xero sync all
+read the same derivation, so a fee-paying admin shows their real Paid/Unpaid
+status everywhere. `Member.lifeMemberDate` is **informational only**; the Life
+exemption comes from the `LIFE` membership type (subscriptionBehavior
+`NOT_REQUIRED`), never from that field. Seasonal membership type changes do not
 automatically reprice existing future bookings, rewrite
 subscription/Xero/payment history, or call external providers.
 

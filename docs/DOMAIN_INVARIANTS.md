@@ -86,6 +86,28 @@ Future reviews and issues should cite this file when proposing changes.
 - Membership approval remains authoritative when billing setup is incomplete:
   billing records a visible post-approval exception/warning and never rolls the
   member transaction back.
+- **Membership type is the sole subscription authority; role carries no
+  exemption (#2149).** Whether a member owes a subscription is decided ONLY by
+  their effective membership type (`subscriptionBehavior`, plus the per-age-tier
+  flag where the type is `BASED_ON_AGE_TIER`). Access **role is a pure permission
+  concept** and grants no exemption of its own — the retired
+  `roleNeverRequiresSubscription` short-circuit is gone from every derivation
+  (booking gate, profile, subscriptions list, admin members list + its SQL
+  filters, CSV export, member-guest booking block, and the Xero sync). Operational
+  and non-member accounts are exempt only because they resolve to a `NOT_REQUIRED`
+  membership type: a member with no explicit season assignment falls back through
+  `defaultMembershipTypeKeyForRole`, which maps `ADMIN`→built-in `ADMIN`
+  (BLOCK_BOOKING, NOT_REQUIRED), `LODGE`→built-in `LODGE` (MEMBER_RATE,
+  NOT_REQUIRED — so the kiosk still books, including across a season rollover),
+  and `SCHOOL`/`NON_MEMBER` to their NOT_REQUIRED built-ins; `USER` falls back to
+  `FULL` (REQUIRED). A real fee-paying human who holds the admin permission is
+  assigned a normal REQUIRED/BASED_ON_AGE_TIER type and owes a subscription like
+  anyone else — showing their real Paid/Unpaid status on every surface. Those
+  two built-in operational types are DB-seeded by a real idempotent migration
+  because the annual-billing preview resolves fallback types from the database.
+  `Member.lifeMemberDate` is **informational only** and is never read by any
+  subscription derivation — the Life exemption is the `LIFE` membership type
+  (subscriptionBehavior `NOT_REQUIRED`).
 - **Paid-up semantics (one meaning, three facts).** A member counts as paid-up
   (not owing a subscription) when ANY of: their membership-type policy
   `subscriptionBehavior` is `NOT_REQUIRED` (Life/honorary/operational — no

@@ -37,6 +37,16 @@ configurable — see [Subscription lockout](subscription-lockout.md)).
    link, and paid date. Only **linked** members are checked in Xero — unlinked
    members stay *Not Invoiced* until a Xero contact is linked or created.
 
+> **Who shows as *Not Required*.** A member's **membership type** — not their
+> login role — decides whether they owe a subscription. A member shows *Not
+> Required* only when their season membership type opts out (Life, School,
+> Non-Member, and the operational Admin/Lodge accounts), or their age group is
+> not subscription-liable. An administrator who is also an ordinary fee-paying
+> member (a normal membership type) shows their real Paid / Unpaid status here,
+> on their profile, in the members list, and in the CSV export — all of which
+> read the same rule. To exempt someone from subscriptions, change their
+> membership type; changing only their admin permission does not.
+
 ### Refresh paid status from Xero
 
 1. Click **Incremental Sync** for the normal low-cost refresh, or **Repair Stale
