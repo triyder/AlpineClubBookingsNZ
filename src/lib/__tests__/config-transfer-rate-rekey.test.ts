@@ -266,7 +266,53 @@ describe("config-transfer Xero HUT_FEE re-key import rejection (#2131)", () => {
     expect(plan.items.filter((i) => i.entity === "xero-item-code-mapping")).toHaveLength(0);
   });
 
-  it("rejects a legacy ENTRANCE_FEE item-code row naming the last compatible release", async () => {
+  it("applies a CURRENT-format HUT_FEE bundle: membership-type-keyed, never the frozen legacy shape", async () => {
+    const captures = { rateCreates: [] as Record<string, unknown>[], itemCreates: [] as Record<string, unknown>[] };
+    // The exporter's real current header (ITEM_FIELDS, xero-config.ts).
+    const files = new Map<string, Uint8Array>([
+      ["xero-config/item-code-mappings.csv", strToU8(
+        "category,membershipTypeKey,ageTier,seasonType,entranceFeeCategory,itemCode,amountCents\n" +
+        "HUT_FEE,FULL,ADULT,WINTER,,HUT-MEM,\n" +
+        "HUT_FEE,NON_MEMBER,ADULT,WINTER,,HUT-NON,\n",
+      )],
+    ]);
+    await xeroConfigImporter.apply(applyCtx(files, makeTx(captures)) as never);
+
+    expect(captures.itemCreates).toHaveLength(2);
+    expect(captures.itemCreates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ membershipTypeId: "mt-full", ageTier: "ADULT", seasonType: "WINTER", itemCode: "HUT-MEM" }),
+        expect.objectContaining({ membershipTypeId: "mt-nonmember", ageTier: "ADULT", seasonType: "WINTER", itemCode: "HUT-NON" }),
+      ]),
+    );
+    // Never the frozen legacy shape: every created row is membership-type-keyed
+    // and writes no isMember. A keyless row would be skipped by loadXeroBatch,
+    // so it would re-create on every import and resolve to no item code.
+    for (const created of captures.itemCreates) {
+      expect(created.membershipTypeId).toBeTruthy();
+      expect(created.isMember ?? null).toBeNull();
+    }
+  });
+
+  it("rejects a keyless HUT_FEE row rather than writing a frozen-legacy-shaped mapping", async () => {
+    const captures = { rateCreates: [] as Record<string, unknown>[], itemCreates: [] as Record<string, unknown>[] };
+    const files = new Map<string, Uint8Array>([
+      ["xero-config/item-code-mappings.csv", strToU8(
+        "category,membershipTypeKey,ageTier,seasonType,entranceFeeCategory,itemCode,amountCents\n" +
+        "HUT_FEE,,ADULT,WINTER,,HUT-KEYLESS,\n",
+      )],
+    ]);
+    const plan = await xeroConfigImporter.plan(planCtx(files, makeTx(captures)) as never);
+
+    expect(plan.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("a HUT_FEE item-code row must name a membership type"),
+      ]),
+    );
+    expect(plan.items.filter((i) => i.entity === "xero-item-code-mapping")).toHaveLength(0);
+  });
+
+  it("rejects a legacy ENTRANCE_FEE item-code row with an actionable, version-free remedy", async () => {
     const captures = { rateCreates: [] as Record<string, unknown>[], itemCreates: [] as Record<string, unknown>[] };
     const files = new Map<string, Uint8Array>([
       ["xero-config/item-code-mappings.csv", strToU8(
@@ -281,7 +327,13 @@ describe("config-transfer Xero HUT_FEE re-key import rejection (#2131)", () => {
         expect.stringContaining('legacy "ENTRANCE_FEE" item-code rows are no longer imported'),
       ]),
     );
-    expect(plan.errors.join(" ")).toContain("v0.12.2");
+    // The remedy copy is pinned but deliberately version-free: a hardcoded
+    // release number goes stale in shipped code if the PR slips a release. The
+    // precise "v0.12.2 was the last release that could import…" statement lives
+    // in CHANGELOG.md and the config-transfer docs, which are edited at each cut.
+    expect(plan.errors.join(" ")).toContain(
+      "re-export this bundle from an install running the current release",
+    );
     expect(plan.items.filter((i) => i.entity === "xero-item-code-mapping")).toHaveLength(0);
   });
 });

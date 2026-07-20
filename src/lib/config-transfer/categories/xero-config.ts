@@ -163,7 +163,7 @@ function parseItemRow(
   // unknown-category error or a quiet normalisation.
   if (rawCategory === LEGACY_ENTRANCE_FEE_CATEGORY) {
     errors.push(
-      `${ITEM_FILE} row ${index + 2}: category — legacy "ENTRANCE_FEE" item-code rows are no longer imported (renamed to JOINING_FEE in #1931); re-export this bundle from an up-to-date install (v0.12.2 was the last release that could import the legacy isMember/ENTRANCE_FEE bundle shape)`,
+      `${ITEM_FILE} row ${index + 2}: category — legacy "ENTRANCE_FEE" item-code rows are no longer imported (renamed to JOINING_FEE in #1931); re-export this bundle from an install running the current release`,
     );
     return null;
   }
@@ -184,7 +184,7 @@ function parseItemRow(
     membershipTypeKey = String(nz(raw.membershipTypeKey));
   } else if (nz(raw.isMember) !== null) {
     errors.push(
-      `${ITEM_FILE} row ${index + 2}: the legacy 'isMember' HUT_FEE key is no longer imported; re-export this bundle from an up-to-date install (v0.12.2 was the last release that could import the legacy isMember/ENTRANCE_FEE bundle shape)`,
+      `${ITEM_FILE} row ${index + 2}: the legacy 'isMember' HUT_FEE key is no longer imported; re-export this bundle from an install running the current release`,
     );
     return null;
   }
@@ -576,8 +576,10 @@ export const xeroConfigExporter: CategoryExporter = {
       ctx.db.membershipType.findMany({ select: { id: true, key: true } }),
     ]);
     const membershipTypeKeyById = new Map(membershipTypeRows.map((t) => [t.id, t.key]));
-    // Emit membership-type-keyed HUT_FEE rows and all ENTRANCE_FEE rows; the
+    // Emit membership-type-keyed HUT_FEE rows and all JOINING_FEE rows; the
     // frozen legacy isMember-keyed HUT_FEE rows are skipped (#1930, E4).
+    // ENTRANCE_FEE is not an emitted category — the #1931 migration re-keyed
+    // every such row to JOINING_FEE, and it is a rejected import shape (#2131).
     const items = itemRows
       .filter((r) => !(r.category === "HUT_FEE" && !r.membershipTypeId))
       .map((r) => ({
@@ -616,14 +618,15 @@ export const xeroConfigExporter: CategoryExporter = {
 };
 
 /**
- * The #1941 precedence guard. The legacy joining-fee materialisation is
- * SUPERSEDED only when the bundle carries the first-class joining-fee schedule
+ * The #1941 precedence guard. The item-code-amount joining-fee materialisation
+ * (#1931 — live behaviour, not old-bundle compat) is SUPERSEDED only when the
+ * bundle carries the first-class joining-fee schedule
  * (membership-fees/joining-fees.csv) AND the membership-fees category is actually
  * being applied. If an admin imports xero-config with membership-fees DESELECTED,
- * the membership-fees importer never runs, so the legacy fan-out MUST still run
- * or the joining fees silently vanish (neither path writes them).
+ * the membership-fees importer never runs, so the item-code fan-out MUST still
+ * run or the joining fees silently vanish (neither path writes them).
  */
-function legacyJoiningFeeSuperseded(
+function itemCodeJoiningFeeSuperseded(
   files: Map<string, Uint8Array>,
   selectedCategories: ConfigTransferCategory[] | undefined,
 ): boolean {
@@ -672,14 +675,14 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
   // Joining-fee materialisation preview (#1931, E5): surface which categories
   // will fan out into JoiningFee windows, and bind the coverage state into the
   // fingerprint so a concurrent fee-configuration change forces a re-plan.
-  // SUPERSEDED by #1941: a NEW-format bundle carries the authoritative
-  // joining-fee schedule in membership-fees/joining-fees.csv, so the legacy
-  // item-code-amount fan-out must not also run/duplicate — but ONLY when the
-  // membership-fees category is actually being applied (see
-  // legacyJoiningFeeSuperseded). A bundle without joining-fees.csv, or a
-  // bundle imported with membership-fees deselected, keeps the item-code-amount
-  // fan-out so its joining fees are not silently dropped.
-  if (!legacyJoiningFeeSuperseded(ctx.files, ctx.selectedCategories)) {
+  // SUPERSEDED by #1941: a bundle carrying the authoritative joining-fee
+  // schedule in membership-fees/joining-fees.csv means the item-code-amount
+  // fan-out must not also run/duplicate — but ONLY when the membership-fees
+  // category is actually being applied (see itemCodeJoiningFeeSuperseded). A
+  // bundle without joining-fees.csv, or a bundle imported with membership-fees
+  // deselected, keeps the item-code-amount fan-out so its joining fees are not
+  // silently dropped.
+  if (!itemCodeJoiningFeeSuperseded(ctx.files, ctx.selectedCategories)) {
     const materialisation = await decideJoiningFeeMaterialisation(
       ctx.db,
       parsedItemRows,
@@ -754,17 +757,16 @@ async function applyXeroConfig(ctx: ApplyContext): Promise<CategoryApplyResult> 
     });
   }
 
-  // Materialise JoiningFee windows from the bundle's legacy amounts (#1931,
-  // E5): re-derive the same decision the plan previewed (the fingerprint
-  // guarantees the coverage state has not drifted) and fan the amounts out
-  // per D-R1 inside this transaction. SUPERSEDED by #1941 for NEW-format
-  // bundles — when membership-fees/joining-fees.csv is present AND the
-  // membership-fees category is being applied it is the authoritative joining-fee
-  // schedule, so the item-code-amount fan-out is skipped to avoid
-  // duplicating/skewing it (the precedence the plan previewed). With
-  // membership-fees deselected the fan-out still runs, so the fees are not
-  // silently dropped.
-  if (!legacyJoiningFeeSuperseded(ctx.files, ctx.selectedCategories)) {
+  // Materialise JoiningFee windows from the bundle's JOINING_FEE item-code
+  // amounts (#1931, E5): re-derive the same decision the plan previewed (the
+  // fingerprint guarantees the coverage state has not drifted) and fan the
+  // amounts out per D-R1 inside this transaction. SUPERSEDED by #1941 — when
+  // membership-fees/joining-fees.csv is present AND the membership-fees
+  // category is being applied it is the authoritative joining-fee schedule, so
+  // the item-code-amount fan-out is skipped to avoid duplicating/skewing it
+  // (the precedence the plan previewed). With membership-fees deselected the
+  // fan-out still runs, so the fees are not silently dropped.
+  if (!itemCodeJoiningFeeSuperseded(ctx.files, ctx.selectedCategories)) {
     const today = getTodayDateOnly();
     const materialisation = await decideJoiningFeeMaterialisation(
       ctx.tx,

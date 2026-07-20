@@ -588,6 +588,8 @@ function parseLodgeFolder(
     out.seasons.push({ raw, name, data: { type: type as never, startDate, endDate, active } });
   });
 
+  // Row numbers below are `i + 2` — the physical CSV line (header is line 1) —
+  // matching RowValidator, so every error about the same row names one line.
   readCsvRows(files, paths.rates).forEach((raw, i) => {
     const v = new RowValidator(paths.rates, i, errors);
     const seasonName = v.required("seasonName", raw.seasonName);
@@ -598,7 +600,7 @@ function parseLodgeFolder(
     // shape is rejected here, never silently mapped.
     if (nz(raw.membershipTypeKey) === null && nz(raw.isMember) !== null) {
       errors.push(
-        `${paths.rates}: row ${i + 1}: the legacy 'isMember' season-rate shape is no longer imported; re-export this bundle from an up-to-date install (v0.12.2 was the last release that could import the legacy isMember bundle shape)`,
+        `${paths.rates}: row ${i + 2}: the legacy 'isMember' season-rate shape is no longer imported; re-export this bundle from an install running the current release`,
       );
       return;
     }
@@ -606,7 +608,7 @@ function parseLodgeFolder(
     const membershipType = batch.membershipTypesByKey.get(membershipTypeKey);
     if (membershipTypeKey && !membershipType) {
       errors.push(
-        `${paths.rates}: row ${i + 1}: unknown membership type "${membershipTypeKey}"`,
+        `${paths.rates}: row ${i + 2}: unknown membership type "${membershipTypeKey}"`,
       );
     }
 
@@ -626,17 +628,17 @@ function parseLodgeFolder(
         membershipTypeKey === "NON_MEMBER";
       if (!rateBearing) {
         errors.push(
-          `${paths.rates}: row ${i + 1}: membership type "${membershipTypeKey}" does not carry its own hut rates (${membershipType.bookingBehavior} types own zero rate rows)`,
+          `${paths.rates}: row ${i + 2}: membership type "${membershipTypeKey}" does not carry its own hut rates (${membershipType.bookingBehavior} types own zero rate rows)`,
         );
         rowShapeValid = false;
       } else if (!membershipType.ageGroupsApply && ageTier !== null) {
         errors.push(
-          `${paths.rates}: row ${i + 1}: membership type "${membershipTypeKey}" prices from a single flat rate — leave ageTier blank`,
+          `${paths.rates}: row ${i + 2}: membership type "${membershipTypeKey}" prices from a single flat rate — leave ageTier blank`,
         );
         rowShapeValid = false;
       } else if (membershipType.ageGroupsApply && ageTier === null) {
         errors.push(
-          `${paths.rates}: row ${i + 1}: membership type "${membershipTypeKey}" uses per-age-tier rates — specify an ageTier`,
+          `${paths.rates}: row ${i + 2}: membership type "${membershipTypeKey}" uses per-age-tier rates — specify an ageTier`,
         );
         rowShapeValid = false;
       }

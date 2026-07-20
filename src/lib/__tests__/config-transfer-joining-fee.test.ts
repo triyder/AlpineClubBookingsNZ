@@ -129,17 +129,19 @@ function joiningFeeStore(created: JoiningFeeRow[], existing: JoiningFeeRow[]) {
 function itemCodeBundle(rows: string[]): Map<string, Uint8Array> {
   return new Map<string, Uint8Array>([
     ["xero-config/item-code-mappings.csv", strToU8(
-      "category,ageTier,seasonType,entranceFeeCategory,itemCode,amountCents\n" +
+      // The exporter's real current header (ITEM_FIELDS): membershipTypeKey is
+      // always emitted, blank for JOINING_FEE rows (HUT_FEE-only column).
+      "category,membershipTypeKey,ageTier,seasonType,entranceFeeCategory,itemCode,amountCents\n" +
       rows.join("\n") + "\n",
     )],
   ]);
 }
 
 const FULL_ITEM_CODE_BUNDLE = itemCodeBundle([
-  "JOINING_FEE,,,ADULT,ENT-AD,10000",
-  "JOINING_FEE,,,YOUTH,ENT-YO,5000",
-  "JOINING_FEE,,,CHILD,ENT-CH,2500",
-  "JOINING_FEE,,,FAMILY,ENT-FA,20000",
+  "JOINING_FEE,,,,ADULT,ENT-AD,10000",
+  "JOINING_FEE,,,,YOUTH,ENT-YO,5000",
+  "JOINING_FEE,,,,CHILD,ENT-CH,2500",
+  "JOINING_FEE,,,,FAMILY,ENT-FA,20000",
 ]);
 
 describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
@@ -207,7 +209,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
       ],
     };
     await xeroConfigImporter.apply(
-      applyCtx(itemCodeBundle(["JOINING_FEE,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
+      applyCtx(itemCodeBundle(["JOINING_FEE,,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
     );
     expect(captures.joiningFeeCreates).toHaveLength(0);
   });
@@ -224,7 +226,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
       ],
     };
     await xeroConfigImporter.apply(
-      applyCtx(itemCodeBundle(["JOINING_FEE,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
+      applyCtx(itemCodeBundle(["JOINING_FEE,,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
     );
 
     const fullAdult = captures.joiningFeeCreates.find(
@@ -252,7 +254,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
       ],
     };
     await xeroConfigImporter.apply(
-      applyCtx(itemCodeBundle(["JOINING_FEE,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
+      applyCtx(itemCodeBundle(["JOINING_FEE,,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
     );
 
     const fullAdultFills = captures.joiningFeeCreates
@@ -291,7 +293,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
       ],
     };
     await xeroConfigImporter.apply(
-      applyCtx(itemCodeBundle(["JOINING_FEE,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
+      applyCtx(itemCodeBundle(["JOINING_FEE,,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
     );
 
     const fullAdultFills = captures.joiningFeeCreates
@@ -321,7 +323,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
   it("a genuinely fee-free install (no legacy amount) still resolves NONE (regression)", async () => {
     const captures = { joiningFeeCreates: [] as JoiningFeeRow[] };
     await xeroConfigImporter.apply(
-      applyCtx(itemCodeBundle(["JOINING_FEE,,,ADULT,ENT-AD,"]), makeTx(captures)) as never,
+      applyCtx(itemCodeBundle(["JOINING_FEE,,,,ADULT,ENT-AD,"]), makeTx(captures)) as never,
     );
     expect(captures.joiningFeeCreates).toHaveLength(0);
 
@@ -335,7 +337,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
   it("ignores zero/absent amounts (no windows materialised from item-code-only rows)", async () => {
     const captures = { joiningFeeCreates: [] as JoiningFeeRow[] };
     await xeroConfigImporter.apply(
-      applyCtx(itemCodeBundle(["JOINING_FEE,,,ADULT,ENT-AD,", "JOINING_FEE,,,YOUTH,ENT-YO,0"]), makeTx(captures)) as never,
+      applyCtx(itemCodeBundle(["JOINING_FEE,,,,ADULT,ENT-AD,", "JOINING_FEE,,,,YOUTH,ENT-YO,0"]), makeTx(captures)) as never,
     );
     expect(captures.joiningFeeCreates).toHaveLength(0);
   });
