@@ -77,7 +77,13 @@ before changing Next.js APIs or conventions.
   the matching `area:edit` permission. This is binding for settings work touched
   from here on; two pre-existing surfaces are acknowledged divergents and are NOT
   retrofitted by this rule alone: the `/admin/modules` grid (bulk toggles) and
-  the staged-but-ungated legacy settings forms. Reference implementation:
+  the staged-but-ungated legacy settings forms. One further divergent is named
+  because it does NOT qualify as untouched:
+  `src/components/admin/booking-policies/public-booking-requests-section.tsx`
+  was modified by #2142 and its **Show indicative pricing** checkbox still
+  auto-persists on toggle. Whether to stage it is an owner decision tracked in
+  **#2162**; until that lands it is a known divergence, not an exemption. See
+  `docs/ARCHITECTURE.md` → the same list. Reference implementation:
   `src/components/admin/booking-policies/group-discount-section.tsx`.
   When you write a new section, or change an existing section's draft/snapshot
   logic, implement that half of the pattern with the shared
@@ -94,10 +100,64 @@ before changing Next.js APIs or conventions.
   that DOES normalise and the form silently disagrees with storage. Keep the
   transport in your own `save` callback (throw the hook's `ForbiddenSaveError`
   for a 403) and keep the section's feedback rendering in the component. A
-  section whose snapshot is a LIST with per-row edits is a different shape and
-  is out of the hook's scope — such a section still follows the canonical
-  pattern by hand. `default-cancellation-policy-section` is a not-yet-adopted
-  holdover that still hand-rolls its draft/snapshot state.
+  section whose snapshot is a LIST with per-row edits is NOT out of scope, but
+  the hook belongs one level down: give the OPEN EDITOR its own instance, keyed
+  on the row being edited AND on an instance counter bumped every time an editor
+  is opened (`` key={`${rowId ?? "new"}:${editorInstance}`} ``), and leave the
+  list itself as ordinary state with its row-level actions as plain direct
+  writes. The counter is not cosmetic: with the bare `key={rowId ?? "new"}` the
+  key is unchanged when Edit is clicked again on the row already open, React
+  reuses the instance, the fresh `initial` is ignored, and the abandoned draft
+  silently survives. Row-level actions that WRITE need an in-flight guard held in
+  a ref, not just a disabled button — a double-click dispatched inside one tick
+  gives both handlers the same pre-update row, so both send the same value and
+  the second write is a no-op audit entry of exactly the #2143 kind. The
+  booking-periods and minimum-night-stay sections are the reference for that
+  shape (#2142). Wherever the read endpoint SYNTHESISES defaults on a miss — or
+  the editor is creating a row that does not exist yet — carry the first-save
+  exception: count the draft as dirty so committing the defaults stays
+  reachable, but never extend that exception to a FAILED load, where the same
+  fallback values would let one click blind-write over a real stored policy.
+  For the same reason, a snapshot is authoritative only for the KEY it was
+  loaded for. Where the fetch is keyed on something beyond the section itself (a
+  lodge scope, say), carry that key inside the snapshot and treat a mismatch as
+  UNKNOWN — no editor, no destructive affordances, no first-save exception —
+  because the hook leaves `saved`/`draft` untouched when a re-fetch fails, and
+  the previous key's value would otherwise be presented as this key's. That
+  binds LIST sections too, where the stale value is a set of rows whose Edit,
+  Delete, and Activate/Deactivate buttons all act on a row id from the partition
+  the admin has already navigated away from. Give the never-loaded state a
+  SENTINEL key distinct from every real key: `null` usually means "club-wide"
+  as well as "no lodge", so seeding `null` makes a failed FIRST load compare
+  equal to the club-wide scope the section mounts on — the widest blast radius
+  there is. Make the unknown state recoverable in place: give its card a **Try
+  again** action that re-runs the current key's load, so an admin is not left
+  reloading the page over one failed GET. All three keyed booking-policy
+  sections (default cancellation, booking periods, minimum night stay) carry
+  this.
+- Every gated section's Save must be dirty-gated, not just view-gated. Booking
+  write routes log audit entries and revalidate public content unconditionally,
+  so a pristine re-save writes an entry asserting a change that never happened
+  (#2143). Fix that at the FORM layer via the hook's `isDirty`; do not bolt an
+  ad-hoc no-op comparison onto the route.
+- Where a section renders an `AdminViewOnlySectionBanner`, its buttons pass
+  `describeReason={false}` so the view-only reason is stated once, in the
+  reading order, instead of on disabled buttons that are out of the tab order —
+  and whose `title` never fires at all, because the shared `buttonVariants` set
+  `disabled:pointer-events-none`. The banner keeps its `role="status"` wrapper
+  permanently mounted and gates only the content, because a polite live region
+  injected already-populated is silently dropped by some screen-reader/browser
+  pairings — and the same is true of `PolicyFeedback`'s `role="alert"` /
+  `role="status"` pair. That guarantee is a POSITION rule, so do not render the
+  loading state as an early return above them. Give the section a FRAME that is
+  rendered in every state — banner, feedback regions, and (where the fetch is
+  scope-keyed) the scope select — and swap only the cards below it. An early
+  return breaks two things at once: a failed FIRST load mounts the section and
+  its already-populated alert in a single commit, and, because a scope change is
+  itself a load, it unmounts the very `PolicyScopeSelect` the admin just used,
+  dropping keyboard focus to `<body>` mid-interaction. Adopted by the five
+  Booking Policies sections only (#2142); the rest of the admin tree keeps
+  `AdminViewOnlyNotice` plus the per-button reason, which stays the default.
 - Security, payment, booking, membership lifecycle, Xero, Stripe, and
   data-integrity work requires high or xhigh reasoning effort and human review
   before merge.

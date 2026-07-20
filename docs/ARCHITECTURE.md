@@ -309,18 +309,55 @@ Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; see `AGENTS.md` → Change Discipline). A section
 renders read-only on mount and stages every change behind a per-section Edit →
 Save/Cancel step: no individual control auto-persists on toggle, Cancel reverts
-to the last saved snapshot, and Save writes once. Edit affordances gate on the
-tri-state `useAdminAreaEditAccess(area)` through `ViewOnlyActionButton` /
-`AdminViewOnlyNotice` (so the resolving `undefined` window stays neutral), and
-the backing write route enforces the matching `area:edit` permission. Module
+to the last saved snapshot, and Save writes once. Save is **dirty-gated as well
+as view-gated**: booking write routes log an audit entry and revalidate public
+content unconditionally, so a pristine re-save would record a change that never
+happened (#2143). That gate belongs at the FORM layer, through the hook's
+`isDirty` — routes deliberately keep no ad-hoc no-op comparison, so a direct API
+caller holding `area:edit` can still write an unchanged body. Edit affordances
+gate on the tri-state `useAdminAreaEditAccess(area)` through
+`ViewOnlyActionButton` / `AdminViewOnlyNotice` (so the resolving `undefined`
+window stays neutral), and the backing write route enforces the matching
+`area:edit` permission. Where a section renders an
+`AdminViewOnlySectionBanner` instead, its buttons pass `describeReason={false}`:
+the view-only reason is then stated once, at the top of the section, in a
+permanently-mounted `role="status"` region, rather than on disabled buttons that
+are out of the tab order and whose `title` never fires at all (the shared
+`buttonVariants` set `disabled:pointer-events-none`). "Permanently mounted" is a
+POSITION rule as much as a rendering one, and it covers `PolicyFeedback`'s
+`role="alert"` / `role="status"` pair too: the section has a FRAME — banner,
+feedback regions, and, where the fetch is scope-keyed, the scope select — that
+is rendered in EVERY state, with only the cards below it swapped. A loading
+early return above that frame re-creates both defects it exists to prevent: a
+failed FIRST load mounts the section together with an already-populated alert in
+one commit, and because a scope change is itself a load it unmounts the
+`PolicyScopeSelect` the admin just operated, dropping keyboard focus to `<body>`
+for the duration of the round trip. That banner shape is
+adopted by the five Booking Policies sections only (#2142); the rest of the
+admin tree keeps `AdminViewOnlyNotice` plus the per-button reason, which stays
+the default. Module
 toggles that share the strict `PUT /api/admin/modules` object (for example the
 magic-link and Google cards on `/admin/security`) must GET the fresh settings and
 merge only their own key before writing, so a sibling card's change is never
-clobbered by a stale render-time snapshot. Two pre-existing surfaces are
-acknowledged divergents that this rule does not retrofit on its own: the
-`/admin/modules` grid (deliberate bulk toggles) and the older staged-but-ungated
-settings forms. Reference:
-`src/components/admin/booking-policies/group-discount-section.tsx`.
+clobbered by a stale render-time snapshot. The rule binds sections that are NEW
+or MODIFIED, so several pre-existing surfaces are acknowledged divergents it does
+not retrofit on its own: the `/admin/modules` grid (deliberate bulk toggles), the
+older staged-but-ungated settings forms, and the age-tier and notification
+settings panels — the last two were previously written up as blanket exemptions
+"because they are list sections", which is no longer the reason: list sections
+are in scope (see the per-row shape below), those two simply have not been
+touched since. One divergent is NOT pre-existing-and-untouched and is called out
+by name for that reason: `public-booking-requests-section.tsx` was modified by
+#2142 (its Save buttons and view-only banner), yet its **Show indicative
+pricing** checkbox still auto-persists on toggle rather than staging behind
+Edit → Save. That is deliberate for now — the owner decision on whether to stage
+it lives in **#2162** — but under "binds new or modified sections" it is a real
+divergence, not an exemption, and it stays listed here until #2162 resolves.
+Reference:
+`src/components/admin/booking-policies/group-discount-section.tsx` — note that
+it now carries the section banner, so for the default per-button
+`AdminViewOnlyNotice` treatment look at any admin surface outside Booking
+Policies instead.
 
 The draft/snapshot half of that pattern lives in the shared
 `useSectionEditState` hook (`src/hooks/use-section-edit-state.ts`), which new
@@ -341,9 +378,36 @@ GET-fresh-then-merge step above, multi-endpoint writes, and per-endpoint failure
 copy all stay local — and throws the hook's `ForbiddenSaveError` for a 403 so it
 maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Feedback rendering stays
 in the component, because booking-policy sections use `PolicyFeedback` while the
-security cards use `Alert`. Sections whose snapshot is a list edited row by row
-(age tiers, notification settings) are a different shape and stay outside the
-hook.
+security cards use `Alert`. A section whose snapshot is a LIST with per-row
+edits is not out of scope, but the hook belongs one level down: the OPEN EDITOR
+gets its own instance, keyed on the row being edited AND on an instance counter
+bumped every time an editor is opened
+(`` key={`${rowId ?? "new"}:${editorInstance}`} ``), while the list itself stays
+ordinary state and its row-level actions stay plain direct writes. The counter
+is not cosmetic: with the bare `key={rowId ?? "new"}` the key is unchanged when
+Edit is clicked again on the row already open, so React reuses the instance, the
+fresh `initial` is ignored, and the abandoned draft silently survives. Row-level
+actions that WRITE also need an in-flight guard held in a ref rather than only a
+disabled button, because a double-click dispatched inside one tick gives both
+handlers the same pre-update row and the second write becomes a no-op audit
+entry of the #2143 kind. The booking-periods and minimum-night-stay sections are
+the reference for that shape (#2142). Wherever the read endpoint SYNTHESISES
+defaults on a miss — or the editor is creating a row that does not exist yet —
+carry the first-save exception so committing the defaults stays reachable, but
+never extend it to a FAILED load, where the same fallback values would let one
+click blind-write over a real stored policy. For the same reason a snapshot is
+authoritative only for the scope it was loaded for: a section whose fetch is
+keyed on something else (a lodge scope) must track that key WITH the snapshot
+and treat a mismatch as unknown, because a failed re-fetch leaves the previous
+key's value in place. That binds LIST sections just as hard — there the stale
+value is a set of rows whose Edit, Delete, and Activate/Deactivate buttons all
+act on a row id belonging to the partition the admin has navigated away from —
+and the never-loaded state needs a SENTINEL key distinct from every real one,
+because `null` already means "club-wide" and a `null` seed makes a failed FIRST
+load compare equal to the scope the section mounts on. The unknown state must
+also be RECOVERABLE without leaving the page: it carries a **Try again** action
+that re-runs the current key's load in place. All three keyed booking-policy
+sections (default cancellation, booking periods, minimum night stay) carry this.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same

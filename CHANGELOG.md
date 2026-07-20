@@ -175,6 +175,155 @@ All notable public reference-release changes should be recorded here.
   can be widened. Chart hex colours are unaffected — they remain the documented
   #1801 SVG-presentation-attribute carve-out.
 
+- **Booking-policies Save buttons: unified view-only gating, and no more no-op
+  group-discount saves (#2142, #2143).** Two carry-forwards from #2136. First,
+  every Save/Create button across the five **Booking Policies** sections — group
+  discount, booking periods, minimum night stay, default cancellation policy,
+  and public booking requests — now goes through `ViewOnlyActionButton`, the same
+  wrapper the security cards and these sections' own Edit buttons already used.
+  The behaviour change is narrow but real: `useAdminAreaEditAccess` is tri-state
+  and can narrow **after** the form was opened (a session refetch reducing the
+  actor's permissions mid-edit), and in that window Save previously stayed
+  clickable and the admin walked into a 403 mapped to the "not saved" notice.
+  It now disables immediately. While access is still *resolving* (`undefined`)
+  the button is disabled **neutrally**, with no reason shown, so an admin who
+  turns out to be edit-capable never sees a "view only" message flash.
+  No security consequence either way — Save only ever rendered behind the
+  already-gated Edit, and each write route enforces `bookings:edit`
+  independently. The two public-booking-request Saves were also raw `<button>`
+  elements styled with brand utilities; they now use the shared themed `Button`
+  like the other four sections, so they follow the club theme.
+
+  **The explanation for a view-only disabled state now lives at the section
+  level, not on each button.** A `disabled` button is out of the tab order, so
+  the reason it used to carry was attached to an element a keyboard user never
+  lands on — precisely the people it was for. (A screen reader *can* still
+  traverse a disabled button in browse mode, so "unreachable" overstates it; but
+  the `title` tooltip genuinely never appeared, because the shared button styles
+  set `disabled:pointer-events-none`, so a disabled button fires no hover event
+  at all.) Each of the five sections now renders a single banner at the top —
+  "You have view-only access to this area", plus what that section specifically
+  cannot be changed — in the normal reading order and in a polite live region,
+  so it is announced when the session resolves and met *before* the dead
+  controls rather than never. The live region itself is mounted from the first
+  paint, ahead of each section's "Loading…" state, and only its *content*
+  appears when access resolves: a live region injected already-populated is
+  silently dropped by some screen reader and browser combinations. The buttons
+  stay disabled exactly as before; only the explanation moved. This is scoped to
+  Booking Policies: every other admin surface keeps the per-button reason
+  unchanged, and widening the pattern is tracked in #2160.
+
+  Second, the group discount card's Save is no longer clickable while the form
+  is unchanged. Opening **Edit** and clicking **Save** without touching a field
+  used to re-PUT, and the route writes its `group-discount.update` audit entry
+  and busts the public-page cache unconditionally — so the audit trail collected
+  entries asserting policy changes that never happened. There is one deliberate
+  exception, because the GET **synthesises** the default values when no row has
+  ever been saved: on such a club the form can never differ from its snapshot,
+  so gating on that comparison alone would have made creating the row
+  unreachable and left the setup checklist reporting "Group discount: using
+  defaults" forever. The GET now reports whether a row is actually persisted,
+  and the card treats "no row yet" as savable — a first save is a genuine
+  creation, so its audit entry is accurate. A **failed** load deliberately does
+  not get that exception: the fallback shown in the form is the same defaults
+  object, and treating it as "no row yet" would let one click overwrite a real
+  configured policy. No pricing behaviour changed — a missing row and a disabled
+  row were already equivalent to every pricing reader.
+
+  **The same no-op protection now covers the other three sections**, which were
+  hand-rolled create/edit forms with no draft/snapshot pair at all. Booking
+  periods, minimum night stay, and the default cancellation policy now track
+  real dirtiness through the shared `useSectionEditState` hook, so **Update
+  Period**, **Update Policy**, and **Save Default Policy** stay greyed out until
+  the form actually differs from what is stored — and light up again the moment
+  it does, or go back to grey if you undo the change by hand. That closes two
+  more audit-erosion paths of exactly the kind #2143 describes: the cancellation
+  write route logs `cancellation-policy.update` unconditionally, and the
+  per-period write route logs a `booking-period.update` entry carrying a
+  `before`/`after` pair *even when the two halves are identical*. Neither is
+  reachable from the UI any more, and both are fixed at the form layer rather
+  than by bolting an ad-hoc comparison onto the routes. Because these sections
+  edit rows rather than one config object, each **open editor** gets its own
+  draft/snapshot pair keyed on the row being edited; the list around it stays
+  ordinary state, and the row-level Activate/Deactivate/Delete buttons stay
+  DIRECT actions rather than becoming draft-and-Save ones — they still write on
+  the click, they just write once (see the single-shot guard below). The
+  first-save exception carries over where it
+  applies: creating a period or a minimum-stay policy is always savable (there
+  is no stored row to be unchanged from), as is the first cancellation policy on
+  a partition that has none — the club-wide rules on a club that never saved
+  them, or a lodge override being created — but, as with the group discount, a
+  **failed** load never gets that exception, so a load error can never turn into
+  a one-click overwrite of a real policy. Comparisons are semantic rather than
+  literal: a re-ordered but otherwise identical set of refund rules is not a
+  change (the routes sort before storing), and neither is ticking a trigger day
+  and unticking it again.
+
+  For multi-lodge clubs, the same "a failed load must not become a write" rule
+  now also covers the **scope switch**. If you pick a lodge and its policy fails
+  to load, the section says so and shows nothing else: previously the club-wide
+  policy left on screen would have been relabelled as that lodge's override,
+  offering a **Remove override** that wrote an audit entry while deleting
+  nothing, and a Save that would have created an override out of rules you never
+  chose for that lodge. Three smaller editor fixes ship alongside: clicking
+  **Edit** again on the row you already have open now resets the form instead of
+  keeping the abandoned draft, **Cancel** clears the error the editor raised, and
+  if the server's reply to a *create* cannot be read the form still closes — so
+  the obvious retry cannot quietly create a second period or policy.
+
+  **A failed load now stops the section everywhere, not just on a scope
+  switch.** Three related holes closed. If the cancellation policy fails to load
+  on ARRIVAL — not after switching lodge, just an ordinary failed page load — the
+  section used to render the full **Default Policy** editor over its own
+  hard-coded starting rules, indistinguishable on screen from the club's real
+  refund schedule. A pristine Save was already blocked, but the realistic path
+  was not: click **Edit**, change one field, **Save**, and the write replaced the
+  club-wide rules wholesale with values nobody had ever configured. It now shows
+  the same "Could not load…" card a failed lodge switch shows, with no editor at
+  all. **Date-Specific Periods** and **Minimum Night Stay** got the same
+  treatment, which they had been missing entirely: a failed switch there left the
+  previous scope's rows on screen under the new scope's heading, with **Edit**,
+  **Delete**, and **Activate/Deactivate** all live over them — so a click acted
+  on the partition the admin thought they had left. Both now list nothing and say
+  so, and switching scope closes any editor that was open. Two smaller
+  scope-timing fixes ship with it: **Create override** can no longer land on the
+  lodge you switched TO while its seed was still loading, and the "Override saved
+  for …" confirmation now names the lodge that was actually written rather than
+  whichever one is selected when the reply arrives.
+
+  **Activate/Deactivate is now single-shot, and it is announced.** Those row
+  buttons are one-click writes, never covered by the Save dirty gate, and they
+  read the row's current state from a list that only refreshes afterwards — so a
+  quick double-click sent the same value twice and recorded the second as an
+  update whose "before" and "after" were identical, the exact #2143 harm from a
+  different direction. Each button is now disabled for the round trip and
+  guarded against the repeat click. Separately, the box that reports the outcome
+  of every booking-policy save had no live region at all, so neither a success
+  nor a failure — including the "This change was not saved" message for a
+  permissions change mid-edit — was announced to a screen reader. Failures are
+  now assertive (they contradict what you believe just happened) and
+  confirmations polite, both in regions registered before the message lands. And
+  an active minimum-stay row no longer shows two different buttons both labelled
+  **Deactivate**: the reversible pause keeps that name, and the destructive one
+  is now **Delete**, which is what it is. (**Delete** is a soft delete: the row
+  is taken out of use and a `delete` audit entry is recorded, but it stays
+  listed as inactive and **Activate** brings it back. The guide previously said
+  it removed the policy "for good", which was never what the code did.)
+
+  **The section frame no longer disappears while a scope loads.** All three
+  scoped sections — cancellation policy, Date-Specific Periods, Minimum Night
+  Stay — now keep the view-only banner, the message area, and the **Rules for**
+  select on screen in every state, and swap only the cards below them. Two
+  things were broken by rendering the loading state above all that. A keyboard
+  or screen-reader admin who changed scope from the **Rules for** select had
+  that select removed from the page for the whole round trip, dropping their
+  focus and forcing a full re-traverse to change scope again; and the message
+  area was mounted already carrying an error whenever the FIRST load failed,
+  which is the one thing a live region must never do if the message is to be
+  announced reliably. Finally, the "Could not load…" card now offers **Try
+  again**, so recovering from a failed load is one click instead of a page
+  reload.
+
 ## 0.12.2 - 2026-07-20
 
 - Release classification: patch public reference release. As with `v0.12.1`, the

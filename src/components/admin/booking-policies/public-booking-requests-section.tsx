@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
-import { ADMIN_FORBIDDEN_SAVE_REASON, AdminViewOnlyNotice } from "@/components/admin/view-only-action"
+import { ADMIN_FORBIDDEN_SAVE_REASON, AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { PolicyFeedback } from "./policy-feedback"
 
 interface BookingRequestSettings {
@@ -132,8 +132,29 @@ export function PublicBookingRequestsSection() {
     })
   }
 
+  /*
+    #2142: one section-level banner carries the view-only explanation —
+    announced on arrival, in the reading order — instead of each disabled Save
+    carrying its own copy. It is rendered in BOTH branches below, in the same
+    position, so the polite live region is registered in the accessibility tree
+    from the first paint and only its CONTENT changes when `canEdit` resolves. A
+    region injected already-populated is silently dropped by some
+    screen-reader/browser pairings.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the public booking request settings but cannot
+      change them. Bookings edit access is required.
+    </AdminViewOnlySectionBanner>
+  )
+
   if (loading) {
-    return <div className="text-center py-8">Loading...</div>
+    return (
+      <div>
+        {viewOnlyBanner}
+        <div className="text-center py-8">Loading...</div>
+      </div>
+    )
   }
 
   const timingDirty =
@@ -144,165 +165,173 @@ export function PublicBookingRequestsSection() {
     Number(attendeeReminderDraft) !== settings.attendeeConfirmationReminderDays
 
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
       <PolicyFeedback
         error={error}
         success={success}
         onClearError={() => setError("")}
         onClearSuccess={() => setSuccess("")}
       />
-
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view the public booking request settings but cannot
-          change them. Bookings edit access is required.
-        </AdminViewOnlyNotice>
-      ) : null}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Indicative Pricing</CardTitle>
-          <CardDescription>
-            Control whether the public booking request form shows indicative pricing to non-members.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              id="showPricingToNonMembers"
-              checked={settings.showPricingToNonMembers}
-              onChange={(e) => handleToggleShowPricing(e.target.checked)}
-              className="rounded border-input"
-              disabled={saving || !canEdit}
-            />
-            <Label htmlFor="showPricingToNonMembers">Show indicative pricing on the request form</Label>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            When enabled, the public form is labelled &ldquo;Request to Book&rdquo; and shows an indicative
-            price. When disabled, it is labelled &ldquo;Request for Price&rdquo; and no pricing is shown
-            until an officer reviews the request.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Submitted requests that are declined, or never have their email verified, are automatically
-            purged after 90 days in line with the Privacy Act 2020.
-          </p>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Quote Response Window &amp; Reminders</CardTitle>
-          <CardDescription>
-            Set how long a quote link stays valid after you send it, and when the requester is reminded
-            before it expires.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="space-y-1">
-            <Label htmlFor="quoteResponseTtlDays">Quote response window (days)</Label>
-            <input
-              type="number"
-              id="quoteResponseTtlDays"
-              min={1}
-              max={60}
-              value={ttlDraft}
-              onChange={(e) => setTtlDraft(e.target.value)}
-              className="block w-28 rounded border border-input px-2 py-1 text-sm"
-              disabled={saving || !canEdit}
-            />
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Indicative Pricing</CardTitle>
+            <CardDescription>
+              Control whether the public booking request form shows indicative pricing to non-members.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="showPricingToNonMembers"
+                checked={settings.showPricingToNonMembers}
+                onChange={(e) => handleToggleShowPricing(e.target.checked)}
+                className="rounded border-input"
+                disabled={saving || !canEdit}
+              />
+              <Label htmlFor="showPricingToNonMembers">Show indicative pricing on the request form</Label>
+            </div>
             <p className="text-xs text-muted-foreground">
-              How many days the requester has to accept, cancel, or reply before the secure quote link
-              expires. Applies to quotes sent from now on; quotes already sent keep their original expiry.
+              When enabled, the public form is labelled &ldquo;Request to Book&rdquo; and shows an indicative
+              price. When disabled, it is labelled &ldquo;Request for Price&rdquo; and no pricing is shown
+              until an officer reviews the request.
             </p>
-          </div>
-
-          <div className="space-y-1">
-            <Label htmlFor="quoteReminderLeadDays">Reminder lead time (days before expiry)</Label>
-            <input
-              type="number"
-              id="quoteReminderLeadDays"
-              min={0}
-              max={30}
-              value={reminderDraft}
-              onChange={(e) => setReminderDraft(e.target.value)}
-              className="block w-28 rounded border border-input px-2 py-1 text-sm"
-              disabled={saving || !canEdit}
-            />
             <p className="text-xs text-muted-foreground">
-              Send the requester one reminder this many days before the quote expires. The reminder
-              contains a fresh, working quote link so they never have to find the original email. Set to
-              0 to turn reminders off. Must be shorter than the response window above.
+              Submitted requests that are declined, or never have their email verified, are automatically
+              purged after 90 days in line with the Privacy Act 2020.
             </p>
-          </div>
+          </CardContent>
+        </Card>
 
-          <button
-            type="button"
-            onClick={handleSaveQuoteTiming}
-            disabled={saving || !timingDirty || !canEdit}
-            className="rounded bg-brand-charcoal px-3 py-1.5 text-sm font-medium text-brand-snow disabled:opacity-50"
-          >
-            {saving ? "Saving…" : "Save quote timing"}
-          </button>
-        </CardContent>
-      </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Quote Response Window &amp; Reminders</CardTitle>
+            <CardDescription>
+              Set how long a quote link stays valid after you send it, and when the requester is reminded
+              before it expires.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="space-y-1">
+              <Label htmlFor="quoteResponseTtlDays">Quote response window (days)</Label>
+              <input
+                type="number"
+                id="quoteResponseTtlDays"
+                min={1}
+                max={60}
+                value={ttlDraft}
+                onChange={(e) => setTtlDraft(e.target.value)}
+                className="block w-28 rounded border border-input px-2 py-1 text-sm"
+                disabled={saving || !canEdit}
+              />
+              <p className="text-xs text-muted-foreground">
+                How many days the requester has to accept, cancel, or reply before the secure quote link
+                expires. Applies to quotes sent from now on; quotes already sent keep their original expiry.
+              </p>
+            </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>School Attendee Confirmation</CardTitle>
-          <CardDescription>
-            Before a school group arrives, the school contact is emailed a secure link to replace the
-            placeholder attendee names and confirm who is coming. The chore roster uses the confirmed
-            names.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1">
-            <Label htmlFor="attendeeConfirmationLeadDays">First prompt (days before check-in)</Label>
-            <input
-              type="number"
-              id="attendeeConfirmationLeadDays"
-              min={0}
-              max={90}
-              value={attendeeLeadDraft}
-              onChange={(e) => setAttendeeLeadDraft(e.target.value)}
-              className="block w-28 rounded border border-input px-2 py-1 text-sm"
-              disabled={saving || !canEdit}
-            />
-            <p className="text-xs text-muted-foreground">
-              Start prompting the school this many days before check-in. Set to 0 to turn the prompts
-              off.
-            </p>
-          </div>
+            <div className="space-y-1">
+              <Label htmlFor="quoteReminderLeadDays">Reminder lead time (days before expiry)</Label>
+              <input
+                type="number"
+                id="quoteReminderLeadDays"
+                min={0}
+                max={30}
+                value={reminderDraft}
+                onChange={(e) => setReminderDraft(e.target.value)}
+                className="block w-28 rounded border border-input px-2 py-1 text-sm"
+                disabled={saving || !canEdit}
+              />
+              <p className="text-xs text-muted-foreground">
+                Send the requester one reminder this many days before the quote expires. The reminder
+                contains a fresh, working quote link so they never have to find the original email. Set to
+                0 to turn reminders off. Must be shorter than the response window above.
+              </p>
+            </div>
 
-          <div className="space-y-1">
-            <Label htmlFor="attendeeConfirmationReminderDays">Reminder interval (days)</Label>
-            <input
-              type="number"
-              id="attendeeConfirmationReminderDays"
-              min={1}
-              max={30}
-              value={attendeeReminderDraft}
-              onChange={(e) => setAttendeeReminderDraft(e.target.value)}
-              className="block w-28 rounded border border-input px-2 py-1 text-sm"
-              disabled={saving || !canEdit}
-            />
-            <p className="text-xs text-muted-foreground">
-              Keep re-sending the confirmation link this often until the school confirms the list or
-              check-in arrives. Each email carries a fresh working link.
-            </p>
-          </div>
+            {/*
+              #2142: these two Saves were already gated correctly, but as raw
+              <button> elements they were unthemed and could not participate in the
+              shared view-only treatment. `ViewOnlyActionButton` keeps the
+              resolving (`undefined`) window neutral, and `describeReason={false}`
+              defers the explanation to the section banner above (a disabled button
+              is out of the tab order, so its own reason was never reachable). The
+              existing `!canEdit` term is now redundant with the wrapper's own
+              `canEdit !== true` check; it is kept so the gate is legible here
+              rather than only inside the wrapper.
+            */}
+            <ViewOnlyActionButton
+              type="button"
+              canEdit={canEdit}
+              describeReason={false}
+              onClick={handleSaveQuoteTiming}
+              disabled={saving || !timingDirty || !canEdit}
+            >
+              {saving ? "Saving…" : "Save quote timing"}
+            </ViewOnlyActionButton>
+          </CardContent>
+        </Card>
 
-          <button
-            type="button"
-            onClick={handleSaveAttendeeTiming}
-            disabled={saving || !attendeeTimingDirty || !canEdit}
-            className="rounded bg-brand-charcoal px-3 py-1.5 text-sm font-medium text-brand-snow disabled:opacity-50"
-          >
-            {saving ? "Saving…" : "Save attendee prompts"}
-          </button>
-        </CardContent>
-      </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>School Attendee Confirmation</CardTitle>
+            <CardDescription>
+              Before a school group arrives, the school contact is emailed a secure link to replace the
+              placeholder attendee names and confirm who is coming. The chore roster uses the confirmed
+              names.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-1">
+              <Label htmlFor="attendeeConfirmationLeadDays">First prompt (days before check-in)</Label>
+              <input
+                type="number"
+                id="attendeeConfirmationLeadDays"
+                min={0}
+                max={90}
+                value={attendeeLeadDraft}
+                onChange={(e) => setAttendeeLeadDraft(e.target.value)}
+                className="block w-28 rounded border border-input px-2 py-1 text-sm"
+                disabled={saving || !canEdit}
+              />
+              <p className="text-xs text-muted-foreground">
+                Start prompting the school this many days before check-in. Set to 0 to turn the prompts
+                off.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="attendeeConfirmationReminderDays">Reminder interval (days)</Label>
+              <input
+                type="number"
+                id="attendeeConfirmationReminderDays"
+                min={1}
+                max={30}
+                value={attendeeReminderDraft}
+                onChange={(e) => setAttendeeReminderDraft(e.target.value)}
+                className="block w-28 rounded border border-input px-2 py-1 text-sm"
+                disabled={saving || !canEdit}
+              />
+              <p className="text-xs text-muted-foreground">
+                Keep re-sending the confirmation link this often until the school confirms the list or
+                check-in arrives. Each email carries a fresh working link.
+              </p>
+            </div>
+
+            <ViewOnlyActionButton
+              type="button"
+              canEdit={canEdit}
+              describeReason={false}
+              onClick={handleSaveAttendeeTiming}
+              disabled={saving || !attendeeTimingDirty || !canEdit}
+            >
+              {saving ? "Saving…" : "Save attendee prompts"}
+            </ViewOnlyActionButton>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }

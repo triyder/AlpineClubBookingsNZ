@@ -86,10 +86,16 @@ export interface UseSectionEditStateOptions<T extends object> {
   /** Gate Save on draft validity. Defaults to always valid. */
   isValid?: (draft: T) => boolean;
   /**
-   * Let Save run when the draft matches the snapshot. Defaults to `false`,
-   * matching cards whose Save button is disabled while pristine. Cards that
-   * leave Save enabled regardless (and so can re-PUT an unchanged draft) set
-   * this to `true` to keep that behaviour.
+   * Let Save run when the draft matches the snapshot. Defaults to `false`:
+   * every card that currently uses this hook disables Save while pristine, so
+   * an unchanged draft never re-PUTs.
+   *
+   * NO CURRENT ADOPTER SETS THIS. It is retained as a deliberate escape hatch
+   * for a future card whose write endpoint is a meaningful action rather than a
+   * state update — a "re-send", "re-sync", or "re-apply" whose whole point is to
+   * fire again with identical input. Reach for it only in that case: for an
+   * ordinary settings PUT, a pristine save writes a misleading audit entry and
+   * busts caches for a change that never happened (#2143).
    */
   allowPristineSave?: boolean;
 }

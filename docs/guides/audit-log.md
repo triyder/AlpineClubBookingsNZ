@@ -59,6 +59,35 @@ and machine `action`, the actor, the affected member (subject), the entity, and
 primary drill-down links. Expanding a row reveals the request ID, IP, user
 agent, **retention class**, raw details, and JSON metadata.
 
+### Booking-policy entries
+
+From this release, a `group-discount.update`, `cancellation-policy.update`,
+`booking-period.update`, or `minimum-stay-policy.update` entry recorded **from
+the admin screens** always reflects a real change: the Booking Policies forms
+keep **Save** disabled until the form actually differs from what is stored, so
+opening **Edit** and saving without touching anything can no longer write an
+entry.
+
+The same now holds for the row-level **Activate** / **Deactivate** buttons on
+booking periods and minimum-stay policies, which write through the same two
+`*.update` actions. Those are not form saves — they are one-click writes — so
+they were never covered by the Save gate; a quick double-click used to send the
+same new value twice and record the second as an update whose `before` and
+`after` were identical. Each button is now disabled for the round trip and
+guarded against a repeat click, so one click is one entry.
+
+The red **Delete** button on a minimum-stay policy records
+`minimum-stay-policy.delete`, not an `*.update`. It is a **soft** delete: the
+policy is marked inactive and stops applying, but the row is kept and stays
+listed in the admin screen, where **Activate** can bring it back. Read the
+entry as "taken out of use", not as "erased".
+
+Two caveats. Entries recorded *before* this release may still be no-ops, so
+treat an older pair of identical `before`/`after` values as "nothing changed"
+rather than as a mystery. And the guarantee is a property of the admin screens,
+not of the write routes — a script or integration calling the API directly with
+`bookings:edit` can still submit an unchanged body and get an entry.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
