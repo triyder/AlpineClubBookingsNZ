@@ -4,14 +4,16 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
-- **Every admin area now explains view-only access once, at the top, instead of
+- **Most admin areas now explain view-only access once, at the top, instead of
   on each greyed-out button (#2160).** If your admin role can look at an area
   but not change it, you now meet a single short banner when you arrive — "You
   have view-only access to this area", followed by what specifically you cannot
   change there and which permission would let you. The greyed-out buttons below
   it no longer each carry their own hidden copy of that explanation. This is the
-  pattern Booking Policies adopted in #2142 (above), now applied across the
-  whole admin tree. **Nothing about who can do what has changed** — the same
+  pattern Booking Policies adopted in #2142 (above), now applied across most of
+  the admin tree: about four out of five gated buttons (202 of 254) are now
+  explained by a banner instead of individually. **Nothing about who can do what
+  has changed** — the same
   people can edit the same things, every button is gated exactly as it was, and
   no write path, price, or permission moved.
 
@@ -28,10 +30,19 @@ All notable public reference-release changes should be recorded here.
   was considered and deliberately not done: it would turn every gated control
   into a clickable one that has to be individually stopped from saving, and the
   risk of getting that wrong on a money or membership screen outweighed the
-  benefit. A few controls are also unchanged because no banner can cover them —
-  those inside a pop-up dialog or dropdown menu, and a handful of small toolbars
-  that are dropped into other pages — and they keep their own per-button
-  explanation. See `docs/ARCHITECTURE.md` and `docs/STYLE_GUIDE.md`.
+  benefit.
+
+  **What is not converted.** 52 controls still carry their own per-button
+  explanation. Most of that is one screen: **the member detail page**, where 25
+  buttons across nine per-record cards (credit, lifecycle, committee, partner
+  link, deletion, dependents, parent links, lodge access, seasonal membership)
+  are unchanged. Those cards *could* each show the banner, but one member page
+  shows all nine at once, so it would repeat the same sentence nine times down a
+  single screen; whether that becomes one banner for the whole page is a
+  separate open decision (#2168). The rest — 27 controls — are places no banner
+  can reach: inside a pop-up dialog or dropdown menu, or in small toolbars
+  dropped into another page's layout. See `docs/ARCHITECTURE.md` and
+  `docs/STYLE_GUIDE.md`.
 
 - **Secondary text in the member and admin app now actually looks secondary
   (#2145).** Small labels, hints, and footnotes are meant to sit a step below

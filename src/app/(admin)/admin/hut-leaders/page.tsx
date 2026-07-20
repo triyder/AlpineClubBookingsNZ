@@ -548,6 +548,11 @@ export default function HutLeadersPage() {
         error={error}
         onConfirm={handleConfirm}
         canEdit={canEdit}
+        // #2160: the page banner above already states view-only access for this
+        // whole surface, including the assignments table below, so the form must
+        // not repeat it — both are unconditional, so every view-only lodge admin
+        // would otherwise meet the same sentence twice in two live regions.
+        renderViewOnlyBanner={false}
         lodgeSelector={
           <LodgeSelect
             lodges={lodges}

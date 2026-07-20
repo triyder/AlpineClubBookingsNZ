@@ -35,6 +35,19 @@ export interface FamilyGroupEditorProps {
   onChanged?: () => void;
   // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
   canEdit: boolean | undefined;
+  /**
+   * Whether this editor renders its OWN view-only banner (#2160). Default
+   * `true`, which is what the dialog mount on `/admin/members/[id]` needs: a
+   * dialog is a separate accessibility container, so no ancestor banner can
+   * reach it and the editor must state the reason itself.
+   *
+   * `/admin/family-groups` renders this editor inline BELOW its own page
+   * banner, which is unconditional and covers the same membership scope, so it
+   * passes `false` — otherwise a view-only membership admin who opens a group
+   * meets the same sentence twice, in two `role="status"` regions. Gating never
+   * changes; this only says WHO states the reason.
+   */
+  renderViewOnlyBanner?: boolean;
 }
 
 export function FamilyGroupEditor({
@@ -42,6 +55,7 @@ export function FamilyGroupEditor({
   onClose,
   onChanged,
   canEdit,
+  renderViewOnlyBanner = true,
 }: FamilyGroupEditorProps) {
   const [group, setGroup] = useState<FamilyGroupDetail | null>(null);
   const [requests, setRequests] = useState<FamilyGroupRequest[]>([]);
@@ -314,12 +328,18 @@ export function FamilyGroupEditor({
     some screen-reader/browser pairings. It is rendered in EVERY return branch,
     including the loading one, and sits OUTSIDE the card's `space-y-*` stack so
     the empty wrapper an edit-capable admin gets costs no layout.
+
+    `renderViewOnlyBanner={false}` suppresses it for the one parent that already
+    covers this editor with its own banner (`/admin/family-groups`, which renders
+    the editor inline under a page banner). The dialog mount keeps the default:
+    a dialog is its own accessibility container, so the ancestor banner does not
+    reach it and this is the only explanation the admin gets there.
   */
-  const viewOnlyBanner = (
+  const viewOnlyBanner = renderViewOnlyBanner ? (
     <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
       Your admin role can view this family group but cannot change it.
     </AdminViewOnlySectionBanner>
-  );
+  ) : null;
 
   if (loading) {
     return (

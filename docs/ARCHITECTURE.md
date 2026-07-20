@@ -547,28 +547,55 @@ failed FIRST load mounts the section together with an already-populated alert in
 one commit, and because a scope change is itself a load it unmounts the
 `PolicyScopeSelect` the admin just operated, dropping keyboard focus to `<body>`
 for the duration of the round trip. That banner shape started in the five
-Booking Policies sections (#2142) and is now the **house pattern across the
-whole admin tree** (#2160): every admin section that can host a banner renders
-one and opts its own controls out of the per-button reason.
-
-Two shapes are deliberately NOT converted, and they keep
-`ViewOnlyActionButton`'s default per-button reason (`describeReason` left at
-`true`) because no banner can cover them:
+Booking Policies sections (#2142) and is now the **default across the admin
+tree** (#2160) — not a claim that nothing is left. Measured on the branch that
+rolled it out: **72 components render a banner, and 202 of the 254
+`ViewOnlyActionButton` call sites opt out** of the per-button reason because a
+banner in the same file covers them. The remaining **52 controls across 23 files
+deliberately keep the per-button default** (`describeReason` left at `true`), in
+three shapes:
 
 - **Controls inside a dialog, sheet, popover, or dropdown menu.** These live in
   a separate accessibility container — focus is trapped and the page behind is
   commonly inert — so a banner rendered in the page body does not reach them.
+  (9 controls across 4 files.)
 - **Leaf components with no section of their own**, which a parent drops into
   someone else's layout (for example the member detail header's action toolbar,
-  and the booking capacity/exclusive hold controls). Nothing local proves an
-  ancestor renders a banner above them, so the reason stays on the control.
+  the booking capacity/exclusive hold controls, the family-group login-holder
+  and request-review sub-sections, and the non-member contact form). Nothing
+  local proves an ancestor renders a banner above them, so the reason stays on
+  the control. (18 controls across 10 files.)
+- **The member detail per-record cards** in
+  `src/app/(admin)/admin/members/[id]/_components/` — `member-credit-card`,
+  `member-lifecycle-card`, `member-committee-assignments-card`,
+  `member-partner-link-card`, `member-deletion-card`, `member-dependents-card`,
+  `member-parent-links-card`, `member-lodge-access-card`, and
+  `member-seasonal-membership-card`. (25 controls across 9 files — the single
+  largest block of unconverted controls, and the busiest admin surface in the
+  product.) These are NOT the two shapes above: they are real `Card`/
+  `CardHeader` sections, several call `useAdminAreaEditAccess` themselves, and
+  they are structurally identical to panels that were converted, so a banner
+  *could* cover them. They were deferred for a different reason — one member
+  detail page renders all nine at once, so converting them stacks nine copies of
+  the same banner down a single page, and the right answer is probably one
+  page-level banner rather than nine section-level ones. That is a design
+  decision with a visible-UI consequence, so it is **owner decision #2168**, not
+  a silent to-do. Do not convert them under #2160.
 
-The invariant that makes this safe is enforced mechanically by
-`src/components/admin/__tests__/view-only-banner-contract.test.ts`: a file may
-only use `describeReason={false}` if it also renders an
-`AdminViewOnlySectionBanner`. Coverage is asserted per FILE, because that is the
+Two invariants are enforced mechanically by
+`src/components/admin/__tests__/view-only-banner-contract.test.ts`. First,
+coverage: a file may only use `describeReason={false}` if it also renders an
+`AdminViewOnlySectionBanner`. That is asserted per FILE, because that is the
 only scope in which a reader — and the test — can see that the banner really
-does render above the control.
+does render above the control. Second, and because the coverage rule is by
+construction blind to it, **nesting**: a component that renders a banner may not
+also render a child component that renders one, or a view-only admin meets the
+same sentence twice in two `role="status"` regions. Where a child is legitimately
+reused in a container no ancestor banner reaches (a dialog), it keeps its own
+banner by default and the covering parent passes `renderViewOnlyBanner={false}`
+at the render site — `FamilyGroupEditor` is the worked example: banner-bearing
+inside the member-detail dialog, suppressed on `/admin/family-groups`, which
+already banners the whole page.
 
 **Known limitation, accepted by the owner as Decision 1 on #2160.** Gated
 controls keep the `disabled` attribute rather than moving to

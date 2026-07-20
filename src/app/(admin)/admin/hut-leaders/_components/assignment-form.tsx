@@ -81,6 +81,15 @@ interface AssignmentFormProps {
   // Lodge edit gating (#1940): a lodge:view admin can view the picker but the
   // Confirm-assignment write is disabled.
   canEdit: boolean | undefined;
+  /**
+   * Whether this form renders its OWN view-only banner (#2160). Default `true`,
+   * so the form is self-explaining wherever it is dropped. A parent that
+   * already renders an `AdminViewOnlySectionBanner` covering this form passes
+   * `false`: two identical banners, each in its own `role="status"`, announce
+   * the same sentence twice to a view-only admin. Gating never changes — this
+   * only says WHO states the reason.
+   */
+  renderViewOnlyBanner?: boolean;
   // Optional lodge picker (multi-lodge, ADR-002): renders in step 1 above the
   // date inputs. It renders nothing while fewer than two lodges exist.
   lodgeSelector?: ReactNode;
@@ -105,6 +114,7 @@ export function AssignmentForm({
   error,
   onConfirm,
   canEdit,
+  renderViewOnlyBanner = true,
   lodgeSelector,
 }: AssignmentFormProps) {
   const label = hutLeaderLabel.toLowerCase();
@@ -132,13 +142,20 @@ export function AssignmentForm({
     content appears; a region injected already-populated is silently dropped by
     some screen-reader/browser pairings. It sits OUTSIDE the card so the empty
     wrapper an edit-capable admin gets costs no layout.
+
+    `renderViewOnlyBanner={false}` suppresses it entirely for a parent that
+    already covers this form with its own banner — the page-level banner on
+    `/admin/hut-leaders` does, and two of them announced the same sentence
+    twice. Suppressing the whole wrapper (rather than just its content) is
+    correct here: the ancestor's wrapper is the registered live region, and a
+    second empty one adds nothing.
   */
-  const viewOnlyBanner = (
+  const viewOnlyBanner = renderViewOnlyBanner ? (
     <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
       Your admin role can view {label} assignments but cannot create them. Lodge
       edit access is required.
     </AdminViewOnlySectionBanner>
-  );
+  ) : null;
 
   return (
     <div>

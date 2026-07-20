@@ -507,9 +507,16 @@ export default function AdminBookPage() {
 
   return (
     <div className="max-w-3xl">
+      {/*
+        #2160: the heading comes FIRST. The banner says "You have view-only
+        access to this area", so a screen-reader user has to know which area
+        they are on before they hear it. `mb-6` replaces the `space-y-6` gap the
+        h1 had as the stack's first child, so spacing is unchanged in both
+        states — the empty wrapper an edit-capable admin gets has no height.
+      */}
+      <h1 className="mb-6 text-3xl font-bold">Book on Behalf of Member</h1>
       {viewOnlyBanner}
       <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Book on Behalf of Member</h1>
 
       {/* Owner selection — pick an existing member, or inline-create a
           non-login non-member owner (#1935). The toggle only shows before an

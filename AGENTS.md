@@ -155,9 +155,18 @@ before changing Next.js APIs or conventions.
   return breaks two things at once: a failed FIRST load mounts the section and
   its already-populated alert in a single commit, and, because a scope change is
   itself a load, it unmounts the very `PolicyScopeSelect` the admin just used,
-  dropping keyboard focus to `<body>` mid-interaction. Adopted by the five
-  Booking Policies sections only (#2142); the rest of the admin tree keeps
-  `AdminViewOnlyNotice` plus the per-button reason, which stays the default.
+  dropping keyboard focus to `<body>` mid-interaction. Started in the five
+  Booking Policies sections (#2142) and rolled across most of the admin tree
+  (#2160): 202 of 254 `ViewOnlyActionButton` call sites now opt out, and 52 keep
+  the per-button reason — dialog/popover contents, leaf toolbars, and the member
+  detail per-record cards, which are deferred to owner decision **#2168** and
+  must not be converted opportunistically. A view-only admin must meet the
+  banner exactly ONCE per screen: a banner-bearing component may not render
+  another banner-bearing component, so when a covering parent renders such a
+  child, the child takes `renderViewOnlyBanner={false}` at the render site (it
+  keeps its own banner where an ancestor cannot reach it, e.g. inside a dialog).
+  Both rules — coverage and nesting — are enforced by
+  `src/components/admin/__tests__/view-only-banner-contract.test.ts`.
 - Security, payment, booking, membership lifecycle, Xero, Stripe, and
   data-integrity work requires high or xhigh reasoning effort and human review
   before merge.

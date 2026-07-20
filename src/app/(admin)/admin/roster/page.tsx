@@ -489,9 +489,15 @@ export default function RosterPage() {
 
   return (
     <div>
-      {viewOnlyBanner}
-      <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      {/*
+        #2160: the heading block comes FIRST. The banner says "You have
+        view-only access to this area", so a screen-reader user has to know
+        which area they are on before they hear it. `mb-6` replaces the
+        `space-y-6` gap this block had as the stack's first child, so spacing is
+        unchanged in both states — the empty wrapper an edit-capable admin gets
+        has no height.
+      */}
+      <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Chore Roster</h1>
           <p className="text-muted-foreground mt-1">
@@ -516,6 +522,9 @@ export default function RosterPage() {
           </a>
         </div>
       </div>
+
+      {viewOnlyBanner}
+      <div className="space-y-6">
 
       {error && (
         <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">

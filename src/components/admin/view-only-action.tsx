@@ -18,18 +18,24 @@ interface ViewOnlyActionButtonProps extends ButtonProps {
    * decision). Default `true`: a `title`, an `aria-describedby`, and an sr-only
    * line carrying {@link readOnlyReason}.
    *
-   * Since #2160 the DEFAULT is no longer the house pattern — it is the
-   * fallback. Every admin section that can host a banner renders an
-   * {@link AdminViewOnlySectionBanner} and passes `describeReason={false}`
-   * here. The default survives only where no banner can cover the control:
+   * Since #2160 the DEFAULT is no longer the usual case — it is the fallback.
+   * Most admin sections render an {@link AdminViewOnlySectionBanner} and pass
+   * `describeReason={false}` here (202 of 254 call sites at the time of the
+   * rollout). The default survives in three shapes:
    *
    *  - inside a dialog, sheet, popover, or dropdown menu, which is a separate
    *    accessibility container (focus trapped, page behind commonly inert), so
-   *    a banner in the page body does not reach it; and
+   *    a banner in the page body does not reach it;
    *  - in a leaf component with no section of its own, dropped by a parent into
    *    someone else's layout (the member detail header toolbar, the booking
-   *    capacity/exclusive hold controls), where nothing local proves an
-   *    ancestor renders a banner.
+   *    capacity/exclusive hold controls, the non-member contact form), where
+   *    nothing local proves an ancestor renders a banner; and
+   *  - in the member detail per-record cards under
+   *    `admin/members/[id]/_components/` (25 controls across 9 files). Those
+   *    COULD host a banner — they are real Card sections — but one page renders
+   *    all nine, so converting them stacks nine identical banners. Whether that
+   *    becomes one page-level banner is **owner decision #2168**; do not
+   *    convert them under #2160.
    *
    * NEVER pass `false` without a banner in the SAME file. Doing so deletes the
    * explanation outright — no title, no description, no banner — which is
@@ -168,11 +174,25 @@ export const ADMIN_VIEW_ONLY_SECTION_HEADING =
  * section's `space-y-*` stack: an empty wrapper is still a flex/stack child, so
  * left inside it would add a gap for every edit-capable admin.
  *
- * Since #2160 this is the house pattern for the whole admin tree, not just
- * Booking Policies. {@link AdminViewOnlyNotice} is retained for the surfaces
- * that state view-only access WITHOUT gating a control through
- * {@link ViewOnlyActionButton}; where a section has such controls, this banner
- * replaces it.
+ * Since #2160 this is the default for the admin tree, not just Booking
+ * Policies. {@link AdminViewOnlyNotice} is retained in two cases:
+ *
+ *  - surfaces that state view-only access WITHOUT gating a control through
+ *    {@link ViewOnlyActionButton} — with no gated control there is nothing for
+ *    this banner to head; and
+ *  - a NARROWER permission scope nested inside a section this banner already
+ *    heads. The banner states the section's own scope once at the top; a Notice
+ *    further down carries a DIFFERENT permission's reason for a subset of the
+ *    controls, so the two are not the same statement and the Notice is not
+ *    redundant. `fees/_components/hut-fees-section.tsx` (finance inside a lodge
+ *    section) and `subscription-lockout-settings-panel.tsx` (finance-scoped
+ *    account/item codes inside a membership section) both do this deliberately,
+ *    and both render banner AND Notice AND gated buttons.
+ *
+ * So "a section with gated controls replaces its Notice with this banner" holds
+ * only for a Notice covering the SAME scope. Before deleting a Notice from a
+ * section that has a banner, check which permission its text names — if it is
+ * not the banner's, it is carrying a reason nothing else states.
  *
  * Known limitation (owner Decision 1 on #2160): the controls this banner
  * explains keep `disabled`, so they stay OUT of the keyboard tab order. The

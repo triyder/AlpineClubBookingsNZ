@@ -530,6 +530,12 @@ export default function FamilyGroupsPage() {
               void fetchData();
             }}
             canEdit={canEditMembership}
+            // #2160: the page banner above is unconditional and covers this
+            // whole membership surface, including the editor rendered inline
+            // here, so the editor must not repeat it. The dialog mount on
+            // /admin/members/[id] keeps its own banner — a dialog is a separate
+            // accessibility container that no ancestor banner reaches.
+            renderViewOnlyBanner={false}
           />
         ) : (
           <Card>
