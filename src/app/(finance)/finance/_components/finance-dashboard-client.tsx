@@ -147,10 +147,10 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                   {model.syncStatus.label}
                 </Badge>
               </div>
-              <CardTitle className="text-2xl text-slate-900">
+              <CardTitle className="text-2xl text-card-foreground">
                 {model.selectionLabels.view}
               </CardTitle>
-              <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
+              <CardDescription className="max-w-3xl text-sm leading-6 text-muted-foreground">
                 {model.selectionLabels.primaryWindow} compared with{" "}
                 {model.selectionLabels.comparisonWindow}. Forward window:{" "}
                 {model.selectionLabels.forwardWindow}.
@@ -187,7 +187,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
             </div>
           </div>
 
-          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+          <div className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
             {model.syncStatus.detail}
           </div>
         </CardHeader>
@@ -411,10 +411,10 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
 
       <div ref={reportRef} className="reports-print-root space-y-6">
         <div className="hidden print:block">
-          <h1 className="text-2xl font-bold text-slate-900">
+          <h1 className="text-2xl font-bold text-foreground">
             Finance - {model.selectionLabels.view}
           </h1>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-muted-foreground">
             {model.selectionLabels.primaryWindow}; generated {model.generatedOn}
           </p>
         </div>
@@ -438,7 +438,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
           {model.trends.map((trend) => (
             <Card key={trend.title} className="reports-print-card">
               <CardHeader>
-                <CardTitle className="text-lg text-slate-900">
+                <CardTitle className="text-lg text-card-foreground">
                   {trend.title}
                 </CardTitle>
                 <CardDescription>{trend.description}</CardDescription>
@@ -457,7 +457,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
           {model.mix ? (
             <Card className="reports-print-card">
               <CardHeader>
-                <CardTitle className="text-lg text-slate-900">
+                <CardTitle className="text-lg text-card-foreground">
                   {model.mix.title}
                 </CardTitle>
                 <CardDescription>{model.mix.description}</CardDescription>
@@ -479,7 +479,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                 <CardHeader>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <CardTitle className="text-lg text-slate-900">
+                      <CardTitle className="text-lg text-card-foreground">
                         {panel.title}
                       </CardTitle>
                       <CardDescription>{panel.description}</CardDescription>
@@ -497,22 +497,22 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                       key={`${panel.title}:${itemIndex}:${item.label}`}
                       className={
                         item.emphasis
-                          ? "flex items-center justify-between gap-4 rounded-md border border-slate-300 bg-slate-100 px-3 py-2 text-sm"
-                          : "flex items-center justify-between gap-4 rounded-md border border-slate-200 px-3 py-2 text-sm"
+                          ? "flex items-center justify-between gap-4 rounded-md border border-border bg-muted px-3 py-2 text-sm"
+                          : "flex items-center justify-between gap-4 rounded-md border border-border px-3 py-2 text-sm"
                       }
                     >
                       <div>
                         <p
                           className={
                             item.emphasis
-                              ? "text-xs font-semibold uppercase tracking-[0.12em] text-slate-700"
-                              : "font-medium text-slate-900"
+                              ? "text-xs font-semibold uppercase tracking-[0.12em] text-foreground"
+                              : "font-medium text-card-foreground"
                           }
                         >
                           {item.label}
                         </p>
                         {item.detail ? (
-                          <p className="text-xs text-slate-500">
+                          <p className="text-xs text-muted-foreground">
                             {item.detail}
                           </p>
                         ) : null}
@@ -525,7 +525,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                           </a>
                         ) : null}
                       </div>
-                      <p className="font-semibold text-slate-900">
+                      <p className="font-semibold text-card-foreground">
                         {item.value}
                       </p>
                     </div>
@@ -536,20 +536,20 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
           </section>
         ) : null}
 
-        <section className="rounded-md border border-slate-200 bg-white p-4">
+        <section className="rounded-md border border-border bg-card p-4 text-card-foreground">
           <div className="mb-3 flex items-center gap-2">
-            <SlidersHorizontal className="h-4 w-4 text-slate-500" />
-            <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-600">
+            <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">
               Sources
             </h2>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             {model.sourceNotes.map((note) => (
               <div key={note.label}>
-                <p className="text-sm font-medium text-slate-900">
+                <p className="text-sm font-medium text-card-foreground">
                   {note.label}
                 </p>
-                <p className="text-sm leading-6 text-slate-600">
+                <p className="text-sm leading-6 text-muted-foreground">
                   {note.description}
                 </p>
                 {note.href ? (

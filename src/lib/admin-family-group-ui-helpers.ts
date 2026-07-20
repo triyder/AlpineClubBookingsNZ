@@ -1,3 +1,5 @@
+import { CHIP_TONE_CLASSES } from "@/lib/chip-tones";
+
 export interface MemberOption {
   id: string;
   firstName: string;
@@ -173,7 +175,9 @@ export function getFamilyGroupRequestBadgeClass(request: FamilyGroupRequest) {
   if (request.type === "CHILD_REQUEST") return "bg-blue-100 text-blue-800 border-blue-200";
   if (request.type === "ADULT_REQUEST") return "bg-violet-100 text-violet-800 border-violet-200";
   if (request.type === "REMOVAL_REQUEST") return "bg-rose-100 text-rose-800 border-rose-200";
-  if (request.type === "GROUP_CREATE") return "bg-teal-100 text-teal-800 border-teal-200";
+  // GROUP_CREATE reaches its teal through the shared `--hue-*` chip tones
+  // (#2137) rather than a literal Tailwind `teal-*` pair.
+  if (request.type === "GROUP_CREATE") return `${CHIP_TONE_CLASSES.teal} border-hue-teal/20`;
   return "bg-emerald-100 text-emerald-800 border-emerald-200";
 }
 

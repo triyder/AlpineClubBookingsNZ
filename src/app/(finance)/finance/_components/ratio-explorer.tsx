@@ -274,7 +274,7 @@ export function RatioExplorer({
                 className={`rounded-full border px-3 py-1 text-sm ${
                   chip.key === rangeKey
                     ? "border-primary bg-primary text-primary-foreground"
-                    : "border-slate-300 bg-transparent text-slate-700 hover:bg-slate-100"
+                    : "border-border bg-transparent text-foreground hover:bg-muted"
                 }`}
               >
                 {chip.label}
@@ -282,14 +282,14 @@ export function RatioExplorer({
             ))}
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <div className="text-sm text-slate-600">
+          <div className="rounded-lg border border-border bg-muted p-4">
+            <div className="text-sm text-muted-foreground">
               {numerator?.name} ÷ {denominator?.name} — {activeChip?.label}
             </div>
-            <div className="text-4xl font-semibold text-slate-900">
+            <div className="text-4xl font-semibold text-card-foreground">
               {headline === null ? "—" : formatFinancePercent(headline)}
             </div>
-            <div className="text-sm text-slate-600">
+            <div className="text-sm text-muted-foreground">
               {numerator && activeChip
                 ? formatDollarsDisplay(
                     sumRatioSeries(matrix, numerator, activeChip)
@@ -310,7 +310,7 @@ export function RatioExplorer({
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-200 text-left text-slate-600">
+                <tr className="border-b border-border text-left text-muted-foreground">
                   <th className="py-2 pr-4 font-medium">Financial year</th>
                   <th className="py-2 pr-4 font-medium">Ratio</th>
                   <th className="py-2 pr-4 font-medium">{numerator?.name}</th>
@@ -319,7 +319,7 @@ export function RatioExplorer({
               </thead>
               <tbody>
                 {fyTable.map((row) => (
-                  <tr key={row.label} className="border-b border-slate-100">
+                  <tr key={row.label} className="border-b border-border/60">
                     <td className="py-2 pr-4">{row.label}</td>
                     <td className="py-2 pr-4 font-semibold">
                       {row.ratio === null ? "—" : formatFinancePercent(row.ratio)}
@@ -363,7 +363,7 @@ export function RatioExplorer({
               ]}
             />
           ) : (
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-muted-foreground">
               No months in this range have a non-zero denominator.
             </p>
           )}

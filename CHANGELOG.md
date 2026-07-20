@@ -132,6 +132,50 @@ once this release is the deployed, drained colour in production.
   gates on `canEdit === false` internally (#2065), a strictly stronger condition
   than the wrapper's, so the wrapper was a no-op in all three tri-states.
 
+- **Theming follow-ups: categorical teal on tokens, and a themed /finance body
+  (#2137).** Three related cleanups to the theme-token system. First, the
+  categorical teal that was still written as literal Tailwind utilities now
+  reaches its hue through the `--hue-*` tokens via `CHIP_TONE_CLASSES.teal`: the
+  waitlist-offered booking chip, the audit-log `family` category badge, and the
+  family-group `GROUP_CREATE` badge. Each of those was already written on the
+  Tailwind -100/-800 pairing the `--hue-*` tokens encode, so the migration is
+  value-identical — no visible change. The admin dashboard Chore Roster tile was
+  deliberately left on `bg-teal-50`/`text-teal-600` and allowlisted instead: it
+  uses the -50/-600 tile convention and is one of five identically-built
+  quick-link tiles, so moving it alone would have made the row non-uniform.
+  The audit category badge map was duplicated verbatim between the member
+  timeline and the admin audit-log page and is now a single shared module
+  (`src/lib/audit-category-badges.ts`), so the two surfaces can no longer drift.
+  The brand-colour contract test's allowlist shrinks from six files to two: the
+  admin booking calendar keeps `bg-teal-500`, because it is a solid status
+  swatch with no muted-background / accent-text pairing and the `--hue-*` system
+  is defined only as such a pair; the dashboard tile keeps its -50/-600 pair for
+  the row-uniformity reason above. The calendar-colour regression pin in
+  `phase1-bug-fixes.test.ts` previously asserted against a LOCAL FIXTURE COPY of
+  the colour map, so it constrained nothing; it now imports the real exported
+  map. Second, `FINANCE_MIX_COLORS` is confirmed as a deliberate KEEP — the
+  literal hex palette stays, per the #1801 carve-out — and its doc comment is
+  corrected: it had claimed chart neutrals were tokenised in `trend-chart.tsx`,
+  when that file still passes literal strokes as SVG presentation attributes
+  (where `var()` cannot resolve) and the real theming happens in `globals.css`
+  via the `.finance-trend-chart .recharts-*` selectors. Third, the `/finance`
+  dashboard was themed at the chrome level only, so its BODY rendered raw
+  slate/white inside `app-theme-scope`. Dark mode was NOT broken by this — the
+  existing `.dark .app-theme-scope` neutral remap in `globals.css` (#1263) had
+  those utilities covered — but that shim is dark-only, so in LIGHT mode the
+  body did not follow a strongly non-default club theme; the dashboard, ratio
+  explorer, KPI cards,
+  and pie-chart tooltip now use the semantic surface tokens (`bg-card`,
+  `text-card-foreground`, `bg-popover`, `text-muted-foreground`, `bg-muted`,
+  `border-border`), with no layout, spacing, or value-rendering changes. A new
+  contract test keeps the finance tree free of raw neutral Tailwind utilities
+  (the whole slate/gray/zinc/neutral/stone family, plus `bg-white` and
+  `bg`/`text-black`, matching how the dark shim groups them); it is deliberately
+  scoped to that tree rather than repo-wide, because the admin tree still
+  carries raw slate in roughly 111 files and must be migrated before the check
+  can be widened. Chart hex colours are unaffected — they remain the documented
+  #1801 SVG-presentation-attribute carve-out.
+
 ### Release B (contract drops — a separate, later deploy)
 
 > **⚠️ Do not cut Release A and Release B into the same version tag.** They are

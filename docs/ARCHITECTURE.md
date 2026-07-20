@@ -97,6 +97,80 @@ injects the admin-configured theme via `getWebsiteThemeRenderState()` inside an
 site colours apply in light and dark, and use the `--hue-*` tokens for
 categorical status hues that must stay fixed across themes.
 
+The same rule applies to raw NEUTRALS, though for a narrower reason than the
+brand accent — and the reason is worth stating precisely, because a safety net
+already exists.
+
+`globals.css` carries a **`.dark .app-theme-scope` neutral remap** (the #1263
+follow-up block, immediately after the `.finance-trend-chart` chart rules). It
+rewrites literal `bg-white`, `bg-{neutral}-50/100/200`,
+`text-{neutral}-300..950`, `border-{neutral}-100..300`, and the matching
+`divide-`/`hover:` variants onto `--card`, `--muted`, `--border`,
+`--foreground`, `--muted-foreground`, and `--accent`, treating
+slate/gray/zinc/neutral/stone as one family. So a raw neutral inside
+`app-theme-scope` is **already handled in dark mode** — that shim is why dark
+mode reads correctly today, and it is not going away.
+
+What the shim does **not** do is cover LIGHT mode: it is `.dark`-scoped only. A
+literal `slate-*` or `bg-white` therefore stays literally slate/white under a
+strongly non-default club theme in light mode, where the theme's own surface
+colours should apply. That gap — plus the plain consistency argument that a
+surface should be correct at source rather than correct-by-shim — is why new and
+migrated code inside `app-theme-scope` uses the semantic surface tokens:
+`bg-card` / `text-card-foreground` for card surfaces, `bg-popover` /
+`text-popover-foreground` for floating panels such as chart tooltips,
+`text-muted-foreground` for secondary labels and footnotes, `bg-muted` for
+tinted rows, and `border-border` for rules.
+
+Two contract tests in `src/lib/__tests__/brand-color-source-contract.test.ts`
+enforce this:
+
+- **Brand accent.** No literal Tailwind `bg-`, `text-`, or `border-` `teal-*`
+  utility under `src/` (the check is scoped to those three prefixes; `ring-`,
+  `divide-`, `fill-`, and gradient `from-`/`to-` teal are not currently
+  matched). Two files are allowlisted, each because `--hue-*` has no equivalent
+  for the shape of colour they need. `src/components/admin-booking-calendar.tsx`
+  paints each booking status as a SOLID swatch (`bg-teal-500`), and `--hue-*` is
+  defined only as a muted-background / accent-text PAIR.
+  `src/app/(admin)/admin/dashboard/page.tsx` tints the Chore Roster quick-link
+  tile on the Tailwind **-50/-600** convention, whereas the `--hue-*` pair is
+  pinned at **-100/-800**; it is the fifth of five identically-built tiles whose
+  blue/green/purple/orange siblings are all -50/-600, so migrating it alone
+  would visibly break the row. Re-weighting the whole row is a redesign, not a
+  drive-by. Every other categorical teal (the waitlist-offered chip, the audit
+  `family` badge, the family-group `GROUP_CREATE` badge) reaches its hue through
+  `CHIP_TONE_CLASSES.teal` in `src/lib/chip-tones.ts`, the single source of
+  truth for chip tone classes — those were already -100/-800 pairs, so the
+  migration was value-identical.
+- **Themed neutrals.** No raw `slate-`/`gray-`/`zinc-`/`neutral-`/`stone-`
+  utility, `bg-white`, or `bg-`/`text-black` under `src/app/(finance)` or
+  `src/components/finance`, with an empty allowlist (the empty `Set` is kept in
+  the test so a future exception is a reviewable edit). This check is
+  deliberately scoped to the finance tree rather than repo-wide: the admin tree
+  still carries raw slate in many files and would have to be migrated before the
+  check could be widened.
+
+The dark-mode colored-callout pass in `globals.css` (#1248) re-tints literal
+Tailwind `bg-{family}-50/100/200`, `text-{family}-600..950`, and
+`border-{family}-100..300` inside `app-theme-scope`. It is a UNIFORM,
+palette-wide block covering every Tailwind family, not a teal-specific shim, so
+its teal rows are kept even though the migrations above left few teal literals
+behind: dropping them alone would make the block asymmetric for no benefit. They
+are also still load-bearing — the allowlisted dashboard tile's `bg-teal-50` and
+`text-teal-600` are exactly what this pass re-tints, which is why that tile
+dark-adapts correctly while staying on the -50/-600 tile convention in light
+mode. The calendar's `bg-teal-500` is outside the pass's range (it only remaps
+`-50/-100/-200` fills) and does not depend on it.
+
+Chart colours are a documented carve-out. `FINANCE_MIX_COLORS` in
+`src/components/finance/charts/finance-chart-theme.ts` stays a literal hex
+palette (#1801, re-affirmed in #2137): the values feed Recharts `fill`/`stroke`
+SVG presentation attributes, where `var()` does not resolve, and they are
+categorical tones chosen to stay distinguishable independent of the club theme.
+Chart neutrals (grid, axis, ticks) are themed in `globals.css` through the
+`.finance-trend-chart .recharts-*` selectors, which override the light-mode
+literal fallbacks that `trend-chart.tsx` passes as attributes.
+
 ## Module Boundaries
 
 This application is intentionally still a single Next.js monolith. The

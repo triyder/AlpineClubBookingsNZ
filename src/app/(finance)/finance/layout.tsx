@@ -55,7 +55,7 @@ export default async function FinanceLayout({
         <main className="reports-print-root flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
           <div className="mb-8 flex flex-col gap-3 rounded-2xl border bg-card p-6 text-card-foreground shadow-sm sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1">
-              <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">
+              <p className="text-sm font-medium uppercase tracking-[0.2em] text-muted-foreground">
                 Finance
               </p>
               <h1 className="text-3xl font-semibold text-foreground">

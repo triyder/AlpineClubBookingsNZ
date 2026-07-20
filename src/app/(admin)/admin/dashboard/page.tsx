@@ -788,6 +788,12 @@ export default async function AdminDashboardPage() {
           <Card className="hover:shadow-md transition-shadow">
             <CardHeader>
               <div className="flex items-center gap-3">
+                {/* Deliberately NOT on the `--hue-*` tokens (#2137): this is the
+                    fifth of five identically-built quick-link tiles, all on the
+                    Tailwind -50/-600 convention. The `--hue-*` pair encodes
+                    -100/-800, so migrating this tile alone would give it a
+                    deeper tint and a darker icon than its four siblings. See the
+                    allowlist note in brand-color-source-contract.test.ts. */}
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-50">
                   <ClipboardList className="h-5 w-5 text-teal-600" />
                 </div>

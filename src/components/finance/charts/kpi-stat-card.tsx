@@ -27,15 +27,19 @@ export function KpiStatCard({
     <Card className="reports-print-card">
       <CardHeader className="pb-3">
         <CardDescription>{title}</CardDescription>
-        <CardTitle className="text-3xl text-slate-900">{value}</CardTitle>
+        <CardTitle className="text-3xl text-card-foreground">{value}</CardTitle>
       </CardHeader>
       {description || footnote ? (
         <CardContent className="space-y-2">
           {description ? (
-            <p className="text-sm leading-6 text-slate-600">{description}</p>
+            <p className="text-sm leading-6 text-muted-foreground">
+              {description}
+            </p>
           ) : null}
           {footnote ? (
-            <p className="text-xs font-medium text-slate-500">{footnote}</p>
+            <p className="text-xs font-medium text-muted-foreground">
+              {footnote}
+            </p>
           ) : null}
         </CardContent>
       ) : null}
