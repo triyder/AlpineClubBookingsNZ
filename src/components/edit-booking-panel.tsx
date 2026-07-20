@@ -182,6 +182,11 @@ interface QuoteResult {
   // capacity — the UI shows a warning and an explicit confirm rather than a
   // hard block.
   overCapacityConfirmRequired?: boolean;
+  // #2124: whole-stay minimum-stay verdict. ADVISORY on this self-service path
+  // — rendered as a warning, never gates Save (matching the pre-existing
+  // future-edit semantics; the hard block lives on the create path).
+  minimumStayValid?: boolean;
+  minimumStayViolations?: { message: string }[];
 }
 
 function previousDateOnly(dateString: string | null) {
@@ -1251,11 +1256,17 @@ export function EditBookingPanel({
             </p>
           ) : null}
           {isInProgressEdit ? (
-            <p className="mt-2 text-sm text-amber-800">
-              Self-service edits for this in-progress stay can only affect
-              nights from {minEditableDate} onward. NZ today and earlier stay
-              locked for admin review.
-            </p>
+            <div className="mt-2 space-y-1 text-sm text-amber-800">
+              <p>
+                Your stay has started, so the check-in date stays fixed — you
+                can extend your check-out night by night from {minEditableDate}{" "}
+                onward.
+              </p>
+              <p>
+                Minimum-stay rules apply to your whole stay, not just the added
+                nights. Nights up to today can only be changed by an admin.
+              </p>
+            </div>
           ) : null}
         </CardContent>
       </Card>
@@ -1813,6 +1824,25 @@ export function EditBookingPanel({
                       ))}
                   </ul>
                 )}
+              </div>
+            )}
+
+            {/* #2124: advisory whole-stay minimum-stay warning. Never gates
+                Save (matches the future-edit semantics; the hard block lives
+                on the create path). */}
+            {quote && quote.minimumStayValid === false && (
+              <div
+                className="rounded-md bg-amber-50 p-3 text-sm text-amber-900"
+                role="status"
+              >
+                <p className="font-medium">
+                  This change would leave your stay under a minimum-stay rule
+                </p>
+                <ul className="mt-1 list-disc pl-4">
+                  {(quote.minimumStayViolations ?? []).map((violation, i) => (
+                    <li key={i}>{violation.message}</li>
+                  ))}
+                </ul>
               </div>
             )}
 

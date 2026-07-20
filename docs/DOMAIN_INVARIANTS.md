@@ -1134,7 +1134,16 @@ it.
 Self-service edits obey a date-window edit policy (`getBookingEditPolicy`):
 future bookings edit freely, an in-progress stay (checked in, not yet checked
 out) may only extend its **future** nights with the check-in locked, and a
-fully-past stay is not self-editable at all. Issue #1668 adds an **admin-only
+fully-past stay is not self-editable at all. On an in-progress extension the
+minimum-stay policy is evaluated over the **whole contiguous stay**, not the
+added nights alone (#2124): because the original check-in is kept fixed, the
+modify-quote preview runs `validateMinimumStay` across `[checkIn, newCheckOut]`
+(the already-valid original plus the added nights), so a member can extend
+their check-out one night at a time even across a weekend minimum-stay rule —
+the added night alone would fail the minimum, but the whole stay satisfies it.
+A genuinely too-short whole stay is still reported. (The create path evaluates
+each new booking's own range, so a separate contiguous one-night booking is
+still subject to the minimum — deferred as scope B on #2124.) Issue #1668 adds an **admin-only
 override** (`adminOverride`, honoured solely when
 `bookingManagementAuthorizationRole(session.user) === "ADMIN"`, i.e. Full Admin
 or Booking Officer) that lifts those date-window locks so an admin can move the
