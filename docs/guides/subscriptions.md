@@ -46,6 +46,22 @@ configurable — see [Subscription lockout](subscription-lockout.md)).
 > on their profile, in the members list, and in the CSV export — all of which
 > read the same rule. To exempt someone from subscriptions, change their
 > membership type; changing only their admin permission does not.
+>
+> **Assignment changes reconcile the current-season row.** When you assign a
+> REQUIRED-type season membership to a member who previously showed *Not Required*
+> (for example an operational Admin/Lodge account being made a paying member),
+> their current-season subscription row is re-derived on save from *Not Required*
+> to *Not Invoiced*, so the members list, member detail, and subscription history
+> immediately agree with the booking gate. Rows that carry a real Xero invoice, a
+> charge/family coverage, or a manual mark-paid are never changed.
+>
+> **Before deploying #2149:** because membership type (not login role) now decides
+> liability, audit for any operational-role accounts (Admin/Lodge) that hold a
+> REQUIRED-type season assignment. The next Xero membership sync will begin
+> reflecting their real subscription (Paid/Unpaid/Not Invoiced) state — this is
+> intended, but worth a pre-deploy check so no operational account is unexpectedly
+> invoiced. Give any such account a NOT_REQUIRED membership type (or remove the
+> assignment) if it should stay exempt.
 
 ### Refresh paid status from Xero
 

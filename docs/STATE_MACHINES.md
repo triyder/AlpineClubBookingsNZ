@@ -806,8 +806,9 @@ existing invoices are adopted; amount/contact/account mismatch becomes visible
 `PAID`, `OVERDUE`.
 
 ```text
-(no row) -> NOT_REQUIRED            membership type never owes (ensureNotRequiredSubscriptionForRole, billing NO_INVOICE)
+(no row) -> NOT_REQUIRED            membership type never owes (ensureDefaultSeasonSubscriptionForNewMember, billing NO_INVOICE)
 (no row) -> NOT_INVOICED            billing sweep creates a billable-but-uninvoiced row
+NOT_REQUIRED -> NOT_INVOICED        REQUIRED-type season assignment supersedes a stale creation-seeded NOT_REQUIRED row (reconcileSeasonSubscriptionForAssignment, #2149)
 NOT_INVOICED -> UNPAID              Xero subscription invoice created (xero-subscription-invoices)
 UNPAID/OVERDUE <-> PAID             Xero discovery/webhook reflects the invoice's real payment state
 NOT_INVOICED -> PAID (manual)       manual mark-paid (finance:edit) — sets manuallyMarkedPaidAt/By/Note, never calls Xero
@@ -829,7 +830,15 @@ covered subscription became `PAID` while it was queued. `checkMembershipStatus`
 never downgrades a manually marked-paid row that carries no Xero invoice link
 (enforced by a write-time fence, not just an up-front read), and
 `flushMemberSubscriptionHistory` never deletes a manual-PAID row on contact
-link/push/unlink. Every manual transition is audited with the acting admin.
+link/push/unlink. The assignment reconcile
+(`reconcileSeasonSubscriptionForAssignment`, #2149) only ever flips a row that is
+still the untouched creation-seeded `NOT_REQUIRED` default (null Xero invoice, no
+charge/family coverage, no manual mark-paid) and only when the newly-effective
+type is `REQUIRED`; it is a status-guarded, idempotent `updateMany` (no advisory
+lock, no provider call) that runs inside the assignment transaction, so it can
+never downgrade a paid/invoiced/covered/manual row and never fires for a
+`BASED_ON_AGE_TIER` type (whose `NOT_REQUIRED` row is the authoritative #2041
+season-start exemption). Every manual transition is audited with the acting admin.
 
 To verify: manual mark-paid sets PAID + provenance and never calls Xero; the
 sweep skips a manual-PAID member; a Xero force-sync leaves a manual-PAID row
