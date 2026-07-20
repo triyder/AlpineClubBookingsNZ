@@ -28,6 +28,9 @@ const MEMBERSHIP_TYPES = [
 function makeTx(captures: {
   rateCreates: Record<string, unknown>[];
   itemCreates: Record<string, unknown>[];
+  // Optional: the FULL create args (not just `data`), so a test can assert the
+  // explicit `select` narrowing the implicit RETURNING (#2130 runtime-prep).
+  itemCreateArgs?: Record<string, unknown>[];
 }): TxDb {
   const noopDelegate = {
     findMany: async () => [],
@@ -73,8 +76,9 @@ function makeTx(captures: {
     xeroItemCodeMapping: {
       ...noopDelegate,
       findMany: async () => [],
-      create: async ({ data }: { data: Record<string, unknown> }) => {
-        captures.itemCreates.push(data);
+      create: async (args: { data: Record<string, unknown> }) => {
+        captures.itemCreates.push(args.data);
+        captures.itemCreateArgs?.push(args as Record<string, unknown>);
         return { id: "i-new" };
       },
     },
@@ -262,6 +266,32 @@ describe("config-transfer Xero HUT_FEE re-key apply (#1930, E4)", () => {
     // Legacy isMember column is not carried onto the new-key row.
     for (const created of captures.itemCreates) {
       expect(created.isMember ?? null).toBeNull();
+    }
+  });
+
+  it("narrows the create's RETURNING, never naming the doomed isMember column (#2130 runtime-prep)", async () => {
+    // Blue/green safety pin, WRITE half. Prisma emits an implicit RETURNING
+    // over every scalar column of a create unless a `select` narrows it, so
+    // this config-transfer import would keep naming
+    // XeroItemCodeMapping.isMember once the contract migration drops it.
+    // `applyRow` discards the result, so `{ id: true }` is the safe narrowing.
+    const captures = {
+      rateCreates: [] as Record<string, unknown>[],
+      itemCreates: [] as Record<string, unknown>[],
+      itemCreateArgs: [] as Record<string, unknown>[],
+    };
+    const files = new Map<string, Uint8Array>([
+      ["xero-config/item-code-mappings.csv", strToU8(
+        "category,ageTier,seasonType,isMember,entranceFeeCategory,itemCode,amountCents\n" +
+        "HUT_FEE,ADULT,WINTER,true,,HUT-MEM,\n",
+      )],
+    ]);
+    await xeroConfigImporter.apply(applyCtx(files, makeTx(captures)) as never);
+
+    expect(captures.itemCreateArgs.length).toBeGreaterThan(0);
+    for (const args of captures.itemCreateArgs) {
+      expect(args.select).toEqual({ id: true });
+      expect(args.select).not.toHaveProperty("isMember");
     }
   });
 });
