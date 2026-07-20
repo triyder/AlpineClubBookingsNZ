@@ -4,7 +4,8 @@ Content editors can place authoritative server-rendered blocks in any rich
 `PageContent` body, including home, code-backed pages, catch-all pages, and the
 database-backed 404. The supported data tokens are:
 
-- `{{hut-fees}}` — nightly hut fees (all lodges, or one named lodge).
+- `{{hut-fees}}` — nightly hut fees as a table of age tiers x membership-type
+  rate columns (all lodges, or one named lodge).
 - `{{joining-fees}}` — one-off joining fees, grouped by membership type or age.
 - `{{annual-fees}}` — annual membership fee totals (own visibility opt-in).
 - `{{booking-policy-summary}}` or `{{booking-policy-summary:lodge-slug}}`
@@ -44,6 +45,79 @@ the safe **no-information state** — never another group's data. The single-bra
 capture is unchanged; the parameter grammar is parsed from the captured text by
 `parseTokenParameters` in `src/lib/token-parameters.ts`, shared by the renderer
 and the admin token-help validation.
+
+## How `{{hut-fees}}` builds its table (#2129)
+
+`{{hut-fees}}` reads the **authoritative** per-membership-type nightly rates
+(`MembershipTypeSeasonRate`) — the same rows that price a real booking. Before
+#2129 it read the frozen member/non-member `SeasonRate` table and printed a
+list of "Age tier — Member/Non-member" rows. That table now has no
+**application-runtime** readers and is scheduled for removal, but it is not yet
+unreferenced: one reader and two writers remain in seed code
+(`e2e/setup/seed-second-lodge.ts:202` and `:218-224`, `prisma/seed.ts:208-227`),
+and all three must be removed in the same PR as the DROP migration. See
+[Authoritative fee configuration](AUTHORITATIVE_FEES.md) for the full picture.
+
+Each active season of each active lodge renders as **one table**:
+
+- **Rows** are the club's configured age tiers, in the configured age order. A
+  membership type whose *Age groups apply* setting is off contributes a single
+  **All ages** row instead.
+- **Columns** are the nightly-rate columns. A membership type earns a column
+  only when it is **active**, **publicly listed** (Admin > Membership Types),
+  and actually carries rates for that season. No membership type is
+  special-cased — the public-listing flag is the only lever an operator has.
+- **Identically-priced types share one column.** If several types have exactly
+  the same age-tier-to-price map for the season, they collapse into a single
+  column headed by their names joined with commas, for example
+  `Full Member, Life, Family`. The moment one of them is repriced it splits into
+  its own column automatically, with no configuration change.
+- **Column order** is the lowest sort order among the types sharing the column,
+  then the heading.
+- A column with **no rate** for a given row renders an em dash (`—`), never a
+  zero and never another column's price.
+
+If fewer than two columns would appear, the table has nothing to compare. The
+setup-readiness **Seasons And Rates** step raises a warning listing the affected
+`Lodge — Season` pairs whenever the hut-fees block is switched on, so a
+single-column table cannot ship unnoticed.
+
+On narrow screens the table keeps its natural width and scrolls **horizontally
+inside its own container**; the page body never scrolls sideways.
+
+### Parameter semantics for `{{hut-fees}}`
+
+These three changed in #2129 — pages using the old behaviour still render, but
+they render the new shape:
+
+| Parameter | Before #2129 | Now |
+| --- | --- | --- |
+| `type=` | Validated the key existed, then showed every rate anyway | Filters the table to that one publicly-listed type's column |
+| `group-by=type` | Split the season into a Member group and a Non-member group | Splits the season into one single-column table per rate column |
+| `group-by=age` | Did nothing | Orients the table: membership types become the rows, age tiers the columns (it does not split — see below) |
+
+An unknown or unlisted `type=`, and an unknown or inactive `lodge=` slug, still
+fail closed to the no-information state.
+
+#### `group-by=type` splits, `group-by=age` orients
+
+These two are deliberately **not** symmetrical, and `{{hut-fees}}`'s
+`group-by=age` is deliberately **not** the same operation as
+`{{joining-fees}}`'s `by-age`:
+
+| Token | `group-by=age` does | Result |
+| --- | --- | --- |
+| `{{hut-fees}}` | **Orients** one table | One table, membership types as rows, age tiers as columns |
+| `{{joining-fees}}` | **Groups** into blocks | One block *per age tier*, headed by the tier, membership types as its rows |
+
+`{{hut-fees}}` does not group by tier because a club running four age tiers
+would then get four blocks of one row each — a worse public page than a single
+transposed grid. This is a rendering choice, not an inconsistency to be
+"corrected" later.
+
+`group-by=type+age` composes both: the season is split into one single-column
+table per membership type, and each is then transposed into a single-**row**
+table. It is legal and harmless, but degenerate — prefer one or the other.
 
 ## Block placement (D-R8)
 

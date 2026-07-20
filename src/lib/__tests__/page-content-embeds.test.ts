@@ -53,7 +53,7 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/public-page-content-tokens", () => ({
   loadPublicAnnualFees: vi.fn(async () => [{ heading: "Annual membership fees", rows: [{ label: "Public member", fee: { amountCents: 1000, label: "$10.00" } }] }]),
   loadPublicJoiningFees: vi.fn(async () => [{ heading: "Adult", rows: [] }]),
-  loadPublicHutFees: vi.fn(async (slug?: string) => [{ heading: slug ?? "all", rows: [] }]),
+  loadPublicHutFees: vi.fn(async (slug?: string) => [{ heading: slug ?? "all", rowHeading: "Age", columns: [], rows: [] }]),
   loadPublicBookingPolicy: vi.fn(async (slug?: string) => ({ lodge: slug ?? null })),
   loadPublicCancellationPolicy: vi.fn(async (slug?: string) => ({ lodge: slug ?? null })),
 }));
@@ -81,7 +81,10 @@ describe("buildEmbeddedBody", () => {
       "cancellation-policy", "html",
     ]);
     // The positional back-compat slug still flows to loadPublicHutFees.
-    expect(parts[4]).toEqual({ type: "hut-fees", groups: [{ heading: "river-lodge", rows: [] }] });
+    expect(parts[4]).toEqual({
+      type: "hut-fees",
+      tables: [{ heading: "river-lodge", rowHeading: "Age", columns: [], rows: [] }],
+    });
   });
 
   it("preserves mixed rich HTML and repeated tokens without falling back to contact form", async () => {

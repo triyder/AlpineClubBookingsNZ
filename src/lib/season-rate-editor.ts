@@ -25,6 +25,61 @@ export type MembershipTypeSeasonRateInput = z.infer<
   typeof membershipTypeSeasonRateInputSchema
 >;
 
+/** Minimal shape the copy-seasons flow reads out of GET /api/admin/seasons. */
+export interface CopyableSeason {
+  name: string;
+  type: "WINTER" | "SUMMER";
+  startDate: string;
+  endDate: string;
+  active: boolean;
+  membershipTypeRates: Array<{
+    membershipTypeId: string;
+    ageTier: string | null;
+    pricePerNightCents: number;
+  }>;
+}
+
+/**
+ * Build the POST /api/admin/seasons body that clones one lodge's season onto
+ * another (the lodge-setup wizard's "copy seasons" step).
+ *
+ * Two things this pins down, both of which were live bugs or near-bugs:
+ *
+ * 1. The rates go out under `membershipTypeRates`, NOT the legacy `rates` key.
+ *    `seasonSchema` in the POST route requires `membershipTypeRates`, so the
+ *    old `rates` body failed validation and every copy silently 400'd (#2129).
+ * 2. `membershipTypeId` is carried across unchanged. `MembershipType` has no
+ *    lodge scoping, so type ids are global and remain valid at the target lodge.
+ *
+ * Known rough edge (deliberate, fails loudly): a source season carrying a rate
+ * row with `ageTier: "NOT_APPLICABLE"` copies as a hard 400. The column
+ * `MembershipTypeSeasonRate.ageTier` is the full `AgeTier` enum and so permits
+ * `NOT_APPLICABLE`, but `bookableAgeTierEnum` (`age-tier-schema.ts:22-28`)
+ * deliberately excludes it — per-tier season rates are always people with an
+ * age. Such a row cannot be created through the admin editor, so it should only
+ * exist via direct SQL. The wizard collects the rejection into its `failed[]`
+ * list and shows it, so this surfaces as a named per-season failure rather than
+ * a silent skip — a rough edge, not a defect.
+ */
+export function buildCopiedSeasonPayload(
+  season: CopyableSeason,
+  targetLodgeId: string,
+) {
+  return {
+    name: season.name,
+    type: season.type,
+    startDate: season.startDate.slice(0, 10),
+    endDate: season.endDate.slice(0, 10),
+    active: season.active,
+    lodgeId: targetLodgeId,
+    membershipTypeRates: season.membershipTypeRates.map((rate) => ({
+      membershipTypeId: rate.membershipTypeId,
+      ageTier: rate.ageTier,
+      pricePerNightCents: rate.pricePerNightCents,
+    })),
+  };
+}
+
 type MembershipTypeReadDelegate = {
   membershipType: {
     findMany(args: {

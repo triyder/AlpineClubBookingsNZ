@@ -52,7 +52,7 @@ const page = {
 const parts = [
   { type: "annual-fees" as const, groups: [{ heading: "Annual membership fees", rows: [{ label: "Public membership", fee: { amountCents: 15000, label: "$150.00" } }] }] },
   { type: "joining-fees" as const, groups: [{ heading: "Full", rows: [{ label: "Adult", fee: { amountCents: 1000, label: "$10.00" } }] }] },
-  { type: "hut-fees" as const, groups: [{ heading: "River Lodge — Winter nightly rates", rows: [{ label: "Adult", audience: "Member", fee: { amountCents: 4000, label: "$40.00" } }] }] },
+  { type: "hut-fees" as const, tables: [{ heading: "River Lodge — Winter nightly rates", rowHeading: "Age", columns: ["Full Member"], rows: [{ label: "Adult", cells: [{ amountCents: 4000, label: "$40.00" }] }] }] },
   { type: "booking-policy-summary" as const, policy: { lodge: { name: "River Lodge", slug: "river" }, hold: "Non-member bookings are not held provisionally.", periods: [], minimumStays: [], groupDiscount: null } },
   { type: "cancellation-policy" as const, policy: { lodge: { name: "River Lodge", slug: "river" }, tiers: [{ description: "7 or more days before check-in: 100% refund" }, { description: "After check-in: no refund" }], periods: [] } },
 ];

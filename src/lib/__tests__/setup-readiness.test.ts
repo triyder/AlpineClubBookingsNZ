@@ -206,6 +206,47 @@ describe("setup-readiness", () => {
     expect(readiness.status).toBe("warning");
   });
 
+  it("warns when the public hut-fees embed would show fewer than two rate columns (#2129)", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        publicHutFeeSingleColumnSeasons: ["River Lodge — Winter 2026"],
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const seasonsCheck = readiness.categories
+      .find((category) => category.id === "booking")
+      ?.checks.find((check) => check.id === "seasons-rates");
+    expect(seasonsCheck?.status).toBe("warning");
+    // "Fewer than two", matching the `< 2` gate: zero publicly-listed priced
+    // types is the likelier misconfiguration, and must not be described as one.
+    expect(seasonsCheck?.message).toContain("fewer than two nightly-rate columns");
+    expect(seasonsCheck?.details).toContain(
+      "Single-column public rate table: River Lodge — Winter 2026",
+    );
+    expect(readiness.status).toBe("warning");
+  });
+
+  it("raises no hut-fees embed warning when every season has two or more rate columns (#2129)", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: { ...completeDatabase, publicHutFeeSingleColumnSeasons: [] },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+
+    const seasonsCheck = readiness.categories
+      .find((category) => category.id === "booking")
+      ?.checks.find((check) => check.id === "seasons-rates");
+    expect(seasonsCheck?.status).toBe("complete");
+    expect(
+      seasonsCheck?.details.some((detail) => detail.includes("Single-column")),
+    ).toBe(false);
+  });
+
   it("reports the age-tier step against the DB/seed contract when club.json is absent (#1983)", () => {
     // Age tiers are DB-only at runtime; club.json ageTiers[] is a seed input.
     // With no config file present, the expected count falls back to the seed

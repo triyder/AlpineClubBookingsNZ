@@ -134,13 +134,16 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
   {
     token: "hut-fees",
     kind: "embed",
-    description: "Lists active public hut-fee seasons and nightly rates for all lodges, or one named lodge.",
+    description: "Shows a nightly-rate table for each active hut season — age tiers down the side, one column per publicly listed membership type — for all lodges, or one named lodge.",
     example: "{{hut-fees}}",
     notes:
-      "Parameters are comma-separated key=value pairs after a colon; a bare " +
-      "value is the lodge slug (back-compat). Keys: lodge=, type=, group-by= " +
-      "(type and/or age, joined with +). by-age is shorthand for group-by=age. " +
-      "An unknown key or value shows the empty state, never another group.",
+      "Membership types priced the same share one column, headed by their " +
+      "names. Parameters are comma-separated key=value pairs after a colon; a " +
+      "bare value is the lodge slug (back-compat). Keys: lodge=, type= (limits " +
+      "the table to one membership type's column), group-by= (type splits the " +
+      "season into one table per column; age transposes the table; joined with " +
+      "+). by-age is shorthand for group-by=age. An unknown key or value shows " +
+      "the empty state, never another group.",
     allowsParameter: true,
     parameterExample: "{{hut-fees:lodge=whakapapa, group-by=age}}",
     allowsLegacySingleBrace: false,

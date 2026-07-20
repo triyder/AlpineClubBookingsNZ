@@ -1422,10 +1422,30 @@ model Season {
   updatedAt DateTime   @updatedAt
 
   // Relations
-  // `rates` is the legacy member/non-member boolean-keyed rate table. It is
-  // retained (frozen, read only by the public {{hut-fees}} embed) after the
-  // E4 re-key (#1930); the authoritative pricing rows now live in
-  // `membershipTypeRates`. E13 drops `rates` after a release soak.
+  // `rates` is the legacy member/non-member boolean-keyed rate table, frozen
+  // since the E4 re-key (#1930); the authoritative pricing rows live in
+  // `membershipTypeRates`. Its last APPLICATION-RUNTIME reader is gone: #2129
+  // step 1 re-sourced the public {{hut-fees}} embed onto `membershipTypeRates`,
+  // dropped the admin season routes' unused `rates` include, and switched the
+  // lodge-setup copy-seasons flow onto `membershipTypeRates`.
+  // The relation is NOT unreferenced, though — the seeders still use it:
+  // ONE READER and TWO WRITERS survive, all outside `src/`. Note that none of
+  // them contains the string "SeasonRate" (they go through this `rates`
+  // relation), so a string grep for the model name will not find them.
+  //   READ   e2e/setup/seed-second-lodge.ts:202 — `include: { rates: true }`
+  //   WRITE  e2e/setup/seed-second-lodge.ts:218-224 — `rates: { create: ... }`
+  //   WRITE  prisma/seed.ts:208-227 — `createMissingSeasonRates` → `seasonRate.upsert`
+  // #2129 step 2 (Release B) must, IN THE SAME PR as the DROP migration:
+  //   1. strip the `rates` include AND the `rates: { create: ... }` block from
+  //      e2e/setup/seed-second-lodge.ts, and
+  //   2. delete `createMissingSeasonRates` (and its two call sites) from prisma/seed.ts.
+  // Both are load-bearing, not cosmetic: `e2e/**` is inside tsconfig.json's
+  // `include` (`**/*.ts`) and is NOT excluded (only node_modules and test/
+  // `__tests__` paths are), so dropping the model without editing the seeder
+  // fails `npm run typecheck` on both lines; and scripts/e2e-stack.sh:92 runs
+  // that seeder under E2E_MULTI_LODGE=1, so the REQUIRED `E2E multi-lodge`
+  // branch-protection check fails at seed time. Dropping without step 1 lands
+  // `main` red. This PR carries no schema change.
   rates              SeasonRate[]
   membershipTypeRates MembershipTypeSeasonRate[]
   lodge Lodge        @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
@@ -1434,6 +1454,21 @@ model Season {
   @@index([lodgeId])
 }
 
+// Frozen legacy hut-rate table (member/non-member boolean key). #2129 step 1
+// removed the last APPLICATION-RUNTIME reader (the public {{hut-fees}} embed),
+// but the table is NOT unreferenced: one reader and two writers remain, all in
+// seed code outside `src/` —
+//   READ   e2e/setup/seed-second-lodge.ts:202 — `include: { rates: true }`
+//   WRITE  e2e/setup/seed-second-lodge.ts:218-224 — `rates: { create: ... }`
+//   WRITE  prisma/seed.ts:208-227 — `createMissingSeasonRates` → `seasonRate.upsert`
+// Scheduled for removal by #2129 step 2 (Release B), whose DROP migration MUST
+// ship in the same PR as: stripping the `rates` include and the
+// `rates: { create: ... }` block from e2e/setup/seed-second-lodge.ts, AND
+// deleting `createMissingSeasonRates` from prisma/seed.ts. Otherwise
+// `npm run typecheck` fails (e2e/** is inside tsconfig.json's `**/*.ts`
+// include and is not excluded) and the required `E2E multi-lodge` check fails
+// at seed time (scripts/e2e-stack.sh:92 runs the seeder under
+// E2E_MULTI_LODGE=1). Do not add new readers or writers.
 model SeasonRate {
   id                 String  @id @default(cuid())
   seasonId           String
