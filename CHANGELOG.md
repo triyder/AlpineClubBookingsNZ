@@ -4,6 +4,40 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Legacy contraction, Release B: `SeasonRate` and the doomed Xero columns are
+  dropped (#2129 step 2, #2130 STEP 2).** Two destructive contract migrations
+  finish the expand/migrate/contract series that E4 (#1930) and E8 (#1934)
+  began. `20260721120000_contract_drop_season_rate` drops the frozen
+  member/non-member boolean-keyed `SeasonRate` table; the same PR removes its
+  last references, which were seed-only and outside `src/` (the
+  `include: { rates: true }` read and the `rates: { create: … }` write in
+  `e2e/setup/seed-second-lodge.ts`, and `createMissingSeasonRates` plus its two
+  call sites in `prisma/seed.ts`). Nightly pricing, Xero hut-fee item codes and
+  the public `{{hut-fees}}` embed have all read `MembershipTypeSeasonRate` since
+  #2129 step 1, so nothing user-visible changes.
+  `20260721130000_contract_drop_ismember_and_agetier_xero_columns` deletes the
+  orphaned legacy `HUT_FEE` item-code rows that carried no `membershipTypeId`
+  (unreadable by the current runtime — both the resolver and the admin editor
+  require the key), then drops `XeroItemCodeMapping.isMember` with its old
+  `(category, ageTier, seasonType, isMember)` unique, and drops
+  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName` (their data moved
+  into `XeroContactGroupRule` at E8). The still-live partial index
+  `XeroItemCodeMapping_hutfee_flat_unique` is untouched.
+
+  **These migrations are legal only on top of the preceding runtime-prep
+  releases and must not be deployed until those have shipped to production and
+  soaked** — #2129 step 1 for `SeasonRate`, and #2133 (STEP 1, shipped in
+  `v0.12.2`) plus the #2130 STEP 1.5 write-narrowing release for the columns.
+  Dropping a column while an old colour still names it in a `SELECT` or an
+  implicit `RETURNING` is exactly the blue/green break the multi-step exists to
+  prevent. Deploying requires `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and a
+  `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` recording that soak; both migrations
+  carry full rationale rows in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`. Operator
+  actions: `docs/UPGRADING.md` → Unreleased. The `#2130` select guard
+  (`doomed-column-select-guard.test.ts`) is **kept** even though its original
+  columns are gone — narrow selects remain the rule for both models and it is
+  the only repo-wide enforcement of it.
+
 - **Config transfer: old-bundle entrance-fee/season-rate import compat dropped
   (#2131).** One release after the E13 contraction, the importer no longer
   accepts the legacy boolean-keyed bundle shapes: the `isMember` column on
@@ -49,7 +83,9 @@ All notable public reference-release changes should be recorded here.
   is runtime-prep only. Only **after this release has itself deployed** are
   `isMember` (with its old `@@unique`) and the two `xeroContactGroup*` columns
   drop-eligible, by a *later* release's contract migration — never the same
-  release as this prep.
+  release as this prep. That contract migration is
+  `20260721130000_contract_drop_ismember_and_agetier_xero_columns` (STEP 2,
+  Release B — see the entry above).
 
 - **Public `{{hut-fees}}` embed now reads the authoritative per-membership-type
   rates (#2129, step 1).** The embed was the last reader of the frozen
@@ -86,25 +122,19 @@ All notable public reference-release changes should be recorded here.
   E4 re-key, so every copy silently failed validation. It now posts
   `membershipTypeRates` and works again.
 
-  No schema change: `SeasonRate` is untouched, and this step removed its last
-  **application-runtime** reader (the embed; the admin season routes and the
-  lodge-setup copy flow also stopped selecting it). The table is **not**
-  unreferenced, though — **one reader and two writers remain**, all in seed code
-  outside `src/`:
-
-  - `e2e/setup/seed-second-lodge.ts:202` — READ, `include: { rates: true }`
-  - `e2e/setup/seed-second-lodge.ts:218-224` — WRITE, `rates: { create: … }`
-  - `prisma/seed.ts:208-227` — WRITE, `createMissingSeasonRates` →
-    `prisma.seasonRate.upsert`
-
-  So #2129 step 2 (Release B) must, **in the same PR as the DROP migration**,
-  strip both the `rates` include and the `rates: { create: … }` block from
-  `e2e/setup/seed-second-lodge.ts` **and** delete `createMissingSeasonRates`
-  from `prisma/seed.ts`. Skipping either breaks the build twice over:
-  `e2e/**` sits inside `tsconfig.json`'s `**/*.ts` include and is not excluded,
-  so `npm run typecheck` fails on both seeder lines; and
+  No schema change in this step: `SeasonRate` was untouched, and the step
+  removed its last **application-runtime** reader (the embed; the admin season
+  routes and the lodge-setup copy flow also stopped selecting it). The only
+  surviving references were seed-time and outside `src/` — the
+  `include: { rates: true }` read and the `rates: { create: … }` write in
+  `e2e/setup/seed-second-lodge.ts`, and `createMissingSeasonRates` in
+  `prisma/seed.ts` — and step 2 (Release B, above) removed all three in the same
+  PR as the DROP migration, which is what kept the build green: `e2e/**` sits
+  inside `tsconfig.json`'s `**/*.ts` include and is not excluded, so leaving the
+  seeder alone would have failed `npm run typecheck`; and
   `scripts/e2e-stack.sh:92` runs that seeder under `E2E_MULTI_LODGE=1`, so the
-  required **E2E multi-lodge** branch-protection check fails at seed time.
+  required **E2E multi-lodge** branch-protection check would have failed at seed
+  time.
 
 ## 0.12.2 - 2026-07-20
 

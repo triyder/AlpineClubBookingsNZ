@@ -86,13 +86,28 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
-The unreleased range **closes the config-transfer import compatibility window
-for old bundles** (#2131) and **re-sources the public `{{hut-fees}}` embed onto
-the authoritative per-membership-type rate table** (#2129 step 1). There is
-**no migration and no schema change**, so the deploy itself needs no special
-window: any deploy window is fine, and the old colour is unaffected. The
-operator impact is about **archived configuration bundles** and, if you publish
-hut fees, about which membership types are flagged **Publicly listed**.
+The unreleased range covers **two deploys that must happen in order**, not one.
+
+**Release A (runtime-prep — no migration, no schema change).** It closes the
+config-transfer import compatibility window for old bundles (#2131),
+re-sources the public `{{hut-fees}}` embed onto the authoritative
+per-membership-type rate table (#2129 step 1), and narrows every remaining
+**write** on `XeroItemCodeMapping` and `AgeTierSetting` to an explicit `select`
+(#2130 STEP 1.5). Any deploy window is fine and the old colour is unaffected.
+The operator impact is about **archived configuration bundles** and, if you
+publish hut fees, about which membership types are flagged **Publicly listed**.
+
+**Release B (two destructive contract migrations).** It drops the frozen
+`SeasonRate` table (#2129 step 2) and the doomed
+`XeroItemCodeMapping.isMember` / `AgeTierSetting.xeroContactGroup*` columns
+(#2130 STEP 2). See **Release B: the two contract migrations** below.
+
+> **Ordering is not optional.** Release B is only blue/green-legal on top of
+> Release A, and **only once Release A is the deployed colour in production and
+> has soaked**. Deploying both at once, or deploying B first, drops columns and
+> a table that the draining old colour still names in its SQL — Postgres 42703 /
+> 42P01 on live requests. If you are catching up from `v0.12.2`, deploy Release
+> A, let it run and drain normally, then deploy Release B as a separate deploy.
 
 ### Before deployment
 
@@ -139,10 +154,90 @@ hut fees, about which membership types are flagged **Publicly listed**.
    then check the page. Setup readiness also warns on **Seasons And Rates** when
    the embed is enabled but fewer than two types would produce a column.
 
-**Rollback boundary.** No schema change, so there is nothing to roll back at the
-database level: reverting to the previous colour simply restores the old
-importer, which still accepts legacy bundles, and the previous `{{hut-fees}}`
-rendering.
+**Rollback boundary (Release A).** No schema change, so there is nothing to roll
+back at the database level: reverting to the previous colour simply restores the
+old importer, which still accepts legacy bundles, and the previous
+`{{hut-fees}}` rendering.
+
+### Release B: the two contract migrations
+
+This is a **separate, later deploy**. Do not start it until Release A has been
+the live colour in production long enough that you are confident it is staying
+(a normal soak — at minimum, past the point where you would have rolled back).
+
+Two destructive `contract` migrations, both `old_code_compatible=yes`, both
+fully justified in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`:
+
+- **`20260721120000_contract_drop_season_rate`** — `DROP TABLE "SeasonRate"`,
+  the frozen member/non-member boolean-keyed nightly-rate table. Its rows were
+  copied forward to `MembershipTypeSeasonRate` by the E4 re-key
+  (`20260717140000_pricing_rekey_by_membership_type`) and nothing has priced
+  from them since. Release A (#2129 step 1) removed the last
+  application-runtime reader, the public `{{hut-fees}}` embed; the only other
+  references were seeders, removed in the same PR as this migration.
+- **`20260721130000_contract_drop_ismember_and_agetier_xero_columns`** —
+  deletes the orphaned legacy `HUT_FEE` item-code rows that carry no
+  `membershipTypeId` (unreadable by the current runtime; a production install
+  typically has a handful — ours had 16), drops the old
+  `(category, ageTier, seasonType, isMember)` unique index, drops
+  `XeroItemCodeMapping.isMember`, and drops
+  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName` (their data moved
+  into `XeroContactGroupRule` at E8, `20260716140000_xero_member_grouping`).
+  This one is legal **only** because `v0.12.2` narrowed the reads and Release A
+  (#2130 STEP 1.5) narrowed the writes on both models, so the draining colour
+  names none of these columns in a `SELECT` or an implicit `RETURNING`.
+
+**Before deploying Release B**
+
+1. **Take and restore-test a fresh backup — this deploy drops schema.** There is
+   no down-migration. A `DROP TABLE` and a `DROP COLUMN` cannot be undone by
+   rolling the app back; restore from backup is your only recovery for the
+   dropped data.
+2. **Confirm Release A is actually the deployed colour.** Check the running
+   image/tag, not just what merged. If the live colour is still `v0.12.2`,
+   **stop** — deploying Release B against it will break the drain.
+3. **Set the breaking-migration acknowledgement for this deploy only.** The
+   blue/green validator refuses a destructive migration without it:
+
+   ```bash
+   export ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1
+   export BLUE_GREEN_MIGRATION_OVERRIDE_REASON="Release B contract drops (#2129 step 2, #2130 STEP 2); Release A runtime-prep deployed and soaked since <date>; backup <id> restore-tested"
+   ```
+
+   Put the real soak date and backup identifier in the reason — it is the audit
+   record for why the drop was safe. Unset both afterwards so the next deploy
+   does not inherit the override.
+4. **No special traffic window is needed.** Both tables are cold admin-only
+   config tables: `DROP TABLE`, `DROP INDEX` and `DROP COLUMN` are
+   metadata-only catalog changes taking a brief `ACCESS EXCLUSIVE` lock each,
+   and the row delete touches a handful of rows. No hot table, no table
+   rewrite, no backfill. The normal deploy window is fine; let the deploy guard
+   stop on lock timeout.
+5. **No Xero call is made.** Neither migration contacts Xero — no contact,
+   contact group, item or invoice is touched.
+
+**Post-upgrade actions (Release B)**
+
+1. **Spot-check hut-fee pricing and one Xero hut-fee invoice line.** Quote a
+   member and a non-member booking and confirm the totals and item codes match
+   what you saw before the deploy. They should be identical — the migration
+   removes only structures nothing reads — but this is the cheapest possible
+   confirmation.
+2. **Check Xero member grouping still resolves.** Visit the member-grouping
+   admin page and run its dry-run. Grouping has been driven by
+   `XeroContactGroupRule` since E8; the dropped `AgeTierSetting` columns were
+   dead copies.
+3. **Nothing to reconfigure.** No setting, flag or mapping needs re-entering,
+   and no admin-visible screen changes.
+
+**Rollback boundary (Release B).** A validator or pre-migration failure aborts
+the deploy before any schema change and the old colour keeps serving untouched.
+Once the migrations have applied, a failed cutover auto-restores traffic to the
+Release A colour, which runs correctly against the contracted schema — that is
+precisely what the runtime-prep release bought. **Rolling back past Release A
+(to `v0.12.2` or earlier) against the contracted schema will not work**: that
+colour still names the dropped column and table. Roll forward, or restore the
+pre-upgrade backup and lose the writes since it was taken.
 
 ---
 
@@ -195,13 +290,12 @@ changelog section before starting.
      `{{hut-fees}}` embed), `MembershipTypeAgeTier`, and the
      `XeroItemCodeMapping.isMember` / `AgeTierSetting.xeroContactGroup*` columns
      — follow-ups #2129/#2130/#2131.
-     *(Superseded after this release: #2129 step 1 re-sourced the public
-     `{{hut-fees}}` embed onto `MembershipTypeSeasonRate`, removing the last
-     **application-runtime** `SeasonRate` reader — see the following release's
-     entry. One reader and two writers still remain in seed code
-     (`e2e/setup/seed-second-lodge.ts:202` and `:218-224`, `prisma/seed.ts:208-227`)
-     and must be removed in the same PR as the DROP migration. The sentence above
-     describes the position as at v0.12.2.)*
+     *(Superseded after this release. The sentence above describes the position
+     as at v0.12.2. Release A then re-sourced the public `{{hut-fees}}` embed
+     onto `MembershipTypeSeasonRate` (#2129 step 1) and narrowed the remaining
+     writes on the two column-carrying models (#2130 STEP 1.5), and Release B
+     dropped `SeasonRate`, `XeroItemCodeMapping.isMember` and the
+     `AgeTierSetting.xeroContactGroup*` columns — see the Unreleased section.)*
 3. **The two additive migrations need no special handling.**
    `20260719150000_add_post_login_landing` adds a `PostLoginLanding` enum plus a
    nullable `Member.postLoginLanding` column with no default (metadata-only

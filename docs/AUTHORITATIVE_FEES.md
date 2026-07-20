@@ -9,35 +9,28 @@ type carries its own rate rows; non-members price via the built-in
 `NON_MEMBER` type; `NON_MEMBER_RATE` (except `NON_MEMBER`) and `BLOCK_BOOKING`
 types carry zero own rows. A type prices per age tier when
 `MembershipType.ageGroupsApply` is true (one row per tier) or from a single flat
-rate when false (one `NULL`-ageTier row). The legacy member/non-member
-boolean-keyed `SeasonRate` table is **retained but frozen**, and step 1 of #2129
-removed its last **application-runtime** reader. E13 (#1939) deliberately did not
-drop it because the public `{{hut-fees}}` embed still read its member/non-member
-split; step 1 of #2129 re-sourced that embed onto `MembershipTypeSeasonRate` (one
-nightly-rate column per publicly-listed membership type, with identically-priced
-types collapsed into one column) and removed the admin season routes' unused
-`rates` include.
+rate when false (one `NULL`-ageTier row).
 
-The table is **not** unreferenced, however. **One reader and two writers remain**,
-all in seed code outside `src/`:
+The legacy member/non-member boolean-keyed `SeasonRate` table is **gone**. It
+was retained but frozen through the E4 re-key as a rollback net, and E13 (#1939)
+deliberately could not drop it because the public `{{hut-fees}}` embed still read
+its member/non-member split. Step 1 of #2129 re-sourced that embed onto
+`MembershipTypeSeasonRate` (one nightly-rate column per publicly-listed
+membership type, with identically-priced types collapsed into one column) and
+removed the admin season routes' unused `rates` include, eliminating the last
+application-runtime reader. Step 2 of #2129 (Release B) then removed the
+surviving seed-only reader/writers — the `include: { rates: true }` and
+`rates: { create: … }` in `e2e/setup/seed-second-lodge.ts`, and
+`createMissingSeasonRates` in `prisma/seed.ts` — and dropped the table in
+`20260721120000_contract_drop_season_rate`, in that same PR. Both halves had to
+ship together: `e2e/**` is inside `tsconfig.json`'s `**/*.ts` include and is not
+excluded (only `node_modules` and test/`__tests__` paths are), so dropping the
+model alone would fail `npm run typecheck`; and `scripts/e2e-stack.sh:92`
+executes that seeder under `E2E_MULTI_LODGE=1`, so the required **E2E
+multi-lodge** branch-protection check would fail at seed time. Do not
+reintroduce a boolean member/non-member rate key.
 
-| Location | Kind |
-| --- | --- |
-| `e2e/setup/seed-second-lodge.ts:202` (`include: { rates: true }`) | READ |
-| `e2e/setup/seed-second-lodge.ts:218-224` (`rates: { create: … }`) | WRITE |
-| `prisma/seed.ts:208-227` (`createMissingSeasonRates` → `prisma.seasonRate.upsert`) | WRITE |
-
-`SeasonRate` is therefore **drop-eligible in the next release** (#2129 step 2,
-Release B, which carries the migration) **only if that same PR** strips the
-`rates` include and the `rates: { create: … }` block from
-`e2e/setup/seed-second-lodge.ts` and deletes `createMissingSeasonRates` from
-`prisma/seed.ts`. Dropping the model without those edits lands `main` red twice
-over: `e2e/**` is inside `tsconfig.json`'s `**/*.ts` include and is not excluded
-(only `node_modules` and test/`__tests__` paths are), so `npm run typecheck`
-fails on both seeder lines; and `scripts/e2e-stack.sh:92` executes that seeder
-under `E2E_MULTI_LODGE=1`, so the required **E2E multi-lodge**
-branch-protection check fails at seed time. Do not add new readers or writers to
-it. E7 (#1933) added the grouped public presentation and token grammar on top of
+E7 (#1933) added the grouped public presentation and token grammar on top of
 this source, not a re-key. Xero
 hut-fee item codes re-key the same way via `XeroItemCodeMapping.membershipTypeId`
 so an invoice line never disagrees with the rate that priced it.
