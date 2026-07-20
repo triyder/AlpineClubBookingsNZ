@@ -4,30 +4,148 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
-- **Post-login landing for admins + per-member preference (#2090).** After
-  sign-in, a member with admin access now lands on their admin area instead of
-  the member dashboard when they have set no preference — precisely
-  `getFirstAccessibleAdminHref(matrix) ?? /dashboard`. This applies to **every**
-  member whose role resolves to an accessible admin page, not just full admins:
-  read-only admins and finance-only viewers are included and now land on their
-  first accessible admin page (e.g. a finance-only viewer lands on
-  `/admin/payments`). An admin whose matrix denies the overview area still lands
-  on their first accessible admin page, and
-  a member with no admin area (or a demoted admin holding a stale preference)
-  still lands safely on `/dashboard`, never a 403 loop. A new typed, nullable
-  `Member.postLoginLanding` column (`MEMBER_DASHBOARD | ADMIN_DASHBOARD`, null =
-  role default) backs a profile **Account Information** toggle shown only to
-  members with an accessible admin page; there is no free-text path stored, so
-  no open-redirect surface. A genuinely user- or deep-link-supplied `callbackUrl`
-  always wins over the preference, but a value the login flow itself materialised
-  (the 2FA detour, a provider return URL) never counts as explicit. Credential,
-  magic-link, and Google sign-in all honour the same resolution, including
-  through the two-factor detour. Migration
-  `20260719150000_add_post_login_landing` is additive/expand-only (a new enum +
-  a nullable column with no default); no existing member changes behaviour on
-  migrate — **the changed admin default is applied entirely by the application
-  redirect resolver**, so on the first login after upgrade every existing admin
-  lands on their admin area. See the `Unreleased` section of `docs/UPGRADING.md`.
+## 0.12.2 - 2026-07-20
+
+- Release classification: patch public reference release. As with `v0.12.1`, the
+  version is a deliberate patch bump chosen by the owner even though the range
+  carries feature work — most additions are opt-in and flagged off by default.
+  Unlike `v0.12.1`, however, this release is **not** purely additive: it lands
+  the first **destructive contract migration** since the expand/migrate/contract
+  series began (legacy-structure contraction E13, the blue/green-safe subset of
+  #1939) plus a second breaking column-drop migration (member-grouping
+  multi-select age tiers), and it changes one default behaviour (admin
+  post-login landing). Both breaking migrations are old-colour compatible under
+  a prompt cutover but require the `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`
+  operator acknowledgement. Read `docs/releases/v0.12.2.md` and the
+  `v0.12.1 -> v0.12.2` section of `docs/UPGRADING.md` before deployment.
+
+- **Production Xero lock-date 503 fix and Xero reliability (#2101/#2110,
+  #2105/#2116, #2089/#2096).** The urgent fix: retroactive (past-dated) booking
+  creation returned a 503 "Could not verify the Xero lock dates" whenever the
+  connected Xero organisation actually **has** lock dates set — the exact case
+  the guard exists for. Root cause (confirmed from production logs): xero-node's
+  `ObjectSerializer` deserialises an MS-JSON `/Date(...)/` payload into a JS
+  `Date`, so `parseXeroLockDate`'s `value.slice(0,10)` threw and the guard failed
+  closed; reconnecting could never fix it. The parser now accepts `string |
+  Date`. On top of the fix, a **lock-date error taxonomy** classifies the guard's
+  503 as `reconnect_required | rate_limited | transient` with cause-specific,
+  admin-only reason copy (member bodies byte-identical), plus a click-only live
+  **connection-health probe** (`GET /api/admin/xero/status?probe=1`) replacing
+  the token-row-presence "Connected" chip, and a finance-sync
+  `parseOptionalDateOnly` made `Date`-aware (SDK-coerced due-dates no longer
+  drift into the no-due-date aging bucket). Separately, the Xero contact-create
+  gate is shrunk to require only first name + last name + email — phone, DOB,
+  joined date, and addresses become optional, with an informational
+  "profile incomplete" note and cleaner sparse-member payloads (no empty phone
+  block).
+
+- **Membership-type lifecycle: age-exempt types, bulk assignment, Xero import,
+  and item-code paid-detection (#2106/#2118, #2107/#2126, #2108/#2127,
+  #2109/#2123).** Membership types whose allowed-age-tiers list "N/A (no age)"
+  become the single source for genuinely age-exempt members: a type allowing
+  only N/A **forces** every current-season holder to `NOT_APPLICABLE`, a type
+  listing N/A among person tiers lets admins hand-pick it per member, and the
+  rule is enforced through one shared helper at every ageTier write site
+  (assignment, admin edit, self-serve profile, family confirmation, set-role
+  grant/revoke, season roll-forward). Admins can **bulk-assign** membership type
+  to up to 100 selected members from the members page (aggregate preview →
+  required reason → per-member outcomes, HMAC preview-token gated, per-member
+  audits, per-member Xero group syncs suppressed in favour of one batched
+  reconcile). Xero **Setup import** gains a mapping mode — age tiers (default),
+  membership types, or both — mapping contact groups onto active types, never
+  overwriting an existing current-season assignment and fully reporting what it
+  skipped, with `membership:edit` gating on type-mapping imports. And an opt-in
+  **"use membership fee item codes"** mode lets subscription paid-detection look
+  through to the per-type+tier item codes the fee schedule already stamps on
+  invoices (default off = today's single-code behaviour byte-for-byte;
+  strong-match-first selection; overlap warnings).
+
+- **Xero member-grouping multi-select age tiers (#2093/#2111).** A grouping rule
+  can now target any subset of age tiers (`XeroContactGroupRule.ageTier` →
+  `ageTiers AgeTier[]`, empty = all tiers) with specificity-based overlap
+  resolution and a fingerprint serializer proven byte-identical to the old one
+  for the migrated cases (no spurious full regroup on the first post-deploy
+  resync), plus a "Refresh from Xero" button and a "Last synced" header. Its
+  migration (`20260719170000_xero_grouping_age_tiers_multiselect`) backfills
+  `X → [X]` / `null → []` and then **drops** the old scalar `ageTier` column — a
+  breaking column-drop that needs the blue/green acknowledgement (see notes
+  below).
+
+- **Post-login landing for admins + per-member preference (#2090/#2098).** After
+  sign-in, a member with admin access and no set preference now lands on their
+  admin area (`getFirstAccessibleAdminHref(matrix) ?? /dashboard`) instead of the
+  member dashboard — applied entirely by the application redirect resolver, so
+  every existing admin lands on their admin area on the first login after
+  upgrade. This includes read-only admins and finance-only viewers (e.g. a
+  finance-only viewer lands on `/admin/payments`). A new typed, nullable
+  `Member.postLoginLanding` enum column (`MEMBER_DASHBOARD | ADMIN_DASHBOARD`,
+  null = role default) backs a profile **Account Information** toggle shown only
+  to members with an accessible admin page; there is no free-text path and no
+  open-redirect surface. A genuinely deep-linked `callbackUrl` still wins; a
+  value the login flow itself materialised (the 2FA detour, a provider return
+  URL) never counts as explicit. A member with no admin area — including a
+  demoted admin holding a stale preference — still lands safely on `/dashboard`,
+  never a 403 loop.
+
+- **Admin and booking UX (#2092/#2112, #2091/#2099, #2088/#2097, #2102/#2113,
+  #2103/#2114, #2104/#2115, #2124/#2128).** A Ctrl/Cmd-K admin **feature search**
+  palette plus a sidebar Search button, derived from the visible-nav single
+  source so it can never reveal an inaccessible page. The admin **dashboard**
+  key-card row re-targets the four bookings-officer surfaces (Bookings, Hut
+  Leader, Roster, Bed Allocation) with actionable "work to do" counts. The admin
+  **booking calendar** no longer overflows into the next week's row
+  (auto-expanding rows capped at six lanes, a per-day "+N more" chip, greyed
+  finished days). The `/finance` and `/lodge` shells now inherit the club theme
+  (they were rendering the default teal), guarded by a brand-colour source
+  contract test. `/admin/security` now follows the settings-page Edit→Save
+  convention, makes the magic-link TTL persistable, and fixes a stale-clobber
+  that silently reverted other module toggles. The member booking-edit panel
+  finally **renders the required justification field** for a minors-without-adult
+  edit (previously the 400 surfaced as bare red text), with a machine-readable
+  `REVIEW_JUSTIFICATION_REQUIRED` code. And an in-progress stay's **minimum-stay
+  rule is now evaluated against the whole contiguous stay** — a one-night
+  extension of an already-valid stay is no longer wrongly rejected — surfaced as
+  an advisory warning on the quote.
+
+- **Legacy schema contraction E13 — destructive, safe subset of #1939 (#2132).**
+  The first contract migration of this release removes two provably-dead legacy
+  structures — the `EntranceFee` table (superseded by JoiningFee in E5 #1931) and
+  the `AgeTierXeroAcceptedContactGroup` table (converged into
+  `XeroContactGroupRule` in E8 #1934) — plus the orphaned `entranceFeeAmountCents`
+  account-mapping row. An independent drop-proof review re-verified zero readers
+  against the `v0.12.1` tag (the colour draining during the deploy). The
+  `EntranceFeeCategory` enum, `SeasonRate` (the live public `{{hut-fees}}` embed
+  reader), `MembershipTypeAgeTier`, and the `XeroItemCodeMapping.isMember` /
+  `AgeTierSetting.xeroContactGroup*` columns are all deliberately **kept or
+  deferred** to follow-ups #2129/#2130/#2131. The destructive `DROP TABLE`s
+  require the blue/green acknowledgement (see notes).
+
+- **Docs, CI, and tests (#2083/#2085, #2117/#2125).** The member-facing user
+  guide (`docs/user-guide/`) is now mirrored one-way to the GitHub wiki by a
+  push-triggered workflow plus `npm run docs:wiki-sync`. The E2E seed fixtures
+  were made relative and never-expiring so the suite stops going stale at date
+  boundaries.
+
+- **Migration/deployment notes:** **take a fresh, restore-tested backup before
+  deploying — this release contains destructive schema changes.** Four migrations
+  apply. Two are expand/additive: `20260719150000_add_post_login_landing` (a new
+  `PostLoginLanding` enum + a nullable `Member` column with no default; ledgered
+  `old_code_compatible=yes`) and `20260719180000_add_use_fee_schedule_item_codes`
+  (a single flagged-off boolean on the cold single-row `MembershipLockoutSettings`
+  table — additive with a constant default, so ledger-exempt under the same
+  policy as v0.12.1's `add_login_security_setting`). **Two are breaking `contract`
+  migrations that each require `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`:**
+  `20260719170000_xero_grouping_age_tiers_multiselect` backfills then **drops** the
+  scalar `ageTier` column (window-bounded, admin-only — between migrate and
+  cutover the old colour's grouping/membership-admin reads error with
+  column-does-not-exist; the live grouping sync fails closed and retries
+  post-cutover, so deploy with that admin traffic idle and cut over promptly),
+  and `20260720120000_contract_drop_entrance_fee_and_agetier_xero_group` drops the
+  two dead tables (old-colour compatible — no deployed SQL names them — but a
+  `DROP` is breaking by class). Both carry `old_code_compatible=yes` ledger rows
+  and name their `previous_expand_release`. No migration makes a Xero, Stripe, or
+  SES call, and no member is re-grouped in Xero by any migration. See
+  `docs/UPGRADING.md` for the complete operator checklist.
 
 ## 0.12.1 - 2026-07-19
 
