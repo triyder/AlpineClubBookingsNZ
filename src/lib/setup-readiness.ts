@@ -78,9 +78,10 @@ export interface SetupDatabaseSnapshot {
   // for the season (identically-priced types share one collapsed column). This
   // lists "Lodge — Season" entries that would render FEWER THAN TWO columns, so
   // a published rate table cannot silently collapse to a single column (for
-  // example when only one membership type is flagged publicly listed). Computed
-  // only while the hut-fees public-content toggle is ON; empty or undefined
-  // (toggle off, older callers, no DB) raises no warning.
+  // example when only one membership type is flagged publicly listed, or none
+  // at all). Computed only while the hut-fees public-content toggle is ON AND
+  // the token actually appears on a published page; empty or undefined (toggle
+  // off, token never placed, older callers, no DB) raises no warning.
   publicHutFeeSingleColumnSeasons?: string[];
   // Misconfig soft-check (#2041): names of ACTIVE membership types set to
   // "subscription required based on age tier" while NO configured age tier
@@ -970,7 +971,11 @@ function buildSeasonRateCheck(
           : hasGaps
             ? "Some membership types have no hut rates for an active or future season; bookings for them will fail at pricing until rates are set."
             : hasSingleColumnSeasons
-              ? "The public hut-fees page block would show only one nightly-rate column for some seasons; publish at least two membership types' rates so visitors can compare them."
+              // "Fewer than two", not "only one": the gate is `< 2`, and the
+              // likelier misconfiguration is ZERO publicly-listed priced types
+              // (the operator never ticked publiclyListed), which the old
+              // wording told the operator was one.
+              ? "The public hut-fees page block would show fewer than two nightly-rate columns for some seasons; publish at least two membership types' rates so visitors can compare them."
               : `${seasonCount} season${seasonCount === 1 ? "" : "s"} configured.`,
       details: [`Configured seasons: ${seasonCount}`, ...gapDetails, ...embedDetails],
       href: "/admin/seasons",

@@ -139,31 +139,32 @@ export function collapseHutFeeColumns(
       });
     }
   }
-  return [...bySignature.entries()]
-    .map(([signature, group]) => {
-      const members = group.members
-        .slice()
-        .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
-      const typeNames = members.map((member) => member.name);
-      return {
+  const ordered = [...bySignature.entries()].map(([signature, group]) => {
+    const members = group.members
+      .slice()
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    const typeNames = members.map((member) => member.name);
+    return {
+      signature,
+      column: {
         heading: typeNames.join(", "),
         typeNames,
         sortOrder: Math.min(...members.map((member) => member.sortOrder)),
         prices: group.prices,
-        signature,
-      };
-    })
-    // `MembershipType.name` is not unique (only `key` is), so two publicly
-    // listed types can share a sortOrder AND a heading — "Senior" at two
-    // different prices. localeCompare then returns 0 and the order fell back to
-    // Map insertion order, which can swap between renders. The price signature
-    // is the last discriminator that always differs here: two groups with the
-    // same signature would have collapsed into one column already.
-    .sort(
-      (a, b) =>
-        a.sortOrder - b.sortOrder ||
-        a.heading.localeCompare(b.heading) ||
-        a.signature.localeCompare(b.signature),
-    )
-    .map(({ signature: _signature, ...column }) => column);
+      } satisfies HutFeeColumn,
+    };
+  });
+  // `MembershipType.name` is not unique (only `key` is), so two publicly listed
+  // types can share a sortOrder AND a heading — "Senior" at two different
+  // prices. localeCompare then returns 0 and the order fell back to Map
+  // insertion order, which can swap between renders. The price signature is the
+  // last discriminator that always differs here: two groups with the same
+  // signature would already have collapsed into one column.
+  ordered.sort(
+    (a, b) =>
+      a.column.sortOrder - b.column.sortOrder ||
+      a.column.heading.localeCompare(b.column.heading) ||
+      a.signature.localeCompare(b.signature),
+  );
+  return ordered.map((entry) => entry.column);
 }

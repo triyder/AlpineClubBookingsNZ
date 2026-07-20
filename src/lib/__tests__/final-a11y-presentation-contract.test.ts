@@ -84,7 +84,6 @@ describe("#1819 final accessibility presentation contract", () => {
     expect(hutFees).toContain('role="region"');
     expect(hutFees).toContain("tabIndex={0}");
     expect(hutFees).toContain("aria-labelledby={headingId}");
-    expect(hutFees).toContain('<caption className="sr-only">{table.heading}</caption>');
     // The table keeps its natural width inside that scroller rather than
     // compressing rate columns into unreadable slivers.
     expect(hutFees).toContain("w-full min-w-max border-collapse");

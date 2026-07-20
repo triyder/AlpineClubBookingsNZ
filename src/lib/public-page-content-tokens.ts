@@ -433,12 +433,25 @@ function transposeFeeTable(table: PublicFeeTable): PublicFeeTable {
  *   column; before #2129 it only validated that the key existed. An unknown or
  *   unlisted key still yields the empty state (fail closed), never another
  *   type's rates.
- * - `groupBy=type` splits a season into one single-column table per membership
- *   -type column; before #2129 it split a season into Member and Non-member
- *   groups.
- * - `groupBy=age` **transposes** the table (membership types become the rows,
- *   age tiers the columns), matching the joining-fee embed's "by age" meaning;
- *   before #2129 it did nothing at all.
+ * - `groupBy=type` **splits**: a season becomes one single-column table per
+ *   membership-type column; before #2129 it split a season into Member and
+ *   Non-member groups.
+ * - `groupBy=age` **orients**: it transposes the single table so membership
+ *   types are the rows and age tiers the columns. It does NOT split. Before
+ *   #2129 it did nothing at all.
+ *
+ * Those two are deliberately asymmetric — one splits, one orients — and this
+ * embed's `group-by=age` also differs from `{{joining-fees}}`'s `by-age`, which
+ * GROUPS (one block per age tier, headed by the tier, with membership types as
+ * its rows — see `loadPublicJoiningFees`). Here, one table per tier would emit
+ * a degenerate single-row table for every tier a club runs, which reads worse
+ * on a public page than one transposed grid. Keep the asymmetry documented
+ * rather than "fixed": it is a rendering choice, not an oversight.
+ *
+ * `groupBy=type+age` composes both — each single-column table is then
+ * transposed into a single-ROW table. That is legal but degenerate, and
+ * documented as such in docs/PUBLIC_PAGE_CONTENT_TOKENS.md rather than rejected,
+ * since it is harmless and rejecting it would need a new failure mode.
  */
 export async function loadPublicHutFees(
   slug?: string,

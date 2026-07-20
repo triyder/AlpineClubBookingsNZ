@@ -90,10 +90,30 @@ they render the new shape:
 | --- | --- | --- |
 | `type=` | Validated the key existed, then showed every rate anyway | Filters the table to that one publicly-listed type's column |
 | `group-by=type` | Split the season into a Member group and a Non-member group | Splits the season into one single-column table per rate column |
-| `group-by=age` | Did nothing | Transposes the table: membership types become the rows, age tiers the columns |
+| `group-by=age` | Did nothing | Orients the table: membership types become the rows, age tiers the columns (it does not split — see below) |
 
 An unknown or unlisted `type=`, and an unknown or inactive `lodge=` slug, still
 fail closed to the no-information state.
+
+#### `group-by=type` splits, `group-by=age` orients
+
+These two are deliberately **not** symmetrical, and `{{hut-fees}}`'s
+`group-by=age` is deliberately **not** the same operation as
+`{{joining-fees}}`'s `by-age`:
+
+| Token | `group-by=age` does | Result |
+| --- | --- | --- |
+| `{{hut-fees}}` | **Orients** one table | One table, membership types as rows, age tiers as columns |
+| `{{joining-fees}}` | **Groups** into blocks | One block *per age tier*, headed by the tier, membership types as its rows |
+
+`{{hut-fees}}` does not group by tier because a club running four age tiers
+would then get four blocks of one row each — a worse public page than a single
+transposed grid. This is a rendering choice, not an inconsistency to be
+"corrected" later.
+
+`group-by=type+age` composes both: the season is split into one single-column
+table per membership type, and each is then transposed into a single-**row**
+table. It is legal and harmless, but degenerate — prefer one or the other.
 
 ## Block placement (D-R8)
 

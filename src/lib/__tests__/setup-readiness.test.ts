@@ -221,7 +221,9 @@ describe("setup-readiness", () => {
       .find((category) => category.id === "booking")
       ?.checks.find((check) => check.id === "seasons-rates");
     expect(seasonsCheck?.status).toBe("warning");
-    expect(seasonsCheck?.message).toContain("only one nightly-rate column");
+    // "Fewer than two", matching the `< 2` gate: zero publicly-listed priced
+    // types is the likelier misconfiguration, and must not be described as one.
+    expect(seasonsCheck?.message).toContain("fewer than two nightly-rate columns");
     expect(seasonsCheck?.details).toContain(
       "Single-column public rate table: River Lodge — Winter 2026",
     );

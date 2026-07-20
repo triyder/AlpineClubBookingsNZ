@@ -85,14 +85,18 @@ export function FeeTableToken({
               tabIndex={0}
               aria-labelledby={headingId}
             >
-              <table className="w-full min-w-max border-collapse text-left">
-                {/*
-                  Each page can emit many of these tables (lodges x seasons, and
-                  more again under `group-by=type`). Without a caption a screen
-                  reader announces every one as an indistinguishable "table, N
-                  columns, M rows", so name each from its own heading.
-                */}
-                <caption className="sr-only">{table.heading}</caption>
+              {/*
+                Each page can emit many of these tables (lodges x seasons, and
+                more again under `group-by=type`). Unnamed, a screen reader
+                announces every one as an indistinguishable "table, N columns,
+                M rows", so name each from its own heading. `aria-labelledby`
+                rather than an sr-only <caption> so the heading text exists once
+                in the DOM instead of twice.
+              */}
+              <table
+                className="w-full min-w-max border-collapse text-left"
+                aria-labelledby={headingId}
+              >
                 <thead>
                   <tr>
                     <th scope="col" className="border-b border-brand-mist py-2 pr-6">

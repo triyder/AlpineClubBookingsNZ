@@ -261,6 +261,75 @@ describe("public PageContent token view models", () => {
     }));
   });
 
+  it("never leaks a non-publicly-listed type's name or price into the table (#2129)", async () => {
+    // The entire exposure story for this embed rests on ONE nested relation
+    // filter. Rather than assert the filter object's shape (which passes even
+    // if the filter is semantically wrong), drive the mock with a dataset that
+    // contains a private type and have it APPLY the where-clause the loader
+    // actually sent. If the loader ever stops filtering, or filters on the
+    // wrong field, the private rows flow through and this fails.
+    const listed = { id: "t-full", name: "Full Member", sortOrder: 1, ageGroupsApply: true };
+    const secret = { id: "t-staff", name: "Staff Comp Rate", sortOrder: 2, ageGroupsApply: true };
+    const publiclyListedById: Record<string, boolean> = { "t-full": true, "t-staff": false };
+    const allRates = [
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: listed },
+      { ageTier: "ADULT", pricePerNightCents: 111, membershipType: secret },
+      { ageTier: "CHILD", pricePerNightCents: 2000, membershipType: listed },
+      { ageTier: "CHILD", pricePerNightCents: 222, membershipType: secret },
+    ];
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockImplementation(({ select }: { select: Record<string, { where?: { membershipType?: { isActive?: boolean; publiclyListed?: boolean } } }> }) => {
+      const where = select.membershipTypeRates?.where?.membershipType ?? {};
+      return Promise.resolve([
+        hutSeason(
+          allRates.filter((rate) =>
+            where.publiclyListed === true
+              ? publiclyListedById[rate.membershipType.id] === true
+              : true,
+          ),
+        ),
+      ]);
+    });
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees();
+
+    expect(tables[0]?.columns).toEqual(["Full Member"]);
+    const serialised = JSON.stringify(tables);
+    expect(serialised).not.toContain("Staff Comp Rate");
+    expect(serialised).not.toContain("t-staff");
+    // The prices themselves must not surface anywhere either — not as a stray
+    // cell, not folded into another type's column.
+    expect(serialised).not.toContain("111");
+    expect(serialised).not.toContain("222");
+    expect(serialised).not.toContain("$1.11");
+    expect(serialised).not.toContain("$2.22");
+  });
+
+  it("renders a genuinely free $0.00 rate and an absent rate differently (#2129)", async () => {
+    // Zero is a real price; absent is not. Both live in the SAME row here, so a
+    // regression that conflated them (for example flattening cells to
+    // Array<number | null>, making 0 falsy) turns a free infant night into "no
+    // rate" and cannot hide behind a passing sibling assertion.
+    const full = hutType("t-full", "Full Member", 1);
+    const nonMember = hutType("t-non", "Non-member", 9);
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockResolvedValue([hutSeason([
+      { ageTier: "CHILD", pricePerNightCents: 0, membershipType: full },
+      // Non-member carries no CHILD row at all -> that cell must be null.
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: full },
+      { ageTier: "ADULT", pricePerNightCents: 6000, membershipType: nonMember },
+    ])]);
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees();
+    expect(tables[0]?.rows).toEqual([
+      { label: "Child (5–12)", cells: [{ amountCents: 0, label: "$0.00" }, null] },
+      { label: "Adult (18+)", cells: [
+        { amountCents: 4000, label: "$40.00" },
+        { amountCents: 6000, label: "$60.00" },
+      ] },
+    ]);
+  });
+
   it("collapses identically-priced membership types into one shared column (#2129)", async () => {
     const full = hutType("t-full", "Full Member", 1);
     const life = hutType("t-life", "Life", 2);
