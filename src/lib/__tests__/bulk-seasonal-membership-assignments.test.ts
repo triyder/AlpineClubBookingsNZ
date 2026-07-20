@@ -201,6 +201,9 @@ function makeBulkDb(members: Record<string, MemberConfig>) {
     },
     memberSubscription: {
       findMany: vi.fn().mockResolvedValue([]),
+      // #2149 assignment reconcile: no stale seed row by default (no-op).
+      findUnique: vi.fn().mockResolvedValue(null),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),

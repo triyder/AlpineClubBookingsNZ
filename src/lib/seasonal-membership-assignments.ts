@@ -27,6 +27,7 @@ import {
   resolveAccessRoleTokens,
 } from "@/lib/access-roles";
 import { membershipTypeAgeExemption } from "@/lib/membership-types";
+import { reconcileSeasonSubscriptionForAssignment } from "@/lib/member-subscription-defaults";
 import { resolveEnforcedAgeTier } from "@/lib/age-tier-enforcement";
 import {
   describePartnerSharedSweepReason,
@@ -840,6 +841,21 @@ export async function saveSeasonalMembershipAssignment(params: {
       }
     }
 
+    // #2149 F1: a REQUIRED-type season assignment supersedes any stale
+    // creation-seeded NOT_REQUIRED row for the SAME season, so an operational
+    // account (ADMIN/LODGE) that is later made a paying member stops reading
+    // "Not Required" while the booking gate treats it as owing. Idempotent and
+    // status-guarded (never touches a paid/invoiced/covered/manual row), it runs
+    // in this transaction so the row flips atomically with the assignment and
+    // makes no provider calls. BASED_ON_AGE_TIER / NOT_REQUIRED types are left
+    // untouched (the #2041 NOT_REQUIRED-row dominance already keeps them
+    // consistent).
+    await reconcileSeasonSubscriptionForAssignment(tx, {
+      memberId: params.memberId,
+      seasonYear: params.seasonYear,
+      subscriptionBehavior: saved.membershipType.subscriptionBehavior,
+    });
+
     await tx.auditLog.create(
       buildStructuredAuditLogCreateArgs({
         action: SEASONAL_MEMBERSHIP_ASSIGNMENT_CHANGED_ACTION,
@@ -1396,7 +1412,10 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
                 select: {
                   memberId: true,
                   membershipType: {
-                    select: { allowedAgeTiers: { select: { ageTier: true } } },
+                    select: {
+                      subscriptionBehavior: true,
+                      allowedAgeTiers: { select: { ageTier: true } },
+                    },
                   },
                 },
               }),
@@ -1409,6 +1428,12 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
                     (tier) => tier.ageTier,
                   ),
                 ),
+              ]),
+            );
+            const behaviorByMemberId = new Map(
+              freshAssignments.map((assignment) => [
+                assignment.memberId,
+                assignment.membershipType.subscriptionBehavior,
               ]),
             );
 
@@ -1476,6 +1501,19 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
                   });
                 }
               }
+            }
+
+            // #2149 F1: a REQUIRED type copied into the CURRENT season supersedes
+            // any stale creation-seeded NOT_REQUIRED row, exactly as the single
+            // save path does. Idempotent + status-guarded; keyed off the copied
+            // type's behaviour so BASED_ON_AGE_TIER / NOT_REQUIRED rows are left
+            // to the #2041 dominance rule.
+            for (const [memberId, subscriptionBehavior] of behaviorByMemberId) {
+              await reconcileSeasonSubscriptionForAssignment(tx, {
+                memberId,
+                seasonYear: params.toSeasonYear,
+                subscriptionBehavior,
+              });
             }
             return { chunkReconciled, chunkSwept };
           });

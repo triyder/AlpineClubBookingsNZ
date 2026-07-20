@@ -30,7 +30,7 @@ import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
 import { buildParentLinks } from "@/lib/member-parent-links";
 import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
-import { ensureNotRequiredSubscriptionForRole } from "@/lib/member-subscription-defaults";
+import { ensureDefaultSeasonSubscriptionForNewMember } from "@/lib/member-subscription-defaults";
 import { ensureMemberAccessRoles } from "@/lib/member-access-role-writes";
 import { issueActionToken } from "@/lib/action-tokens";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
@@ -1196,9 +1196,11 @@ export async function createAdminMember(
         definitions: roleDefinitions,
       });
 
-      // Admin accounts never owe a membership subscription, so they default
-      // to NOT_REQUIRED for the current season at creation time.
-      await ensureNotRequiredSubscriptionForRole(tx, {
+      // Seed a NOT_REQUIRED current-season row when the new member's effective
+      // membership type does not owe a subscription (operational/non-member
+      // accounts). Derived from the shared type resolver, not the login role
+      // (#2149).
+      await ensureDefaultSeasonSubscriptionForNewMember(tx, {
         id: created.id,
         role: created.role,
       });

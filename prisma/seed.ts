@@ -27,7 +27,7 @@ import {
 import { ensureAccessRoleDefinitions } from "../src/lib/access-role-definitions";
 import { ensureBuiltInDisplays } from "../src/lib/lodge-display/built-in-seeds";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "../src/lib/member-access-role-writes";
-import { ensureNotRequiredSubscriptionForRole } from "../src/lib/member-subscription-defaults";
+import { ensureDefaultSeasonSubscriptionForNewMember } from "../src/lib/member-subscription-defaults";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import {
   buildSeedAdminMemberData,
@@ -508,8 +508,8 @@ async function main() {
         lastName: process.env.SEED_ADMIN_LAST_NAME,
       }),
     });
-    // Admin accounts never owe a membership subscription.
-    await ensureNotRequiredSubscriptionForRole(prisma, admin);
+    // Admin accounts resolve to the NOT_REQUIRED built-in ADMIN type (#2149).
+    await ensureDefaultSeasonSubscriptionForNewMember(prisma, admin);
     await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
       memberId: admin.id,
       role: admin.role,
@@ -545,7 +545,7 @@ async function main() {
         passwordHash: lodgePasswordHash,
       }),
     });
-    await ensureNotRequiredSubscriptionForRole(prisma, lodge);
+    await ensureDefaultSeasonSubscriptionForNewMember(prisma, lodge);
     await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
       memberId: lodge.id,
       role: lodge.role,

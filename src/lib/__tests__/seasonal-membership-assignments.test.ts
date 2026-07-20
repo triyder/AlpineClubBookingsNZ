@@ -205,6 +205,10 @@ function makePreviewDb() {
     },
     memberSubscription: {
       findMany: vi.fn().mockResolvedValue(subscriptions),
+      // #2149 assignment reconcile: no stale seed row by default, so it is a
+      // no-op that leaves the existing save assertions unchanged.
+      findUnique: vi.fn().mockResolvedValue(null),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
@@ -290,6 +294,11 @@ function makeRollForwardDb() {
           cancelledAt: null,
         },
       ]),
+      update: vi.fn().mockResolvedValue({}),
+    },
+    memberSubscription: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),

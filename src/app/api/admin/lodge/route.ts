@@ -8,7 +8,7 @@ import { z } from "zod";
 import { nameField } from "@/lib/zod-helpers";
 import { clubDomainEmail } from "@/config/club-identity";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "@/lib/member-access-role-writes";
-import { ensureNotRequiredSubscriptionForRole } from "@/lib/member-subscription-defaults";
+import { ensureDefaultSeasonSubscriptionForNewMember } from "@/lib/member-subscription-defaults";
 import { isFullAdmin } from "@/lib/access-roles";
 import { getDefaultLodgeId } from "@/lib/lodges";
 
@@ -160,8 +160,9 @@ export async function GET() {
       },
       select: KIOSK_SELECT,
     });
-    // LODGE accounts never owe a membership subscription.
-    await ensureNotRequiredSubscriptionForRole(prisma, {
+    // LODGE accounts resolve to the NOT_REQUIRED built-in LODGE type, so seed a
+    // NOT_REQUIRED current-season row (#2149).
+    await ensureDefaultSeasonSubscriptionForNewMember(prisma, {
       id: lodge.id,
       role: "LODGE",
     });
@@ -405,9 +406,10 @@ export async function POST(request: NextRequest) {
     return member;
   });
 
-  // LODGE accounts never owe a membership subscription; normalized access
-  // rows mirror the compatibility fields (same as the auto-create path).
-  await ensureNotRequiredSubscriptionForRole(prisma, {
+  // LODGE accounts resolve to the NOT_REQUIRED built-in LODGE type (#2149);
+  // normalized access rows mirror the compatibility fields (same as the
+  // auto-create path).
+  await ensureDefaultSeasonSubscriptionForNewMember(prisma, {
     id: created.id,
     role: "LODGE",
   });
