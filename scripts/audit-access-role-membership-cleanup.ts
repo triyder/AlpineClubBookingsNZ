@@ -966,7 +966,27 @@ function parseArgs(argv: string[]): { yes: boolean } {
   return { yes: argv.includes("--yes") };
 }
 
+// #1939 (E13 contraction): this audit's fixture SQL targets the retired
+// AgeTierXeroAcceptedContactGroup table, which the contraction migration
+// drops — replaying the full migration tree then seeding those fixtures can
+// no longer work. The audit was a one-shot harness for two already-executed
+// 2026-06 migrations, so it is retired rather than ported.
+const RETIRING_CONTRACTION_MIGRATION =
+  "20260720120000_contract_drop_entrance_fee_and_agetier_xero_group";
+
 function main(): void {
+  if (
+    fs.existsSync(path.join(MIGRATIONS_DIR, RETIRING_CONTRACTION_MIGRATION))
+  ) {
+    console.log(
+      `This audit is retired: the ${RETIRING_CONTRACTION_MIGRATION} contraction ` +
+        "drops the AgeTierXeroAcceptedContactGroup table its fixtures seed. " +
+        "The audited 2026-06 migrations were verified before the contraction " +
+        "landed (#1939); nothing remains to audit.",
+    );
+    return;
+  }
+
   const { yes } = parseArgs(process.argv.slice(2));
   const databaseUrl = process.env.DATABASE_URL ?? "";
   const guard = checkDisposableLocalDatabaseUrl(databaseUrl);

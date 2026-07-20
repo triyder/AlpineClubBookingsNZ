@@ -11,8 +11,11 @@ types carry zero own rows. A type prices per age tier when
 `MembershipType.ageGroupsApply` is true (one row per tier) or from a single flat
 rate when false (one `NULL`-ageTier row). The legacy member/non-member
 boolean-keyed `SeasonRate` table is **retained but frozen** — still read by the
-public `{{hut-fees}}` embed (its member/non-member split), and dropped by E13.
-E7 (#1933) added the grouped public presentation and token grammar on top of
+public `{{hut-fees}}` embed (its member/non-member split). E13 (#1939)
+deliberately did **not** drop it: because that public embed is still a live
+reader, dropping `SeasonRate` needs an owner decision on how the embed sources
+its Member / Non-member columns from the membership-type-keyed model, tracked as
+a follow-up. E7 (#1933) added the grouped public presentation and token grammar on top of
 this source, not a re-key. Xero
 hut-fee item codes re-key the same way via `XeroItemCodeMapping.membershipTypeId`
 so an invoice line never disagrees with the rate that priced it.
@@ -29,8 +32,12 @@ untouched. A `NULL` snapshot (pre-refactor booking) resolves at read time as
 > `JoiningFee` schedule, keyed by **membership type × optional age tier** (an
 > age-keyed type carries one row per tier — INFANT folds onto the CHILD amount —
 > and a flat-fee type such as the built-in Family type carries a single
-> NULL-tier row). The legacy category-keyed `EntranceFee` table is retained
-> unused and dropped by the deferred contract issue (E13).
+> NULL-tier row). The legacy category-keyed `EntranceFee` table was **dropped**
+> by the E13 contract migration `20260720120000` (#1939). The
+> `EntranceFeeCategory` enum is deliberately **retained** — it still keys
+> `XeroItemCodeMapping.entranceFeeCategory` for the live `JOINING_FEE` item-code
+> mappings (E5 carried those rows forward under category `JOINING_FEE` but kept
+> the physical column and enum names).
 >
 > **Annual fees are keyed the same way (#2067).** `MembershipAnnualFee` now
 > carries the identical Flat-vs-per-tier shape: an optional `ageTier`, with the

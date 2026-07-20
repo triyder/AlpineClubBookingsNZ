@@ -199,6 +199,10 @@ Rules and guarantees:
 - **`None` mode is a total no-op.** Selecting `None` leaves every existing Xero
   group membership untouched and stops all managed adds/removes, including on
   the membership-cancellation path.
-- The legacy `AgeTierSetting.xeroContactGroupId/Name` columns and the
-  `AgeTierXeroAcceptedContactGroup` table are retained but no longer read after
-  E8; they are dropped in the deferred E13 (#1939) after a release soak.
+- The legacy `AgeTierXeroAcceptedContactGroup` table was **dropped** by the E13
+  contract migration `20260720120000` (#1939) — no deployed code queried or
+  joined it after E8. The `AgeTierSetting.xeroContactGroupId/Name` columns are
+  still **retained**: E13 deferred them because the currently-deployed runtime
+  still SELECTs them (`getAgeTierSettings` does a no-`select` `findMany`), so
+  dropping the columns is not blue/green safe until a runtime-prep release stops
+  selecting them; a follow-up contract step drops them then.
