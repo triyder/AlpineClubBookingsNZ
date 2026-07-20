@@ -13,6 +13,8 @@ import { BedTypeIndicator } from "@/components/admin/bed-type-indicator";
 import {
   BED_ALLOCATION_COLUMN_WIDTH_CLASS,
   BED_ALLOCATION_COLUMN_WIDTH_REM,
+  BED_ALLOCATION_LABEL_COLUMN_WIDTH_CLASS,
+  BED_ALLOCATION_LABEL_COLUMN_WIDTH_REM,
   BoardCell,
 } from "./board-cell";
 import {
@@ -105,20 +107,23 @@ export function RoomTable({
       <Table
         className="table-fixed"
         style={{
-          width: `${(nights.length + 1) * BED_ALLOCATION_COLUMN_WIDTH_REM}rem`,
+          width: `${BED_ALLOCATION_LABEL_COLUMN_WIDTH_REM + nights.length * BED_ALLOCATION_COLUMN_WIDTH_REM}rem`,
         }}
       >
         <colgroup>
-          {Array.from({ length: nights.length + 1 }, (_, index) => (
+          <col className={BED_ALLOCATION_LABEL_COLUMN_WIDTH_CLASS} />
+          {Array.from({ length: nights.length }, (_, index) => (
             <col key={index} className={BED_ALLOCATION_COLUMN_WIDTH_CLASS} />
           ))}
         </colgroup>
         <TableHeader>
           <TableRow>
             <TableHead
-              className={`${BED_ALLOCATION_COLUMN_WIDTH_CLASS} sticky left-0 z-10 bg-background`}
+              className={`${BED_ALLOCATION_LABEL_COLUMN_WIDTH_CLASS} sticky left-0 z-10 bg-background`}
             >
-              <span className="block truncate">{room.name}</span>
+              <span className="block truncate" title={room.name}>
+                {room.name}
+              </span>
             </TableHead>
             {nights.map((night) => (
               <TableHead
@@ -134,15 +139,20 @@ export function RoomTable({
           {activeBeds.map((bed) => (
             <TableRow key={bed.id}>
               <TableCell
-                className={`${BED_ALLOCATION_COLUMN_WIDTH_CLASS} sticky left-0 z-10 bg-background font-medium`}
+                className={`${BED_ALLOCATION_LABEL_COLUMN_WIDTH_CLASS} sticky left-0 z-10 bg-background font-medium`}
               >
-                <span className="flex items-center gap-1.5">
+                <span className="flex items-start gap-1.5">
                   <BedTypeIndicator
                     bedType={bed.bedType}
                     labelOverride={bedTypeAccessibleLabel(bed, pairedBunkGroups)}
-                    className="shrink-0 text-muted-foreground"
+                    className="mt-0.5 shrink-0 text-muted-foreground"
                   />
-                  <span className="block min-w-0 truncate">{bed.name}</span>
+                  <span
+                    className="line-clamp-2 min-w-0 whitespace-normal"
+                    title={bed.name}
+                  >
+                    {bed.name}
+                  </span>
                 </span>
               </TableCell>
               {nights.map((night) => {
