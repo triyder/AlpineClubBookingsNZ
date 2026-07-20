@@ -508,11 +508,33 @@ export default function AdminBookPage() {
   return (
     <div className="max-w-3xl">
       {/*
-        #2160: the heading comes FIRST. The banner says "You have view-only
-        access to this area", so a screen-reader user has to know which area
-        they are on before they hear it. `mb-6` replaces the `space-y-6` gap the
-        h1 had as the stack's first child, so spacing is unchanged in both
-        states — the empty wrapper an edit-capable admin gets has no height.
+        #2160: on THIS page the heading comes first, so that a screen-reader
+        user knows which area they are on before the banner tells them they
+        have view-only access to it. `mb-6` replaces the `space-y-6` gap the h1
+        had as the stack's first child, so spacing is unchanged in both states:
+        the `mb-6` lives on the banner's inner div, which only renders for a
+        view-only admin, and the permanently-mounted `role="status"` wrapper an
+        edit-capable admin gets has no height and no margin.
+
+        This ordering is NOT the house rule, and is applied only here and on
+        `/admin/roster`. Everywhere else the banner is the FIRST child of the
+        outermost wrapper, in EVERY render branch, and has to stay there: that
+        is what keeps the `role="status"` wrapper in the same DOM position when
+        a fetch settles. On a section with a loading or error branch, putting a
+        heading above the banner in the loaded branch only makes React
+        reconcile child 0 from the live region into the heading and mount a
+        fresh, already-populated region below it — precisely the defect the
+        mount-order rule in
+        `src/components/admin/__tests__/view-only-banner-contract.test.ts`
+        exists to prevent.
+
+        This page renders in a single branch, so the reorder is free. Plenty of
+        other surfaces are single-branch too and could take it; they have not,
+        because doing so would make the banner's position depend on whether a
+        section happens to have a loading branch — a property you can not see
+        at the render site, and the wrong thing to make a reader check. "Banner
+        first, always" stays the shape everywhere else. See
+        `docs/ARCHITECTURE.md` for the whole rule.
       */}
       <h1 className="mb-6 text-3xl font-bold">Book on Behalf of Member</h1>
       {viewOnlyBanner}

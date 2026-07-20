@@ -490,12 +490,24 @@ export default function RosterPage() {
   return (
     <div>
       {/*
-        #2160: the heading block comes FIRST. The banner says "You have
-        view-only access to this area", so a screen-reader user has to know
-        which area they are on before they hear it. `mb-6` replaces the
-        `space-y-6` gap this block had as the stack's first child, so spacing is
-        unchanged in both states — the empty wrapper an edit-capable admin gets
-        has no height.
+        #2160: on THIS page the heading block comes first, so that a
+        screen-reader user knows which area they are on before the banner tells
+        them they have view-only access to it. `mb-6` replaces the `space-y-6`
+        gap this block had as the stack's first child, so spacing is unchanged
+        in both states: the `mb-6` lives on the banner's inner div, which only
+        renders for a view-only admin, and the permanently-mounted
+        `role="status"` wrapper an edit-capable admin gets has no height and no
+        margin.
+
+        This ordering is NOT the house rule — see the fuller note on
+        `/admin/book`. It is applied only on these two pages. Everywhere else
+        the banner stays the FIRST child of the outermost wrapper in EVERY
+        render branch, so the `role="status"` region keeps its DOM position when
+        a fetch settles instead of being re-created already populated. This page
+        renders in a single branch, so the reorder is free; it has not been
+        propagated to the other single-branch sections, because keying the
+        banner's position on whether a section has a loading branch is not
+        something a reader can check at the render site.
       */}
       <div className="mb-6 flex items-center justify-between">
         <div>

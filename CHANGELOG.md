@@ -11,7 +11,7 @@ All notable public reference-release changes should be recorded here.
   change there and which permission would let you. The greyed-out buttons below
   it no longer each carry their own hidden copy of that explanation. This is the
   pattern Booking Policies adopted in #2142 (above), now applied across most of
-  the admin tree: about four out of five gated buttons (202 of 254) are now
+  the admin tree: about four out of five gated buttons (201 of 254) are now
   explained by a banner instead of individually. **Nothing about who can do what
   has changed** — the same
   people can edit the same things, every button is gated exactly as it was, and
@@ -32,14 +32,14 @@ All notable public reference-release changes should be recorded here.
   risk of getting that wrong on a money or membership screen outweighed the
   benefit.
 
-  **What is not converted.** 52 controls still carry their own per-button
+  **What is not converted.** 53 controls still carry their own per-button
   explanation. Most of that is one screen: **the member detail page**, where 25
   buttons across nine per-record cards (credit, lifecycle, committee, partner
   link, deletion, dependents, parent links, lodge access, seasonal membership)
   are unchanged. Those cards *could* each show the banner, but one member page
   shows all nine at once, so it would repeat the same sentence nine times down a
   single screen; whether that becomes one banner for the whole page is a
-  separate open decision (#2168). The rest — 27 controls — are places no banner
+  separate open decision (#2168). The rest — 28 controls — are places no banner
   can reach: inside a pop-up dialog or dropdown menu, or in small toolbars
   dropped into another page's layout. See `docs/ARCHITECTURE.md` and
   `docs/STYLE_GUIDE.md`.

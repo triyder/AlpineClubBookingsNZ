@@ -549,9 +549,9 @@ one commit, and because a scope change is itself a load it unmounts the
 for the duration of the round trip. That banner shape started in the five
 Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160) — not a claim that nothing is left. Measured on the branch that
-rolled it out: **72 components render a banner, and 202 of the 254
+rolled it out: **72 components render a banner, and 201 of the 254
 `ViewOnlyActionButton` call sites opt out** of the per-button reason because a
-banner in the same file covers them. The remaining **52 controls across 23 files
+banner in the same file covers them. The remaining **53 controls across 23 files
 deliberately keep the per-button default** (`describeReason` left at `true`), in
 three shapes:
 
@@ -564,7 +564,7 @@ three shapes:
   the booking capacity/exclusive hold controls, the family-group login-holder
   and request-review sub-sections, and the non-member contact form). Nothing
   local proves an ancestor renders a banner above them, so the reason stays on
-  the control. (18 controls across 10 files.)
+  the control. (19 controls across 10 files.)
 - **The member detail per-record cards** in
   `src/app/(admin)/admin/members/[id]/_components/` — `member-credit-card`,
   `member-lifecycle-card`, `member-committee-assignments-card`,
@@ -582,8 +582,38 @@ three shapes:
   decision with a visible-UI consequence, so it is **owner decision #2168**, not
   a silent to-do. Do not convert them under #2160.
 
-Two invariants are enforced mechanically by
-`src/components/admin/__tests__/view-only-banner-contract.test.ts`. First,
+Every figure in this section is asserted mechanically by
+`src/components/admin/__tests__/view-only-banner-contract.test.ts` — the totals
+and all three buckets — so they can not drift out of step with the tree. The
+test strips comments with TypeScript's own scanner before counting, because
+counting raw text conflates a call site with prose *about* a call site (both
+`view-only-action.tsx`'s JSDoc and `public-booking-requests-section.tsx`'s JSX
+commentary quote `describeReason={false}` while explaining it, and each was
+miscounted as an opt-out once). If you add or convert a gated control, that test
+fails and the numbers here, in `AGENTS.md`, in `docs/STYLE_GUIDE.md`, in
+`CHANGELOG.md` and in the `ViewOnlyActionButton` JSDoc all need updating
+together.
+
+**Where the banner goes: first child, every branch.** The banner is the first
+child of a section's outermost wrapper, rendered identically in the loading,
+error and loaded branches. That position is load-bearing, not cosmetic: it is
+what keeps the `role="status"` wrapper at the same place in the DOM when a fetch
+settles. Put a heading above the banner in the loaded branch only, and React
+reconciles child 0 from the live region into the heading and mounts a fresh,
+already-populated region below it — the exact defect the mount-order rule exists
+to prevent. Two pages, `/admin/book` and `/admin/roster`, put their page heading
+above the banner instead, so a screen-reader user hears which area they are on
+before hearing that it is view-only; both render in a single branch, so the
+reorder costs nothing there. That is a local exception with a comment at each
+site, **not** a rule to spread: other single-branch sections have deliberately
+been left alone rather than make the banner's position depend on whether a
+section happens to have a loading branch, which is not visible at the render
+site. Making heading-before-banner uniform would mean moving the announcement
+out of the sections entirely (for example, one banner in the admin shell below
+the page title) — a design change with a visible-UI consequence, and a fresh
+owner decision rather than something to retrofit page by page.
+
+Two further invariants are enforced by the same test. First,
 coverage: a file may only use `describeReason={false}` if it also renders an
 `AdminViewOnlySectionBanner`. That is asserted per FILE, because that is the
 only scope in which a reader — and the test — can see that the banner really
@@ -595,7 +625,13 @@ reused in a container no ancestor banner reaches (a dialog), it keeps its own
 banner by default and the covering parent passes `renderViewOnlyBanner={false}`
 at the render site — `FamilyGroupEditor` is the worked example: banner-bearing
 inside the member-detail dialog, suppressed on `/admin/family-groups`, which
-already banners the whole page.
+already banners the whole page. The check reads EVERY render site of the child,
+not just the first, so a second copy added below a compliant one can not ride on
+it. It follows the house import style (a named import rendered as `<Child …>`)
+and would not see a component reached by an aliased or default import, a barrel
+re-export, or `next/dynamic`; none are used for banner-bearing admin components
+today, but a refactor to one of those forms would quietly take the pair out of
+the test's view rather than fail it.
 
 **Known limitation, accepted by the owner as Decision 1 on #2160.** Gated
 controls keep the `disabled` attribute rather than moving to

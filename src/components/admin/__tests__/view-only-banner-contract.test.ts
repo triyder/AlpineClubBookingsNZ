@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 /*
@@ -23,9 +24,53 @@ import { describe, expect, it } from "vitest";
 
 const SRC = join(process.cwd(), "src");
 
+/**
+ * `source` with every comment blanked out — each comment character replaced by
+ * a space, newlines kept — so offsets and line numbers still line up with the
+ * file on disk.
+ *
+ * Every check below asks "does this file CONTAIN this text", and raw text can
+ * not tell a call site from prose ABOUT a call site. That distinction has now
+ * bitten this branch twice, both times inflating the published counts by one:
+ * `view-only-action.tsx`'s JSDoc quotes `describeReason={false}` while
+ * documenting when to pass it, and `public-booking-requests-section.tsx`
+ * carries a JSX comment narrating the #2142 conversion that quotes it too.
+ *
+ * Excluding those two files by name would only postpone the third instance, so
+ * the strip is structural instead. It uses TypeScript's own scanner — the same
+ * lexer the compiler runs — because a regex can not reliably tell a comment
+ * from a `/*` inside a string, a template literal, or a regex literal, and a
+ * naive JSX-comment pattern (`\{\s*\/\*[\s\S]*?\*\/\s*\}`) silently swallows an
+ * object type that merely OPENS with a JSDoc member comment, taking the real
+ * call sites inside it along with the prose.
+ */
+function stripComments(source: string): string {
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    /* skipTrivia */ false,
+    ts.LanguageVariant.JSX,
+    source,
+  );
+  const chars = source.split("");
+  let token = scanner.scan();
+  while (token !== ts.SyntaxKind.EndOfFileToken) {
+    if (
+      token === ts.SyntaxKind.SingleLineCommentTrivia ||
+      token === ts.SyntaxKind.MultiLineCommentTrivia
+    ) {
+      for (let i = scanner.getTokenStart(); i < scanner.getTokenEnd(); i += 1) {
+        if (chars[i] !== "\n") chars[i] = " ";
+      }
+    }
+    token = scanner.scan();
+  }
+  return chars.join("");
+}
+
 // Plain recursive walk rather than a glob library: this is the only place in
 // the repo that would need one, and knip rightly flags a dependency added for a
-// single test.
+// single test. (`typescript` is already a devDependency — the scanner above
+// reuses it rather than adding anything.)
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
@@ -78,50 +123,59 @@ function componentRendersBanner(source: string, name: string): boolean {
 }
 
 /**
- * The opening tag of the FIRST `<Name` element in `source`, e.g.
+ * The opening tag of EVERY `<Name` element in `source`, e.g.
  * `<AssignmentForm ... />`. Attribute values routinely contain `>` (arrow
- * functions: `onChanged={() => …}`), so the tag can not be matched with a
+ * functions: `onChanged={() => …}`), so a tag can not be matched with a
  * regex — this walks the text tracking brace depth and string literals, and
- * ends the tag at the first `>` that is outside both.
+ * ends each tag at the first `>` that is outside both.
+ *
+ * Every render site is returned, not just the first. Checking only the first
+ * made the nesting rule below evadable in exactly the likeliest direction: a
+ * second, un-opted-out `<Child>` added BELOW an existing compliant one — the
+ * shape you get by copying a working render site and dropping the prop — was
+ * never looked at, so the earlier compliant site kept the suite green.
  */
-function openingTag(source: string, name: string): string | null {
-  const start = source.search(new RegExp(`<${name}\\b`));
-  if (start === -1) return null;
-
-  let depth = 0;
-  let quote: string | null = null;
-  for (let i = start; i < source.length; i += 1) {
-    const char = source[i];
-    if (quote) {
-      if (char === quote && source[i - 1] !== "\\") quote = null;
-      continue;
+function openingTags(source: string, name: string): string[] {
+  const tags: string[] = [];
+  for (const match of source.matchAll(new RegExp(`<${name}\\b`, "g"))) {
+    const start = match.index;
+    let depth = 0;
+    let quote: string | null = null;
+    for (let i = start; i < source.length; i += 1) {
+      const char = source[i];
+      if (quote) {
+        if (char === quote && source[i - 1] !== "\\") quote = null;
+        continue;
+      }
+      if (char === '"' || char === "'" || char === "`") quote = char;
+      else if (char === "{") depth += 1;
+      else if (char === "}") depth -= 1;
+      else if (char === ">" && depth === 0) {
+        tags.push(source.slice(start, i + 1));
+        break;
+      }
     }
-    if (char === '"' || char === "'" || char === "`") quote = char;
-    else if (char === "{") depth += 1;
-    else if (char === "}") depth -= 1;
-    else if (char === ">" && depth === 0) return source.slice(start, i + 1);
   }
-  return null;
+  return tags;
 }
 
 function adminSourceFiles(): string[] {
-  return walk(SRC)
-    .filter((file) => {
-      const rel = relative(SRC, file).split(sep).join("/");
-      // `view-only-action.tsx` DEFINES the primitives and documents them, so its
-      // JSDoc necessarily quotes `describeReason={false}` and `aria-disabled` as
-      // prose. Scanning it would match the documentation rather than a call
-      // site. Its own behaviour is pinned by the dedicated Decision 1 case below
-      // and by `view-only-section-banner.test.tsx`.
-      return rel.includes("admin") && !rel.endsWith("admin/view-only-action.tsx");
-    });
+  return walk(SRC).filter((file) =>
+    relative(SRC, file).split(sep).join("/").includes("admin"),
+  );
 }
 
 describe("view-only section banner coverage (#2160)", () => {
+  // `source` is the file with its comments blanked out. Every assertion in this
+  // suite is a text search, so it has to run against code only — see
+  // `stripComments`. That is also why `view-only-action.tsx` needs no special
+  // case here even though its JSDoc quotes `describeReason={false}` at length,
+  // and why the counts below can be trusted: the prose is gone before anything
+  // is matched.
   const files = adminSourceFiles().map((file) => ({
     file,
     rel: relative(SRC, file).split(sep).join("/"),
-    source: readFileSync(file, "utf8"),
+    source: stripComments(readFileSync(file, "utf8")),
   }));
 
   it("finds the admin surfaces it is meant to police", () => {
@@ -131,6 +185,107 @@ describe("view-only section banner coverage (#2160)", () => {
     expect(
       files.filter((f) => f.source.includes("<ViewOnlyActionButton")).length,
     ).toBeGreaterThan(50);
+  });
+
+  it("matches the coverage figures the docs publish", () => {
+    /*
+      Four documents and one JSDoc block quote these numbers as fact:
+      `docs/ARCHITECTURE.md`, `AGENTS.md`, `docs/STYLE_GUIDE.md`,
+      `CHANGELOG.md`, and `ViewOnlyActionButton`'s own JSDoc in
+      `src/components/admin/view-only-action.tsx`.
+
+      They were counted by hand, from raw text, and came out one too high —
+      twice, for the same reason both times: a `describeReason={false}` written
+      inside a comment counted as a call site. Nothing structural stopped a
+      third instance, so this pins them. `files` is comment-stripped (see
+      `stripComments`), which is what makes the count mean "call sites" rather
+      than "mentions".
+
+      This test is MEANT to fail when the rollout changes. Adding or converting
+      a gated control is a real change to a published figure, and the fix is to
+      re-run the numbers and update all five places together — never to loosen
+      the assertion.
+    */
+    const perFile = files.map((f) => ({
+      rel: f.rel,
+      sites: f.source.match(/<ViewOnlyActionButton\b/g)?.length ?? 0,
+      optOuts: f.source.match(/describeReason=\{false\}/g)?.length ?? 0,
+    }));
+    const sum = (list: { n: number }[]) => list.reduce((n, f) => n + f.n, 0);
+
+    // Controls that KEEP the per-button reason, per file.
+    const exceptions = perFile
+      .map((f) => ({ rel: f.rel, n: f.sites - f.optOuts }))
+      .filter((f) => f.n > 0);
+
+    expect({
+      callSites: perFile.reduce((n, f) => n + f.sites, 0),
+      optOuts: perFile.reduce((n, f) => n + f.optOuts, 0),
+      exceptions: sum(exceptions),
+      exceptionFiles: exceptions.length,
+      bannerComponents: files.filter((f) =>
+        f.source.includes("<AdminViewOnlySectionBanner"),
+      ).length,
+    }).toEqual({
+      callSites: 254,
+      optOuts: 201,
+      exceptions: 53,
+      exceptionFiles: 23,
+      bannerComponents: 72,
+    });
+
+    /*
+      …and the three shapes those exceptions fall into, because the docs break
+      the total down and a bucket can drift while the total holds. The member
+      detail cards are listed by name rather than by directory: three OTHER
+      files in that same folder (`member-detail-header`,
+      `member-account-access-group`, `member-contact-group`) are leaf toolbars,
+      not per-record cards, and belong in the leaf bucket.
+    */
+    const MEMBER_DETAIL_CARDS = [
+      "member-committee-assignments-card",
+      "member-credit-card",
+      "member-deletion-card",
+      "member-dependents-card",
+      "member-lifecycle-card",
+      "member-lodge-access-card",
+      "member-parent-links-card",
+      "member-partner-link-card",
+      "member-seasonal-membership-card",
+    ].map((name) => `app/(admin)/admin/members/[id]/_components/${name}.tsx`);
+
+    // Controls inside a dialog, sheet, popover, or dropdown menu — a separate
+    // accessibility container that a banner in the page body does not reach.
+    const SEPARATE_A11Y_CONTAINER = [
+      "app/(admin)/admin/bookings/page.tsx",
+      "app/(admin)/admin/issue-reports/page.tsx",
+      "app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx",
+      "app/(admin)/admin/membership-types/page.tsx",
+    ];
+
+    const bucket = (names: string[]) =>
+      exceptions.filter((f) => names.includes(f.rel));
+    const leaves = exceptions.filter(
+      (f) =>
+        !MEMBER_DETAIL_CARDS.includes(f.rel) &&
+        !SEPARATE_A11Y_CONTAINER.includes(f.rel),
+    );
+
+    expect({
+      memberDetailCards: {
+        controls: sum(bucket(MEMBER_DETAIL_CARDS)),
+        files: bucket(MEMBER_DETAIL_CARDS).length,
+      },
+      separateA11yContainer: {
+        controls: sum(bucket(SEPARATE_A11Y_CONTAINER)),
+        files: bucket(SEPARATE_A11Y_CONTAINER).length,
+      },
+      leaves: { controls: sum(leaves), files: leaves.length },
+    }).toEqual({
+      memberDetailCards: { controls: 25, files: 9 },
+      separateA11yContainer: { controls: 9, files: 4 },
+      leaves: { controls: 19, files: 10 },
+    });
   });
 
   it("never strips a control's reason without a banner covering it", () => {
@@ -156,12 +311,21 @@ describe("view-only section banner coverage (#2160)", () => {
       child component that renders one too shows a view-only admin the same
       sentence twice, in two `role="status"` regions, both announced.
 
-      Both halves are static and reliable: a file's imports name the component
-      files it can render, and the render site itself carries the opt-out. A
-      child that is legitimately reused in a container no ancestor banner
+      A child that is legitimately reused in a container no ancestor banner
       reaches (a dialog) keeps its own banner by default; the parent that DOES
       cover it passes `renderViewOnlyBanner={false}` at the render site, which
-      is exactly where a reader needs to see it.
+      is exactly where a reader needs to see it. EVERY render site of the child
+      is checked, not just the first, so a second copy added below a compliant
+      one can not ride on it.
+
+      The scan is static, and its reach is exactly the house style it polices:
+      a named import (`import { Child } from "…"`) rendered as `<Child …>`. It
+      does NOT see a component reached by an aliased import
+      (`import { Child as Editor }`), a default import, a barrel re-export, or
+      `next/dynamic`. None of those are used for banner-bearing admin
+      components today — every pair that currently exists is checked — but a
+      future refactor to one of those forms would take the pair out of this
+      test's view rather than fail it.
     */
     const bannerFiles = new Set(
       files.filter((f) => f.source.includes("<AdminViewOnlySectionBanner")).map((f) => f.file),
@@ -183,15 +347,19 @@ describe("view-only section banner coverage (#2160)", () => {
           if (!spec || spec.startsWith("type ") || spec.includes(" as ")) continue;
           if (!/^[A-Z]\w*$/.test(spec)) continue;
 
-          const tag = openingTag(parent.source, spec);
-          if (!tag) continue; // imported but never rendered here
-          if (tag.includes("renderViewOnlyBanner={false}")) continue;
+          const tags = openingTags(parent.source, spec);
+          if (tags.length === 0) continue; // imported but never rendered here
+          const uncovered = tags.filter(
+            (tag) => !tag.includes("renderViewOnlyBanner={false}"),
+          );
+          if (uncovered.length === 0) continue;
           // The file has a banner somewhere; only THIS export matters.
-          const childSource = readFileSync(target, "utf8");
+          const childSource = stripComments(readFileSync(target, "utf8"));
           if (!componentRendersBanner(childSource, spec)) continue;
 
           offenders.push(
-            `${parent.rel} renders <${spec}> from ${relative(SRC, target).split(sep).join("/")}`,
+            `${parent.rel} renders <${spec}> from ${relative(SRC, target).split(sep).join("/")} ` +
+              `(${uncovered.length} of ${tags.length} render site(s) without renderViewOnlyBanner={false})`,
           );
         }
       }
