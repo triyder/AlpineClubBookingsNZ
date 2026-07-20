@@ -148,14 +148,15 @@ function changedTimingFields<T extends Record<string, string>>(
  * The quote card carries the route's cross-field rule
  * (`quoteReminderLeadDays < quoteResponseTtlDays`), and only the CHANGED field
  * goes on the wire, so the pair that would reach the route can be one the admin
- * never saw: their new reminder beside a window a second admin moved since (or
- * the reverse). The card's own click-time validation compares the two DRAFT
- * values and cannot see that. Refuse the composed pair here instead of sending
+ * never saw: their new reminder beside a window that moved since page load (or
+ * the reverse) — whether a second admin moved it, this admin did in another tab,
+ * or a config-transfer import did. The card's own click-time validation compares
+ * the two DRAFT values and cannot see that. Refuse the pair here instead of sending
  * it — the route would reject it with a bare "Invalid input", and either way the
  * change does not land, so the admin deserves to be told why.
  */
 const QUOTE_TIMING_CONFLICT =
-  "Your change was not saved: another admin has changed the quote timing since this page loaded, and the reminder lead time would no longer be shorter than the response window. Reload the page to see the current values, then try again."
+  "Your change was not saved: the quote timing has been changed since this page loaded, and the reminder lead time would no longer be shorter than the response window. Reload the page to see the current values, then try again."
 
 /**
  * Shown when the fresh read a save takes fails for any reason other than a 403
@@ -280,9 +281,11 @@ export function PublicBookingRequestsSection() {
    * unmount, and — because the SECOND mount's signals were never aborted — it
    * would still clear `loading` without ever seeding `saved`/`draft`. The
    * section would then render {@link SETTINGS_FALLBACK} as though those were the
-   * stored values, and an admin who edited one field and saved would write the
-   * fallback over the real row. `next dev` enables StrictMode by default, so
-   * that is every local session.
+   * stored values, so the admin edits against fabricated numbers — and any field
+   * they then changed would be written over a stored value they never saw.
+   * (Only that field: each save sends just the fields the admin CHANGED, merged
+   * over a fresh read, so the fallback itself never reaches the wire.)
+   * `next dev` enables StrictMode by default, so that is every local session.
    *
    * Nothing is lost by dropping the signal: the request is one GET, and each
    * hook independently discards a result whose OWN signal aborted before it
@@ -344,7 +347,8 @@ export function PublicBookingRequestsSection() {
     // here: every other singleton in that exporter, the group-discount
     // reference included, has exactly the same property, the GET exposes no
     // `configured` flag to key one off, and the workaround is to change a value
-    // and save. Fixing it belongs in config-transfer, not in this card.
+    // and save. Fixing it belongs in config-transfer, not in this card — tracked
+    // as #2171.
   })
 
   /*

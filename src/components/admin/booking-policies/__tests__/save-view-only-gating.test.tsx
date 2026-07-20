@@ -1774,8 +1774,11 @@ describe("PublicBookingRequestsSection timing cards stage behind Edit (#2166)", 
   // rejects with `AbortError`, every hook swallows it as an ordinary unmount,
   // and each one still clears `loading` (its OWN signal was never aborted)
   // without ever seeding `saved`/`draft`. The section then renders
-  // `SETTINGS_FALLBACK` as though those were the stored values, and an admin who
-  // edits one field and saves writes the fallback over the real row.
+  // `SETTINGS_FALLBACK` as though those were the stored values, so the admin
+  // edits against fabricated numbers, and any field they then change is written
+  // over a stored value they never saw. (Only that field: each save sends just
+  // the CHANGED fields merged over a fresh read, so the fallback itself never
+  // reaches the wire.)
   // `next dev` enables StrictMode by default, so that is every local session.
   //
   // No other mock in this file honours `init.signal` — which is exactly why the
@@ -1882,27 +1885,30 @@ describe("PublicBookingRequestsSection timing cards stage behind Edit (#2166)", 
   it("refuses a quote pair another admin's change would make invalid, and says why", async () => {
     const fetchMock = stubSettings({
       stored: { quoteResponseTtlDays: 30, quoteReminderLeadDays: 7 },
-      changedByAnotherAdmin: { quoteResponseTtlDays: 6 },
+      // Both the loaded pair (30/7) and the concurrently-stored one (10/7)
+      // satisfy the route's own `reminderLead < responseTtl` refinement, so this
+      // models a state the server can actually be in.
+      changedByAnotherAdmin: { quoteResponseTtlDays: 10 },
     });
     await loadSection();
 
     fireEvent.click(button("Edit quote timing"));
-    // Valid against what this admin can see (10 < 30); invalid against what is
-    // now stored (10 >= 6).
+    // Valid against what this admin can see (15 < 30); invalid against what is
+    // now stored (15 >= 10).
     fireEvent.change(input("Reminder lead time (days before expiry)"), {
-      target: { value: "10" },
+      target: { value: "15" },
     });
     fireEvent.click(button("Save quote timing"));
 
     await waitFor(() =>
       expect(
-        screen.getByText(/another admin has changed the quote timing/),
+        screen.getByText(/the quote timing has been changed since this page loaded/),
       ).toBeTruthy(),
     );
-    // Refused BEFORE the write — the other admin's 6 is untouched — and the card
-    // stays open holding this admin's input.
+    // Refused BEFORE the write — the other admin's 10 is untouched — and the
+    // card stays open holding this admin's input.
     expect(writeCalls(fetchMock)).toHaveLength(0);
-    expect(input("Reminder lead time (days before expiry)").value).toBe("10");
+    expect(input("Reminder lead time (days before expiry)").value).toBe("15");
   });
 
   // #2166 review: Tailwind's preflight resets `color`, `background-color` and

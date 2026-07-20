@@ -640,7 +640,8 @@ pristine, audit-writing no-op (#2143). (Config-transfer does observe the row —
 `club-settings.ts` skips a singleton that has none, so a club that never saved
 these settings exports no `booking-request-settings.json`. Every singleton in
 that exporter behaves that way, the group-discount reference included, so it is a
-config-transfer question rather than a reason to unlock a pristine save here.)
+config-transfer question rather than a reason to unlock a pristine save here —
+tracked as #2171.)
 Validation stays in each card's click
 handler rather than the hook's `isValid`, so an out-of-range or
 reminder-not-shorter-than-window draft gets an explanation instead of a greyed
