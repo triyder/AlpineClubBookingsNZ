@@ -133,6 +133,10 @@ changelog section before starting.
      `{{hut-fees}}` embed), `MembershipTypeAgeTier`, and the
      `XeroItemCodeMapping.isMember` / `AgeTierSetting.xeroContactGroup*` columns
      — follow-ups #2129/#2130/#2131.
+     *(Superseded after this release: #2129 step 1 re-sourced the public
+     `{{hut-fees}}` embed onto `MembershipTypeSeasonRate`, removing the last
+     `SeasonRate` reader — see the following release's entry. The sentence above
+     describes the position as at v0.12.2.)*
 3. **The two additive migrations need no special handling.**
    `20260719150000_add_post_login_landing` adds a `PostLoginLanding` enum plus a
    nullable `Member.postLoginLanding` column with no default (metadata-only

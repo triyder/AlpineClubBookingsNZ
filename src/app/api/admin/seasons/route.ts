@@ -40,7 +40,8 @@ export async function GET(req: NextRequest) {
     where: lodgeId ? lodgeNullTolerantScope(lodgeId) : undefined,
     // membershipTypeRates is the authoritative pricing table the editor
     // reads and writes (#1930, E4). The legacy `rates` relation is no longer
-    // selected anywhere (#2129).
+    // selected by any read path (#2129); consumers of this response — including
+    // the lodge-setup copy-seasons flow — read `membershipTypeRates`.
     include: { membershipTypeRates: true },
     orderBy: { startDate: "desc" },
   })

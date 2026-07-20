@@ -49,9 +49,13 @@ interface SeasonRecord {
   startDate: string;
   endDate: string;
   active: boolean;
-  rates: Array<{
-    ageTier: string;
-    isMember: boolean;
+  // Authoritative pricing rows, keyed by membership type + optional age tier
+  // (#1930, E4). `ageTier` is null for a flat type (ageGroupsApply=false).
+  // The legacy boolean-keyed `rates` relation is no longer returned by
+  // GET /api/admin/seasons (#2129), so it is not declared here.
+  membershipTypeRates: Array<{
+    membershipTypeId: string;
+    ageTier: string | null;
     pricePerNightCents: number;
   }>;
 }
@@ -337,9 +341,13 @@ export default function LodgeSetupWizardPage() {
             endDate: season.endDate.slice(0, 10),
             active: season.active,
             lodgeId,
-            rates: season.rates.map((rate) => ({
+            // Membership types are global (no lodgeId), so their ids carry
+            // across lodges unchanged. POST requires `membershipTypeRates`;
+            // this used to send the legacy `rates` key, which meant every
+            // copy silently 400'd on validation (#2129).
+            membershipTypeRates: season.membershipTypeRates.map((rate) => ({
+              membershipTypeId: rate.membershipTypeId,
               ageTier: rate.ageTier,
-              isMember: rate.isMember,
               pricePerNightCents: rate.pricePerNightCents,
             })),
           }),
