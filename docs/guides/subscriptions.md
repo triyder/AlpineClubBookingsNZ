@@ -97,6 +97,45 @@ listed — with their invoice number — under the collapsed **Already invoiced*
 panel below the preview, so you can see exactly who was suppressed and why, and
 they are never included in a confirmed batch.
 
+**Families are never double-billed — but a mixed-basis family still bills.** When
+a family is invoiced once for a **per-family** fee, the preview suppresses a
+second family charge if a family member already holds a live season invoice or an
+active per-family coverage claim. That suppression is deliberately narrow: it
+applies **only when the member holding the invoice is themselves billed
+per-family**. If one member of the family is billed **per-member** (their own
+personal subscription invoice) while the rest are billed per-family, that
+personal invoice **no longer blocks the family fee** — the family is still billed
+once for the per-family members, and the per-member member stays skipped for their
+own invoice. A suppressed family is shown, with the covering member and invoice
+number, under the collapsed **Already invoiced** panel.
+
+**Only a proven per-member basis lifts suppression.** The family is billed only
+when the invoice-holder's own basis resolves to **per-member** — the one case
+where their live invoice can be a personal invoice. Any other holder keeps the
+family **suppressed** (never silently re-billed): a *no-invoice* fee basis, or a
+basis that cannot be resolved at all — their type is *not required* (for example
+a Life Member holding the legacy family invoice), no type resolves, or there is
+no fee row for their type. Unresolvable cases are tagged **Unresolved basis** in
+the **Already invoiced** panel. To re-bill such a family, either fix the holder's membership type/fee so a
+real basis resolves, or void the stale invoice in Xero (which releases the block
+and re-bills the group as one entry).
+
+**Mark a family as already invoiced (operator override).** Sometimes an older,
+ambiguous invoice already covered a whole family, but it sits on a member whose
+current billing basis is per-member — so the automatic suppression above will not
+recognise it and the family would be billed again. On a per-family charge in the
+preview, use **Mark family as already invoiced** (finance edit) to record that
+the family is already covered for the season, with an optional note (for example
+the covering invoice number). A marked family is suppressed from billing — shown
+in the **Already invoiced** panel with an **Operator marked** indicator — until
+you **Unmark** it there, which restores it to the next billing run. Marking keeps
+an audit row even after you unmark. Use it only when you know a real invoice
+covers the family; to re-bill, unmark it. A marker created while a confirm run is
+mid-flight can end up alongside a family that was billed by that same run — this
+is harmless: the resulting charge's own coverage suppresses the family in every
+future preview, so the redundant marker changes nothing. If that invoice is later
+voided, the marker simply becomes visible and unmarkable again.
+
 **Voided/deleted invoices re-open billing.** If you **void or delete** a
 member's subscription invoice in Xero, the next paid-status refresh clears the
 local invoice link, marks the underlying durable charge **Voided** (kept for
@@ -148,6 +187,7 @@ stored exceptions.
 | Confirm and queue annual batch | Snapshot the previewed charges and queue Xero work | — | Freezes fee/recipient/amount; cannot be undone by later changes |
 | Retry (charge) | Re-attempt a failed/queued charge | — | Idempotent per charge |
 | Mark as paid (manual) / unpaid | Record/reverse a non-Xero payment | — | Only when unpaid with no Xero invoice; never calls Xero |
+| Mark family as already invoiced / Unmark | Suppress/restore a per-family charge you know is already covered | — | Finance edit; idempotent; keeps an audit row on unmark |
 
 ## Troubleshooting
 
@@ -160,6 +200,8 @@ stored exceptions.
 | A member is missing from the preview | They are already paid, or already hold a live Xero invoice for the season | Check the collapsed **Already invoiced** panel; record payment against the existing invoice in Xero, or void it there to re-bill |
 | A voided-invoice member still won't re-bill | The paid-status refresh has not run since you voided the invoice in Xero | Run **Incremental Sync** (or the daily refresh), then refresh the preview — the member reappears with a new charge |
 | A per-family fee raised an exception | The club bills individually but the schedule is per-family | Re-base the schedule to per-member/no-invoice in [Fees](fees.md), or switch the family billing mode here |
+| A mixed-basis family is billed again after a member's personal invoice | The personal invoice is a **per-member** charge, so it does not cover the family fee | Expected; if a real invoice already covered the whole family, use **Mark family as already invoiced** on that preview entry |
+| A family you marked still shows in the preview | The marker was released, or you marked a different season | Check the **Already invoiced** panel for the **Operator marked** indicator; re-mark for the correct season if needed |
 | A child/infant member is missing from the preview | Their age tier does not require a subscription | Expected — check the collapsed **Exempt** panel; confirming records a Not-required season row, no invoice |
 | A `MISSING_FEE_SCHEDULE` (or other) exception won't clear after you fixed it | The stored exception only clears on an edit-gated preview refresh | As a finance-edit admin, press **Refresh preview**; the fresh preview auto-resolves any exception it no longer regenerates |
 
