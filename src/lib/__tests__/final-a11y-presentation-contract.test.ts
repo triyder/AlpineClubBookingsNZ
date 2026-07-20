@@ -29,7 +29,7 @@ describe("#1819 final accessibility presentation contract", () => {
     },
   );
 
-  it("keeps the four named wide surfaces usable at mobile width", () => {
+  it("keeps the five named wide surfaces usable at mobile width", () => {
     const adminLayout = source("src/app/(admin)/layout.tsx");
     const bookings = source("src/app/(admin)/admin/bookings/page.tsx");
     const table = source("src/components/admin/admin-data-table.tsx");
@@ -44,6 +44,14 @@ describe("#1819 final accessibility presentation contract", () => {
     );
     const memberContact = source(
       "src/app/(admin)/admin/members/[id]/_components/member-contact-group.tsx",
+    );
+    // Fifth wide surface, and the only one on the PUBLIC site: the {{hut-fees}}
+    // rate table (#2129). It scrolls horizontally rather than shrinking, so the
+    // scroll container must stay keyboard-reachable and named — a bare
+    // `overflow-x-auto` div trips axe `scrollable-region-focusable` and strands
+    // keyboard-only visitors on any column clipped off-screen (WCAG 2.1.1).
+    const hutFees = source(
+      "src/components/website/public-page-content-token.tsx",
     );
 
     expect(adminLayout).toContain(
@@ -72,6 +80,15 @@ describe("#1819 final accessibility presentation contract", () => {
     );
     expect(memberHeader).toContain("break-all");
     expect(memberContact).not.toMatch(/className="grid grid-cols-2 gap-4"/);
+    expect(hutFees).toContain('className="mt-2 max-w-full overflow-x-auto"');
+    expect(hutFees).toContain('role="region"');
+    expect(hutFees).toContain("tabIndex={0}");
+    expect(hutFees).toContain("aria-labelledby={headingId}");
+    // The table keeps its natural width inside that scroller rather than
+    // compressing rate columns into unreadable slivers.
+    expect(hutFees).toContain("w-full min-w-max border-collapse");
+    // An absent rate is spoken, not left as a silent em dash ("blank").
+    expect(hutFees).toContain('<span className="sr-only">No rate</span>');
   });
 
   it("exposes payment selection without relying on colour or weakened opacity", () => {

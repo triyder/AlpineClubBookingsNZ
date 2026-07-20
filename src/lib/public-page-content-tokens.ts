@@ -5,16 +5,40 @@ import { APP_CURRENCY } from "@/config/operational";
 import { normalizeCancellationRule } from "@/lib/cancellation-rules";
 import { resolvePolicyRowsForLodge } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
+import { collapseHutFeeColumns, type HutFeeColumn } from "@/lib/public-hut-fee-columns";
 
 export type PublicMoney = { amountCents: number; label: string };
 export type PublicTokenLodge = { name: string; slug: string };
 
-// Generic grouped-fee view model shared by all three fee embeds (#1933, E7).
-// A group is one titled block (a lodge season, a membership type, or a fee
-// family); each row is one labelled amount with an optional audience qualifier
-// (e.g. Member / Non-member). Public names only — never ids or provider codes.
-export type PublicFeeRow = { label: string; audience?: string; fee: PublicMoney };
+// Generic grouped-fee view model shared by the joining-fee and annual-fee
+// embeds (#1933, E7). A group is one titled block (a membership type or a fee
+// family); each row is one labelled amount. Public names only — never ids or
+// provider codes. (The optional `audience` qualifier was removed in #2129: hut
+// fees were its only producer and they now render as a real table.)
+export type PublicFeeRow = { label: string; fee: PublicMoney };
 export type PublicFeeGroup = { heading: string; rows: PublicFeeRow[] };
+
+// Tabular fee view model for the public {{hut-fees}} embed (#2129). Each table
+// is one lodge x season; `columns` are the collapsed membership-type rate
+// columns and each row is one age tier (or, transposed by `group-by=age`, one
+// membership type). A NULL cell means that column carries no rate for that row
+// and renders as an em dash — never as a zero or another column's price.
+export type PublicFeeTableRow = { label: string; cells: Array<PublicMoney | null> };
+export type PublicFeeTable = {
+  heading: string;
+  /** Header for the leading (row-label) column, e.g. "Age" or "Membership type". */
+  rowHeading: string;
+  columns: string[];
+  rows: PublicFeeTableRow[];
+  /**
+   * True when at least one rate column collapses several identically-priced
+   * membership types (its heading lists them, e.g. "Full Member, Life"). The
+   * renderer shows a one-line explanation only then, so a multi-name heading
+   * does not read to a visitor as a rendering glitch. Survives the `group-by=age`
+   * transpose, where the collapsed names become row labels instead.
+   */
+  collapsedColumns: boolean;
+};
 
 export type PublicBookingPolicy = {
   lodge: PublicTokenLodge | null;
@@ -350,27 +374,100 @@ export async function loadPublicAnnualFees(
 
 export type PublicHutFeeOptions = { typeKey?: string; groupBy?: Set<"type" | "age"> };
 
+type AgeTierLabels = Map<string, { label: string; sortOrder: number }>;
+
+/** Build one lodge x season rate table from its collapsed rate columns. */
+function hutFeeTable(
+  heading: string,
+  columns: HutFeeColumn[],
+  tiers: AgeTierLabels,
+): PublicFeeTable | null {
+  if (columns.length === 0) return null;
+  const tierKeys = [...new Set(columns.flatMap((column) => [...column.prices.keys()]))]
+    .sort((a, b) => ageSort(tiers, a) - ageSort(tiers, b));
+  if (tierKeys.length === 0) return null;
+  return {
+    heading,
+    rowHeading: "Age",
+    columns: columns.map((column) => column.heading),
+    collapsedColumns: columns.some((column) => column.typeNames.length > 1),
+    rows: tierKeys.map((tier) => ({
+      label: ageLabel(tiers, tier),
+      cells: columns.map((column) => {
+        const cents = column.prices.get(tier);
+        return cents === undefined ? null : money(cents);
+      }),
+    })),
+  };
+}
+
+/** Swap axes so membership types are rows and age tiers are columns. */
+function transposeFeeTable(table: PublicFeeTable): PublicFeeTable {
+  return {
+    heading: table.heading,
+    rowHeading: "Membership type",
+    columns: table.rows.map((row) => row.label),
+    collapsedColumns: table.collapsedColumns,
+    rows: table.columns.map((column, columnIndex) => ({
+      label: column,
+      cells: table.rows.map((row) => row.cells[columnIndex] ?? null),
+    })),
+  };
+}
+
 /**
- * Public hut nightly fees. Each active season (per lodge) is a group; rows are
- * the age-tier × audience (Member / Non-member) grid. `group-by=type` splits a
- * season into a Member group and a Non-member group; otherwise both audiences
- * sit in one season group. An unknown `typeKey` yields the empty state; a
- * known one is accepted without further filtering (public hut rates carry the
- * retained member/non-member split, not per-type rows — E4/E13 nuance).
+ * Public hut nightly fees, sourced from the authoritative
+ * `MembershipTypeSeasonRate` rows (#2129 — the legacy member/non-member
+ * `SeasonRate` table is no longer read by anything).
+ *
+ * Each active season of each public lodge renders as one table: age tiers are
+ * the rows and **membership-type rate columns** are the columns. A membership
+ * type earns a column only when it is active, publicly listed, and actually
+ * carries rate rows for that season; types whose full price map is identical
+ * collapse into one shared column headed by their names (see
+ * `collapseHutFeeColumns`). A type with `ageGroupsApply=false` contributes a
+ * single "All ages" row. A cell with no matching rate renders as an em dash.
+ *
+ * Options (semantics changed in #2129 — see docs/PUBLIC_PAGE_CONTENT_TOKENS.md):
+ * - `typeKey` now genuinely **filters** to that one publicly-listed type's
+ *   column; before #2129 it only validated that the key existed. An unknown or
+ *   unlisted key still yields the empty state (fail closed), never another
+ *   type's rates.
+ * - `groupBy=type` **splits**: a season becomes one single-column table per
+ *   membership-type column; before #2129 it split a season into Member and
+ *   Non-member groups.
+ * - `groupBy=age` **orients**: it transposes the single table so membership
+ *   types are the rows and age tiers the columns. It does NOT split. Before
+ *   #2129 it did nothing at all.
+ *
+ * Those two are deliberately asymmetric — one splits, one orients — and this
+ * embed's `group-by=age` also differs from `{{joining-fees}}`'s `by-age`, which
+ * GROUPS (one block per age tier, headed by the tier, with membership types as
+ * its rows — see `loadPublicJoiningFees`). Here, one table per tier would emit
+ * a degenerate single-row table for every tier a club runs, which reads worse
+ * on a public page than one transposed grid. Keep the asymmetry documented
+ * rather than "fixed": it is a rendering choice, not an oversight.
+ *
+ * `groupBy=type+age` composes both — each single-column table is then
+ * transposed into a single-ROW table. That is legal but degenerate, and
+ * documented as such in docs/PUBLIC_PAGE_CONTENT_TOKENS.md rather than rejected,
+ * since it is harmless and rejecting it would need a new failure mode.
  */
 export async function loadPublicHutFees(
   slug?: string,
   options: PublicHutFeeOptions = {},
-): Promise<PublicFeeGroup[]> {
+): Promise<PublicFeeTable[]> {
   if (!(await isPublicContentEnabled("hutFees"))) return [];
   const lodges = await publicLodges(slug);
   if (lodges.length === 0) return [];
+  let onlyTypeId: string | undefined;
   if (options.typeKey) {
     const known = await prisma.membershipType.findFirst({
       where: { isActive: true, publiclyListed: true, key: { equals: options.typeKey, mode: "insensitive" } },
       select: { id: true },
     });
     if (!known) return [];
+    onlyTypeId = known.id;
   }
   const [seasons, tiers] = await Promise.all([
     prisma.season.findMany({
@@ -381,45 +478,47 @@ export async function loadPublicHutFees(
         name: true,
         startDate: true,
         endDate: true,
-        rates: {
-          orderBy: [{ isMember: "desc" }, { ageTier: "asc" }],
-          select: { ageTier: true, isMember: true, pricePerNightCents: true },
+        membershipTypeRates: {
+          where: {
+            membershipType: { isActive: true, publiclyListed: true },
+            ...(onlyTypeId ? { membershipTypeId: onlyTypeId } : {}),
+          },
+          orderBy: [{ ageTier: "asc" }],
+          select: {
+            ageTier: true,
+            pricePerNightCents: true,
+            membershipType: { select: { id: true, name: true, sortOrder: true, ageGroupsApply: true } },
+          },
         },
       },
     }),
     loadAgeTierLabels(),
   ]);
-  const splitByAudience = options.groupBy?.has("type") ?? false;
-  const groups: PublicFeeGroup[] = [];
+  const splitByType = options.groupBy?.has("type") ?? false;
+  const byAge = options.groupBy?.has("age") ?? false;
+  const tables: PublicFeeTable[] = [];
   for (const { id, name: lodgeName } of lodges) {
     for (const season of seasons.filter((row) => row.lodgeId === id)) {
       const seasonTitle = `${lodgeName} — ${season.name} (${dateRange(season.startDate, season.endDate)}) nightly rates`;
-      const cells = [...season.rates]
-        .map((rate) => ({
-          tier: rate.ageTier,
-          audience: rate.isMember ? "Member" : "Non-member",
-          fee: money(rate.pricePerNightCents),
-        }))
-        .sort((a, b) =>
-          ageSort(tiers, a.tier) - ageSort(tiers, b.tier) ||
-          a.audience.localeCompare(b.audience));
-      if (cells.length === 0) continue;
-      if (splitByAudience) {
-        for (const audience of ["Member", "Non-member"]) {
-          const rows = cells
-            .filter((cell) => cell.audience === audience)
-            .map((cell) => ({ label: ageLabel(tiers, cell.tier), fee: cell.fee }));
-          if (rows.length > 0) groups.push({ heading: `${seasonTitle} · ${audience}`, rows });
-        }
-      } else {
-        groups.push({
-          heading: seasonTitle,
-          rows: cells.map((cell) => ({ label: ageLabel(tiers, cell.tier), audience: cell.audience, fee: cell.fee })),
-        });
+      const byType = new Map<string, { id: string; name: string; sortOrder: number; ageGroupsApply: boolean; rates: Array<{ ageTier: string | null; pricePerNightCents: number }> }>();
+      for (const rate of season.membershipTypeRates ?? []) {
+        const type = rate.membershipType;
+        const entry = byType.get(type.id) ?? { ...type, rates: [] };
+        entry.rates.push({ ageTier: rate.ageTier, pricePerNightCents: rate.pricePerNightCents });
+        byType.set(type.id, entry);
+      }
+      const columns = collapseHutFeeColumns([...byType.values()]);
+      if (columns.length === 0) continue;
+      const built = splitByType
+        ? columns.map((column) => hutFeeTable(`${seasonTitle} · ${column.heading}`, [column], tiers))
+        : [hutFeeTable(seasonTitle, columns, tiers)];
+      for (const table of built) {
+        if (!table) continue;
+        tables.push(byAge ? transposeFeeTable(table) : table);
       }
     }
   }
-  return groups;
+  return tables;
 }
 
 export async function loadPublicBookingPolicy(slug?: string): Promise<PublicBookingPolicy | null> {

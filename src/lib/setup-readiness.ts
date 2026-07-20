@@ -73,6 +73,16 @@ export interface SetupDatabaseSnapshot {
   // for that type on some (or all) of those dates hard-throws at pricing, so
   // the Seasons And Rates step drops to a warning.
   membershipTypeRateGaps?: string[];
+  // Public {{hut-fees}} embed readiness (#2129). The embed renders one nightly
+  // -rate column per publicly-listed active membership type that carries rates
+  // for the season (identically-priced types share one collapsed column). This
+  // lists "Lodge — Season" entries that would render FEWER THAN TWO columns, so
+  // a published rate table cannot silently collapse to a single column (for
+  // example when only one membership type is flagged publicly listed, or none
+  // at all). Computed only while the hut-fees public-content toggle is ON AND
+  // the token actually appears on a published page; empty or undefined (toggle
+  // off, token never placed, older callers, no DB) raises no warning.
+  publicHutFeeSingleColumnSeasons?: string[];
   // Misconfig soft-check (#2041): names of ACTIVE membership types set to
   // "subscription required based on age tier" while NO configured age tier
   // actually requires a subscription — such a type can never invoice or lock
@@ -912,8 +922,14 @@ function buildSeasonRateCheck(
   const seasonCount = db?.seasonCount ?? 0;
   const rateGaps = db?.membershipTypeRateGaps ?? [];
   const hasGaps = rateGaps.length > 0;
+  const singleColumnSeasons = db?.publicHutFeeSingleColumnSeasons ?? [];
+  const hasSingleColumnSeasons = singleColumnSeasons.length > 0;
   const status: SetupStatus =
-    seasonCount === 0 ? "blocked" : hasGaps ? "warning" : "complete";
+    seasonCount === 0
+      ? "blocked"
+      : hasGaps || hasSingleColumnSeasons
+        ? "warning"
+        : "complete";
   const MAX_LISTED_GAPS = 8;
   const gapDetails = hasGaps
     ? [
@@ -924,6 +940,21 @@ function buildSeasonRateCheck(
         ...(rateGaps.length > MAX_LISTED_GAPS
           ? [`…and ${rateGaps.length - MAX_LISTED_GAPS} more`]
           : []),
+      ]
+    : [];
+  // #2129: the public {{hut-fees}} embed shows one column per publicly-listed
+  // membership type that carries rates. Fewer than two columns means the
+  // published table collapses to a single rate with nothing to compare against.
+  const embedDetails = hasSingleColumnSeasons
+    ? [
+        `Public hut-fee seasons showing fewer than two rate columns: ${singleColumnSeasons.length}`,
+        ...singleColumnSeasons
+          .slice(0, MAX_LISTED_GAPS)
+          .map((season) => `Single-column public rate table: ${season}`),
+        ...(singleColumnSeasons.length > MAX_LISTED_GAPS
+          ? [`…and ${singleColumnSeasons.length - MAX_LISTED_GAPS} more`]
+          : []),
+        "Flag more membership types as publicly listed under Admin > Membership Types, or add their season rates, so the published table compares at least two rates.",
       ]
     : [];
   return applyProgress(
@@ -939,8 +970,14 @@ function buildSeasonRateCheck(
           ? "At least one active season with rates is needed before bookings can price correctly."
           : hasGaps
             ? "Some membership types have no hut rates for an active or future season; bookings for them will fail at pricing until rates are set."
-            : `${seasonCount} season${seasonCount === 1 ? "" : "s"} configured.`,
-      details: [`Configured seasons: ${seasonCount}`, ...gapDetails],
+            : hasSingleColumnSeasons
+              // "Fewer than two", not "only one": the gate is `< 2`, and the
+              // likelier misconfiguration is ZERO publicly-listed priced types
+              // (the operator never ticked publiclyListed), which the old
+              // wording told the operator was one.
+              ? "The public hut-fees page block would show fewer than two nightly-rate columns for some seasons; publish at least two membership types' rates so visitors can compare them."
+              : `${seasonCount} season${seasonCount === 1 ? "" : "s"} configured.`,
+      details: [`Configured seasons: ${seasonCount}`, ...gapDetails, ...embedDetails],
       href: "/admin/seasons",
     },
     progress,
