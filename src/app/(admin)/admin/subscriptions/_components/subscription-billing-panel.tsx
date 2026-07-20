@@ -69,6 +69,9 @@ type BillingData = {
       xeroInvoiceNumber: string | null;
       status: string | null;
       membersCovered: number;
+      // #2161 FINDING 1: true when the auto-detected holder suppressed the family
+      // via the fail-closed path (its own billing basis could not be resolved).
+      holderBasisUnresolvable?: boolean;
       // #2161 (D2): true when an operator marker suppresses the family. The marker
       // fields describe who marked it and any note.
       operatorMarked?: boolean;
@@ -343,6 +346,12 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                               {" "}
                               <Badge variant="secondary">Operator marked</Badge>
                               {row.markerNote ? <span className="text-muted-foreground"> · {row.markerNote}</span> : null}
+                            </>
+                          ) : null}
+                          {!row.operatorMarked && row.holderBasisUnresolvable ? (
+                            <>
+                              {" "}
+                              <Badge variant="outline" title="The invoice holder's own membership fee basis could not be resolved, so the family is suppressed conservatively. Resolve the holder's type/fee or void the invoice to re-bill.">Unresolved basis</Badge>
                             </>
                           ) : null}
                         </span>

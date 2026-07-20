@@ -158,6 +158,12 @@ export type SubscriptionBillingPreview = {
     xeroInvoiceNumber: string | null;
     status: SubscriptionStatus | null;
     membersCovered: number;
+    // #2161 FINDING 1: true when the auto-detected invoice holder suppressed the
+    // family via the fail-closed path — its OWN billing basis could not be
+    // resolved (NOT_REQUIRED type, no resolvable type, or no fee row), so the
+    // family is conservatively suppressed. Resolve the holder's type/fee or void
+    // the invoice to re-bill. Always false for a purely operator-marked family.
+    holderBasisUnresolvable: boolean;
     // #2161 (D2): true when an operator marker suppresses this family. The
     // marker fields describe who marked it and any note; a family can be BOTH
     // auto-suppressed (holder fields populated) and operator-marked.
@@ -510,6 +516,9 @@ export async function buildSubscriptionBillingPreview(input: {
     xeroInvoiceNumber: string | null;
     status: SubscriptionStatus | null;
     hasLiveInvoice: boolean;
+    // #2161 FINDING 1: the representative holder blocked the family via the
+    // fail-closed unresolvable-basis path (surfaced so the operator sees WHY).
+    basisUnresolvable: boolean;
   }>();
   // #2161 (D2): ACTIVE operator markers by family group, plus their display info.
   // An active marker suppresses the family regardless of the D1 predicate.
@@ -635,8 +644,24 @@ export async function buildSubscriptionBillingPreview(input: {
         && claim.charge.familyGroupId === row.familyGroupId,
     );
     let suppresses = coverageSuppresses;
+    // #2161 FINDING 1 (FAIL CLOSED): a bare live-invoice holder (no PER_FAMILY
+    // coverage claim) suppresses its family unless its OWN basis PROVABLY
+    // resolves to a non-PER_FAMILY (PER_MEMBER-ish) value. A null / unresolvable
+    // basis — NOT_REQUIRED type, no resolvable type, or no fee row for the type
+    // — keeps the family SUPPRESSED rather than silently minting a second family
+    // invoice off a not-yet-billed child (e.g. a Life Member parent holding the
+    // legacy family invoice resolves to a NOT_REQUIRED basis of null). Suppression
+    // lifts ONLY on a proven non-PER_FAMILY basis. Escape paths for a family
+    // wrongly suppressed this way: fix the holder's membership type / fee config,
+    // or void the stale invoice in Xero (link nulled + coverage released, then the
+    // group re-bills as one entry — see docs/guides/subscriptions.md).
+    let basisUnresolvable = false;
     if (!suppresses && sub?.xeroInvoiceId != null) {
-      suppresses = (await resolveMemberBillingBasis(row.member)) === "PER_FAMILY";
+      const holderBasis = await resolveMemberBillingBasis(row.member);
+      if (holderBasis === "PER_FAMILY" || holderBasis == null) {
+        suppresses = true;
+        basisUnresolvable = holderBasis == null;
+      }
     }
     if (!suppresses) continue;
     suppressedFamilyGroupIds.add(row.familyGroupId);
@@ -646,6 +671,7 @@ export async function buildSubscriptionBillingPreview(input: {
       xeroInvoiceNumber: sub?.xeroInvoiceNumber ?? null,
       status: sub?.status ?? null,
       hasLiveInvoice: sub?.xeroInvoiceId != null,
+      basisUnresolvable,
     };
     const existing = familySuppressionInfo.get(row.familyGroupId);
     if (
@@ -896,6 +922,7 @@ export async function buildSubscriptionBillingPreview(input: {
           holderName: info?.holderName ?? null,
           xeroInvoiceNumber: info?.xeroInvoiceNumber ?? null,
           status: info?.status ?? null,
+          holderBasisUnresolvable: info?.basisUnresolvable ?? false,
           membersCovered: familyGroupSizeById.get(familyGroupId) ?? 0,
           operatorMarked: marker != null,
           markerNote: marker?.note ?? null,

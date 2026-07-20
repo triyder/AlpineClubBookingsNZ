@@ -923,7 +923,7 @@ describe("membership subscription billing", () => {
       expect(preview.entries).toHaveLength(0);
       // The whole family is surfaced for audit, with the invoice-holder + number.
       expect(preview.alreadyInvoicedFamilies).toEqual([
-        { familyGroupId: "family-1", holderMemberId: "billing-1", holderName: "Bill Member", xeroInvoiceNumber: "INV-100", status: "UNPAID", membersCovered: 3, operatorMarked: false, markerNote: null, markedByName: null, markedAt: null },
+        { familyGroupId: "family-1", holderMemberId: "billing-1", holderName: "Bill Member", xeroInvoiceNumber: "INV-100", status: "UNPAID", holderBasisUnresolvable: false, membersCovered: 3, operatorMarked: false, markerNote: null, markedByName: null, markedAt: null },
       ]);
       // The family-level dedup query is intentionally NOT scoped to memberIds.
       expect(mocks.familyGroupMembers.findMany).toHaveBeenCalled();
@@ -1008,7 +1008,7 @@ describe("membership subscription billing", () => {
       ]);
       const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
       expect(preview.alreadyInvoicedFamilies).toEqual([
-        { familyGroupId: "family-1", holderMemberId: "billing-1", holderName: "Bill Member", xeroInvoiceNumber: "INV-100", status: "UNPAID", membersCovered: 4, operatorMarked: false, markerNote: null, markedByName: null, markedAt: null },
+        { familyGroupId: "family-1", holderMemberId: "billing-1", holderName: "Bill Member", xeroInvoiceNumber: "INV-100", status: "UNPAID", holderBasisUnresolvable: false, membersCovered: 4, operatorMarked: false, markerNote: null, markedByName: null, markedAt: null },
       ]);
     });
   });
@@ -1097,6 +1097,61 @@ describe("membership subscription billing", () => {
       expect(preview.alreadyInvoicedFamilies[0]).toMatchObject({ familyGroupId: "family-1", holderMemberId: "fam-cov", operatorMarked: false });
     });
 
+    it("FINDING 1 (a): fail-closed — a live-invoice holder whose OWN basis is unresolvable (NOT_REQUIRED type) keeps the family SUPPRESSED + surfaced", async () => {
+      // Regression guard for the fail-open bug: a Life-Member-style parent holds
+      // the legacy family invoice but their membership type is NOT_REQUIRED, so
+      // resolveMemberBillingBasis returns null. The pre-fix predicate treated null
+      // like a proven PER_MEMBER and LIFTED suppression, minting a duplicate family
+      // invoice off fam-a. Fail-closed keeps the family suppressed and surfaces it
+      // with holderBasisUnresolvable=true (holder + invoice number still shown).
+      mocks.effectiveFee.mockResolvedValue(perFamilyFee()); // fam-a resolves PER_FAMILY
+      mocks.familyGroupMembers.findMany.mockResolvedValue([
+        {
+          familyGroupId: "family-1",
+          memberId: "life-parent",
+          member: {
+            firstName: "Lena", lastName: "Life", role: "USER", dateOfBirth: null, ageTier: "ADULT",
+            seasonalMembershipAssignments: [{ membershipType: { id: "type-life", key: "LIFE", name: "Life", subscriptionBehavior: "NOT_REQUIRED" } }],
+            subscriptions: [{ xeroInvoiceId: "xi-legacy", xeroInvoiceNumber: "INV-LEGACY", status: "UNPAID", chargeCoverage: [] }],
+          },
+        },
+      ]);
+      mocks.familyGroupMembers.groupBy.mockResolvedValue([{ familyGroupId: "family-1", _count: { memberId: 2 } }]);
+      mocks.members.findMany.mockResolvedValue([famMember("fam-a")]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
+      expect(preview.entries).toHaveLength(0);
+      expect(preview.alreadyInvoicedFamilies).toHaveLength(1);
+      expect(preview.alreadyInvoicedFamilies[0]).toMatchObject({
+        familyGroupId: "family-1", holderMemberId: "life-parent", xeroInvoiceNumber: "INV-LEGACY",
+        holderBasisUnresolvable: true, operatorMarked: false,
+      });
+    });
+
+    it("FINDING 1 (c): fail-closed — a live-invoice holder whose type resolves but has NO fee row keeps the family SUPPRESSED", async () => {
+      // Type resolves (REQUIRED) but getEffectiveMembershipAnnualFee returns null
+      // for it, so the holder's basis is null/unresolvable -> fail closed.
+      mocks.effectiveFee.mockImplementation(async ({ membershipTypeId }: { membershipTypeId: string }) =>
+        membershipTypeId === "type-nofee" ? null : perFamilyFee());
+      mocks.familyGroupMembers.findMany.mockResolvedValue([
+        {
+          familyGroupId: "family-1",
+          memberId: "nofee-holder",
+          member: {
+            firstName: "Nora", lastName: "NoFee", role: "USER", dateOfBirth: null, ageTier: "ADULT",
+            seasonalMembershipAssignments: [{ membershipType: { id: "type-nofee", key: "X", name: "X", subscriptionBehavior: "REQUIRED" } }],
+            subscriptions: [{ xeroInvoiceId: "xi-x", xeroInvoiceNumber: "INV-X", status: "UNPAID", chargeCoverage: [] }],
+          },
+        },
+      ]);
+      mocks.familyGroupMembers.groupBy.mockResolvedValue([{ familyGroupId: "family-1", _count: { memberId: 2 } }]);
+      mocks.members.findMany.mockResolvedValue([famMember("fam-a")]);
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
+      expect(preview.entries).toHaveLength(0);
+      expect(preview.alreadyInvoicedFamilies[0]).toMatchObject({
+        familyGroupId: "family-1", holderMemberId: "nofee-holder", holderBasisUnresolvable: true,
+      });
+    });
+
     it("D2: an active operator marker suppresses the family and surfaces it with the marker indicator + note", async () => {
       mocks.effectiveFee.mockResolvedValue(perFamilyFee());
       mocks.familyMarkers.findMany.mockResolvedValue([
@@ -1109,6 +1164,7 @@ describe("membership subscription billing", () => {
       expect(preview.alreadyInvoicedFamilies).toEqual([
         {
           familyGroupId: "family-1", holderMemberId: null, holderName: null, xeroInvoiceNumber: null, status: null,
+          holderBasisUnresolvable: false,
           membersCovered: 2, operatorMarked: true, markerNote: "Covered by INV-legacy-9", markedByName: "Ada Admin",
           markedAt: new Date("2026-05-01T00:00:00.000Z"),
         },
