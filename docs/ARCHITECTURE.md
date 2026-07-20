@@ -122,6 +122,51 @@ migrated code inside `app-theme-scope` uses the semantic surface tokens:
 `text-muted-foreground` for secondary labels and footnotes, `bg-muted` for
 tinted rows, and `border-border` for rules.
 
+**`--muted-foreground` is a DERIVED tone, not a brand colour** (#2145). Every
+other app text token in the `.app-theme-scope` block resolves to a solid brand
+endpoint (`--foreground` is `--brand-deep` in light, `--brand-snow` in dark).
+`--muted-foreground` used to do the same — which made it byte-identical to
+`--foreground`, so `text-muted-foreground` rendered as primary text and the
+`muted` role was inert. It is now computed by `deriveAppMutedForeground` in
+`src/lib/club-theme-schema.ts` and injected as `--app-muted-foreground` /
+`--app-muted-foreground-dark` by `buildClubThemeAppCss`; `globals.css` reads
+those with a static fallback for the case where no ClubTheme stylesheet is
+injected.
+
+The derivation mixes each mode's foreground 30% toward that mode's base surface
+(the same 70/30 sRGB mix `.website-theme` already uses for its own
+`--muted-foreground`) and then steps the tone BACK toward the foreground until
+it clears WCAG AA 4.5:1 against **both** surfaces that mode can place muted text
+on — `--brand-snow` and `--brand-mist` in light, `--brand-deep` and
+`--brand-charcoal` in dark. Checking both surfaces is what makes the guard hold
+for an endpoint-crossing palette, where moving toward one surface moves away
+from the other.
+
+Two things about this guard are worth stating precisely, because it is easy to
+read more into it than it delivers:
+
+- **It guarantees** that the shipped tone is never less readable than
+  `--foreground` on any app surface, and that it clears 4.5:1 on all of them
+  whenever `--foreground` itself does. It is a build-time computation over the
+  saved palette, so it also covers palettes already stored in the database — not
+  only newly saved ones.
+- **It does not guarantee** that the tone is visually DISTINCT from
+  `--foreground`. A palette with no contrast headroom walks all the way back and
+  the two coincide again, exactly as before #2145. Accessibility wins over the
+  semantic distinction; `getBlockingContrastWarnings` is what stops a palette
+  that poor being saved at all. Nor does it say anything about non-text uses of
+  the token (a meter fill, a dashed border) beyond the fact that they inherit a
+  tone measured to a stricter bar than the 3:1 non-text minimum.
+
+The tone is computed in TypeScript and emitted as a resolved colour rather than
+written as a CSS `color-mix()` on purpose: a mix is unmeasurable from the
+contrast gate, and "app text tokens are solid, measurable endpoints" is the same
+invariant that keeps `--foreground` / `--card-foreground` off interpolated
+values. `src/lib/__tests__/club-theme-schema.test.ts` gates the derived values
+(including a sweep over configurable neutral ramps) and
+`src/lib/__tests__/app-theme-layout-contract.test.ts` pins the `globals.css`
+wiring and its static fallback.
+
 Two contract tests in `src/lib/__tests__/brand-color-source-contract.test.ts`
 enforce this:
 
@@ -196,7 +241,14 @@ two halves with different enforcement:
    colourless but theme-dependent declaration such as `outline: none`. It
    derives the set of self-healing tokens from the stylesheet itself (declared
    by a print-visible light block AND by a `.dark`-gated block), so the set
-   cannot drift away from what this file actually declares.
+   cannot drift away from what this file actually declares. A corollary that
+   bites when a token stops being a plain brand alias: the derived
+   `--muted-foreground` (#2145) reads a DIFFERENT injected variable per mode
+   (`--app-muted-foreground` vs `--app-muted-foreground-dark`), but both blocks
+   still declare `--muted-foreground` itself, so it stays a light/dark pair and
+   paper keeps the light derived tone. Splitting a paired token across two
+   differently-named declarations — light in one block, dark in the other, with
+   no shared name — would silently drop it out of the healed set.
 2. **In a class string, wherever it lives:** a Tailwind `dark:` utility carrying
    a **literal palette colour** — a named shade (`dark:bg-slate-900`,
    `dark:text-amber-200`) or an arbitrary value (`dark:bg-[#0b1220]`,

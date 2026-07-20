@@ -87,7 +87,10 @@ describe("StatusChip presentation contract", () => {
     expect(chip?.className).toContain("text-success");
   });
 
-  it("neutral uses text-foreground (muted-foreground fails AA on muted)", () => {
+  // Not because `--muted-foreground` fails AA on `--muted` — since #2145 the
+  // app-scope muted tone is clamped to clear AA on both surfaces. A status chip
+  // carries meaning, so it reads at full text weight like its coloured siblings.
+  it("neutral uses text-foreground, at full text weight like its siblings", () => {
     const { container } = renderChip("booking", "DRAFT");
     const chip = container.querySelector('[data-slot="status-chip"]');
     expect(chip?.className).toContain("bg-muted");

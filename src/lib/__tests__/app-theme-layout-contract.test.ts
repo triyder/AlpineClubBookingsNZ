@@ -1,7 +1,11 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { contrastRatio } from "@/lib/club-theme-schema";
+import {
+  DEFAULT_CLUB_THEME_VALUES,
+  contrastRatio,
+  deriveAppMutedForeground,
+} from "@/lib/club-theme-schema";
 
 function readRepoFile(path: string) {
   return readFileSync(join(process.cwd(), path), "utf8");
@@ -107,11 +111,17 @@ describe("database theme app-shell contract", () => {
       "card-foreground",
       "popover-foreground",
       "secondary-foreground",
-      "muted-foreground",
       "accent-foreground",
     ]) {
       expect(lightRules).toContain(`--${token}: var(--brand-deep)`);
     }
+    // `--muted-foreground` is deliberately NOT in that list (#2145): it is a
+    // semantic role, so it must resolve to a DERIVED tone rather than alias
+    // `--foreground`/`--brand-deep`.
+    expect(lightRules).toContain(
+      "--muted-foreground: var(--app-muted-foreground,",
+    );
+    expect(lightRules).not.toContain("--muted-foreground: var(--brand-deep)");
     expect(lightRules).toContain("--sidebar: var(--brand-charcoal)");
     expect(lightRules).toContain("--sidebar-accent: var(--brand-deep)");
     expect(lightRules).toContain("--sidebar-foreground: var(--brand-snow)");
@@ -134,13 +144,16 @@ describe("database theme app-shell contract", () => {
       "card-foreground",
       "popover-foreground",
       "secondary-foreground",
-      "muted-foreground",
       "accent-foreground",
       "sidebar-foreground",
       "sidebar-accent-foreground",
     ]) {
       expect(darkRules).toContain(`--${token}: var(--brand-snow)`);
     }
+    expect(darkRules).toContain(
+      "--muted-foreground: var(--app-muted-foreground-dark,",
+    );
+    expect(darkRules).not.toContain("--muted-foreground: var(--brand-snow)");
     expect(darkRules).toContain("--sidebar-accent: var(--brand-deep)");
     expect(darkRules).toContain("--ring: var(--brand-snow)");
     expect(darkRules).toContain("--sidebar-ring: var(--brand-snow)");
@@ -162,6 +175,44 @@ describe("database theme app-shell contract", () => {
     expect(appThemeRules).not.toMatch(
       /--(?:success|warning|info|danger)(?:-|:)/,
     );
+  });
+
+  // #2145 — the CSS half of the derived muted role. The value itself is derived
+  // and gated in `club-theme-schema.test.ts`; this pins the wiring in
+  // `globals.css` that makes the derived value reach the token, and the static
+  // fallback that stands in when no ClubTheme stylesheet has been injected.
+  it("wires the derived app muted role to the injected tokens", () => {
+    const globals = readRepoFile("src/app/globals.css");
+    const start = globals.indexOf(".app-theme-scope {");
+    const end = globals.indexOf("/* App headings pick up", start);
+    const appThemeRules = globals.slice(start, end);
+    const darkStart = appThemeRules.indexOf(".dark .app-theme-scope {");
+    const lightRules = appThemeRules.slice(0, darkStart);
+    const darkRules = appThemeRules.slice(darkStart);
+    const fallback = deriveAppMutedForeground(DEFAULT_CLUB_THEME_VALUES);
+
+    // The literal fallbacks are the derivation of the shipped default palette.
+    // Hardcoding them in CSS is unavoidable (the static sheet cannot run the
+    // derivation), so this is the pin that stops the two drifting apart.
+    expect(lightRules).toContain(
+      `--muted-foreground: var(--app-muted-foreground, ${fallback.light});`,
+    );
+    expect(darkRules).toContain(
+      `--muted-foreground: var(--app-muted-foreground-dark, ${fallback.dark});`,
+    );
+
+    // The fallback must be a solid colour, not a color-mix: a mix is
+    // unmeasurable from the contrast gate, which is the same reason every other
+    // app text token in this block stays a solid brand endpoint.
+    expect(fallback.light).toMatch(/^#[0-9a-f]{6}$/);
+    expect(fallback.dark).toMatch(/^#[0-9a-f]{6}$/);
+
+    // #2146 print pairing: BOTH blocks must declare `--muted-foreground`, so
+    // excluding the dark block from print media leaves the light derived tone
+    // standing on paper. `print-light-palette-contract.test.ts` derives its
+    // healed-token set from exactly this pairing.
+    expect(lightRules).toContain("--muted-foreground:");
+    expect(darkRules).toContain("--muted-foreground:");
   });
 
   it("keeps app brand utilities on solid gated text/background pairs", () => {

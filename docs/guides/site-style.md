@@ -40,6 +40,17 @@ permission area.
    information, danger, and waitlist states) is curated and is **not** editable,
    so operational meaning and contrast stay consistent. Use **Reset neutral** to
    restore the neutral colours.
+
+   Secondary text in the member and admin app — small labels, hints, and
+   footnotes — is not one of the colours you pick. It is worked out from your
+   **Deep**, **Snow**, **Mist**, and **Charcoal** choices as a softer version of
+   the main text colour, so it reads as clearly secondary without becoming hard
+   to read. The app checks that softer tone against every background it can
+   appear on and pulls it back toward the main text colour if it would otherwise
+   fall below the accessibility minimum. If your neutral colours are very close
+   together there may be no room to soften it at all, and secondary text will
+   look the same as normal text — that is the accessible outcome, and picking
+   neutrals with more separation is what restores the distinction.
 3. Use **Save and next** to move through **Fonts** (the public and app font
    choices), **Raw CSS** (advanced custom CSS), and **Logo** (upload the public
    logo).

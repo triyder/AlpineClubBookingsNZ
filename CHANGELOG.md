@@ -4,6 +4,26 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Secondary text in the member and admin app now actually looks secondary
+  (#2145).** Small labels, hints, and footnotes are meant to sit a step below
+  normal text, but inside the themed app they rendered in exactly the same
+  colour as normal text — the "muted" role was set to the same brand colour as
+  the main text colour, so it did nothing. That role is now worked out from your
+  saved brand neutrals as a genuinely softer tone, in both light and dark mode.
+  **This is a visible change:** every muted label across the member, admin, and
+  finance screens gets lighter. It is not a new colour picker — the tone is
+  derived from the **Deep**, **Snow**, **Mist**, and **Charcoal** colours you
+  already choose in **Site Style**. Before it ships, the derived tone is checked
+  against every background it can appear on, in both modes, and pulled back
+  toward the main text colour if it would otherwise drop below the WCAG AA 4.5:1
+  minimum — so it can never be less readable than the text colour it softens. A
+  palette whose neutrals sit very close together has no room to soften at all,
+  and secondary text stays identical to normal text, exactly as it was before;
+  that is the accessible outcome rather than a failure. Printing and PDF export
+  are unaffected: the role keeps its light/dark pairing, so paper keeps the light
+  tone (the #2146 guarantee below). No schema, API, or data change. See
+  `docs/guides/site-style.md` and `docs/ARCHITECTURE.md`.
+
 - **Printing or exporting a report in dark mode no longer produces a blank page
   (#2146).** A finance manager or admin browsing in dark mode who used **Download
   PDF**, or the browser print dialog, on `/finance` or `/admin/reports` got a
