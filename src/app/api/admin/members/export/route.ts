@@ -107,6 +107,22 @@ export async function GET(req: NextRequest) {
         },
       },
     },
+    // #2041/#2149: mirror the members-list filter and the displayed flag's
+    // row-dominance branch. A BASED_ON_AGE_TIER assignment with a NOT_REQUIRED
+    // current-season row is exempt even when the age tier is liable
+    // (mid-season tier promotion). See admin-members-service for the full
+    // rationale on why the assignment gate is required.
+    {
+      seasonalMembershipAssignments: {
+        some: {
+          seasonYear: currentSeasonYear,
+          membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
+        },
+      },
+      subscriptions: {
+        some: { seasonYear: currentSeasonYear, status: "NOT_REQUIRED" },
+      },
+    },
     ...(notRequiredAgeTiers.size > 0
       ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
       : []),

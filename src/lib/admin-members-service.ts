@@ -323,6 +323,26 @@ export async function listAdminMembers(
         },
       },
     },
+    // #2041/#2149: mirror the displayed flag's row-dominance branch. A
+    // BASED_ON_AGE_TIER assignment paired with a NOT_REQUIRED current-season
+    // subscription row is exempt even when the member's age tier is
+    // subscription-liable (the mid-season tier-promotion shape). This clause
+    // matches `isSubscriptionNotRequiredForMembershipType`'s
+    // `subscriptionBehavior === "BASED_ON_AGE_TIER" && hasNotRequiredSeasonRow`
+    // branch exactly — the assignment gate is required because a bare NOT_REQUIRED
+    // row does NOT exempt a REQUIRED type, and effective behavior is only
+    // BASED_ON_AGE_TIER when a season assignment carries it (no role default does).
+    {
+      seasonalMembershipAssignments: {
+        some: {
+          seasonYear: currentSeasonYear,
+          membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
+        },
+      },
+      subscriptions: {
+        some: { seasonYear: currentSeasonYear, status: "NOT_REQUIRED" },
+      },
+    },
     ...(notRequiredAgeTiers.size > 0
       ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
       : []),
