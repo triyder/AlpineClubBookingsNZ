@@ -163,22 +163,47 @@ Deliberately **not** in the list:
   badge (`page-content-panel.tsx`) was moved to `bg-muted text-muted-foreground`
   instead. A mid-luminance hairline colour is the wrong background for body text
   at any weight, and clamping against it would collapse the derived tone into
-  `--foreground` for roughly a third of gate-passing palettes rather than the
-  ~4% it does today.
-- The dark coloured hue remaps (`bg-red-50` → `oklch(0.29 0.05 27)` and
-  friends). They are strictly darker than the `*-muted` tier already checked, so
-  clearing AA on `--success-muted` clears them too.
+  `--foreground` for roughly 30% of gate-passing palettes rather than the ~12%
+  it does today. (Measured like-for-like over the 77 gate-passing palettes of
+  the neutral-ramp sweep in `club-theme-schema.test.ts`, counting a palette that
+  collapses in EITHER mode: 11.7% today, 29.9% with `--border` clamped. Per-mode
+  it is 5.2% → 11.7% light and 6.5% → 24.7% dark. Any single framing shows the
+  same 2.5–3× increase; quote one, not a mixture.)
+- The dark coloured hue remaps. The `-50` (`oklch(0.29 …)`) and `-100`
+  (`oklch(0.33 …)`) tiers sit at or below the `*-muted` tier already checked, so
+  in dark mode — where the derived tone is the LIGHT one — clearing AA on
+  `--success-muted` clears them too. The `-200` tier does NOT follow from that
+  reasoning and is excluded on evidence instead: `bg-{hue}-200` remaps to
+  `oklch(0.38 …)`, which is LIGHTER than the checked `oklch(0.33 …)` tier and so
+  is the HARDER background for a light tone. The default dark tone measures
+  6.10:1 on `--warning-muted` but 5.00:1 on `bg-amber-200` and 4.93:1 on
+  `bg-sky-200`. Both shipped palettes still clear 4.5:1 there, and the only
+  coloured `-200` background in the app
+  (`admin-exclusive-hold-controls.tsx`) carries `text-amber-900`, not muted
+  text — so nothing fails today. But a `bg-*-200` + `text-muted-foreground`
+  pairing is NOT covered by the guard; on a lower-headroom palette it could drop
+  below AA, so measure before shipping one.
 
-Three things about this guard are worth stating precisely, because it is easy to
+Four things about this guard are worth stating precisely, because it is easy to
 read more into it than it delivers:
 
-- **It guarantees** that the shipped tone is never less readable than
-  `--foreground` on any surface **in the table above**, and that it clears 4.5:1
-  on all of them whenever `--foreground` itself does. It is computed from the
-  saved palette every time the app stylesheet is rendered, so it also covers
-  palettes already stored in the database — not only newly saved ones. It says
-  nothing about a surface not in the table; a new always-on background that
+- **It guarantees** a TWO-BRANCH outcome, over the surfaces **in the table
+  above** and no others. Where `--foreground` itself clears 4.5:1 on a listed
+  surface, the derived tone clears 4.5:1 there too. Where `--foreground` itself
+  FAILS AA on a listed surface — an inherited failure the derivation cannot
+  repair, because #1808 pins the curated `*-muted` fills while the brand ramp
+  moves — the derived tone is no worse than `--foreground` there. It is computed
+  from the saved palette every time the app stylesheet is rendered, so it also
+  covers palettes already stored in the database — not only newly saved ones. It
+  says nothing about a surface not in the table; a new always-on background that
   hosts muted text has to be added to the list.
+- **It is deliberately LESS readable than `--foreground`, and that is the
+  point.** Carrying measurably less contrast than the token it softens is the
+  whole feature, so no clause here should be read as parity with `--foreground`.
+  `club-theme-schema.test.ts` pins the shipped tones at 0.41 / 0.53 (default
+  light/dark) and 0.51 / 0.59 (Tokoroa) of `--foreground`'s ratio on the same
+  surface, and fails if that fraction ever climbs past 0.75 — which is what stops
+  the role being tuned back into an invisible near-copy of `--foreground`.
 - **It does not guarantee** that the tone is visually DISTINCT from
   `--foreground`. A palette with no contrast headroom walks all the way back and
   the two coincide again, exactly as before #2145. Accessibility wins over the

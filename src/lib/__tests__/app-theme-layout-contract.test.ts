@@ -25,6 +25,59 @@ function listSourceFiles(path: string): string[] {
   });
 }
 
+/** Every quoted string literal in a source file, unescaped body only. */
+const STRING_LITERAL = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g;
+
+/**
+ * The source text of every `cn(…)` call, paren-balanced.
+ *
+ * A naive depth count, so a literal paren inside a string can over-extend a
+ * region. That errs toward a LARGER context, i.e. toward a false positive that
+ * a human then triages — never toward silently missing a pairing.
+ */
+function cnCallRegions(source: string): string[] {
+  const regions: string[] = [];
+
+  for (const match of source.matchAll(/\bcn\(/g)) {
+    const start = match.index + match[0].length - 1;
+    let depth = 0;
+    let index = start;
+    for (; index < source.length; index += 1) {
+      if (source[index] === "(") {
+        depth += 1;
+      } else if (source[index] === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          break;
+        }
+      }
+    }
+    regions.push(source.slice(start, index + 1));
+  }
+
+  return regions;
+}
+
+/**
+ * Every CLASS-STRING CONTEXT in a source file: each string literal on its own,
+ * plus the concatenation of all literals inside each `cn(…)` call.
+ *
+ * Anchoring on `className=` — the obvious approach — misses the house idiom
+ * `cn("…", cond && "…")` entirely, including the case where both classes sit in
+ * a single literal that happens to be a `cn()` argument. Scanning literals and
+ * `cn()` argument lists instead sees both shapes. Pinned by the probe test
+ * beside the neutral-200 scan that uses it.
+ */
+function classStringContexts(source: string): string[] {
+  const literals = (text: string) =>
+    [...text.matchAll(STRING_LITERAL)].map((match) => match[2]);
+
+  return [
+    ...literals(source),
+    ...cnCallRegions(source).map((region) => literals(region).join(" ")),
+  ];
+}
+
 describe("database theme app-shell contract", () => {
   it.each([
     ["src/app/(public)/layout.tsx", "getCachedWebsiteThemeRenderState()"],
@@ -285,28 +338,73 @@ describe("database theme app-shell contract", () => {
   // `bg-slate-200 text-slate-500` badge in `page-content-panel.tsx` resolved to
   // muted-on-border at 3.74:1 (default) and 3.54:1 (Tokoroa) in dark mode. It
   // now uses `bg-muted text-muted-foreground`. This keeps the exclusion honest.
+  //
+  // The scan deliberately does NOT anchor on `className=`. The house idiom is
+  // `cn("…", cond && "…")`, so an anchored scan skips exactly the files this
+  // issue had to fix (`allocation-chip.tsx`, `bucket-board.tsx`) and would not
+  // have caught the original `page-content-panel.tsx` offender had it been
+  // written the house way. Instead every quoted string literal is a context in
+  // its own right, and every `cn(…)` argument list is a context too — so a pair
+  // split across two arguments of one `cn()` call is still seen as one class
+  // set.
   it("keeps de-emphasised text off the neutral-200 surfaces that remap to --border", () => {
+    const hasBorderSurface = (classes: string) =>
+      /(?:^|\s)bg-(?:slate|gray|zinc|neutral|stone)-200(?:\s|$)/.test(classes);
+    const hasMutedText = (classes: string) =>
+      /(?:^|\s)text-(?:muted-foreground|(?:slate|gray|zinc|neutral|stone)-(?:300|400|500|600|700))(?:\s|$)/.test(
+        classes,
+      );
+
     const offenders = listSourceFiles("src")
-      .filter((path) => path.endsWith(".tsx"))
-      .flatMap((path) => {
-        const source = readRepoFile(path);
-        return [...source.matchAll(/class(?:Name)?=\{?["'`]([^"'`]+)["'`]/g)]
-          .filter((match) => {
-            const classes = match[1];
-            const hasBorderSurface =
-              /(?:^|\s)bg-(?:slate|gray|zinc|neutral|stone)-200(?:\s|$)/.test(
-                classes,
-              );
-            const hasMutedText =
-              /(?:^|\s)text-(?:muted-foreground|(?:slate|gray|zinc|neutral|stone)-(?:300|400|500|600|700))(?:\s|$)/.test(
-                classes,
-              );
-            return hasBorderSurface && hasMutedText;
-          })
-          .map((match) => `${path}: ${match[1]}`);
-      });
+      // `.ts` as well as `.tsx`: class strings live in plain modules too
+      // (`chip-tones.ts` is a whole file of them). Test files are excluded —
+      // they render nothing, and the probe test below deliberately contains
+      // offending strings.
+      .filter((path) => /\.tsx?$/.test(path) && !path.includes("__tests__"))
+      .flatMap((path) =>
+        classStringContexts(readRepoFile(path))
+          .filter(
+            (classes) => hasBorderSurface(classes) && hasMutedText(classes),
+          )
+          .map((classes) => `${path}: ${classes}`),
+      );
 
     expect(offenders).toEqual([]);
+  });
+
+  // The widened scan above is only worth anything if it actually sees the house
+  // idiom, so its reach is pinned directly rather than assumed. The three probes
+  // are the shapes the previous `className=`-anchored regex missed: the second
+  // and third both come straight from files this PR touches.
+  it("sees neutral-200 pairings through cn(), not just className=", () => {
+    const probes = [
+      '<span className="bg-slate-200 px-1 text-slate-500" />',
+      '<span className={cn("rounded bg-slate-200 px-1", "text-slate-500")} />',
+      '<span className={cn("rounded bg-slate-200 px-1 text-slate-500", x && "z")} />',
+    ];
+
+    for (const probe of probes) {
+      const contexts = classStringContexts(probe);
+      expect(
+        contexts.some(
+          (classes) =>
+            /(?:^|\s)bg-slate-200(?:\s|$)/.test(classes) &&
+            /(?:^|\s)text-slate-500(?:\s|$)/.test(classes),
+        ),
+        `the neutral-200 scan cannot see: ${probe}`,
+      ).toBe(true);
+    }
+
+    // …and it must not fire on a pairing that is split across two SEPARATE
+    // elements, which is not a pairing at all.
+    expect(
+      classStringContexts(
+        '<span className="bg-slate-200" /><span className="text-slate-500" />',
+      ).some(
+        (classes) =>
+          /bg-slate-200/.test(classes) && /text-slate-500/.test(classes),
+      ),
+    ).toBe(false);
   });
 
   // #2145 — the prose in ARCHITECTURE.md previously claimed the derived tone was
@@ -351,9 +449,50 @@ describe("database theme app-shell contract", () => {
       ).not.toContain(token);
     }
 
-    // The doc must not restate the absolute claim it used to make.
-    expect(section).not.toContain("on any app surface");
-    expect(section).not.toContain("every background it can appear on");
+    // Whitespace-normalised, so a claim that happens to wrap across lines is
+    // still caught. The un-normalised `toContain` this replaced would have
+    // missed a wrapped occurrence of its own two banned phrases.
+    const flat = section.replace(/\s+/g, " ");
+
+    // The doc must not restate a claim the code does not deliver. The first two
+    // are the absolute claims this section originally made. The rest are PARITY
+    // claims, which are false BY CONSTRUCTION: the derived tone carries 0.41-0.59
+    // of `--foreground`'s ratio on the shipped palettes, and being less readable
+    // than `--foreground` is the entire point of the role. Re-wording an
+    // overclaim rather than repeating one is what got past the first version of
+    // this pin, so the positive shape assertions below matter more than this
+    // list.
+    for (const claim of [
+      /on any app surface/i,
+      /every background it can appear on/i,
+      /never less readable than/i,
+      /no less readable than/i,
+      /at least as readable as/i,
+      /as readable as `--foreground`/i,
+      /never worse than `--foreground` on any surface/i,
+    ]) {
+      expect(flat, `docs restate an overclaim matching ${claim}`).not.toMatch(
+        claim,
+      );
+    }
+
+    // …and it must state the guarantee in its actual TWO-BRANCH shape, plus the
+    // fact that the tone is deliberately weaker than `--foreground`. A future
+    // edit that deletes the qualifications and leaves a bare claim fails here
+    // even if it invents wording no ban above anticipates.
+    expect(flat, "the AA branch of the guarantee is not stated").toMatch(
+      /where `--foreground` itself clears 4\.5:1/i,
+    );
+    expect(flat, "the inherited-failure branch is not stated").toMatch(
+      /where `--foreground` itself fails AA/i,
+    );
+    expect(flat, "the surfaces the guarantee covers are not bounded").toMatch(
+      /in the table above/i,
+    );
+    expect(
+      flat,
+      "the docs do not say the tone is deliberately less readable than --foreground",
+    ).toMatch(/deliberately LESS readable than `--foreground`/);
   });
 
   // #2145 — the site-style wizard preview overlays inline `--brand-*` values on

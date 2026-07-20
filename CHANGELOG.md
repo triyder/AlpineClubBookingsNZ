@@ -23,8 +23,11 @@ All notable public reference-release changes should be recorded here.
   page and card background, the tinted-row background, and the four built-in
   notice panels (warning, information, success, danger) — and pulled back
   toward the main text colour if it would otherwise drop below the WCAG AA 4.5:1
-  minimum, so it can never be less readable than the text colour it softens on
-  any of them. Dividers and hairlines are deliberately outside that check: text
+  minimum on any of them. It is meant to be softer than normal text — that is
+  what makes it read as secondary — but never softer than that minimum; and
+  where your own main text colour already falls short on one of the notice
+  panels, the secondary tone is held to no worse than it. Dividers and hairlines
+  are deliberately outside that check: text
   is not meant to sit on a divider, and the one badge that did has been moved
   onto the tinted-row background instead. A
   palette whose neutrals sit very close together has no room to soften at all,

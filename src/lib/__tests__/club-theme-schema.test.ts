@@ -303,7 +303,7 @@ describe("deriveAppMutedForeground (#2145)", () => {
   // the same surface, not merely a different hex.
   //
   // 0.75 is chosen with evidence, not taste: the shipped palettes land at
-  // 0.41/0.53 (default light/dark) and 0.52/0.59 (Tokoroa), so the bar has real
+  // 0.41/0.53 (default light/dark) and 0.51/0.59 (Tokoroa), so the bar has real
   // headroom, while a 0.90 mix weight already reads 0.74-0.83 and a 0.99 weight
   // reads ~0.98. It is asserted only for palettes with headroom — a palette the
   // clamp walks all the way back to `--foreground` is the documented accessible
@@ -342,8 +342,12 @@ describe("deriveAppMutedForeground (#2145)", () => {
     // colours do not have (see the endpoint-crossing case below).
     //
     // The assertion is stated RELATIVE to `--foreground`, which is the actual
-    // guarantee: never less readable than the token it softens, and clearing
-    // 4.5:1 wherever that token does. An absolute "always AA" claim would be
+    // guarantee, and it is TWO-BRANCH: it clears 4.5:1 wherever `--foreground`
+    // does, and where `--foreground` itself fails AA on a listed surface it is
+    // no worse than `--foreground` there. It is NOT a parity claim — the muted
+    // tone is deliberately less readable than the token it softens (the
+    // MUTED_STEP_CEILING test above is what enforces that it stays so).
+    // An absolute "always AA" claim would be
     // false and for a reason that has nothing to do with #2145 — the curated
     // `*-muted` fills are #1808-fixed, so a palette can pick a `--brand-snow`
     // that fails AA on a warning panel all by itself. The derivation must not
@@ -377,7 +381,13 @@ describe("deriveAppMutedForeground (#2145)", () => {
                 const mutedRatio = contrastRatio(tone, surface) ?? 0;
                 const where = `${mode} ${tone} on ${surface} (deep ${brandDeep}, snow ${brandSnow}, mist ${brandMist}, charcoal ${brandCharcoal})`;
 
-                // Never less readable than the token it softens.
+                // Both branches of the guarantee in one bound. Math.min means:
+                // where --foreground clears 4.5:1 the bar is 4.5:1 (restated
+                // explicitly just below); where --foreground itself fails AA on
+                // this surface the bar is --foreground's own ratio, i.e. no
+                // worse than the token it softens. This is NOT a parity
+                // assertion — on a palette with headroom the muted tone is
+                // deliberately well BELOW --foreground.
                 expect(mutedRatio, where).toBeGreaterThanOrEqual(
                   Math.min(foregroundRatio, AA_TEXT_CONTRAST_RATIO),
                 );

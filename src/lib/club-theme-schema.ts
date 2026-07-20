@@ -505,9 +505,18 @@ export const APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS = [
  * only such badge (`page-content-panel.tsx`) was moved to
  * `bg-muted text-muted-foreground` instead, because a mid-luminance rule colour
  * is the wrong background for body text at any weight. Clamping against it
- * instead would collapse the derived tone into `--foreground` for roughly a
- * third of gate-passing palettes rather than the ~4% it does today, defeating
- * #2145 for a surface no text should sit on.
+ * instead would collapse the derived tone into `--foreground` for roughly 30% of
+ * gate-passing palettes rather than the ~12% it does today, defeating #2145 for
+ * a surface no text should sit on.
+ *
+ * Those two figures are like-for-like: both are measured over the 77
+ * gate-passing palettes of the neutral-ramp sweep in
+ * `club-theme-schema.test.ts`, counting a palette that collapses in EITHER mode
+ * (11.7% today vs 29.9% with `--border` clamped, replicating the `--border`
+ * mixes from `globals.css`). Per-mode the same comparison reads 5.2% -> 11.7%
+ * light and 6.5% -> 24.7% dark. Every framing shows the same 2.5-3x increase;
+ * quote one consistently rather than mixing a light-only figure with an
+ * either-mode one.
  *
  * Kept as a value rather than a comment so the docs pin can assert the
  * exclusion is STATED, not silently assumed.
@@ -519,9 +528,17 @@ export const APP_MUTED_FOREGROUND_EXCLUDED_SURFACES = ["--border", "--input"] as
  * toward `foreground` until it clears WCAG AA against EVERY surface it can land
  * on.
  *
- * What this guarantees: the returned tone is never less readable than
- * `foreground` itself on any listed surface, and it clears 4.5:1 on all of them
- * whenever `foreground` does.
+ * What this guarantees is TWO-BRANCH, and only over the LISTED surfaces: where
+ * `foreground` itself clears 4.5:1 on a listed surface, the returned tone clears
+ * 4.5:1 there too; where `foreground` itself FAILS AA on a listed surface (an
+ * inherited failure — a curated `*-muted` fill is fixed while the brand ramp
+ * moves), the returned tone is no worse than `foreground` there.
+ *
+ * What it does NOT guarantee is parity with `foreground`. The returned tone is
+ * deliberately LESS readable than the token it softens — that is the entire
+ * point of the role, and `club-theme-schema.test.ts` fails if the ratio it
+ * carries ever climbs back above 0.75 of `foreground`'s on a palette with
+ * headroom.
  *
  * What it does NOT guarantee: that the tone is DISTINCT from `foreground`. A
  * palette with no contrast headroom (one whose own body text only just clears
