@@ -57,6 +57,7 @@ All notable public reference-release changes should be recorded here.
   change. Operator actions: `docs/UPGRADING.md` → Unreleased. See
   `docs/config-transfer/README.md`.
 
+
 - **Blue/green runtime-prep for the legacy Xero column drops, write half
   (#2130).** `v0.12.2` narrowed the two READ paths (`getHutFeeItemCodeMap`,
   `getAgeTierSettings`) with an explicit `select` so the deployed Prisma client
@@ -133,6 +134,61 @@ All notable public reference-release changes should be recorded here.
   inside `tsconfig.json`'s `**/*.ts` include and is not excluded, so leaving the
   seeder alone would have failed `npm run typecheck`; and
   `scripts/e2e-stack.sh:92` runs that seeder under `E2E_MULTI_LODGE=1`, so the
+  required **E2E multi-lodge** branch-protection check fails at seed time.
+
+- **Blue/green runtime-prep for the legacy Xero column drops, write half
+  (#2130).** `v0.12.2` narrowed the two READ paths (`getHutFeeItemCodeMap`,
+  `getAgeTierSettings`) with an explicit `select` so the deployed Prisma client
+  stopped naming `XeroItemCodeMapping.isMember` and
+  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName`. That was
+  incomplete: Prisma also emits an implicit `RETURNING` over **every** scalar
+  column of a `create`/`update`/`upsert` unless a `select` narrows it, so the
+  unnarrowed WRITE paths still named the doomed columns and a draining old
+  colour would keep issuing that SQL. Every mutation on those two models is now
+  narrowed — the admin item-code-mappings route, the admin age-tier-settings
+  route, config-transfer's Xero import, the setup wizard, and the seed — each to
+  the minimal projection its (discarded) result needs. Regression pins assert
+  the `select` on each mutation, and a static source-scan guard (modelled on the
+  existing `ClubModuleSettings` select guard) fails CI on any future call site
+  on either model that forgets its `select` — across `src/`, `prisma/seed.ts`
+  and `scripts/` — so the narrowing cannot silently regress before the drop.
+  As defensive cleanup, the already-retired raw-SQL audit script
+  `audit-access-role-membership-cleanup.ts` also stopped naming the age-tier
+  Xero-group columns (its `managedAgeTierSettings` metric and paired "Managed
+  Xero age-tier rules backfilled" check were removed). That script never
+  executes — it returns early now that the `20260720120000` contraction
+  migration exists — so no live audit coverage was lost and it was never part of
+  the blue/green gap. **No schema change and no migration in this release**: it
+  is runtime-prep only. Only **after this release has itself deployed** are
+  `isMember` (with its old `@@unique`) and the two `xeroContactGroup*` columns
+  drop-eligible, by a *later* release's contract migration — never the same
+  release as this prep.
+
+- **Shared `useSectionEditState` hook for admin settings sections (#2136).**
+  The canonical settings-section pattern (`AGENTS.md`) — load read-only,
+  per-section Edit reveals Save/Cancel, nothing auto-persists on toggle, Cancel
+  reverts to the saved snapshot, Save persists once — had every card
+  re-deriving the same draft/snapshot bookkeeping by hand. `useSectionEditState`
+  (`src/hooks/use-section-edit-state.ts`) now owns it, centralising the two
+  details that are easiest to get subtly wrong: Cancel restores *every* field
+  from the snapshot, and Save re-seeds both the draft and the snapshot from what
+  the card's save callback returns rather than from the submitted draft — so a
+  card that returns the parsed server response (the group discount and password
+  policy cards) never leaves a clamped or normalised value misreported in the
+  form. The guarantee is only as good as what that callback returns: the email
+  sign-in link and Google sign-in cards return locally-computed values because
+  neither route echoes the stored row back, which is safe only because those
+  routes reject out-of-range input rather than clamping it. Adopted by the group
+  discount, password policy, email sign-in link, and Google sign-in
+  sections. Transport stays in each card's own save callback, so the security
+  cards' GET-fresh-settings-then-merge step — which stops one card clobbering a
+  module another card changed since page load — and their multi-endpoint saves
+  are unchanged. Refactor only: no admin-visible behaviour change, and every
+  existing card test passes unmodified. Also removes a redundant `!canEdit`
+  wrapper around `AdminViewOnlyNotice` in three sections; the notice already
+  gates on `canEdit === false` internally (#2065), a strictly stronger condition
+  than the wrapper's, so the wrapper was a no-op in all three tri-states.
+
   required **E2E multi-lodge** branch-protection check would have failed at seed
   time.
 

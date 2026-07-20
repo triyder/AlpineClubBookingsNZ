@@ -224,12 +224,10 @@ export function DefaultCancellationPolicySection() {
 
       <PolicyScopeSelect value={scopeLodgeId} onChange={setScopeLodgeId} />
 
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view the cancellation policy but cannot change it.
-          Bookings edit access is required.
-        </AdminViewOnlyNotice>
-      ) : null}
+      <AdminViewOnlyNotice canEdit={canEdit}>
+        Your admin role can view the cancellation policy but cannot change it.
+        Bookings edit access is required.
+      </AdminViewOnlyNotice>
 
       {scopeIsLodge && !hasOverride ? (
         <Card>
