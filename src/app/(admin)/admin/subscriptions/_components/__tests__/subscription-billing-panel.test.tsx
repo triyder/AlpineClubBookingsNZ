@@ -232,6 +232,65 @@ describe("subscription billing panel", () => {
     expect(fetchMock.mock.calls.every(([, init]) => (init as RequestInit | undefined)?.method !== "POST")).toBe(true);
   });
 
+  // #2161 (D2): mark a PER_FAMILY entry as already invoiced (with an optional note).
+  it("marks a family as already invoiced from a PER_FAMILY entry", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    const famPayload = {
+      ...payload(),
+      preview: {
+        ...payload().preview,
+        entries: [{
+          key: "fam-1", membershipTypeName: "Family", billingBasis: "PER_FAMILY", prorationRule: "NONE",
+          chargedAmountCents: 20_000, coveredMonths: 12, familyGroupId: "family-1", xeroAccountCode: "203", xeroItemCode: "SUB",
+          recipient: { name: "Bill Member" }, coveredMembers: [{ id: "c1", name: "Child One" }],
+        }],
+      },
+    };
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(async (_input, init) => (init as RequestInit | undefined)?.method === "POST"
+      ? ({ ok: true, json: async () => ({ message: "Family marked as already invoiced for this season." }) } as Response)
+      : ({ ok: true, json: async () => famPayload } as Response));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mark family as already invoiced" }));
+    fireEvent.change(screen.getByLabelText(/Note \(optional\)/), { target: { value: "INV-9" } });
+    fireEvent.click(screen.getByRole("button", { name: /Confirm.*mark as already invoiced/ }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "POST")).toBe(true));
+    const postCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST");
+    expect(JSON.parse(String((postCall![1] as RequestInit).body))).toEqual({
+      action: "MARK_FAMILY_INVOICED", seasonYear: 2026, familyGroupId: "family-1", note: "INV-9",
+    });
+  });
+
+  // #2161 (D2): an operator-marked family shows the indicator and an Unmark control.
+  it("unmarks an operator-marked family after confirming", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    mocks.confirm.mockResolvedValue(true);
+    const famPayload = {
+      ...payload(),
+      preview: {
+        ...payload().preview,
+        entries: [],
+        alreadyInvoiced: [],
+        alreadyInvoicedFamilies: [{
+          familyGroupId: "family-1", holderMemberId: null, holderName: null, xeroInvoiceNumber: null, status: null,
+          membersCovered: 3, operatorMarked: true, markerNote: "INV-9", markedByName: "Ada Admin", markedAt: null,
+        }],
+      },
+    };
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation(async (_input, init) => (init as RequestInit | undefined)?.method === "POST"
+      ? ({ ok: true, json: async () => ({ message: "Family marker removed; it can be billed again." }) } as Response)
+      : ({ ok: true, json: async () => famPayload } as Response));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findByText("Operator marked")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Unmark" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "POST")).toBe(true));
+    const postCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST");
+    expect(JSON.parse(String((postCall![1] as RequestInit).body))).toEqual({
+      action: "UNMARK_FAMILY_INVOICED", seasonYear: 2026, familyGroupId: "family-1",
+    });
+  });
+
   it("reloads the latest selection when an older-selection mutation completes", async () => {
     mocks.canEdit.mockReturnValue(true);
     const fetchMock = vi.mocked(fetch);
