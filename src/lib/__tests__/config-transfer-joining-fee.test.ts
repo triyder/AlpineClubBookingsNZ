@@ -9,12 +9,13 @@ import type { TxDb } from "@/lib/config-transfer/import-types";
 import { getEffectiveJoiningFee } from "@/lib/authoritative-fees";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
-// Config-transfer joining-fee materialisation (#1931, E5 — HIGH-1): old
-// (pre-#1931) bundles carry joining-fee AMOUNTS only in item-code-mappings.csv
-// amountCents, a column the runtime no longer reads. Importing such a bundle
-// into a fresh install must materialise JoiningFee windows via the same D-R1
-// fan-out the migration uses — otherwise every member joins with no joining
-// fee, silently.
+// Config-transfer joining-fee materialisation (#1931, E5 — HIGH-1): a bundle can
+// carry joining-fee AMOUNTS in item-code-mappings.csv amountCents (a column the
+// runtime no longer reads). Importing such a bundle into a fresh install must
+// materialise JoiningFee windows via the same D-R1 fan-out the migration uses —
+// otherwise every member joins with no joining fee, silently. (Pre-#1931 bundles
+// used the ENTRANCE_FEE category name for these rows; that import compat closed
+// in #2131, so only current JOINING_FEE rows reach the fan-out.)
 
 const MEMBERSHIP_TYPES = [
   { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE", ageGroupsApply: true },
@@ -124,27 +125,29 @@ function joiningFeeStore(created: JoiningFeeRow[], existing: JoiningFeeRow[]) {
   };
 }
 
-/** Old-bundle CSV: pre-#1931 ENTRANCE_FEE label, amounts in amountCents. */
-function oldBundle(rows: string[]): Map<string, Uint8Array> {
+/** Current item-code CSV carrying JOINING_FEE amounts in the amountCents column. */
+function itemCodeBundle(rows: string[]): Map<string, Uint8Array> {
   return new Map<string, Uint8Array>([
     ["xero-config/item-code-mappings.csv", strToU8(
-      "category,ageTier,seasonType,isMember,entranceFeeCategory,itemCode,amountCents\n" +
+      // The exporter's real current header (ITEM_FIELDS): membershipTypeKey is
+      // always emitted, blank for JOINING_FEE rows (HUT_FEE-only column).
+      "category,membershipTypeKey,ageTier,seasonType,entranceFeeCategory,itemCode,amountCents\n" +
       rows.join("\n") + "\n",
     )],
   ]);
 }
 
-const FULL_OLD_BUNDLE = oldBundle([
-  "ENTRANCE_FEE,,,,ADULT,ENT-AD,10000",
-  "ENTRANCE_FEE,,,,YOUTH,ENT-YO,5000",
-  "ENTRANCE_FEE,,,,CHILD,ENT-CH,2500",
-  "ENTRANCE_FEE,,,,FAMILY,ENT-FA,20000",
+const FULL_ITEM_CODE_BUNDLE = itemCodeBundle([
+  "JOINING_FEE,,,,ADULT,ENT-AD,10000",
+  "JOINING_FEE,,,,YOUTH,ENT-YO,5000",
+  "JOINING_FEE,,,,CHILD,ENT-CH,2500",
+  "JOINING_FEE,,,,FAMILY,ENT-FA,20000",
 ]);
 
 describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
-  it("materialises D-R1 fan-out windows from an old bundle on a fresh install, and a member then resolves the fee", async () => {
+  it("materialises D-R1 fan-out windows from an item-code bundle on a fresh install, and a member then resolves the fee", async () => {
     const captures = { joiningFeeCreates: [] as JoiningFeeRow[] };
-    await xeroConfigImporter.apply(applyCtx(FULL_OLD_BUNDLE, makeTx(captures)) as never);
+    await xeroConfigImporter.apply(applyCtx(FULL_ITEM_CODE_BUNDLE, makeTx(captures)) as never);
 
     const today = getTodayDateOnly();
     // Per-tier fan-out to every liable type (FULL, ASSOCIATE) — never to
@@ -206,7 +209,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
       ],
     };
     await xeroConfigImporter.apply(
-      applyCtx(oldBundle(["ENTRANCE_FEE,,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
+      applyCtx(itemCodeBundle(["JOINING_FEE,,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
     );
     expect(captures.joiningFeeCreates).toHaveLength(0);
   });
@@ -223,7 +226,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
       ],
     };
     await xeroConfigImporter.apply(
-      applyCtx(oldBundle(["ENTRANCE_FEE,,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
+      applyCtx(itemCodeBundle(["JOINING_FEE,,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
     );
 
     const fullAdult = captures.joiningFeeCreates.find(
@@ -251,7 +254,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
       ],
     };
     await xeroConfigImporter.apply(
-      applyCtx(oldBundle(["ENTRANCE_FEE,,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
+      applyCtx(itemCodeBundle(["JOINING_FEE,,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
     );
 
     const fullAdultFills = captures.joiningFeeCreates
@@ -290,7 +293,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
       ],
     };
     await xeroConfigImporter.apply(
-      applyCtx(oldBundle(["ENTRANCE_FEE,,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
+      applyCtx(itemCodeBundle(["JOINING_FEE,,,,ADULT,ENT-AD,10000"]), makeTx(captures)) as never,
     );
 
     const fullAdultFills = captures.joiningFeeCreates
@@ -320,7 +323,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
   it("a genuinely fee-free install (no legacy amount) still resolves NONE (regression)", async () => {
     const captures = { joiningFeeCreates: [] as JoiningFeeRow[] };
     await xeroConfigImporter.apply(
-      applyCtx(oldBundle(["ENTRANCE_FEE,,,,ADULT,ENT-AD,"]), makeTx(captures)) as never,
+      applyCtx(itemCodeBundle(["JOINING_FEE,,,,ADULT,ENT-AD,"]), makeTx(captures)) as never,
     );
     expect(captures.joiningFeeCreates).toHaveLength(0);
 
@@ -334,14 +337,14 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
   it("ignores zero/absent amounts (no windows materialised from item-code-only rows)", async () => {
     const captures = { joiningFeeCreates: [] as JoiningFeeRow[] };
     await xeroConfigImporter.apply(
-      applyCtx(oldBundle(["ENTRANCE_FEE,,,,ADULT,ENT-AD,", "ENTRANCE_FEE,,,,YOUTH,ENT-YO,0"]), makeTx(captures)) as never,
+      applyCtx(itemCodeBundle(["JOINING_FEE,,,,ADULT,ENT-AD,", "JOINING_FEE,,,,YOUTH,ENT-YO,0"]), makeTx(captures)) as never,
     );
     expect(captures.joiningFeeCreates).toHaveLength(0);
   });
 
   it("plan previews the materialisation and binds coverage into the fingerprint", async () => {
     const captures = { joiningFeeCreates: [] as JoiningFeeRow[] };
-    const plan = await xeroConfigImporter.plan(planCtx(FULL_OLD_BUNDLE, makeTx(captures)) as never);
+    const plan = await xeroConfigImporter.plan(planCtx(FULL_ITEM_CODE_BUNDLE, makeTx(captures)) as never);
 
     expect(plan.errors).toEqual([]);
     expect(plan.items).toEqual(

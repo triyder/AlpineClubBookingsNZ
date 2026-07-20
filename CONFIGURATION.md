@@ -1527,12 +1527,13 @@ These fee schedules are config-transferable (#1941): the `membership-fees`
 category of the configuration transfer tool carries `joining-fees.csv`,
 `annual-fees.csv`, and `annual-fee-components.csv` (money in integer cents), so a
 club can move its joining-fee and annual-fee schedules — with their per-line Xero
-components — between installs. This schedule takes **precedence** over the legacy
-Xero item-code-amount joining-fee materialisation: when a bundle carries the
-joining-fee schedule and the `membership-fees` category is applied, the
-authoritative amounts come from these CSVs and the old item-code fan-out is
-skipped (an import that deselects `membership-fees` keeps the legacy path). See
-`docs/config-transfer/README.md`.
+components — between installs. This schedule takes **precedence** over the Xero
+**item-code-amount** joining-fee materialisation (#1931 — still live, not
+retired): when a bundle carries the joining-fee schedule and the
+`membership-fees` category is applied, the authoritative amounts come from these
+CSVs and the item-code fan-out is skipped (an import that deselects
+`membership-fees` keeps the item-code-amount path, so its joining fees are not
+silently dropped). See [`docs/config-transfer/README.md`](docs/config-transfer/README.md).
 
 The consolidated `/admin/fees` page (#1933, E7) shows Hut Fees (per lodge →
 season → membership-type × age-tier nightly rates; edits need `bookings:edit`),

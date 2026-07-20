@@ -13,8 +13,8 @@ import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
 // Config-transfer membership-fees category (#1941): first-class transfer of the
 // joining-fee schedule (#1931/E5) and the annual-fee schedule + components
 // (#1932/E6). Money stays in integer cents; export ordering is byte-stable;
-// apply is upsert-only; and a NEW-format bundle SUPERSEDES the #1931 legacy
-// joining-fee materialisation in xero-config.
+// apply is upsert-only; and a bundle carrying joining-fees.csv SUPERSEDES the
+// #1931 item-code-amount joining-fee materialisation in xero-config.
 
 // ---- In-memory store modelling the fee delegates the category touches -------
 
@@ -403,7 +403,7 @@ describe("config-transfer membership-fees apply (merge/update)", () => {
   });
 });
 
-// ---- Precedence over the #1931 legacy materialisation -----------------------
+// ---- Precedence over the #1931 item-code-amount materialisation -------------
 
 function xeroTx(captures: { joiningFeeCreates: unknown[] }): TxDb {
   const noop = {
@@ -436,46 +436,48 @@ function xeroTx(captures: { joiningFeeCreates: unknown[] }): TxDb {
   }) as unknown as TxDb;
 }
 
-// An old-format item-code bundle carrying legacy ENTRANCE_FEE amounts.
-const OLD_ITEM_CODES =
-  "category,ageTier,seasonType,isMember,entranceFeeCategory,itemCode,amountCents\n" +
-  "ENTRANCE_FEE,,,,ADULT,ENT-AD,10000\n" +
-  "ENTRANCE_FEE,,,,FAMILY,ENT-FA,20000\n";
+// A current item-code bundle carrying JOINING_FEE amounts in the amountCents
+// column (the input the #1931 item-code-amount fan-out consumes). Pre-#1931
+// ENTRANCE_FEE bundles are rejected upstream since #2131.
+const ITEM_CODES_WITH_AMOUNTS =
+  "category,ageTier,seasonType,entranceFeeCategory,itemCode,amountCents\n" +
+  "JOINING_FEE,,,ADULT,ENT-AD,10000\n" +
+  "JOINING_FEE,,,FAMILY,ENT-FA,20000\n";
 
 describe("config-transfer joining-fee precedence: #1941 supersedes #1931 (xero-config)", () => {
-  it("old-format bundle (no joining-fees.csv) STILL materialises legacy amounts (regression)", async () => {
+  it("bundle without joining-fees.csv STILL materialises item-code amounts (regression)", async () => {
     const captures = { joiningFeeCreates: [] as unknown[] };
-    const files = bundle({ "xero-config/item-code-mappings.csv": OLD_ITEM_CODES });
+    const files = bundle({ "xero-config/item-code-mappings.csv": ITEM_CODES_WITH_AMOUNTS });
     await xeroConfigImporter.apply(applyCtx(files, xeroTx(captures)));
     expect(captures.joiningFeeCreates.length).toBeGreaterThan(0);
   });
 
-  it("new-format bundle (has joining-fees.csv) does NOT run the legacy materialisation", async () => {
+  it("bundle with joining-fees.csv does NOT run the item-code-amount materialisation", async () => {
     const captures = { joiningFeeCreates: [] as unknown[] };
     const files = bundle({
-      "xero-config/item-code-mappings.csv": OLD_ITEM_CODES,
+      "xero-config/item-code-mappings.csv": ITEM_CODES_WITH_AMOUNTS,
       "membership-fees/joining-fees.csv": JF_HEADER + "FULL,ADULT,2026-01-01,,12345\n",
     });
     await xeroConfigImporter.apply(applyCtx(files, xeroTx(captures)));
     expect(captures.joiningFeeCreates).toHaveLength(0);
   });
 
-  it("new-format bundle STILL materialises legacy amounts when membership-fees is DESELECTED (regression, FIX-2)", async () => {
+  it("bundle with joining-fees.csv STILL materialises item-code amounts when membership-fees is DESELECTED (regression, FIX-2)", async () => {
     const captures = { joiningFeeCreates: [] as unknown[] };
     const files = bundle({
-      "xero-config/item-code-mappings.csv": OLD_ITEM_CODES,
+      "xero-config/item-code-mappings.csv": ITEM_CODES_WITH_AMOUNTS,
       "membership-fees/joining-fees.csv": JF_HEADER + "FULL,ADULT,2026-01-01,,12345\n",
     });
     // Only xero-config selected → membership-fees importer never runs → the
-    // legacy fan-out MUST still materialise or joining fees silently vanish.
+    // item-code fan-out MUST still materialise or joining fees silently vanish.
     await xeroConfigImporter.apply(applyCtx(files, xeroTx(captures), "overwrite", ["xero-config"]));
     expect(captures.joiningFeeCreates.length).toBeGreaterThan(0);
   });
 
-  it("plan: new-format bundle STILL previews materialisation when membership-fees deselected (FIX-2)", async () => {
+  it("plan: bundle with joining-fees.csv STILL previews materialisation when membership-fees deselected (FIX-2)", async () => {
     const captures = { joiningFeeCreates: [] as unknown[] };
     const files = bundle({
-      "xero-config/item-code-mappings.csv": OLD_ITEM_CODES,
+      "xero-config/item-code-mappings.csv": ITEM_CODES_WITH_AMOUNTS,
       "membership-fees/joining-fees.csv": JF_HEADER + "FULL,ADULT,2026-01-01,,12345\n",
     });
     const plan = await xeroConfigImporter.plan(
@@ -484,10 +486,10 @@ describe("config-transfer joining-fee precedence: #1941 supersedes #1931 (xero-c
     expect(plan.items.some((i) => i.entity === "joining-fee-window")).toBe(true);
   });
 
-  it("plan: new-format bundle emits no joining-fee-window items or coverage fingerprint", async () => {
+  it("plan: bundle with joining-fees.csv emits no joining-fee-window items or coverage fingerprint", async () => {
     const captures = { joiningFeeCreates: [] as unknown[] };
     const files = bundle({
-      "xero-config/item-code-mappings.csv": OLD_ITEM_CODES,
+      "xero-config/item-code-mappings.csv": ITEM_CODES_WITH_AMOUNTS,
       "membership-fees/joining-fees.csv": JF_HEADER + "FULL,ADULT,2026-01-01,,12345\n",
     });
     const plan = await xeroConfigImporter.plan(planCtx(files, xeroTx(captures) as unknown as ReadDb));

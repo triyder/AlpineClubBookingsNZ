@@ -84,6 +84,53 @@ as a red flag and check the release notes before deploying.
 
 ---
 
+## Unreleased
+
+The unreleased range **closes the config-transfer import compatibility window
+for old bundles** (#2131). There is **no migration and no schema change**, so
+the deploy itself needs no special window: any deploy window is fine, and the
+old colour is unaffected. The operator impact is entirely about **archived
+configuration bundles**.
+
+### Before deployment
+
+1. **Re-export any archived config bundle you intend to keep, before you
+   upgrade.** From this release the importer rejects the legacy bundle shapes
+   at dry-run — the `isMember` column on `season-rates.csv` and on the Xero
+   `item-code-mappings.csv` HUT_FEE rows, and the pre-#1931 `ENTRANCE_FEE`
+   item-code category name. Any bundle exported by **v0.12.2 or earlier** is
+   likely to carry them. Export a fresh bundle from your still-running v0.12.2
+   install (**Admin → Setup & Configuration → Export & Import**) and archive
+   that instead; a bundle exported after the upgrade is already in the current
+   shape.
+2. **If your source install is already gone**, the old zip is not lost — it can
+   be hand-fixed. Follow "Converting a legacy bundle by hand" in the
+   [Export & Import operator guide](guides/config-transfer.md#converting-a-legacy-bundle-by-hand),
+   then **Reseal edited bundle** and re-preview.
+3. **Check your bootstrap path.** If you set `CONFIG_BUNDLE_IMPORT_PATH` for
+   disaster-recovery or clone boots, make sure the bundle at that path is a
+   current-shape export. A legacy bundle there is refused at boot
+   (`refused-invalid`, nothing written) and the replacement install comes up
+   **unconfigured** — the cause is only visible in the boot logs.
+
+### Post-upgrade actions
+
+1. **Nothing changes for current-shape bundles.** Export and import of bundles
+   produced by this release are byte-identical to before, and the #1931
+   item-code-amount joining-fee materialisation (from current `JOINING_FEE`
+   rows, e.g. when `membership-fees` is deselected) is unchanged.
+2. **Hand-authored Xero bundles now need a membership type on every HUT_FEE
+   row.** A `HUT_FEE` row in `item-code-mappings.csv` with a blank
+   `membershipTypeKey` is now a blocking row error instead of writing a keyless
+   mapping the runtime never reads. Fill in the column (the exporter always
+   does) before re-importing a hand-edited bundle.
+
+**Rollback boundary.** No schema change, so there is nothing to roll back at the
+database level: reverting to the previous colour simply restores the old
+importer, which still accepts legacy bundles.
+
+---
+
 ## v0.12.1 → v0.12.2
 
 `v0.12.2` is a patch release with **four migrations — two expand/additive and

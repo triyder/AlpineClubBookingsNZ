@@ -270,13 +270,25 @@ carry an `ageTier` column (#2067) so per-tier annual fees round-trip; a
 pre-#2067 bundle without the column imports every row as flat, and a per-family
 row with a non-blank `ageTier` is a blocking plan-time error.
 
-For **old-format bundles only** (no `joining-fees.csv`), config-transfer still
-accepts old `ENTRANCE_FEE`-labelled item-code bundles (normalised to
-`JOINING_FEE`) and materialises the imported legacy amounts into `JoiningFee`
-windows via the same fan-out whenever the target has no covering window for a
-category — so importing a pre-#1931 club's config into a fresh install cannot
-silently produce a zero joining fee. See `docs/config-transfer/README.md`
+When a bundle carries **no `joining-fees.csv`** — a bundle exported without the
+`membership-fees` category, or one imported with that category unticked — the
+**item-code-amount fan-out still runs**. Config-transfer materialises the
+bundle's **current `JOINING_FEE`** item-code `amountCents` values into
+`JoiningFee` windows via the same fan-out whenever the target has no covering
+window for a category, so importing such a bundle into a fresh install cannot
+silently produce a zero joining fee. This is live behaviour, not old-bundle
+compatibility; see [`docs/config-transfer/README.md`](config-transfer/README.md)
 (membership-fees) for the precedence rule.
+
+Genuinely **old bundles are rejected, not converted**. Since #2131 (one release
+after the E13 contraction) a bundle carrying the pre-#1931 `ENTRANCE_FEE`
+item-code category name, or the legacy `isMember` key on the Xero HUT_FEE
+item-code rows or on `season-rates.csv`, fails dry-run validation with a
+row-named error that disables Apply — it is never silently normalised to
+`JOINING_FEE` or mapped to a membership type. **v0.12.2 was the last release
+that could import those shapes.** Re-export the bundle from an install running
+the current release, or hand-fix it with the conversion recipe in the
+[Export & Import operator guide](guides/config-transfer.md#converting-a-legacy-bundle-by-hand).
 
 ## Safety checks
 

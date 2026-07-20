@@ -106,11 +106,14 @@ deeper reference for what each category contains and the import safety model.
   `season-rates.csv` is keyed by membership type (#1930, E4):
   `seasonName, membershipTypeKey, ageTier, pricePerNightCents` — a blank
   `ageTier` is a flat type's single all-ages rate. Only rate-bearing types are
-  emitted (every `MEMBER_RATE` type plus `NON_MEMBER`). **OLD bundles** carrying
-  the legacy `seasonName, ageTier, isMember, pricePerNightCents` shape are still
-  accepted on import: `isMember=true` maps to the `FULL` type and `false` to
-  `NON_MEMBER` (documented lossy compat — a legacy bundle populates only those
-  two types). Instructions
+  emitted (every `MEMBER_RATE` type plus `NON_MEMBER`). The old-bundle import
+  compat for the legacy `seasonName, ageTier, isMember, pricePerNightCents`
+  shape **closed one release after the E13 contraction (#2131)**: such a bundle
+  is now **rejected** on import with a clear validation error (re-export it from
+  an install running the current release, or hand-fix it with the
+  [conversion recipe](../guides/config-transfer.md#converting-a-legacy-bundle-by-hand)).
+  **v0.12.2 was the last release that could import the
+  legacy `isMember` shape.** Instructions
   are two-level: the top-level `lodge-config/instructions.csv` holds the
   **club-wide base** shown for every lodge, while a lodge folder's
   `instructions.csv` holds that lodge's **overrides** of the same keys.
@@ -160,30 +163,38 @@ deeper reference for what each category contains and the import safety model.
   **not** deleted (config transfer never deletes) — remove a component from a
   fee on the Fees page, not by re-import.
 
-  **Precedence over the #1931 legacy path:** when a bundle carries
+  **Precedence over the #1931 item-code path:** when a bundle carries
   `membership-fees/joining-fees.csv`, its joining-fee schedule is authoritative,
-  so the **xero-config legacy joining-fee materialisation is suppressed** (it
-  would otherwise invent/duplicate `JoiningFee` windows from a pre-#1931
-  bundle's dead item-code `amountCents`). Old-format bundles (no
-  `joining-fees.csv`) keep the legacy fan-out per the E13 compat window.
+  so the **xero-config item-code-amount joining-fee materialisation is
+  suppressed** (it would otherwise invent/duplicate `JoiningFee` windows from
+  the item-code `amountCents` column). A bundle without `joining-fees.csv`, or
+  one imported with membership-fees deselected, keeps the item-code fan-out so
+  its joining fees are not silently dropped.
 - **xero-config** — Xero account mappings and item-code mappings. HUT_FEE item
   codes are keyed by membership type (#1930, E4): `item-code-mappings.csv` is
   `category, membershipTypeKey, ageTier, seasonType, entranceFeeCategory,
   itemCode, amountCents` (membershipTypeKey is HUT_FEE-only; blank for
-  ENTRANCE_FEE). Frozen legacy `isMember`-keyed HUT_FEE rows are not exported;
-  **OLD bundles** with the legacy `isMember` column are still accepted on import
-  (true→FULL, false→NON_MEMBER). Pre-#1931 `ENTRANCE_FEE` rows are normalised
-  to `JOINING_FEE` on import, and — because the runtime no longer reads
-  item-code-mapping `amountCents` for joining fees — any imported JOINING_FEE
-  amount whose category has **no covering `JoiningFee` window** on the target
-  is **materialised into open JoiningFee windows** using the migration's D-R1
-  fan-out (per-tier to every liable membership type; FAMILY as the Family
-  type's flat fee), bounded to the day before any future window. Categories
-  with a covering window are left alone. This legacy materialisation runs
-  **only for old-format bundles**: a bundle carrying the first-class
-  **membership-fees** category's `joining-fees.csv` (#1941) supersedes it — the
-  schedule there is authoritative, so the legacy fan-out is skipped to avoid
-  duplicating/skewing it. The source Xero org id is recorded in a
+  JOINING_FEE). Frozen legacy `isMember`-keyed HUT_FEE rows are not exported.
+  The old-bundle import compat **closed one release after the E13 contraction
+  (#2131)**: a bundle carrying the legacy `isMember` HUT_FEE column, or the
+  pre-#1931 `ENTRANCE_FEE` category name, is now **rejected** on import with a
+  clear validation error rather than silently mapped/normalised — **v0.12.2 was
+  the last release that could import that shape** (re-export from an install
+  running the current release, or hand-fix it with the
+  [conversion recipe](../guides/config-transfer.md#converting-a-legacy-bundle-by-hand)).
+  Relatedly, a `HUT_FEE` row with a **blank `membershipTypeKey`** is now a
+  blocking row error too: the export always emits the key, and writing a keyless
+  row would create a frozen-legacy-shaped mapping the runtime never reads (and
+  which would re-create on every import). Because the runtime no longer reads item-code-mapping `amountCents`
+  for joining fees, any imported `JOINING_FEE` amount whose category has **no
+  covering `JoiningFee` window** on the target is **materialised into open
+  JoiningFee windows** using the migration's D-R1 fan-out (per-tier to every
+  liable membership type; FAMILY as the Family type's flat fee), bounded to the
+  day before any future window. Categories with a covering window are left
+  alone. A bundle carrying the first-class **membership-fees** category's
+  `joining-fees.csv` (#1941) supersedes this fan-out — the schedule there is
+  authoritative, so the item-code fan-out is skipped to avoid duplicating/skewing
+  it. The source Xero org id is recorded in a
   category-local `xero-config/source.json` (sealed with the rest of the category,
   not the manifest); the plan warns on an org mismatch so codes are verified
   before applying.
@@ -247,7 +258,12 @@ validated pipeline (`src/lib/config-transfer/bootstrap-import.ts`).
   and no audit-log row with a member actor (which catches direct-admin-editor
   configuration). Any of those present → the import is **refused** and nothing
   is written. A malformed/tampered/oversized bundle, an unreadable path, a
-  probe error, or any apply failure also refuses; boot always continues. (A
+  probe error, or any apply failure also refuses; boot always continues. This
+  includes a **legacy bundle** (#2131): it fails plan-time validation, so the
+  bootstrap refuses (`refused-invalid`), writes nothing, and the replacement
+  install comes up **unconfigured** — the only signal is the boot log line
+  naming the first validation error, so keep the bundle at
+  `CONFIG_BUNDLE_IMPORT_PATH` in the current export shape. (A
   plain "the plan has no updates" check is deliberately NOT used — the base
   seed pre-creates the config rows the bundle touches, so a legitimate
   bootstrap always shows updates; see ADR-003 "Empty-target definition".)
