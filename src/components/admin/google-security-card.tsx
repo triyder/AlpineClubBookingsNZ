@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,11 +12,14 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlyNotice,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ForbiddenSaveError,
+  useSectionEditState,
+} from "@/hooks/use-section-edit-state";
 import type { ModuleSettingsValues } from "@/config/modules";
 
 /**
@@ -42,9 +44,11 @@ export interface GoogleSecurityCardProps {
   credentialsConfigured: boolean;
 }
 
-class ForbiddenSaveError extends Error {}
-
 const TOGGLE_FAIL_MESSAGE = "Could not update the Google sign-in setting.";
+
+interface GoogleDraft {
+  enabled: boolean;
+}
 
 export function GoogleSecurityCard({
   moduleSettings,
@@ -52,35 +56,9 @@ export function GoogleSecurityCard({
 }: GoogleSecurityCardProps) {
   const canEdit = useAdminAreaEditAccess("support");
 
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [savedNote, setSavedNote] = useState("");
-
-  const [enabled, setEnabled] = useState(moduleSettings.googleLogin);
-  const [savedEnabled, setSavedEnabled] = useState(moduleSettings.googleLogin);
-
-  const dirty = enabled !== savedEnabled;
-
-  function startEditing() {
-    setError("");
-    setSavedNote("");
-    setEditing(true);
-  }
-
-  function cancelEditing() {
-    setEnabled(savedEnabled);
-    setError("");
-    setSavedNote("");
-    setEditing(false);
-  }
-
-  async function handleSave() {
-    if (!dirty) return;
-    setSaving(true);
-    setError("");
-    setSavedNote("");
-    try {
+  const section = useSectionEditState<GoogleDraft>({
+    initial: { enabled: moduleSettings.googleLogin },
+    save: async (draft) => {
       // GET the FRESH settings and merge only `googleLogin`, so a module another
       // card changed since page load is never reverted by a stale snapshot.
       const freshRes = await fetch("/api/admin/modules", {
@@ -96,28 +74,36 @@ export function GoogleSecurityCard({
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          settings: { ...fresh.settings, googleLogin: enabled },
+          settings: { ...fresh.settings, googleLogin: draft.enabled },
         }),
       });
       if (!putRes.ok) {
         if (putRes.status === 403) throw new ForbiddenSaveError();
         throw new Error(TOGGLE_FAIL_MESSAGE);
       }
+      return { enabled: draft.enabled };
+    },
+    // The confirmation depends on which way the toggle went, so it is computed
+    // from the saved value rather than being a fixed string.
+    successMessage: (saved) =>
+      saved.enabled ? "Google sign-in enabled." : "Google sign-in disabled.",
+    saveErrorFallback: TOGGLE_FAIL_MESSAGE,
+  });
 
-      setSavedEnabled(enabled);
-      setEditing(false);
-      setSavedNote(enabled ? "Google sign-in enabled." : "Google sign-in disabled.");
-    } catch (saveError) {
-      if (saveError instanceof ForbiddenSaveError) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
-      } else {
-        setError(
-          saveError instanceof Error ? saveError.message : TOGGLE_FAIL_MESSAGE,
-        );
-      }
-    } finally {
-      setSaving(false);
-    }
+  const { saving, editing, dirty, error } = section;
+  const savedNote = section.success;
+  const enabled = section.draft?.enabled ?? moduleSettings.googleLogin;
+
+  function startEditing() {
+    section.setError("");
+    section.setSuccess("");
+    section.startEditing();
+  }
+
+  function cancelEditing() {
+    section.cancelEditing();
+    section.setError("");
+    section.setSuccess("");
   }
 
   return (
@@ -171,7 +157,9 @@ export function GoogleSecurityCard({
           <Checkbox
             checked={enabled}
             disabled={!editing || saving}
-            onCheckedChange={(checked) => setEnabled(checked === true)}
+            onCheckedChange={(checked) =>
+              section.setDraft({ enabled: checked === true })
+            }
             aria-label="Enable Google sign-in"
           />
           <span className="text-sm">
@@ -189,7 +177,7 @@ export function GoogleSecurityCard({
             <ViewOnlyActionButton
               canEdit={canEdit}
               type="button"
-              onClick={() => void handleSave()}
+              onClick={() => void section.save()}
               disabled={!dirty || saving}
             >
               {saving ? (
