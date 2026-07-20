@@ -14,9 +14,17 @@ import { E2E_ADMIN } from "./helpers/fixtures";
 // print root's inherited `!important`) that no amount of source parsing settles.
 //
 // This spec closes that gap, and it also closes the gap the CSS parser
-// structurally CANNOT see: a Tailwind `dark:` utility written in TSX compiles
-// into Tailwind's own generated output, never into globals.css, so no
+// structurally CANNOT see: a Tailwind `dark:` utility written in a class string
+// compiles into Tailwind's own generated output, never into globals.css, so no
 // `@media not print` wrapper there can exclude it. Here it is simply rendered.
+//
+// What this spec does NOT cover: the `html2canvas` **Download PDF** path in
+// `src/lib/report-pdf.ts`. `emulateMedia` switches the print medium; it does
+// not run html2canvas, and nothing here clicks Download PDF. That path's only
+// coverage is the jsdom unit test over `forceLightPaletteInClone` plus a
+// source-string check that the `onclone` hook is wired — the function and the
+// wiring, not the html2canvas contract or the produced PDF. Verify a real
+// export by hand in both themes when changing it.
 //
 // E2E_ADMIN is a Full Admin, so both printable report surfaces are reachable
 // from the session saved once in auth.setup.ts (#1779).
@@ -39,14 +47,44 @@ const UI_THEME_STORAGE_KEY = "alpine-ui-theme";
  * `background-color` walks up to the first non-transparent ancestor, because a
  * card's own background may be `transparent` with the paint coming from the
  * print root.
+ *
+ * The serialization is asserted to be `rgb()`/`rgba()` rather than parsed
+ * leniently. `getComputedStyle` does NOT normalise every colour to sRGB: a
+ * value specified in `oklch()` serializes back as `oklch(0.985 0 0)`, and this
+ * stylesheet's raw `:root` / `.dark` ramps ARE oklch. Scraping `[\d.]+` out of
+ * that string reads `0.985, 0, 0` as sRGB 0-255 channels and scores luminance
+ * ≈ 0.00006 — so the literal near-white #2146 value would SATISFY the
+ * `colorLuminance < 0.3` dark-ink assertion. Only the surfaces asserted today
+ * happen to chain to hex `--brand-*`; one token change turns that silent false
+ * pass on. Failing loudly with the raw string is the safe direction.
  */
 async function readLuminance(page: Page, selector: string) {
   return page.evaluate((target) => {
+    /** Numeric channels of an `rgb()`/`rgba()` serialization, else `null`. */
+    const parseSrgb = (color: string): number[] | null => {
+      const match = /^rgba?\(([^)]*)\)$/i.exec(color.trim());
+      if (!match) return null;
+      return match[1]
+        .split(/[\s,/]+/)
+        .filter(Boolean)
+        .map(Number);
+    };
+
     const relativeLuminance = (color: string): number => {
-      const parts = color.match(/[\d.]+/g);
-      if (!parts || parts.length < 3) return Number.NaN;
-      const [red, green, blue] = parts.slice(0, 3).map((part) => {
-        const channel = Number(part) / 255;
+      const channels = parseSrgb(color);
+      if (!channels || channels.length < 3 || channels.some(Number.isNaN)) {
+        throw new Error(
+          `#2146 luminance probe: expected getComputedStyle to serialize a ` +
+            `colour as rgb()/rgba(), got "${color}". Modern colour syntaxes ` +
+            `(oklch(), lab(), color()) serialize as-is and their 0-1 ` +
+            `components would be misread as sRGB 0-255 channels, silently ` +
+            `scoring a near-WHITE print colour as near-black and passing the ` +
+            `dark-ink assertion. Teach this helper that syntax before ` +
+            `re-enabling the assertion.`,
+        );
+      }
+      const [red, green, blue] = channels.slice(0, 3).map((part) => {
+        const channel = part / 255;
         return channel <= 0.04045
           ? channel / 12.92
           : ((channel + 0.055) / 1.055) ** 2.4;
@@ -61,8 +99,11 @@ async function readLuminance(page: Page, selector: string) {
     let background = "rgba(0, 0, 0, 0)";
     while (backgroundSource) {
       const value = getComputedStyle(backgroundSource).backgroundColor;
-      const alpha = value.match(/[\d.]+/g)?.[3];
-      if (value !== "transparent" && alpha !== "0") {
+      // A non-rgb serialization is NOT treated as transparent: it is taken as
+      // the background so `relativeLuminance` reports it loudly rather than
+      // letting the walk skip past an unparsed painted surface.
+      const alpha = parseSrgb(value)?.[3];
+      if (value !== "transparent" && alpha !== 0) {
         background = value;
         break;
       }

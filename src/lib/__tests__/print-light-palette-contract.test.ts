@@ -149,28 +149,77 @@ function isDarkGated(selector: string): boolean {
   return /(^|[\s,>+~(])\.dark\b/.test(gates);
 }
 
+/** The custom-property names declared (not merely referenced) in `rules`. */
+function declaredTokens(
+  rules: Array<{ selector: string; body: string }>,
+): Set<string> {
+  return new Set(
+    rules.flatMap(({ body }) =>
+      [...body.matchAll(/(?:^|[;{\s])(--[a-z0-9-]+)\s*:/gi)].map((match) =>
+        match[1].toLowerCase(),
+      ),
+    ),
+  );
+}
+
 /**
- * The declarations in `body` whose value is NOT purely a `var(--token)`
- * reference.
+ * The tokens a `.dark`-gated rule may safely assign while staying visible to
+ * print media: those that a print-visible LIGHT block declares AND a dark-gated
+ * block also declares.
+ *
+ * Both halves matter, and the second is the one an earlier cut of this guard
+ * got wrong. "Every value is a `var(--token)` therefore it self-heals" is FALSE
+ * in general: `--brand-charcoal/-deep/-snow/-gold/-mist` are FIXED brand colours
+ * declared once on `:root` (globals.css) and no `.dark` block ever restates
+ * them, so they are byte-identical on paper. A rule such as
+ * `.dark .app-theme-scope .foo { background: var(--brand-deep); }` left outside
+ * `@media not print` therefore prints a near-black card — a genuine #2146
+ * recurrence that a bare "is it a var()?" probe waves straight through.
+ *
+ * Requiring the token to appear in a dark-gated block as well is exactly the
+ * "the light value stands once the dark block is excluded from print" argument,
+ * expressed mechanically. Deriving both sets from the stylesheet under test
+ * means the set cannot drift away from what globals.css actually declares.
+ */
+function lightHealedTokens(css: string): Set<string> {
+  const darkTokens = declaredTokens(
+    topLevelRules(css).filter(({ selector }) => isDarkGated(selector)),
+  );
+  // Light declarations only count if PRINT can see them — a light block hidden
+  // inside `@media not print` would not stand in on paper either.
+  const lightTokens = declaredTokens(
+    topLevelRules(stripNotPrintBlocks(css)).filter(
+      ({ selector }) => !isDarkGated(selector),
+    ),
+  );
+  return new Set([...lightTokens].filter((token) => darkTokens.has(token)));
+}
+
+/**
+ * The declarations in `body` whose value is NOT purely a reference to a token
+ * in `healed` (see `lightHealedTokens`).
  *
  * A `.dark`-gated rule may stay visible to print media ONLY if every value it
- * assigns is a bare `var(--token)`: those resolve through the light `:root` /
- * `.app-theme-scope` blocks on paper and therefore self-heal. That is exactly
- * what lets the token-driven neutral remap stay outside the `@media not print`
- * wrapper.
+ * assigns is a bare `var(--token)` for a token the light blocks genuinely
+ * restate: those resolve through the light `:root` / `.app-theme-scope` blocks
+ * on paper. That is exactly what lets the token-driven neutral remap stay
+ * outside the `@media not print` wrapper.
  *
- * The check is "not a token" rather than "looks like a colour" on purpose. The
- * first cut of this test probed for `oklch()/rgb()/hsl()/#hex` and therefore
- * passed three whole classes of regression:
+ * The check is "not a healed token" rather than "looks like a colour" on
+ * purpose. The first cut of this test probed for `oklch()/rgb()/hsl()/#hex` and
+ * therefore passed three whole classes of regression:
  *   - CSS NAMED colours (`background: black`) — black on black paper;
  *   - the newer colour functions `lab()` / `lch()` / `color()`;
  *   - a rule that assigns no colour at all, such as the `outline: none` at
  *     globals.css — colourless, but it still made the same page print
  *     differently depending on the operator's theme.
- * Requiring a token makes the invariant literally true instead of approximately
- * true, and it cannot be outrun by new CSS colour syntax.
+ * Requiring a healed token makes the invariant literally true instead of
+ * approximately true, and it cannot be outrun by new CSS colour syntax.
  */
-function nonTokenDeclarations(body: string): string[] {
+function nonTokenDeclarations(
+  body: string,
+  healed: ReadonlySet<string>,
+): string[] {
   return body
     .replaceAll(/\/\*[\s\S]*?\*\//g, "")
     .split(";")
@@ -179,9 +228,12 @@ function nonTokenDeclarations(body: string): string[] {
     .filter((declaration) => {
       const value = declaration
         .slice(declaration.indexOf(":") + 1)
-        // A bare `var(--token)` self-heals. A fallback form (`var(--x, #fff)`)
-        // deliberately does NOT match, so it is reported.
-        .replaceAll(/var\(\s*--[a-z0-9-]+\s*\)/gi, "")
+        // A bare `var(--token)` self-heals only when the light blocks restate
+        // that token. A fallback form (`var(--x, #fff)`) deliberately does NOT
+        // match, so it is reported.
+        .replaceAll(/var\(\s*(--[a-z0-9-]+)\s*\)/gi, (match, token: string) =>
+          healed.has(token.toLowerCase()) ? "" : match,
+        )
         .replaceAll("!important", "")
         .trim();
       return value !== "";
@@ -194,11 +246,15 @@ function nonTokenDeclarations(body: string): string[] {
  * empty.
  */
 function printReachableDarkRules(css: string): string[] {
+  const healed = lightHealedTokens(css);
   return topLevelRules(stripNotPrintBlocks(css))
     .filter(({ selector }) => isDarkGated(selector))
-    .filter(({ body }) => nonTokenDeclarations(body).length > 0)
+    .filter(({ body }) => nonTokenDeclarations(body, healed).length > 0)
     .map(({ selector }) => selector.replaceAll(/\s+/g, " "));
 }
+
+/** The shipped stylesheet's own healed-token set, for the regex unit cases. */
+const HEALED_TOKENS = lightHealedTokens(source("src/app/globals.css"));
 
 describe("#2146 print always renders the light palette", () => {
   const globals = source("src/app/globals.css");
@@ -273,9 +329,10 @@ describe("#2146 print always renders the light palette", () => {
     // `var(--foreground)` and self-heals), and must keep passing. If this ever
     // reports zero, the check has stopped seeing those rules at all and the
     // one above would be vacuously green.
+    const healed = lightHealedTokens(globals);
     const tokenDriven = topLevelRules(stripNotPrintBlocks(globals))
       .filter(({ selector }) => isDarkGated(selector))
-      .filter(({ body }) => nonTokenDeclarations(body).length === 0);
+      .filter(({ body }) => nonTokenDeclarations(body, healed).length === 0);
 
     expect(tokenDriven.length).toBeGreaterThan(0);
     expect(
@@ -343,45 +400,83 @@ describe("#2146 the print-reachability guard has no blind spots", () => {
     ];
     for (const declaration of missedByTheOldProbe) {
       expect(
-        nonTokenDeclarations(declaration),
+        nonTokenDeclarations(declaration, HEALED_TOKENS),
         `"${declaration}" must be reported as un-healable`,
       ).toHaveLength(1);
     }
   });
 
-  it("passes a rule whose every value is a bare var(--token)", () => {
+  it("passes a rule whose every value is a bare healed var(--token)", () => {
     expect(
       nonTokenDeclarations(
         "background-color: var(--card); color: var(--foreground);",
+        HEALED_TOKENS,
       ),
     ).toEqual([]);
   });
 
+  it("derives the healed set from the light blocks, so --brand-* is NOT healed", () => {
+    // The `var()` shape alone is not the invariant. `--brand-charcoal/-deep/
+    // -snow/-gold/-mist` are FIXED brand colours declared once on `:root`, and
+    // no `.dark` block restates them, so they print byte-identical to their
+    // dark-mode appearance. A "is it a var()?" probe reported these as clean;
+    // they are the same near-black card / near-white ink as #2146 itself.
+    for (const declaration of [
+      "background: var(--brand-deep);",
+      "color: var(--brand-snow);",
+      "background-color: var(--brand-charcoal);",
+    ]) {
+      expect(
+        nonTokenDeclarations(declaration, HEALED_TOKENS),
+        `"${declaration}" is a fixed brand colour, not a light/dark pair, so ` +
+          `it must be reported as un-healable`,
+      ).toHaveLength(1);
+    }
+
+    // Sanity: the derivation really is reading globals.css, not returning
+    // everything or nothing.
+    expect(HEALED_TOKENS.has("--card-foreground")).toBe(true);
+    expect(HEALED_TOKENS.has("--muted-foreground")).toBe(true);
+    expect(HEALED_TOKENS.has("--brand-deep")).toBe(false);
+    expect(HEALED_TOKENS.has("--brand-snow")).toBe(false);
+  });
+
   it("catches a regression the shipped CSS does not contain", () => {
     // End-to-end proof on synthetic CSS: an unwrapped Tailwind-shaped dark
-    // utility and an unwrapped colourless dark rule are both reported, while
-    // the same rules inside `@media not print` are not.
+    // utility, an unwrapped colourless dark rule, and an unwrapped fixed-brand
+    // token rule are all reported, while the same rules inside
+    // `@media not print` are not. The `:root`/`.dark` pair at the top is what
+    // makes `--foreground` healed and `--brand-deep` not.
     const leaky = `
+      :root { --foreground: oklch(0.145 0 0); --brand-deep: #17231c; }
       .dark\\:bg-slate-900:is(.dark *) { background-color: oklch(0.2 0 0); }
       .dark .app-theme-scope .foo { background: black; }
       .dark .app-theme-scope .bar { outline: none; }
+      .dark .app-theme-scope .brand { background: var(--brand-deep); }
       .dark .app-theme-scope .ok { color: var(--foreground); }
     `;
-    expect(printReachableDarkRules(leaky)).toHaveLength(3);
-    expect(printReachableDarkRules(`@media not print {${leaky}}`)).toEqual([]);
+    const wrapped = `:root { --foreground: oklch(0.145 0 0); }
+      @media not print { .dark { --foreground: oklch(0.985 0 0); } }`;
+    expect(printReachableDarkRules(`${wrapped}${leaky}`)).toHaveLength(4);
+    expect(
+      printReachableDarkRules(`${wrapped}@media not print {${leaky}}`),
+    ).toEqual([]);
   });
 });
 
 // FIX for the gap the CSS-only guard cannot see. `globals.css` is not the whole
-// stylesheet: every `dark:` utility written in TSX compiles into TAILWIND'S
+// stylesheet: every `dark:` utility written in a class string — in TSX markup or
+// in a plain `.ts` module that exports class names — compiles into TAILWIND'S
 // generated output, never into globals.css, so no `@media not print` wrapper in
 // this repo can ever reach it. A `dark:bg-slate-900` added to a report card
 // would therefore reintroduce #2146 with every CSS assertion above still green.
 //
-// A `dark:` utility is only a hazard when it carries a LITERAL palette colour.
+// A `dark:` utility is only a hazard when it carries a LITERAL palette colour —
+// a named shade (`dark:bg-slate-900`) or an arbitrary one (`dark:bg-[#0b1220]`).
 // Token-driven ones (`dark:bg-input/30`, `dark:checked:bg-primary`,
-// `dark:bg-warning-muted`) compile to `var(--token)` and self-heal on paper for
-// exactly the same reason the neutral remap does, so they are not matched.
+// `dark:bg-warning-muted`, `dark:bg-[var(--card)]`) compile to `var(--token)`
+// and self-heal on paper for exactly the same reason the neutral remap does, so
+// they are not matched.
 const TAILWIND_PALETTE_FAMILIES = [
   "slate",
   "gray",
@@ -408,16 +503,39 @@ const TAILWIND_PALETTE_FAMILIES = [
 ].join("|");
 
 const LITERAL_PALETTE_DARK_UTILITY = new RegExp(
-  // `dark:` plus any further stacked variants (`dark:focus:`, `dark:hover:`)
-  String.raw`\bdark:(?:[a-z-]+:)*` +
+  // `dark:` plus any further stacked variants — named (`dark:focus:`,
+  // `dark:hover:`), the `*:`/`**:` descendant variants, and bracketed arbitrary
+  // variants (`dark:[&>tr]:`). The original `[a-z-]+:`-only form meant
+  // `dark:*:bg-slate-900` — a single character away from a plain offender —
+  // slipped straight through.
+  String.raw`\bdark:(?:(?:[a-z-]+|\*{1,2}|\[[^\]\s]*\]):)*` +
     // the colour-bearing utility prefixes
     String.raw`(?:text|bg|border|ring|shadow|from|to|via|outline|decoration|divide|fill|stroke|accent|caret)-` +
+    String.raw`(?:` +
     // a LITERAL value: a palette family + numeric shade, or black/white
-    String.raw`(?:(?:${TAILWIND_PALETTE_FAMILIES})-\d{2,3}|black|white)\b`,
+    String.raw`(?:(?:${TAILWIND_PALETTE_FAMILIES})-\d{2,3}|black|white)\b` +
+    // …or an ARBITRARY literal colour: `dark:bg-[#0b1220]`,
+    // `dark:text-[rgb(2,6,23)]`, `dark:bg-[oklch(0.2_0_0)]`. These are exactly
+    // as hazardous as a named shade and were previously invisible.
+    // `dark:bg-[var(--card)]` is deliberately NOT matched: it resolves through
+    // the light token on paper, like every other token-driven variant.
+    String.raw`|\[(?:#|(?:rgba?|hsla?|oklch|oklab|lab|lch|color)\()[^\]]*\]` +
+    String.raw`)`,
   "g",
 );
 
-/** Recursively collect the `.tsx` files under `path`, skipping `__tests__`. */
+/**
+ * Recursively collect the class-string-bearing source files under `path`,
+ * skipping `__tests__`. `path` may be a directory or a single file.
+ *
+ * `.ts` is scanned as well as `.tsx`: Tailwind reads class names from any
+ * source file, and this repo already keeps palette class strings in plain `.ts`
+ * modules (`bed-allocation/_components/booking-accent.ts` holds nine
+ * `dark:ring-<family>-800/60` strings). A `.tsx`-only scan claimed to guard
+ * against new and stale entries while being structurally blind to that whole
+ * file shape — extracting chart accents into a `.ts` module inside a printable
+ * tree would have reopened #2146 with every assertion here still green.
+ */
 function listComponentFiles(path: string): string[] {
   const root = join(process.cwd(), path);
   if (!existsSync(root)) {
@@ -426,6 +544,13 @@ function listComponentFiles(path: string): string[] {
         `If the tree was renamed, update PRINTABLE_SURFACE_ROOTS.`,
     );
   }
+  const isScannable = (entry: string) =>
+    entry.endsWith(".tsx") ||
+    (entry.endsWith(".ts") && !entry.endsWith(".d.ts"));
+
+  if (!statSync(root).isDirectory()) {
+    return isScannable(path) ? [path.replaceAll("\\", "/")] : [];
+  }
   return readdirSync(root).flatMap((entry) => {
     const child = join(path, entry);
     if (statSync(join(process.cwd(), child)).isDirectory()) {
@@ -433,7 +558,7 @@ function listComponentFiles(path: string): string[] {
         ? []
         : listComponentFiles(child);
     }
-    return entry.endsWith(".tsx") ? [child.replaceAll("\\", "/")] : [];
+    return isScannable(entry) ? [child.replaceAll("\\", "/")] : [];
   });
 }
 
@@ -451,6 +576,15 @@ function listComponentFiles(path: string): string[] {
 // - `components/ui`          → shared primitives that render INSIDE all of the
 //                              above. `ui/card.tsx` is where #2146 actually
 //                              originated, so this root is not optional.
+//
+// The last three entries are individual shared components that render inside a
+// print root without living in one of the trees above:
+// `main.reports-print-root` in `(finance)/finance/layout.tsx` wraps
+// `ContextualHelpButton`, and `/admin/reports` renders `DateRangeControls` and
+// the `lodge-select` options hook. All three are `print:hidden` today, so this
+// is belt-and-braces — but "the census will catch it" is the wrong backstop for
+// a file that legitimately renders on a printable surface: the census's only
+// remedy is the non-printable allowlist, which would be a false claim here.
 const PRINTABLE_SURFACE_ROOTS = [
   "src/app/(finance)",
   "src/components/finance",
@@ -460,6 +594,9 @@ const PRINTABLE_SURFACE_ROOTS = [
   "src/app/(authenticated)/lodge-instructions",
   "src/app/(website)/hut-leader-instructions",
   "src/components/ui",
+  "src/components/contextual-help-button.tsx",
+  "src/components/admin/date-range-controls.tsx",
+  "src/components/lodge-select.tsx",
 ];
 
 // Intentionally EMPTY, like `THEMED_NEUTRAL_ALLOWLIST` in
@@ -483,12 +620,19 @@ const PRINTABLE_SURFACE_DARK_ALLOWLIST = new Set<string>([]);
 // - `admin/display/{builder,templates,layouts}` — the lobby-display authoring
 //   screens. The display itself is a screen medium and these editors have no
 //   print affordance.
+// - `admin/bed-allocation/_components/booking-accent.ts` — the nine
+//   `dark:ring-<family>-800/60` chip accents for the bed-allocation board. That
+//   board is a drag-and-drop screen tool: the tree carries no print root, no
+//   `window.print()` caller, and the module is imported only by
+//   `allocation-chip` / `bucket-board` / `guest-chip` inside it. It is also the
+//   file that proved the scan had to cover `.ts`, not just `.tsx`.
 //
 // This list is a DRIFT GUARD, not permission: adding a file here is a claim that
 // the file can never render inside a print root, and must be justified.
 const NON_PRINTABLE_DARK_UTILITY_FILES = new Set(
   [
     "src/components/nav-bar.tsx",
+    "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts",
     "src/app/(authenticated)/book/_components/guests-step.tsx",
     "src/app/(admin)/admin/members/_components/member-bulk-membership-dialog.tsx",
     "src/app/(admin)/admin/display/builder/page.tsx",
@@ -525,6 +669,48 @@ describe("#2146 no literal-palette dark: utility on a printable surface", () => 
     ).toEqual([]);
   });
 
+  it("matches the arbitrary-value and variant-prefix dark: forms", () => {
+    // Every one of these returned `null` from the first cut of the regex, and
+    // each is the #2146 bug verbatim: a hard-coded near-black surface (or
+    // near-white ink) that prints exactly as written.
+    const previouslyEvading = [
+      "dark:bg-[#0b1220]",
+      "dark:text-[rgb(2,6,23)]",
+      "dark:bg-[rgba(2,6,23,0.9)]",
+      "dark:bg-[hsl(222,47%,11%)]",
+      "dark:bg-[oklch(0.2_0_0)]",
+      "dark:text-[lab(20%_40_59)]",
+      "dark:bg-[color(display-p3_0.1_0.1_0.1)]",
+      "dark:*:bg-slate-900",
+      "dark:**:text-white",
+      "dark:[&>tr]:bg-slate-900",
+      "dark:hover:bg-[#0b1220]",
+    ];
+    for (const utility of previouslyEvading) {
+      expect(
+        `class="rounded ${utility} p-2"`.match(LITERAL_PALETTE_DARK_UTILITY),
+        `"${utility}" is a literal dark colour and must be caught`,
+      ).not.toBeNull();
+    }
+
+    // …while token-driven variants — including arbitrary values that reach a
+    // token — stay allowed, because they resolve light on paper.
+    const stillAllowed = [
+      "dark:bg-input/30",
+      "dark:checked:bg-primary",
+      "dark:bg-warning-muted",
+      "dark:bg-[var(--card)]",
+      "dark:text-[var(--foreground)]",
+      "dark:*:bg-card",
+    ];
+    for (const utility of stillAllowed) {
+      expect(
+        `class="rounded ${utility} p-2"`.match(LITERAL_PALETTE_DARK_UTILITY),
+        `"${utility}" is token-driven and must NOT be reported`,
+      ).toBeNull();
+    }
+  });
+
   it("holds the known non-printable carriers to their enumerated list", () => {
     // `String.match` with a /g/ regex is used rather than `RegExp.test`: `test`
     // advances `lastIndex` on a global regex and would skip every other file.
@@ -542,9 +728,18 @@ describe("#2146 no literal-palette dark: utility on a printable surface", () => 
       unexpected,
       unexpected.length === 0
         ? ""
-        : `New file(s) carry a literal-palette \`dark:\` utility. Confirm the ` +
-            `file can never render inside a print root (see #2146), then add ` +
-            `it to NON_PRINTABLE_DARK_UTILITY_FILES with the reason:\n` +
+        : `New file(s) carry a literal-palette \`dark:\` utility (see #2146). ` +
+            `Decide which of these two applies to each — the allowlist is NOT ` +
+            `the default remedy:\n` +
+            `  - It CAN render inside a print root (directly, or as a shared ` +
+            `component used by one): drop the dark: variant or move the colour ` +
+            `onto a semantic token / the --hue-* pairs, and add its path to ` +
+            `PRINTABLE_SURFACE_ROOTS so the stricter check covers it from now ` +
+            `on.\n` +
+            `  - It can NEVER render inside a print root: add it to ` +
+            `NON_PRINTABLE_DARK_UTILITY_FILES with the reason that makes that ` +
+            `true (no print root in its tree, no window.print() caller, not ` +
+            `reachable from a printable route).\n` +
             `${unexpected.join("\n")}`,
     ).toEqual([]);
 
@@ -559,6 +754,15 @@ describe("#2146 no literal-palette dark: utility on a printable surface", () => 
   });
 });
 
+// COVERAGE LIMIT, stated plainly because the Download PDF button is the one
+// operators actually press and was the second half of #2146: these two cases
+// are the ONLY automated coverage of that path, and neither runs html2canvas.
+// The first asserts `forceLightPaletteInClone`'s DOM mutation on a hand-built
+// jsdom document; the second asserts the hook is still wired in the source.
+// Nothing here proves html2canvas honours `onclone` as assumed, and nothing
+// inspects a produced PDF — `e2e/print-dark-mode.spec.ts` does not help either,
+// because `emulateMedia` switches the print medium without touching
+// html2canvas. Changing this path warrants a manual export in both themes.
 describe("#2146 the html2canvas PDF capture renders light", () => {
   it("strips the dark theme from the cloned capture document", async () => {
     const { forceLightPaletteInClone } = await import("@/lib/report-pdf");
