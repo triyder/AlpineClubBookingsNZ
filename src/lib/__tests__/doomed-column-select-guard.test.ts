@@ -41,7 +41,9 @@ const SCAN_ROOTS = ["src", "prisma", "scripts"].map((dir) =>
   path.join(process.cwd(), dir),
 );
 
-const DOOMED_COLUMN_MODELS = ["xeroItemCodeMapping", "ageTierSetting"];
+// Named for what the guard enforces NOW (narrow selects on these two models),
+// not for the three columns it originally protected — those are dropped.
+const NARROW_SELECT_MODELS = ["xeroItemCodeMapping", "ageTierSetting"];
 
 const PROJECTING_METHODS = [
   "findUnique",
@@ -91,7 +93,7 @@ function extractCallArgs(source: string, openParenIndex: number): string {
 describe("doomed-column models are read and written with an explicit select", () => {
   it("has no bare XeroItemCodeMapping/AgeTierSetting projecting call in src/, prisma/ or scripts/", () => {
     const callPattern = new RegExp(
-      `(?:${DOOMED_COLUMN_MODELS.join("|")})\\??\\.(?:${PROJECTING_METHODS.join(
+      `(?:${NARROW_SELECT_MODELS.join("|")})\\??\\.(?:${PROJECTING_METHODS.join(
         "|",
       )})\\(`,
       "g",

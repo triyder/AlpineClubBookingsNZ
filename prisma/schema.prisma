@@ -1429,6 +1429,9 @@ model Season {
   // #2129 step 1 re-sourced the public {{hut-fees}} embed onto
   // `membershipTypeRates` and the same Release B PR removed the surviving seed
   // reader/writers. Do not reintroduce a boolean member/non-member rate key.
+  // NOT YET DEPLOYED as of this branch: production still runs v0.12.2 and even
+  // the Release A runtime-prep is unshipped. Release B must not be cut into the
+  // same version tag as that runtime-prep — see CHANGELOG.md -> Unreleased.
   membershipTypeRates MembershipTypeSeasonRate[]
   lodge Lodge        @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
 
@@ -4070,6 +4073,10 @@ model XeroItemCodeMapping {
   // STEP 1 / STEP 1.5 runtime-prep releases narrowed every read and write on
   // this model to an explicit `select`. HUT_FEE item codes are keyed solely by
   // membershipTypeId now; do not reintroduce a boolean member key.
+  // NOT YET DEPLOYED as of this branch: production still runs v0.12.2 and the
+  // STEP 1.5 runtime-prep (Release A) is itself unshipped. Release B must not be
+  // cut into the same version tag as that runtime-prep — see CHANGELOG.md ->
+  // Unreleased.
   // Membership-type key for HUT_FEE item codes (#1930, E4). Nullable ageTier
   // mirrors MembershipTypeSeasonRate: a per-tier type has one row per tier, a
   // flat type has a single NULL-ageTier row. A companion raw-SQL partial
@@ -4115,6 +4122,10 @@ model AgeTierSetting {
   // AgeTierXeroAcceptedContactGroup child table went in the E13 contract
   // migration 20260720120000 (#1939). Xero member grouping is configured
   // exclusively through XeroContactGroupRule now.
+  // NOT YET DEPLOYED as of this branch: production still runs v0.12.2 and the
+  // STEP 1.5 runtime-prep (Release A) is itself unshipped. Release B must not be
+  // cut into the same version tag as that runtime-prep — see CHANGELOG.md ->
+  // Unreleased.
   sortOrder                             Int                               @default(0)
   createdAt                             DateTime                          @default(now())
   updatedAt                             DateTime                          @updatedAt

@@ -119,11 +119,14 @@ describe("setup-wizard-db", () => {
     expect(db.$transaction).toHaveBeenCalledTimes(1);
   });
 
-  it("narrows every age-tier upsert's RETURNING, never naming the doomed xeroContactGroup* columns (#2130 runtime-prep)", async () => {
+  it("narrows every age-tier upsert's RETURNING, never naming the dropped xeroContactGroup* columns (#2130)", async () => {
     // Blue/green safety pin, WRITE half. Prisma emits an implicit RETURNING
     // over every scalar column of an upsert unless a `select` narrows it, so an
-    // unnarrowed write still names AgeTierSetting.xeroContactGroupId /
-    // xeroContactGroupName that the contract migration drops next release.
+    // unnarrowed write would name AgeTierSetting.xeroContactGroupId /
+    // xeroContactGroupName — columns the #2130 STEP 2 contract migration
+    // 20260721130000_contract_drop_ismember_and_agetier_xero_columns has now
+    // dropped. The pin stays: a bare upsert would now be a hard 42703 error,
+    // and narrow selects remain the rule for this model.
     const db = makeDb();
     await applyWizardConfigToDatabase(values, db);
     const tierUpsert = db.ageTierSetting.upsert as ReturnType<typeof vi.fn>;

@@ -214,6 +214,6 @@ Rules and guarantees:
   release is itself the deployed/draining colour, the live colour still names
   these columns in SQL. If you are upgrading a fork, deploy the runtime-prep
   release, let it soak, and only then deploy the contract migration — see
-  `docs/UPGRADING.md`. Grouping is configured entirely through
+  the [upgrade guide](UPGRADING.md). Grouping is configured entirely through
   `XeroContactGroupRule` now; the dropped columns were dead copies of data E8
   had already migrated.

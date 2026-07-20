@@ -30,8 +30,14 @@
 --
 -- Data safety. Step 1 deletes the orphaned legacy isMember-keyed HUT_FEE rows
 -- (membershipTypeId IS NULL). Production currently holds 16 of them. They are
--- unreadable by the current runtime — both the item-code resolver and the admin
--- editor require membershipTypeId — and were left behind deliberately by the E4
+-- not resolvable for pricing by the current runtime — both the item-code
+-- resolver and the admin editor require membershipTypeId. (Two paths do still
+-- touch these rows, but only in aggregate and never column-wise: the readiness
+-- probe in src/lib/setup-readiness-db.ts counts HUT_FEE rows with a non-null
+-- itemCode without filtering on membershipTypeId, and getNonSubscriptionFeeItemCodes
+-- in src/lib/xero-mappings.ts collects itemCode across all rows. Neither names
+-- isMember, so neither breaks; the delete only narrows a count and a code set to
+-- the rows that actually price something.) They were left behind deliberately by the E4
 -- re-key as a rollback net; the equivalent membership-type-keyed rows already
 -- exist from that migration's fan-out. They must go before the column drop so
 -- the surviving (category, membershipTypeId, seasonType, ageTier) unique is not
@@ -50,7 +56,8 @@
 -- item or invoice is touched.
 
 -- 1. Orphaned legacy isMember-keyed HUT_FEE mappings (no membership-type key).
---    Unreadable by the current runtime; superseded by the E4 fan-out rows.
+--    Not resolvable for pricing by the current runtime; superseded by the E4
+--    fan-out rows.
 DELETE FROM "XeroItemCodeMapping"
 WHERE "category" = 'HUT_FEE' AND "membershipTypeId" IS NULL;
 

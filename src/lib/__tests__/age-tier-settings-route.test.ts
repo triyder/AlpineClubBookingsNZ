@@ -110,13 +110,16 @@ describe("PUT /api/admin/age-tier-settings — subset save (#2009)", () => {
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
   });
 
-  it("narrows every upsert's RETURNING, never naming the doomed xeroContactGroup* columns (#2130 runtime-prep)", async () => {
+  it("narrows every upsert's RETURNING, never naming the dropped xeroContactGroup* columns (#2130)", async () => {
     // Blue/green safety pin, WRITE half. Prisma emits an implicit RETURNING
     // over every scalar column of an upsert unless a `select` narrows it, so an
-    // unnarrowed write still names AgeTierSetting.xeroContactGroupId /
-    // xeroContactGroupName even after the reads were narrowed — a draining old
-    // colour would keep issuing that SQL once the contract migration drops
-    // them. Guards against someone removing the explicit select.
+    // unnarrowed write would name AgeTierSetting.xeroContactGroupId /
+    // xeroContactGroupName even after the reads were narrowed. That narrowing
+    // is what made the #2130 STEP 2 contract migration
+    // 20260721130000_contract_drop_ismember_and_agetier_xero_columns legal, and
+    // the columns are now gone — so a bare upsert would be a hard 42703 rather
+    // than a latent blue/green break. Guards against someone removing the
+    // explicit select.
     const res = await PUT(putRequest([CHILD, ADULT]));
     expect(res.status).toBe(200);
 

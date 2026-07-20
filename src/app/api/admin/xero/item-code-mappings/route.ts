@@ -25,9 +25,12 @@ interface HutFeeKeyParts {
 
 /**
  * Parse a hut-fee composite key. Returns null for malformed keys — including
- * the frozen legacy `${ageTier}_${seasonType}_${isMember}` shape, which this
- * endpoint no longer reads or writes (legacy isMember-keyed rows are retained
- * read-only in the DB until E13 drops them).
+ * the retired `${ageTier}_${seasonType}_${isMember}` shape, which this endpoint
+ * no longer reads or writes. The `isMember` column itself was dropped by the
+ * #2130 STEP 2 contract migration
+ * (20260721130000_contract_drop_ismember_and_agetier_xero_columns), so nothing
+ * can write that shape any more; parsing it still returns null so an old
+ * client or a hand-crafted key fails cleanly rather than half-matching.
  */
 function parseHutFeeKey(compositeKey: string): HutFeeKeyParts | null {
   const parts = compositeKey.split("_");
@@ -80,8 +83,10 @@ const ITEM_CODE_MAPPING_WRITE_SELECT = { id: true } as const;
 
 /**
  * Serialise DB rows into the response shape. Hut fees are keyed by membership
- * type (#1930, E4); the frozen legacy isMember-keyed HUT_FEE rows are hidden
- * (E13 drops them).
+ * type (#1930, E4); `membershipTypeId`-less HUT_FEE rows are hidden. The #2130
+ * STEP 2 contract migration deleted the last of them along with the `isMember`
+ * column, but the check is kept defensively — a fork's database or an older
+ * bundle can still present one.
  */
 function buildResponseBody(rows: ItemCodeMappingRow[]) {
   const hutFees: Record<string, { itemCode: string }> = {};

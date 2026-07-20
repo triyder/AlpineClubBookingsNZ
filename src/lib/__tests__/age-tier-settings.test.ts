@@ -213,12 +213,15 @@ describe("getAgeTierSettings fallback", () => {
     expect(result).toEqual(defaults);
   });
 
-  it("selects ONLY the consumed columns, never the doomed xeroContactGroup* columns (#2130 runtime-prep)", async () => {
-    // Blue/green safety pin: the deployed client must stop naming
+  it("selects ONLY the consumed columns, never the dropped xeroContactGroup* columns (#2130)", async () => {
+    // Blue/green safety pin: the deployed client stopped naming
     // AgeTierSetting.xeroContactGroupId / xeroContactGroupName in generated SQL
-    // one release BEFORE the #2130 contract migration drops them. Guards against
-    // someone removing the explicit select and reintroducing a no-select
-    // findMany that names every column. Inspects the mock call args.
+    // one release BEFORE the #2130 STEP 2 contract migration
+    // 20260721130000_contract_drop_ismember_and_agetier_xero_columns dropped
+    // them, which is what made that drop legal. The columns are gone now, so a
+    // no-select findMany would be a hard 42703; the pin stays to stop someone
+    // removing the explicit select and reintroducing one. Inspects the mock
+    // call args.
     const findMany = vi.fn().mockResolvedValue([
       {
         tier: "INFANT",

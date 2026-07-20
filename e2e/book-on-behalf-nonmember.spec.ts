@@ -78,8 +78,9 @@ type NonMemberQuote = {
 //   - season = seasonForWindow(window): the window's actual nights decide winter
 //     vs summer (an index can drift between seasons as the run date advances);
 //   - rates = clubConfig: the SAME loadClubConfig() the E2E stack's prisma/seed
-//     reads its SeasonRate rows from, resolved from the repo-root cwd shared by
-//     the seed and this test (config/club.json, else club.example.json) — so the
+//     reads its MembershipTypeSeasonRate rows from, resolved from the repo-root
+//     cwd shared by the seed and this test (config/club.json, else
+//     club.example.json) — so the
 //     expected cents equal the seeded rates the app actually quotes, with no
 //     hardcoded magic number and no hardcoded season.
 function assertNonMemberPricing(quote: NonMemberQuote, window: StayWindow): void {
