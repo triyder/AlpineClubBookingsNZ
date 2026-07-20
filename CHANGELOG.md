@@ -4,6 +4,26 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Shared `useSectionEditState` hook for admin settings sections (#2136).**
+  The canonical settings-section pattern (`AGENTS.md`) — load read-only,
+  per-section Edit reveals Save/Cancel, nothing auto-persists on toggle, Cancel
+  reverts to the saved snapshot, Save persists once — had every card
+  re-deriving the same draft/snapshot bookkeeping by hand. `useSectionEditState`
+  (`src/hooks/use-section-edit-state.ts`) now owns it, centralising the two
+  details that are easiest to get subtly wrong: Cancel restores *every* field
+  from the snapshot, and Save re-seeds both the draft and the snapshot from the
+  **authoritative server value** rather than the submitted draft (so a value the
+  server clamps or normalises is never left misreported in the form). Adopted by
+  the group discount, password policy, email sign-in link, and Google sign-in
+  sections. Transport stays in each card's own save callback, so the security
+  cards' GET-fresh-settings-then-merge step — which stops one card clobbering a
+  module another card changed since page load — and their multi-endpoint saves
+  are unchanged. Refactor only: no admin-visible behaviour change, and every
+  existing card test passes unmodified. Also removes a redundant `!canEdit`
+  wrapper around `AdminViewOnlyNotice` in three sections; the notice gates on
+  the tri-state `canEdit === false` itself (#2065), so the wrapper could flash
+  the view-only banner at an edit-capable admin while the session resolved.
+
 ## 0.12.2 - 2026-07-20
 
 - Release classification: patch public reference release. As with `v0.12.1`, the

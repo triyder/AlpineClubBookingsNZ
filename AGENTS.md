@@ -79,6 +79,14 @@ before changing Next.js APIs or conventions.
   retrofitted by this rule alone: the `/admin/modules` grid (bulk toggles) and
   the staged-but-ungated legacy settings forms. Reference implementation:
   `src/components/admin/booking-policies/group-discount-section.tsx`.
+  Implement the draft/snapshot half of the pattern with the shared
+  `useSectionEditState` hook (`src/hooks/use-section-edit-state.ts`, #2136)
+  rather than hand-rolling it: it guarantees Cancel restores every field and
+  that Save re-seeds from the value the SERVER returned, not the submitted
+  draft. Keep the transport in your own `save` callback (throw the hook's
+  `ForbiddenSaveError` for a 403) and keep the section's feedback rendering in
+  the component. A section whose snapshot is a LIST with per-row edits is a
+  different shape and is out of the hook's scope.
 - Security, payment, booking, membership lifecycle, Xero, Stripe, and
   data-integrity work requires high or xhigh reasoning effort and human review
   before merge.
