@@ -99,10 +99,16 @@ export function MagicLinkSecurityCard({
       ttlMinutes: initialClampedTtl,
     },
     save: async (draft, saved) => {
+      // `saved` is never null here: this card is props-seeded, so the hook holds
+      // a snapshot from the first render onward. Fail loudly rather than reading
+      // it optionally — under `saved?.x` a null snapshot would make BOTH slices
+      // below compare as changed and silently double-write two endpoints.
+      if (!saved) throw new Error(TOGGLE_FAIL_MESSAGE);
+
       // Persist the module toggle if it changed: GET the FRESH settings and
       // merge only `magicLink`, so a module another card changed since page
       // load is never reverted by writing back a stale snapshot.
-      if (draft.enabled !== saved?.enabled) {
+      if (draft.enabled !== saved.enabled) {
         const freshRes = await fetch("/api/admin/modules", {
           credentials: "same-origin",
         });
@@ -122,7 +128,7 @@ export function MagicLinkSecurityCard({
 
       // Persist the TTL if it changed.
       const clampedTtl = clampMagicLinkTtlMinutes(draft.ttlMinutes);
-      if (clampedTtl !== saved?.ttlMinutes) {
+      if (clampedTtl !== saved.ttlMinutes) {
         if (onSaveTtlMinutes) {
           await onSaveTtlMinutes(clampedTtl);
         } else {

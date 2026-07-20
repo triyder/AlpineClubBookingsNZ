@@ -58,8 +58,8 @@ export function GroupDiscountSection() {
     // Seeded so a failed load still renders the form with its defaults
     // alongside the error, as it always has.
     initial: GROUP_DISCOUNT_DEFAULTS,
-    load: async () => {
-      const res = await fetch(ENDPOINT)
+    load: async (signal) => {
+      const res = await fetch(ENDPOINT, { signal })
       if (!res.ok) throw new Error("Failed to fetch group discount")
       return toDraft(await res.json())
     },
