@@ -124,7 +124,7 @@ export function BucketBoard({
                     "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
                     holdsCapacity
                       ? "bg-secondary text-secondary-foreground"
-                      : "border border-dashed border-muted-foreground/60 text-muted-foreground",
+                      : "border border-dashed border-muted-foreground/80 text-muted-foreground",
                   )}
                   title={
                     holdsCapacity

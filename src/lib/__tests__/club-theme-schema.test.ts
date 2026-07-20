@@ -227,15 +227,33 @@ describe("getBlockingContrastWarnings", () => {
 // to `--foreground`, so the `muted` semantic role was inert and every
 // `text-muted-foreground` label rendered as primary text.
 describe("deriveAppMutedForeground (#2145)", () => {
-  // Which surface each mode's muted text can actually land on, straight from the
-  // `.app-theme-scope` token blocks in globals.css.
+  // Which surface each mode's muted text can actually land on. The brand tokens
+  // come straight from the `.app-theme-scope` blocks in globals.css; the four
+  // `*-muted` panel fills come from `:root` / `.dark` and are #1808-curated, so
+  // they do NOT move with the brand palette even though the derived tone does —
+  // which is exactly why they have to be checked. `app-theme-layout-contract`
+  // pins these literals against globals.css.
+  const SEMANTIC_MUTED_LIGHT = [
+    "#fef9c3", // --warning-muted
+    "#dbeafe", // --info-muted
+    "#dcfce7", // --success-muted
+    "#fee2e2", // --danger-muted
+  ];
+  const SEMANTIC_MUTED_DARK = [
+    "oklch(0.33 0.05 75)", // --warning-muted
+    "oklch(0.33 0.05 250)", // --info-muted
+    "oklch(0.33 0.05 150)", // --success-muted
+    "oklch(0.33 0.05 27)", // --danger-muted
+  ];
   const lightSurfaces = (theme: typeof DEFAULT_CLUB_THEME_VALUES) => [
     theme.brandSnow, // --background / --card / --popover
     theme.brandMist, // --muted / --secondary / --accent
+    ...SEMANTIC_MUTED_LIGHT,
   ];
   const darkSurfaces = (theme: typeof DEFAULT_CLUB_THEME_VALUES) => [
     theme.brandDeep, // --background
     theme.brandCharcoal, // --card / --popover / --muted / --secondary / --accent
+    ...SEMANTIC_MUTED_DARK,
   ];
 
   it.each([
@@ -276,14 +294,63 @@ describe("deriveAppMutedForeground (#2145)", () => {
     }
   });
 
+  // The DISTINCT-from-`--foreground` tests above only assert `!==`, which one
+  // bit of difference satisfies. Setting MUTED_FOREGROUND_TARGET_WEIGHT to 0.99
+  // — a tone visually identical to `--foreground`, defeating the entire point of
+  // #2145 — passes every one of them. This is the CEILING that makes the role
+  // impossible to render inert again by tuning: on a palette with headroom the
+  // muted tone must carry MEASURABLY less contrast than `--foreground` does on
+  // the same surface, not merely a different hex.
+  //
+  // 0.75 is chosen with evidence, not taste: the shipped palettes land at
+  // 0.41/0.53 (default light/dark) and 0.52/0.59 (Tokoroa), so the bar has real
+  // headroom, while a 0.90 mix weight already reads 0.74-0.83 and a 0.99 weight
+  // reads ~0.98. It is asserted only for palettes with headroom — a palette the
+  // clamp walks all the way back to `--foreground` is the documented accessible
+  // outcome and legitimately has a fraction of 1.
+  const MUTED_STEP_CEILING = 0.75;
+
+  it.each([
+    ["default", DEFAULT_CLUB_THEME_VALUES],
+    ["Tokoroa", TOKOROA_CLUB_THEME_VALUES],
+  ])(
+    "keeps the %s palette's muted tone a real step below --foreground, not a token one",
+    (_label, theme) => {
+      const muted = deriveAppMutedForeground(theme);
+
+      for (const [tone, foreground, base] of [
+        [muted.light, theme.brandDeep, theme.brandSnow],
+        [muted.dark, theme.brandSnow, theme.brandDeep],
+      ] as const) {
+        const foregroundRatio = contrastRatio(foreground, base) ?? 0;
+        const mutedRatio = contrastRatio(tone, base) ?? 0;
+
+        expect(foregroundRatio).toBeGreaterThan(AA_TEXT_CONTRAST_RATIO);
+        expect(
+          mutedRatio / foregroundRatio,
+          `${tone} on ${base} is ${mutedRatio.toFixed(2)}:1 against --foreground's ${foregroundRatio.toFixed(2)}:1 — not a perceptible step down`,
+        ).toBeLessThanOrEqual(MUTED_STEP_CEILING);
+      }
+    },
+  );
+
   it("holds AA across every brand palette a club could configure", () => {
     // The guard's claim is universal, so this sweeps a wide grid of neutral
     // ramps rather than trusting the two shipped ones. Only palettes that pass
     // the SAVE GATE are in scope — a palette the gate rejects can never reach
     // the stylesheet, and the derivation cannot invent contrast the brand
     // colours do not have (see the endpoint-crossing case below).
+    //
+    // The assertion is stated RELATIVE to `--foreground`, which is the actual
+    // guarantee: never less readable than the token it softens, and clearing
+    // 4.5:1 wherever that token does. An absolute "always AA" claim would be
+    // false and for a reason that has nothing to do with #2145 — the curated
+    // `*-muted` fills are #1808-fixed, so a palette can pick a `--brand-snow`
+    // that fails AA on a warning panel all by itself. The derivation must not
+    // make that worse; it cannot make it better.
     const ramp = ["#000000", "#17231c", "#4d4d46", "#767676", "#a8b0ac", "#d4ddd7", "#f5f8f6", "#ffffff"];
     let gated = 0;
+    let inheritedFailures = 0;
 
     for (const brandDeep of ramp) {
       for (const brandSnow of ramp) {
@@ -301,17 +368,28 @@ describe("deriveAppMutedForeground (#2145)", () => {
             }
             gated += 1;
             const muted = deriveAppMutedForeground(theme);
-            for (const surface of lightSurfaces(theme)) {
-              expect(
-                contrastRatio(muted.light, surface) ?? 0,
-                `light ${muted.light} on ${surface} (deep ${brandDeep}, snow ${brandSnow}, mist ${brandMist})`,
-              ).toBeGreaterThanOrEqual(AA_TEXT_CONTRAST_RATIO);
-            }
-            for (const surface of darkSurfaces(theme)) {
-              expect(
-                contrastRatio(muted.dark, surface) ?? 0,
-                `dark ${muted.dark} on ${surface} (snow ${brandSnow}, deep ${brandDeep}, charcoal ${brandCharcoal})`,
-              ).toBeGreaterThanOrEqual(AA_TEXT_CONTRAST_RATIO);
+            for (const [mode, tone, foreground, surfaces] of [
+              ["light", muted.light, brandDeep, lightSurfaces(theme)],
+              ["dark", muted.dark, brandSnow, darkSurfaces(theme)],
+            ] as const) {
+              for (const surface of surfaces) {
+                const foregroundRatio = contrastRatio(foreground, surface) ?? 0;
+                const mutedRatio = contrastRatio(tone, surface) ?? 0;
+                const where = `${mode} ${tone} on ${surface} (deep ${brandDeep}, snow ${brandSnow}, mist ${brandMist}, charcoal ${brandCharcoal})`;
+
+                // Never less readable than the token it softens.
+                expect(mutedRatio, where).toBeGreaterThanOrEqual(
+                  Math.min(foregroundRatio, AA_TEXT_CONTRAST_RATIO),
+                );
+                if (foregroundRatio >= AA_TEXT_CONTRAST_RATIO) {
+                  // …and clears AA wherever --foreground does.
+                  expect(mutedRatio, where).toBeGreaterThanOrEqual(
+                    AA_TEXT_CONTRAST_RATIO,
+                  );
+                } else {
+                  inheritedFailures += 1;
+                }
+              }
             }
           }
         }
@@ -319,9 +397,64 @@ describe("deriveAppMutedForeground (#2145)", () => {
     }
 
     // Guards against the sweep silently gating everything out and passing
-    // vacuously.
+    // vacuously, and against the relative form passing only because the
+    // `--foreground` branch never fires.
     expect(gated).toBeGreaterThan(20);
+    expect(inheritedFailures).toBeGreaterThan(0);
   });
+
+  // The curated `*-muted` panel fills are FIXED (#1808 keeps them out of
+  // `app-theme-scope`) while the derived tone slides with the brand ramp — the
+  // one pairing that can drift apart with nothing watching. A brand-only clamp
+  // ships a sub-AA muted tone on a `bg-warning-muted` / `bg-info-muted` panel
+  // for a palette that passes the save gate, on surfaces where `--foreground`
+  // itself is perfectly readable. Both palettes below are gate-passing, and both
+  // keep a distinct muted tone after the clamp — so this is a genuine fix, not
+  // the derivation giving up and returning `--foreground`.
+  it.each([
+    [
+      "dark",
+      {
+        brandDeep: "#000000",
+        brandSnow: "#a8b0ac",
+        brandMist: "#767676",
+        brandCharcoal: "#2f2f2b",
+      },
+      "oklch(0.33 0.05 75)", // --warning-muted, dark
+    ],
+    [
+      "light",
+      {
+        brandDeep: "#2f2f2b",
+        brandSnow: "#f5f8f6",
+        brandMist: "#f5f8f6",
+        brandCharcoal: "#17231c",
+      },
+      "#dbeafe", // --info-muted, light
+    ],
+  ])(
+    "clears AA on the curated %s semantic panel fills, which do not track the brand palette",
+    (mode, neutrals, panelFill) => {
+      const theme = { ...DEFAULT_CLUB_THEME_VALUES, ...neutrals };
+      expect(getBlockingContrastWarnings(theme)).toEqual([]);
+
+      const muted = deriveAppMutedForeground(theme);
+      const tone = mode === "dark" ? muted.dark : muted.light;
+      const foreground =
+        mode === "dark" ? theme.brandSnow : theme.brandDeep;
+
+      // `--foreground` reads fine on this panel, so a muted tone that does not
+      // is a regression introduced by the derivation, not a palette problem.
+      expect(contrastRatio(foreground, panelFill) ?? 0).toBeGreaterThanOrEqual(
+        AA_TEXT_CONTRAST_RATIO,
+      );
+      expect(contrastRatio(tone, panelFill) ?? 0).toBeGreaterThanOrEqual(
+        AA_TEXT_CONTRAST_RATIO,
+      );
+      // …and the clamp solved it by stepping back, not by collapsing the role.
+      expect(tone.toLowerCase()).not.toBe(foreground.toLowerCase());
+    },
+  );
 
   it("degrades to --foreground rather than ship a sub-AA tone", () => {
     // The endpoint-crossing palette already pinned above: brandDeep sits BETWEEN
@@ -342,9 +475,14 @@ describe("deriveAppMutedForeground (#2145)", () => {
     const muted = deriveAppMutedForeground(endpointCrossingPalette);
 
     expect(muted.light).toBe(endpointCrossingPalette.brandDeep);
+    // Having collapsed onto `--foreground`, the tone is by construction exactly
+    // as readable as `--foreground` on every surface — including the curated
+    // `*-muted` fills, where this palette's own `--brand-deep` only manages
+    // 4.23:1. That shortfall is the palette's (an #1808 gap the save gate does
+    // not police), not something the derivation introduced.
     for (const surface of lightSurfaces(endpointCrossingPalette)) {
-      expect(contrastRatio(muted.light, surface) ?? 0).toBeGreaterThanOrEqual(
-        AA_TEXT_CONTRAST_RATIO,
+      expect(contrastRatio(muted.light, surface)).toBe(
+        contrastRatio(endpointCrossingPalette.brandDeep, surface),
       );
     }
   });

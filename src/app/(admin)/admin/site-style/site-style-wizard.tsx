@@ -39,6 +39,7 @@ import {
   DEFAULT_CLUB_THEME_VALUES,
   MAX_LOGO_DATA_URL_BYTES,
   buildClubThemeCss,
+  deriveAppMutedForeground,
   fontCssVariable,
   fontLabel,
   getBlockingContrastWarnings,
@@ -100,8 +101,22 @@ function themePayload(values: ClubThemeValues, completeSetup: boolean) {
   };
 }
 
+/**
+ * The inline variables the live preview overlays on `app-theme-scope`.
+ *
+ * `--app-muted-foreground*` are here because they are DERIVED, not picked
+ * (#2145): `globals.css` resolves `--muted-foreground` from them, so emitting
+ * only the `--brand-*` values would leave the preview painting the STATIC
+ * fallback — the default palette's tone — no matter which palette is being
+ * edited. That made the one screen where an admin evaluates this feature the one
+ * screen that showed the wrong colour, and for an endpoint-crossing palette it
+ * could show a sub-AA sample of a tone that ships perfectly readable.
+ */
 function previewStyle(values: ClubThemeValues): CSSProperties {
+  const muted = deriveAppMutedForeground(values);
   return {
+    "--app-muted-foreground": muted.light,
+    "--app-muted-foreground-dark": muted.dark,
     "--brand-gold": values.brandGold,
     "--brand-charcoal": values.brandCharcoal,
     "--brand-deep": values.brandDeep,

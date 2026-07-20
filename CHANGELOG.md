@@ -11,12 +11,22 @@ All notable public reference-release changes should be recorded here.
   the main text colour, so it did nothing. That role is now worked out from your
   saved brand neutrals as a genuinely softer tone, in both light and dark mode.
   **This is a visible change:** every muted label across the member, admin, and
-  finance screens gets lighter. It is not a new colour picker — the tone is
+  finance screens gets lighter. **Dark mode changes noticeably more than light
+  mode**, and that is expected: about half the affected places reach this
+  colour through the dark-only neutral remap that already rewrites literal
+  `slate`/`gray` text onto the muted role, so in dark mode those labels move
+  from full body strength to the new softer tone, while in light mode they are
+  untouched. It is not a new colour picker — the tone is
   derived from the **Deep**, **Snow**, **Mist**, and **Charcoal** colours you
   already choose in **Site Style**. Before it ships, the derived tone is checked
-  against every background it can appear on, in both modes, and pulled back
+  in both modes against each background secondary text actually appears on — the
+  page and card background, the tinted-row background, and the four built-in
+  notice panels (warning, information, success, danger) — and pulled back
   toward the main text colour if it would otherwise drop below the WCAG AA 4.5:1
-  minimum — so it can never be less readable than the text colour it softens. A
+  minimum, so it can never be less readable than the text colour it softens on
+  any of them. Dividers and hairlines are deliberately outside that check: text
+  is not meant to sit on a divider, and the one badge that did has been moved
+  onto the tinted-row background instead. A
   palette whose neutrals sit very close together has no room to soften at all,
   and secondary text stays identical to normal text, exactly as it was before;
   that is the accessible outcome rather than a failure. Printing and PDF export

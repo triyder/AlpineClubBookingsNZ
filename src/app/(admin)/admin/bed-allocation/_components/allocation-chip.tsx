@@ -100,7 +100,7 @@ export function AllocationChip({
         accent.ringClassName,
         holdsCapacity
           ? "border-border bg-card text-card-foreground"
-          : "border-dashed border-muted-foreground/50 bg-muted text-foreground",
+          : "border-dashed border-muted-foreground/70 bg-muted text-foreground",
         isDragging && "opacity-50",
         pending && "opacity-60",
       )}
@@ -142,7 +142,7 @@ export function AllocationChip({
               "gap-1 px-1 py-0 text-[10px]",
               holdsCapacity
                 ? "border-transparent bg-secondary font-semibold text-secondary-foreground"
-                : "border-dashed border-muted-foreground/60 text-muted-foreground",
+                : "border-dashed border-muted-foreground/80 text-muted-foreground",
             )}
             title={
               holdsCapacity

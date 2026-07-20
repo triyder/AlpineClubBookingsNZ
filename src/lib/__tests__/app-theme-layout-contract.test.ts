@@ -2,6 +2,9 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS,
+  APP_MUTED_FOREGROUND_EXCLUDED_SURFACES,
+  APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS,
   DEFAULT_CLUB_THEME_VALUES,
   contrastRatio,
   deriveAppMutedForeground,
@@ -213,6 +216,168 @@ describe("database theme app-shell contract", () => {
     // healed-token set from exactly this pairing.
     expect(lightRules).toContain("--muted-foreground:");
     expect(darkRules).toContain("--muted-foreground:");
+  });
+
+  // The fallback above is only ever used when NO ClubTheme sheet is injected —
+  // and in that case the surrounding surfaces come from the `:root`/`.dark`
+  // literals, not from `DEFAULT_CLUB_THEME_VALUES`. Deriving the fallback from
+  // the default palette is therefore only correct because those two agree.
+  // Nothing asserted that until now, so a `:root` retune would have left the
+  // un-themed app pairing a tone derived from one palette against surfaces from
+  // another, with every existing test still green.
+  it("keeps the un-themed :root surfaces byte-identical to the default palette", () => {
+    const globals = readRepoFile("src/app/globals.css");
+    const rootRules = globals.slice(
+      globals.indexOf(":root {"),
+      globals.indexOf("@media not print {"),
+    );
+
+    expect(rootRules).toContain(":root {");
+
+    for (const [variable, value] of [
+      ["--brand-gold", DEFAULT_CLUB_THEME_VALUES.brandGold],
+      ["--brand-charcoal", DEFAULT_CLUB_THEME_VALUES.brandCharcoal],
+      ["--brand-deep", DEFAULT_CLUB_THEME_VALUES.brandDeep],
+      ["--brand-ridge", DEFAULT_CLUB_THEME_VALUES.brandRidge],
+      ["--brand-mist", DEFAULT_CLUB_THEME_VALUES.brandMist],
+      ["--brand-snow", DEFAULT_CLUB_THEME_VALUES.brandSnow],
+      ["--brand-safety", DEFAULT_CLUB_THEME_VALUES.brandSafety],
+    ] as const) {
+      expect(rootRules).toContain(`${variable}: ${value};`);
+    }
+  });
+
+  // #2145 — the clamp checks the curated semantic `*-muted` panel fills, which
+  // #1808 deliberately leaves OUT of `app-theme-scope`. That means the values
+  // live in `globals.css` and are copied into `club-theme-schema.ts`, so this
+  // is the pin that stops a retune of one silently invalidating the other.
+  it("keeps the semantic muted surfaces the clamp checks in step with globals.css", () => {
+    const globals = readRepoFile("src/app/globals.css");
+    const schema = readRepoFile("src/lib/club-theme-schema.ts");
+    const darkStart = globals.indexOf("@media not print {");
+    const rootRules = globals.slice(globals.indexOf(":root {"), darkStart);
+    const darkRules = globals.slice(
+      darkStart,
+      globals.indexOf(".website-theme {", darkStart),
+    );
+
+    expect(darkStart).toBeGreaterThan(0);
+
+    for (const token of ["warning", "info", "success", "danger"] as const) {
+      const light = new RegExp(`--${token}-muted:\\s*(#[0-9a-f]{6});`).exec(
+        rootRules,
+      );
+      const dark = new RegExp(`--${token}-muted:\\s*(oklch\\([^)]*\\));`).exec(
+        darkRules,
+      );
+
+      expect(light, `light --${token}-muted in globals.css`).not.toBeNull();
+      expect(dark, `dark --${token}-muted in globals.css`).not.toBeNull();
+      expect(schema).toContain(`"${light![1]}", // --${token}-muted`);
+      expect(schema).toContain(`"${dark![1]}", // --${token}-muted`);
+    }
+  });
+
+  // #2145 — `--border` is deliberately NOT in the clamp set, on the grounds
+  // that a hairline colour is not a text background. Dark mode remaps
+  // `bg-{neutral}-200` onto `--border`, so that reasoning only holds while no
+  // `bg-{neutral}-200` element carries de-emphasised text. It did: a
+  // `bg-slate-200 text-slate-500` badge in `page-content-panel.tsx` resolved to
+  // muted-on-border at 3.74:1 (default) and 3.54:1 (Tokoroa) in dark mode. It
+  // now uses `bg-muted text-muted-foreground`. This keeps the exclusion honest.
+  it("keeps de-emphasised text off the neutral-200 surfaces that remap to --border", () => {
+    const offenders = listSourceFiles("src")
+      .filter((path) => path.endsWith(".tsx"))
+      .flatMap((path) => {
+        const source = readRepoFile(path);
+        return [...source.matchAll(/class(?:Name)?=\{?["'`]([^"'`]+)["'`]/g)]
+          .filter((match) => {
+            const classes = match[1];
+            const hasBorderSurface =
+              /(?:^|\s)bg-(?:slate|gray|zinc|neutral|stone)-200(?:\s|$)/.test(
+                classes,
+              );
+            const hasMutedText =
+              /(?:^|\s)text-(?:muted-foreground|(?:slate|gray|zinc|neutral|stone)-(?:300|400|500|600|700))(?:\s|$)/.test(
+                classes,
+              );
+            return hasBorderSurface && hasMutedText;
+          })
+          .map((match) => `${path}: ${match[1]}`);
+      });
+
+    expect(offenders).toEqual([]);
+  });
+
+  // #2145 — the prose in ARCHITECTURE.md previously claimed the derived tone was
+  // guaranteed "on any app surface", which was never true: the guarantee is
+  // over a finite, named list. Docs overclaiming what the code delivers has been
+  // the recurring defect across this branch family, so the list is pinned rather
+  // than trusted. Every checked surface must be NAMED in the doc section, and
+  // every excluded one must be named as excluded.
+  it("keeps the documented clamp surfaces in step with the ones the code checks", () => {
+    const architecture = readRepoFile("docs/ARCHITECTURE.md");
+    const start = architecture.indexOf(
+      "**`--muted-foreground` is a DERIVED tone",
+    );
+    const section = architecture.slice(
+      start,
+      architecture.indexOf("Two contract tests in", start),
+    );
+
+    expect(start).toBeGreaterThan(0);
+    expect(section).not.toHaveLength(0);
+
+    for (const token of [
+      ...APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS,
+      ...APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS,
+    ]) {
+      expect(section, `${token} is checked but never named in the docs`).toContain(
+        `\`${token}\``,
+      );
+    }
+
+    const excluded = section.slice(section.indexOf("Deliberately **not** in"));
+    for (const token of APP_MUTED_FOREGROUND_EXCLUDED_SURFACES) {
+      expect(
+        excluded,
+        `${token} is excluded but the docs never say so`,
+      ).toContain(`\`${token}\``);
+      expect(
+        APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS as readonly string[],
+      ).not.toContain(token);
+      expect(
+        APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS as readonly string[],
+      ).not.toContain(token);
+    }
+
+    // The doc must not restate the absolute claim it used to make.
+    expect(section).not.toContain("on any app surface");
+    expect(section).not.toContain("every background it can appear on");
+  });
+
+  // #2145 — the site-style wizard preview overlays inline `--brand-*` values on
+  // `app-theme-scope`. `--muted-foreground` does NOT resolve from those: it
+  // resolves from the injected `--app-muted-foreground*` pair, so without these
+  // two the preview paints the STATIC fallback (the DEFAULT palette's tone)
+  // regardless of the palette being edited — on the one screen where an admin
+  // evaluates the feature.
+  it("feeds the derived muted tones into the site-style wizard preview", () => {
+    const wizard = readRepoFile(
+      "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+    );
+    const preview = wizard.slice(
+      wizard.indexOf("function previewStyle("),
+      wizard.indexOf("export function SiteStyleWizard"),
+    );
+
+    expect(preview).toContain("deriveAppMutedForeground(values)");
+    expect(preview).toContain('"--app-muted-foreground": muted.light');
+    expect(preview).toContain('"--app-muted-foreground-dark": muted.dark');
+    // The preview is applied to the element whose sample label is muted, so the
+    // two must not drift apart.
+    expect(wizard).toContain("previewStyle(values)");
+    expect(wizard).toContain("text-muted-foreground");
   });
 
   it("keeps app brand utilities on solid gated text/background pairs", () => {

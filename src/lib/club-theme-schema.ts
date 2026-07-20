@@ -435,6 +435,86 @@ const MUTED_FOREGROUND_TARGET_WEIGHT = 0.7;
 const MUTED_FOREGROUND_WEIGHT_STEP = 0.02;
 
 /**
+ * The curated semantic `*-muted` surfaces, light mode, exactly as declared on
+ * `:root` in `src/app/globals.css`.
+ *
+ * These are in the clamp set because they are REAL muted-text backgrounds
+ * (`bg-warning-muted`/`bg-info-muted`/`bg-danger-muted`/`bg-success-muted`
+ * panels carry `text-muted-foreground` footnotes in ~35 places across
+ * bed-allocation, waitlist, committee, and family-suggestions) AND because
+ * #1808 deliberately does NOT override them inside `app-theme-scope`. They are
+ * therefore FIXED while the derived tone moves with the brand palette — the one
+ * combination that can drift apart silently. Every other surface muted text
+ * lands on is either a brand token the clamp already covers, or is remapped to
+ * one in dark mode (`bg-white`/`bg-*-50` -> `--card`, `bg-*-100` -> `--muted`,
+ * `hover:bg-*-50` -> `--accent`).
+ *
+ * Pinned against `globals.css` by `app-theme-layout-contract.test.ts` so the two
+ * cannot drift.
+ */
+const SEMANTIC_MUTED_SURFACES_LIGHT = [
+  "#fef9c3", // --warning-muted
+  "#dbeafe", // --info-muted
+  "#dcfce7", // --success-muted
+  "#fee2e2", // --danger-muted
+] as const;
+
+/** The `.dark` half of {@link SEMANTIC_MUTED_SURFACES_LIGHT}. */
+const SEMANTIC_MUTED_SURFACES_DARK = [
+  "oklch(0.33 0.05 75)", // --warning-muted
+  "oklch(0.33 0.05 250)", // --info-muted
+  "oklch(0.33 0.05 150)", // --success-muted
+  "oklch(0.33 0.05 27)", // --danger-muted
+] as const;
+
+/**
+ * The brand tokens whose VALUES the light clamp checks, named as they appear in
+ * `globals.css`. `--brand-snow` backs `--background`/`--card`/`--popover`;
+ * `--brand-mist` backs `--muted`/`--secondary`/`--accent`.
+ *
+ * This list is the CONTRACT, not a convenience: `docs/ARCHITECTURE.md` publishes
+ * it as "the surfaces the derived muted tone is guaranteed against", and
+ * `app-theme-layout-contract.test.ts` fails if the prose and this list disagree.
+ * Prose that claims a broader guarantee than the code delivers is the specific
+ * failure mode this pin exists to prevent.
+ */
+export const APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS = [
+  "--brand-snow",
+  "--brand-mist",
+  "--warning-muted",
+  "--info-muted",
+  "--success-muted",
+  "--danger-muted",
+] as const;
+
+/** The dark-mode counterpart of {@link APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS}. */
+export const APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS = [
+  "--brand-deep",
+  "--brand-charcoal",
+  "--warning-muted",
+  "--info-muted",
+  "--success-muted",
+  "--danger-muted",
+] as const;
+
+/**
+ * Surfaces DELIBERATELY excluded from the clamp set.
+ *
+ * `--border`/`--input` are hairline tokens. Dark mode remaps `bg-*-200` onto
+ * `--border`, so a `bg-slate-200` badge WOULD be a muted-text surface — but the
+ * only such badge (`page-content-panel.tsx`) was moved to
+ * `bg-muted text-muted-foreground` instead, because a mid-luminance rule colour
+ * is the wrong background for body text at any weight. Clamping against it
+ * instead would collapse the derived tone into `--foreground` for roughly a
+ * third of gate-passing palettes rather than the ~4% it does today, defeating
+ * #2145 for a surface no text should sit on.
+ *
+ * Kept as a value rather than a comment so the docs pin can assert the
+ * exclusion is STATED, not silently assumed.
+ */
+export const APP_MUTED_FOREGROUND_EXCLUDED_SURFACES = ["--border", "--input"] as const;
+
+/**
  * A muted tone for `foreground`, mixed toward `towards` and then clamped back
  * toward `foreground` until it clears WCAG AA against EVERY surface it can land
  * on.
@@ -494,21 +574,34 @@ export type AppMutedForegroundTones = {
  * identically to primary text and the `muted` semantic role was inert.
  *
  * Each mode mixes its foreground 30% toward its own base surface and then
- * clamps for AA against BOTH surfaces that mode can put muted text on:
+ * clamps for AA against the SIX surfaces that mode can put muted text on —
+ * `APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS` /
+ * `APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS`:
  *
  * - light: `--brand-deep` toward `--brand-snow`, checked against `--brand-snow`
- *   (`--background`/`--card`/`--popover`) and `--brand-mist`
- *   (`--muted`/`--secondary`/`--accent`);
+ *   (`--background`/`--card`/`--popover`), `--brand-mist`
+ *   (`--muted`/`--secondary`/`--accent`), and the four curated light
+ *   `*-muted` panel fills;
  * - dark: `--brand-snow` toward `--brand-deep`, checked against `--brand-deep`
- *   (`--background`) and `--brand-charcoal`
- *   (`--card`/`--popover`/`--muted`/`--secondary`/`--accent`).
+ *   (`--background`), `--brand-charcoal`
+ *   (`--card`/`--popover`/`--muted`/`--secondary`/`--accent`), and the four
+ *   curated dark `*-muted` panel fills.
  *
- * Checking both surfaces per mode rather than only the base one is what makes
- * the guard hold for an ENDPOINT-CROSSING palette — one whose `--brand-deep`
- * sits BETWEEN `--brand-snow` and `--brand-mist`. Mixing toward one surface
- * moves the tone AWAY from the other, so a single-surface check would ship a
- * sub-AA muted tone for a palette that passes the save gate today (the
- * `#767676`/`#000000`/`#ffffff` case pinned in `club-theme-schema.test.ts`).
+ * Checking both BRAND surfaces per mode rather than only the base one is what
+ * makes the guard hold for an ENDPOINT-CROSSING palette — one whose
+ * `--brand-deep` sits BETWEEN `--brand-snow` and `--brand-mist`. Mixing toward
+ * one surface moves the tone AWAY from the other, so a single-surface check
+ * would ship a sub-AA muted tone for a palette that passes the save gate today
+ * (the `#767676`/`#000000`/`#ffffff` case pinned in
+ * `club-theme-schema.test.ts`).
+ *
+ * Checking the curated `*-muted` fills as well is what makes it hold for a
+ * palette that MOVES while they stay put: they are excluded from the app scope
+ * by #1808, so a brand ramp can slide the derived tone toward them without any
+ * brand-only check noticing. See `SEMANTIC_MUTED_SURFACES_LIGHT`.
+ *
+ * `APP_MUTED_FOREGROUND_EXCLUDED_SURFACES` records what is deliberately NOT in
+ * the set, and why.
  */
 export function deriveAppMutedForeground(
   value: Partial<Record<keyof ClubThemeValues, unknown>> | null | undefined,
@@ -519,10 +612,12 @@ export function deriveAppMutedForeground(
     light: deriveMutedTone(theme.brandDeep, theme.brandSnow, [
       theme.brandSnow,
       theme.brandMist,
+      ...SEMANTIC_MUTED_SURFACES_LIGHT,
     ]),
     dark: deriveMutedTone(theme.brandSnow, theme.brandDeep, [
       theme.brandDeep,
       theme.brandCharcoal,
+      ...SEMANTIC_MUTED_SURFACES_DARK,
     ]),
   };
 }

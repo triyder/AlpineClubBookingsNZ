@@ -2002,7 +2002,7 @@ export function PageContentPanel() {
                   <span className="text-xs font-medium text-slate-700">
                     Slug
                     {isSystemPageSlug(selectedPage.slug) && (
-                      <span className="ml-2 rounded bg-slate-200 px-1 py-0.5 text-[10px] font-normal text-slate-500">
+                      <span className="ml-2 rounded bg-muted px-1 py-0.5 text-[10px] font-normal text-muted-foreground">
                         fixed
                       </span>
                     )}
@@ -2025,7 +2025,7 @@ export function PageContentPanel() {
                   <span className="text-xs font-medium text-slate-700">
                     Menu order
                     {isSystemPageSlug(selectedPage.slug) && (
-                      <span className="ml-2 rounded bg-slate-200 px-1 py-0.5 text-[10px] font-normal text-slate-500">
+                      <span className="ml-2 rounded bg-muted px-1 py-0.5 text-[10px] font-normal text-muted-foreground">
                         fixed at {SYSTEM_PAGE_SLUGS.get(selectedPage.slug)}
                       </span>
                     )}
