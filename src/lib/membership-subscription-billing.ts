@@ -306,6 +306,14 @@ export async function buildSubscriptionBillingPreview(input: {
         seasonYear: input.seasonYear,
         billingBasis: "PER_FAMILY",
         familyGroupId: { not: null },
+        // #2147: a VOIDED family charge (its Xero invoice was voided/deleted and
+        // its coverage released) must NOT keep the family un-billable forever.
+        // The void handler (releaseVoidedSubscriptionInvoice) retains the charge
+        // row with status VOIDED + familyGroupId intact for audit; without this
+        // filter it would still populate billedFamilyTypes and fire
+        // FAMILY_ALREADY_BILLED, permanently blocking the family's re-bill and
+        // contradicting the void→re-bill design.
+        status: { not: "VOIDED" },
       },
       select: {
         id: true,
