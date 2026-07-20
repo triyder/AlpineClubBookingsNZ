@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { KeyRound, Loader2, RefreshCw, Save } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,11 +14,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlyNotice,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ForbiddenSaveError,
+  useSectionEditState,
+} from "@/hooks/use-section-edit-state";
 import {
   MIN_PASSWORD_LENGTH_CEILING,
   MIN_PASSWORD_LENGTH_FLOOR,
@@ -81,83 +83,20 @@ function responseErrorMessage(body: unknown, fallback: string) {
 
 export function PasswordPolicyCard() {
   const canEdit = useAdminAreaEditAccess("support");
-  const [saved, setSaved] = useState<PolicyDraft | null>(null);
-  const [draft, setDraft] = useState<PolicyDraft | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [error, setError] = useState("");
-  const [savedMessage, setSavedMessage] = useState("");
 
-  async function loadSettings() {
-    setLoading(true);
-    setError("");
-    setSavedMessage("");
-    try {
+  const section = useSectionEditState<PolicyDraft>({
+    load: async (signal) => {
       const response = await fetch("/api/admin/security/password-policy", {
         credentials: "same-origin",
+        signal,
       });
       const body = (await response.json()) as SettingsResponse | { error?: string };
       if (!response.ok || !("policy" in body)) {
         throw new Error(responseErrorMessage(body, "Failed to load password policy"));
       }
-      const next = toDraft(body.policy);
-      setSaved(next);
-      setDraft({ ...next });
-      setEditing(false);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error ? loadError.message : "Failed to load password policy",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadSettings();
-  }, []);
-
-  const dirty =
-    saved !== null &&
-    draft !== null &&
-    (saved.minPasswordLength !== draft.minPasswordLength ||
-      CLASS_FIELDS.some(({ key }) => saved[key] !== draft[key]));
-
-  const minLengthValid =
-    draft !== null &&
-    Number.isInteger(draft.minPasswordLength) &&
-    draft.minPasswordLength >= MIN_PASSWORD_LENGTH_FLOOR &&
-    draft.minPasswordLength <= MIN_PASSWORD_LENGTH_CEILING;
-
-  function cancelEditing() {
-    if (saved) setDraft({ ...saved });
-    setError("");
-    setSavedMessage("");
-    setEditing(false);
-  }
-
-  function setClass(key: ClassField, value: boolean) {
-    setDraft((current) => (current ? { ...current, [key]: value } : current));
-    setSavedMessage("");
-  }
-
-  function setMinLength(raw: string) {
-    const parsed = Number.parseInt(raw, 10);
-    setDraft((current) =>
-      current
-        ? { ...current, minPasswordLength: Number.isNaN(parsed) ? 0 : parsed }
-        : current,
-    );
-    setSavedMessage("");
-  }
-
-  async function saveSettings() {
-    if (!draft || !minLengthValid) return;
-    setSaving(true);
-    setError("");
-    setSavedMessage("");
-    try {
+      return toDraft(body.policy);
+    },
+    save: async (draft) => {
       const response = await fetch("/api/admin/security/password-policy", {
         method: "PUT",
         credentials: "same-origin",
@@ -166,24 +105,39 @@ export function PasswordPolicyCard() {
       });
       const body = (await response.json()) as SettingsResponse | { error?: string };
       if (!response.ok || !("policy" in body)) {
-        if (response.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON);
-          return;
-        }
+        if (response.status === 403) throw new ForbiddenSaveError();
         throw new Error(responseErrorMessage(body, "Failed to save password policy"));
       }
-      const next = toDraft(body.policy);
-      setSaved(next);
-      setDraft({ ...next });
-      setEditing(false);
-      setSavedMessage("Password policy saved.");
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error ? saveError.message : "Failed to save password policy",
-      );
-    } finally {
-      setSaving(false);
-    }
+      return toDraft(body.policy);
+    },
+    successMessage: "Password policy saved.",
+    saveErrorFallback: "Failed to save password policy",
+    loadErrorFallback: "Failed to load password policy",
+    isValid: (draft) =>
+      Number.isInteger(draft.minPasswordLength) &&
+      draft.minPasswordLength >= MIN_PASSWORD_LENGTH_FLOOR &&
+      draft.minPasswordLength <= MIN_PASSWORD_LENGTH_CEILING,
+  });
+
+  const { draft, loading, saving, editing, dirty, error } = section;
+  const savedMessage = section.success;
+  const minLengthValid = section.valid;
+
+  function cancelEditing() {
+    section.cancelEditing();
+    section.setError("");
+    section.setSuccess("");
+  }
+
+  function setClass(key: ClassField, value: boolean) {
+    section.setDraft({ [key]: value } as Partial<PolicyDraft>);
+    section.setSuccess("");
+  }
+
+  function setMinLength(raw: string) {
+    const parsed = Number.parseInt(raw, 10);
+    section.setDraft({ minPasswordLength: Number.isNaN(parsed) ? 0 : parsed });
+    section.setSuccess("");
   }
 
   return (
@@ -209,7 +163,7 @@ export function PasswordPolicyCard() {
               variant="outline"
               size="sm"
               type="button"
-              onClick={() => setEditing(true)}
+              onClick={section.startEditing}
             >
               Edit
             </ViewOnlyActionButton>
@@ -217,12 +171,10 @@ export function PasswordPolicyCard() {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {!canEdit ? (
-          <AdminViewOnlyNotice canEdit={canEdit}>
-            Your admin role can view login &amp; security settings but cannot change
-            them. Support edit access is required.
-          </AdminViewOnlyNotice>
-        ) : null}
+        <AdminViewOnlyNotice canEdit={canEdit}>
+          Your admin role can view login &amp; security settings but cannot change
+          them. Support edit access is required.
+        </AdminViewOnlyNotice>
 
         {(error || savedMessage) && (
           <div
@@ -306,7 +258,7 @@ export function PasswordPolicyCard() {
                   <ViewOnlyActionButton
                     canEdit={canEdit}
                     type="button"
-                    onClick={() => void saveSettings()}
+                    onClick={() => void section.save()}
                     disabled={!dirty || saving || !minLengthValid}
                   >
                     {saving ? (
@@ -329,7 +281,7 @@ export function PasswordPolicyCard() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => void loadSettings()}
+                  onClick={() => void section.reload()}
                   disabled={loading || saving}
                 >
                   <RefreshCw className="mr-2 h-4 w-4" />

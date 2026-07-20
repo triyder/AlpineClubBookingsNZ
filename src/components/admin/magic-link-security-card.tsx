@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -15,11 +14,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlyNotice,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ForbiddenSaveError,
+  useSectionEditState,
+} from "@/hooks/use-section-edit-state";
 import type { ModuleSettingsValues } from "@/config/modules";
 import {
   DEFAULT_MAGIC_LINK_TTL_MINUTES,
@@ -59,10 +61,27 @@ export interface MagicLinkSecurityCardProps {
   onSaveTtlMinutes?: (minutes: number) => Promise<void>;
 }
 
-class ForbiddenSaveError extends Error {}
-
 const TOGGLE_FAIL_MESSAGE = "Could not update the email sign-in link setting.";
 const TTL_FAIL_MESSAGE = "Could not update the link expiry.";
+
+interface MagicLinkDraft {
+  enabled: boolean;
+  ttlMinutes: number;
+}
+
+async function putJson(url: string, body: unknown, failMessage: string) {
+  const res = await fetch(url, {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    if (res.status === 403) throw new ForbiddenSaveError();
+    throw new Error(failMessage);
+  }
+  return res;
+}
 
 export function MagicLinkSecurityCard({
   moduleSettings,
@@ -72,62 +91,18 @@ export function MagicLinkSecurityCard({
   const canEdit = useAdminAreaEditAccess("support");
   const initialClampedTtl = clampMagicLinkTtlMinutes(initialTtlMinutes);
 
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [savedNote, setSavedNote] = useState("");
-
-  // Draft (live inputs) vs saved snapshot (last persisted value).
-  const [enabled, setEnabled] = useState(moduleSettings.magicLink);
-  const [ttlMinutes, setTtlMinutes] = useState(initialClampedTtl);
-  const [savedEnabled, setSavedEnabled] = useState(moduleSettings.magicLink);
-  const [savedTtl, setSavedTtl] = useState(initialClampedTtl);
-
-  const ttlValid =
-    Number.isInteger(ttlMinutes) &&
-    ttlMinutes >= MAGIC_LINK_TTL_MIN_MINUTES &&
-    ttlMinutes <= MAGIC_LINK_TTL_MAX_MINUTES;
-
-  const dirty = enabled !== savedEnabled || ttlMinutes !== savedTtl;
-
-  function startEditing() {
-    setError("");
-    setSavedNote("");
-    setEditing(true);
-  }
-
-  function cancelEditing() {
-    setEnabled(savedEnabled);
-    setTtlMinutes(savedTtl);
-    setError("");
-    setSavedNote("");
-    setEditing(false);
-  }
-
-  async function putJson(url: string, body: unknown, failMessage: string) {
-    const res = await fetch(url, {
-      method: "PUT",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      if (res.status === 403) throw new ForbiddenSaveError();
-      throw new Error(failMessage);
-    }
-    return res;
-  }
-
-  async function handleSave() {
-    if (!dirty || !ttlValid) return;
-    setSaving(true);
-    setError("");
-    setSavedNote("");
-    try {
+  const section = useSectionEditState<MagicLinkDraft>({
+    // Props-seeded: the page fetches the module settings and expiry server-side,
+    // so this card has no load step (and no loading state).
+    initial: {
+      enabled: moduleSettings.magicLink,
+      ttlMinutes: initialClampedTtl,
+    },
+    save: async (draft, saved) => {
       // Persist the module toggle if it changed: GET the FRESH settings and
       // merge only `magicLink`, so a module another card changed since page
       // load is never reverted by writing back a stale snapshot.
-      if (enabled !== savedEnabled) {
+      if (draft.enabled !== saved?.enabled) {
         const freshRes = await fetch("/api/admin/modules", {
           credentials: "same-origin",
         });
@@ -140,14 +115,14 @@ export function MagicLinkSecurityCard({
         };
         await putJson(
           "/api/admin/modules",
-          { settings: { ...fresh.settings, magicLink: enabled } },
+          { settings: { ...fresh.settings, magicLink: draft.enabled } },
           TOGGLE_FAIL_MESSAGE,
         );
       }
 
       // Persist the TTL if it changed.
-      const clampedTtl = clampMagicLinkTtlMinutes(ttlMinutes);
-      if (clampedTtl !== savedTtl) {
+      const clampedTtl = clampMagicLinkTtlMinutes(draft.ttlMinutes);
+      if (clampedTtl !== saved?.ttlMinutes) {
         if (onSaveTtlMinutes) {
           await onSaveTtlMinutes(clampedTtl);
         } else {
@@ -159,22 +134,34 @@ export function MagicLinkSecurityCard({
         }
       }
 
-      setSavedEnabled(enabled);
-      setSavedTtl(clampedTtl);
-      setTtlMinutes(clampedTtl);
-      setEditing(false);
-      setSavedNote("Email sign-in settings saved.");
-    } catch (saveError) {
-      if (saveError instanceof ForbiddenSaveError) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
-      } else {
-        setError(
-          saveError instanceof Error ? saveError.message : TOGGLE_FAIL_MESSAGE,
-        );
-      }
-    } finally {
-      setSaving(false);
-    }
+      // Neither write echoes the stored row back, so the clamped value the
+      // routes persist is the authoritative one to re-seed from.
+      return { enabled: draft.enabled, ttlMinutes: clampedTtl };
+    },
+    successMessage: "Email sign-in settings saved.",
+    saveErrorFallback: TOGGLE_FAIL_MESSAGE,
+    isValid: (draft) =>
+      Number.isInteger(draft.ttlMinutes) &&
+      draft.ttlMinutes >= MAGIC_LINK_TTL_MIN_MINUTES &&
+      draft.ttlMinutes <= MAGIC_LINK_TTL_MAX_MINUTES,
+  });
+
+  const { saving, editing, dirty, error } = section;
+  const savedNote = section.success;
+  const ttlValid = section.valid;
+  const enabled = section.draft?.enabled ?? moduleSettings.magicLink;
+  const ttlMinutes = section.draft?.ttlMinutes ?? initialClampedTtl;
+
+  function startEditing() {
+    section.setError("");
+    section.setSuccess("");
+    section.startEditing();
+  }
+
+  function cancelEditing() {
+    section.cancelEditing();
+    section.setError("");
+    section.setSuccess("");
   }
 
   return (
@@ -219,7 +206,9 @@ export function MagicLinkSecurityCard({
           <Checkbox
             checked={enabled}
             disabled={!editing || saving}
-            onCheckedChange={(checked) => setEnabled(checked === true)}
+            onCheckedChange={(checked) =>
+              section.setDraft({ enabled: checked === true })
+            }
             aria-label="Enable email sign-in link"
           />
           <span className="text-sm">
@@ -240,7 +229,9 @@ export function MagicLinkSecurityCard({
             max={MAGIC_LINK_TTL_MAX_MINUTES}
             value={ttlMinutes}
             disabled={!editing || saving}
-            onChange={(e) => setTtlMinutes(Number(e.target.value))}
+            onChange={(e) =>
+              section.setDraft({ ttlMinutes: Number(e.target.value) })
+            }
             className="w-28"
             aria-describedby="magic-link-ttl-hint"
           />
@@ -262,7 +253,7 @@ export function MagicLinkSecurityCard({
             <ViewOnlyActionButton
               canEdit={canEdit}
               type="button"
-              onClick={() => void handleSave()}
+              onClick={() => void section.save()}
               disabled={!dirty || saving || !ttlValid}
             >
               {saving ? (
