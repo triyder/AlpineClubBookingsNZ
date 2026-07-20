@@ -60,7 +60,12 @@ rules — see
 4. Edit the **Cancellation Refund Rules** table — one row per "days before
    stay" threshold, each with a card refund %, credit refund %, and optional
    fixed fees. The **Preview** restates the rules in plain English (for example
-   "14+ days before stay: 100% refund"). Click **Save Default Policy**.
+   "14+ days before stay: 100% refund"). Click **Save Default Policy**. Save
+   stays greyed out until you actually change something, so opening **Edit**
+   and clicking **Save** without touching a field never records a policy change
+   you did not make. On a club that has never saved a cancellation policy, Save
+   is available straight away so you can commit the starting rules once.
+   **Cancel** puts every field back exactly as it was saved.
 
 ### Date-Specific Periods
 
@@ -71,6 +76,10 @@ rules — see
 2. Give the period a name, start and end dates, its own hold setting, and its
    own refund rules, then click **Create Period**. Any booking whose check-in
    falls inside the period uses these rules instead of the default.
+3. To change an existing period, click its **Edit** button. **Update Period**
+   stays greyed out until you actually change something, so re-saving an
+   untouched period never records a change you did not make. **Cancel** closes
+   the editor and leaves the period as it was.
 
 ### Group Discount
 
@@ -97,6 +106,9 @@ rules — see
    **Trigger Days** (Sun–Sat) activate it, then click **Create Policy**. The
    minimum stay applies whenever a booking includes any trigger day in the
    range. (Admins can still override it when booking on behalf.)
+3. To change an existing policy, click its **Edit** button. **Update Policy**
+   stays greyed out until you actually change something — including trigger
+   days, where ticking a day and unticking it again counts as no change.
 
 ### Public Booking Requests
 
@@ -134,8 +146,9 @@ rules — see
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Every field is read-only | Your admin role is view-only for bookings | Ask a full admin for bookings edit access |
-| A **Save** button is greyed out | Either you have not changed anything yet, or your bookings access was reduced while you had the form open | Change a field to enable Save. If hovering the button says your role can only view this area, reload the page and ask a full admin for bookings edit access |
+| Every field is read-only, and a banner at the top of the section says "You have view-only access to this area" | Your admin role is view-only for bookings | Ask a full admin for bookings edit access |
+| A **Save** button is greyed out and there is no view-only banner | You have not changed anything yet | Change a field to enable Save. Every section's Save only lights up once the form differs from what is saved, so an accidental re-save cannot record a change you did not make |
+| A **Save** button went grey part-way through editing, and the view-only banner appeared | Your bookings access was reduced while you had the form open | Reload the page and ask a full admin for bookings edit access |
 | A "Public copy may be out of date" banner | Your Terms/FAQ still describe the old non-member hold | Click **Edit public pages** and update the copy to match the current policy |
 | A period's rules are not applying | The booking's check-in is outside the period, or the period is inactive | Check the dates and the Active toggle on the period card |
 | Group discount never triggers | It is disabled, the group is under the minimum, or it is summer-only and the stay is in winter | Enable it, lower the minimum group size, or untick Summer seasons only |

@@ -1,7 +1,10 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { normalizeCancellationRule } from "@/lib/cancellation-rules"
+import {
+  cancellationRuleSetsEqual,
+  normalizeCancellationRule,
+} from "@/lib/cancellation-rules"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -14,11 +17,208 @@ import { PolicyFeedback } from "./policy-feedback"
 import { PolicyScopeSelect, usePolicyScopeLodgeName } from "./policy-scope-select"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import {
-  ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  ForbiddenSaveError,
+  useSectionEditState,
+} from "@/hooks/use-section-edit-state"
+import {
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import type { BookingPeriod, PolicyRule } from "./types"
+
+const NEW_PERIOD_RULES: PolicyRule[] = [
+  { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 },
+  { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0, creditFixedFeeCents: 0 },
+  { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, creditFixedFeeCents: 0 },
+]
+
+/**
+ * One open period editor's draft. This section's snapshot is a LIST, so the
+ * draft/snapshot pair that `useSectionEditState` owns is scoped to the ROW
+ * being edited, not to the section: the form below mounts one hook instance per
+ * open editor (keyed on the row id) and the list itself stays plain state.
+ */
+interface PeriodDraft {
+  name: string
+  startDate: string
+  endDate: string
+  holdEnabled: boolean
+  holdDays: number
+  rules: PolicyRule[]
+}
+
+const NEW_PERIOD_DRAFT: PeriodDraft = {
+  name: "",
+  startDate: "",
+  endDate: "",
+  holdEnabled: true,
+  holdDays: 5,
+  rules: NEW_PERIOD_RULES,
+}
+
+function toDraft(period: BookingPeriod): PeriodDraft {
+  return {
+    name: period.name,
+    startDate: period.startDate.split("T")[0],
+    endDate: period.endDate.split("T")[0],
+    holdEnabled: period.nonMemberHoldEnabled ?? true,
+    holdDays: period.nonMemberHoldDays,
+    rules: period.cancellationRules.map((rule) => normalizeCancellationRule(rule)),
+  }
+}
+
+function draftsEqual(a: PeriodDraft, b: PeriodDraft) {
+  return (
+    a.name === b.name &&
+    a.startDate === b.startDate &&
+    a.endDate === b.endDate &&
+    a.holdEnabled === b.holdEnabled &&
+    a.holdDays === b.holdDays &&
+    cancellationRuleSetsEqual(a.rules, b.rules)
+  )
+}
+
+function PeriodForm({
+  periodId,
+  initial,
+  canEdit,
+  onSubmit,
+  onCancel,
+  onError,
+}: {
+  /** `null` while creating — there is no persisted row to be unchanged from. */
+  periodId: string | null
+  initial: PeriodDraft
+  canEdit: boolean | undefined
+  /** Persists the draft and closes the form. Throws to surface a failure. */
+  onSubmit: (draft: PeriodDraft) => Promise<PeriodDraft>
+  onCancel: () => void
+  onError: (message: string) => void
+}) {
+  const section = useSectionEditState<PeriodDraft>({
+    initial,
+    save: onSubmit,
+    // The section renders its own `PolicyFeedback` above the list, so the
+    // success copy is set by the parent when the form closes.
+    successMessage: "",
+    // #2143: an Edit -> Save that changed nothing must not reach the PUT, which
+    // writes a `booking-period.update` audit entry with a `before`/`after` pair
+    // unconditionally — identical halves and all — and busts the public-page
+    // cache. Creating is the first-save exception (the same one the group
+    // discount card makes): there is no persisted row for the draft to be
+    // unchanged FROM, so a create is always savable once it validates.
+    isDirty: (draft, saved) => periodId === null || !draftsEqual(draft, saved),
+    isValid: (draft) =>
+      Boolean(draft.name) && Boolean(draft.startDate) && Boolean(draft.endDate),
+  })
+
+  const { draft, saving, dirty, valid, error } = section
+
+  // The hook owns the save-failure message; this section presents every message
+  // in one place above the list, so mirror it up rather than rendering twice.
+  useEffect(() => {
+    if (error) onError(error)
+  }, [error, onError])
+
+  if (!draft) return null
+
+  return (
+    <Card className="border-blue-200 bg-blue-50/30">
+      <CardContent className="pt-6 space-y-4">
+        <h3 className="font-semibold">
+          {periodId ? "Edit Period" : "New Period"}
+        </h3>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="pName">Period Name</Label>
+            <Input
+              id="pName"
+              value={draft.name}
+              onChange={(e) => section.setDraft({ name: e.target.value })}
+              placeholder="e.g. School Holidays Jul 2026"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="pHold">Non-member hold days</Label>
+            <Input
+              id="pHold"
+              type="number"
+              min="1"
+              max="365"
+              value={draft.holdDays}
+              onChange={(e) =>
+                section.setDraft({ holdDays: parseInt(e.target.value) || 5 })
+              }
+              className="w-24"
+              disabled={!draft.holdEnabled}
+            />
+            <p className="text-xs text-muted-foreground">
+              {draft.holdEnabled
+                ? "Used only when this period applies and Members First is enabled."
+                : "Stored but inactive while this period uses First Paid, First In."}
+            </p>
+          </div>
+          <label className="flex items-start gap-3 rounded-md border p-3 md:col-span-2">
+            <Checkbox
+              checked={draft.holdEnabled}
+              onCheckedChange={(v) => section.setDraft({ holdEnabled: v === true })}
+            />
+            <span className="space-y-1">
+              <span className="block text-sm font-medium">Members First for this period</span>
+              <span className="block text-xs text-muted-foreground">
+                Disable this to let bookings in this date range proceed as First Paid, First In.
+              </span>
+            </span>
+          </label>
+          <div className="space-y-2">
+            <Label htmlFor="pStart">Start Date</Label>
+            <Input
+              id="pStart"
+              type="date"
+              value={draft.startDate}
+              onChange={(e) => section.setDraft({ startDate: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="pEnd">End Date</Label>
+            <Input
+              id="pEnd"
+              type="date"
+              value={draft.endDate}
+              onChange={(e) => section.setDraft({ endDate: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <div>
+          <Label className="text-sm font-semibold">Cancellation Rules for this Period</Label>
+          <CancellationRulesEditor
+            rules={draft.rules}
+            onChange={(rules) => section.setDraft({ rules })}
+          />
+        </div>
+
+        <div>
+          <Label className="text-sm font-semibold">Preview</Label>
+          <PolicyPreview rules={draft.rules} />
+        </div>
+
+        <div className="flex space-x-3">
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            describeReason={false}
+            onClick={() => void section.save()}
+            disabled={saving || !valid || !dirty}
+          >
+            {saving ? "Saving..." : periodId ? "Update Period" : "Create Period"}
+          </ViewOnlyActionButton>
+          <Button variant="outline" onClick={onCancel}>Cancel</Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 export function BookingPeriodsSection() {
   // Booking-policy config gates on the bookings area (its write route enforces
@@ -33,17 +233,7 @@ export function BookingPeriodsSection() {
   const [loadingPeriods, setLoadingPeriods] = useState(true)
   const [showPeriodForm, setShowPeriodForm] = useState(false)
   const [editingPeriodId, setEditingPeriodId] = useState<string | null>(null)
-  const [periodName, setPeriodName] = useState("")
-  const [periodStart, setPeriodStart] = useState("")
-  const [periodEnd, setPeriodEnd] = useState("")
-  const [periodHoldEnabled, setPeriodHoldEnabled] = useState(true)
-  const [periodHoldDays, setPeriodHoldDays] = useState(5)
-  const [periodRules, setPeriodRules] = useState<PolicyRule[]>([
-    { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 },
-    { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0, creditFixedFeeCents: 0 },
-    { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, creditFixedFeeCents: 0 },
-  ])
-  const [savingPeriod, setSavingPeriod] = useState(false)
+  const [editingDraft, setEditingDraft] = useState<PeriodDraft>(NEW_PERIOD_DRAFT)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
@@ -80,34 +270,30 @@ export function BookingPeriodsSection() {
   function resetPeriodForm() {
     setShowPeriodForm(false)
     setEditingPeriodId(null)
-    setPeriodName("")
-    setPeriodStart("")
-    setPeriodEnd("")
-    setPeriodHoldEnabled(true)
-    setPeriodHoldDays(5)
-    setPeriodRules([
-      { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 },
-      { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0, creditFixedFeeCents: 0 },
-      { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, creditFixedFeeCents: 0 },
-    ])
+    setEditingDraft(NEW_PERIOD_DRAFT)
+  }
+
+  function startAddPeriod() {
+    setEditingPeriodId(null)
+    setEditingDraft(NEW_PERIOD_DRAFT)
+    setShowPeriodForm(true)
   }
 
   function startEditPeriod(period: BookingPeriod) {
     setEditingPeriodId(period.id)
-    setPeriodName(period.name)
-    setPeriodStart(period.startDate.split("T")[0])
-    setPeriodEnd(period.endDate.split("T")[0])
-    setPeriodHoldEnabled(period.nonMemberHoldEnabled ?? true)
-    setPeriodHoldDays(period.nonMemberHoldDays)
-    setPeriodRules(period.cancellationRules.map((rule) => normalizeCancellationRule(rule)))
+    setEditingDraft(toDraft(period))
     setShowPeriodForm(true)
   }
 
-  async function handleSavePeriod() {
-    setSavingPeriod(true)
-    setError("")
-    setSuccess("")
-    try {
+  /**
+   * The open editor's transport. Throws so `useSectionEditState` surfaces the
+   * message; on success it closes the form and refreshes the list, which is why
+   * the returned value (the hook's re-seed) is never actually rendered again.
+   */
+  const submitPeriod = useCallback(
+    async (draft: PeriodDraft): Promise<PeriodDraft> => {
+      setError("")
+      setSuccess("")
       const url = editingPeriodId
         ? `/api/admin/booking-policies/periods/${editingPeriodId}`
         : "/api/admin/booking-policies/periods"
@@ -117,33 +303,39 @@ export function BookingPeriodsSection() {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: periodName,
-          startDate: periodStart,
-          endDate: periodEnd,
-          nonMemberHoldEnabled: periodHoldEnabled,
-          nonMemberHoldDays: periodHoldDays,
-          cancellationRules: periodRules,
+          name: draft.name,
+          startDate: draft.startDate,
+          endDate: draft.endDate,
+          nonMemberHoldEnabled: draft.holdEnabled,
+          nonMemberHoldDays: draft.holdDays,
+          cancellationRules: draft.rules,
           // Partition is set at creation; edits keep the row's partition.
           ...(editingPeriodId ? {} : scopeLodgeId ? { lodgeId: scopeLodgeId } : {}),
         }),
       })
       if (!res.ok) {
-        if (res.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON)
-          return
-        }
+        if (res.status === 403) throw new ForbiddenSaveError()
         const data = await res.json()
         throw new Error(data.error || "Failed to save period")
       }
+      const saved = await res.json()
+      // Parse the SERVER row into the re-seed value BEFORE closing the form, so
+      // a malformed response surfaces as a save error rather than after a
+      // success message has already been shown.
+      const reseeded = toDraft({
+        ...saved,
+        cancellationRules: (saved.cancellationRules ?? draft.rules).map(
+          (rule: PolicyRule) => normalizeCancellationRule(rule),
+        ),
+      })
+      const wasEditing = editingPeriodId !== null
       resetPeriodForm()
-      fetchPeriods()
-      setSuccess(editingPeriodId ? "Period updated" : "Period created")
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
-    } finally {
-      setSavingPeriod(false)
-    }
-  }
+      void fetchPeriods()
+      setSuccess(wasEditing ? "Period updated" : "Period created")
+      return reseeded
+    },
+    [editingPeriodId, scopeLodgeId, fetchPeriods],
+  )
 
   async function handleDeletePeriod(id: string) {
     if (!confirm("Delete this booking period?")) return
@@ -184,6 +376,16 @@ export function BookingPeriodsSection() {
         onClearSuccess={() => setSuccess("")}
       />
 
+      {/*
+        #2142: the view-only explanation lives here, once, at the top of the
+        section — announced on arrival and in the reading order — instead of on
+        each disabled (and therefore unfocusable) button below.
+      */}
+      <AdminViewOnlySectionBanner canEdit={canEdit}>
+        Your admin role can view booking periods but cannot change them.
+        Bookings edit access is required.
+      </AdminViewOnlySectionBanner>
+
       <PolicyScopeSelect
         value={scopeLodgeId}
         onChange={setScopeLodgeId}
@@ -213,107 +415,22 @@ export function BookingPeriodsSection() {
               </CardDescription>
             </div>
             {!showPeriodForm && (
-              <ViewOnlyActionButton canEdit={canEdit} onClick={() => setShowPeriodForm(true)}>Add Period</ViewOnlyActionButton>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={startAddPeriod}>Add Period</ViewOnlyActionButton>
             )}
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {!canEdit && (
-            <AdminViewOnlyNotice canEdit={canEdit}>
-              Your admin role can view booking periods but cannot change them.
-              Bookings edit access is required.
-            </AdminViewOnlyNotice>
-          )}
-          {/* Period Form */}
+          {/* Period Form — one `useSectionEditState` instance per open editor. */}
           {showPeriodForm && (
-            <Card className="border-blue-200 bg-blue-50/30">
-              <CardContent className="pt-6 space-y-4">
-                <h3 className="font-semibold">
-                  {editingPeriodId ? "Edit Period" : "New Period"}
-                </h3>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="pName">Period Name</Label>
-                    <Input
-                      id="pName"
-                      value={periodName}
-                      onChange={(e) => setPeriodName(e.target.value)}
-                      placeholder="e.g. School Holidays Jul 2026"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="pHold">Non-member hold days</Label>
-                    <Input
-                      id="pHold"
-                      type="number"
-                      min="1"
-                      max="365"
-                      value={periodHoldDays}
-                      onChange={(e) => setPeriodHoldDays(parseInt(e.target.value) || 5)}
-                      className="w-24"
-                      disabled={!periodHoldEnabled}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {periodHoldEnabled
-                        ? "Used only when this period applies and Members First is enabled."
-                        : "Stored but inactive while this period uses First Paid, First In."}
-                    </p>
-                  </div>
-                  <label className="flex items-start gap-3 rounded-md border p-3 md:col-span-2">
-                    <Checkbox
-                      checked={periodHoldEnabled}
-                      onCheckedChange={setPeriodHoldEnabled}
-                    />
-                    <span className="space-y-1">
-                      <span className="block text-sm font-medium">Members First for this period</span>
-                      <span className="block text-xs text-muted-foreground">
-                        Disable this to let bookings in this date range proceed as First Paid, First In.
-                      </span>
-                    </span>
-                  </label>
-                  <div className="space-y-2">
-                    <Label htmlFor="pStart">Start Date</Label>
-                    <Input
-                      id="pStart"
-                      type="date"
-                      value={periodStart}
-                      onChange={(e) => setPeriodStart(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="pEnd">End Date</Label>
-                    <Input
-                      id="pEnd"
-                      type="date"
-                      value={periodEnd}
-                      onChange={(e) => setPeriodEnd(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <Label className="text-sm font-semibold">Cancellation Rules for this Period</Label>
-                  <CancellationRulesEditor rules={periodRules} onChange={setPeriodRules} />
-                </div>
-
-                <div>
-                  <Label className="text-sm font-semibold">Preview</Label>
-                  <PolicyPreview rules={periodRules} />
-                </div>
-
-                <div className="flex space-x-3">
-                  <ViewOnlyActionButton
-                    canEdit={canEdit}
-                    onClick={handleSavePeriod}
-                    disabled={savingPeriod || !periodName || !periodStart || !periodEnd}
-                  >
-                    {savingPeriod ? "Saving..." : editingPeriodId ? "Update Period" : "Create Period"}
-                  </ViewOnlyActionButton>
-                  <Button variant="outline" onClick={resetPeriodForm}>Cancel</Button>
-                </div>
-              </CardContent>
-            </Card>
+            <PeriodForm
+              key={editingPeriodId ?? "new"}
+              periodId={editingPeriodId}
+              initial={editingDraft}
+              canEdit={canEdit}
+              onSubmit={submitPeriod}
+              onCancel={resetPeriodForm}
+              onError={setError}
+            />
           )}
 
           {/* Periods List */}
@@ -348,13 +465,13 @@ export function BookingPeriodsSection() {
                         </p>
                       </div>
                       <div className="flex space-x-2">
-                        <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => handleTogglePeriod(period)}>
+                        <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleTogglePeriod(period)}>
                           {period.active ? "Deactivate" : "Activate"}
                         </ViewOnlyActionButton>
-                        <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => startEditPeriod(period)}>
+                        <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => startEditPeriod(period)}>
                           Edit
                         </ViewOnlyActionButton>
-                        <ViewOnlyActionButton canEdit={canEdit} variant="destructive" size="sm" onClick={() => handleDeletePeriod(period.id)}>
+                        <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" onClick={() => handleDeletePeriod(period.id)}>
                           Delete
                         </ViewOnlyActionButton>
                       </div>

@@ -185,16 +185,27 @@ All notable public reference-release changes should be recorded here.
   and can narrow **after** the form was opened (a session refetch reducing the
   actor's permissions mid-edit), and in that window Save previously stayed
   clickable and the admin walked into a 403 mapped to the "not saved" notice.
-  It now disables immediately and carries the reason as a `title` and an
-  `aria-describedby` sr-only line, so a screen-reader user is told why rather
-  than meeting a silently dead control. While access is still *resolving*
-  (`undefined`) the button is disabled **neutrally**, with no reason shown, so an
-  admin who turns out to be edit-capable never sees a "view only" message flash.
+  It now disables immediately. While access is still *resolving* (`undefined`)
+  the button is disabled **neutrally**, with no reason shown, so an admin who
+  turns out to be edit-capable never sees a "view only" message flash.
   No security consequence either way — Save only ever rendered behind the
   already-gated Edit, and each write route enforces `bookings:edit`
   independently. The two public-booking-request Saves were also raw `<button>`
   elements styled with brand utilities; they now use the shared themed `Button`
   like the other four sections, so they follow the club theme.
+
+  **The explanation for a view-only disabled state now lives at the section
+  level, not on each button.** A `disabled` button is out of the tab order, so
+  the `title` and `aria-describedby` reason it used to carry was attached to the
+  one element a keyboard or screen-reader user can never reach — precisely the
+  people it was for. Each of the five sections now renders a single banner at
+  the top — "You have view-only access to this area", plus what that section
+  specifically cannot be changed — in the normal reading order and in a polite
+  live region, so it is announced when the session resolves and met *before* the
+  dead controls rather than never. The buttons stay disabled exactly as before;
+  only the explanation moved. This is scoped to Booking Policies: every other
+  admin surface keeps the per-button reason unchanged, and widening the pattern
+  is tracked separately.
 
   Second, the group discount card's Save is no longer clickable while the form
   is unchanged. Opening **Edit** and clicking **Save** without touching a field
@@ -212,6 +223,32 @@ All notable public reference-release changes should be recorded here.
   object, and treating it as "no row yet" would let one click overwrite a real
   configured policy. No pricing behaviour changed — a missing row and a disabled
   row were already equivalent to every pricing reader.
+
+  **The same no-op protection now covers the other three sections**, which were
+  hand-rolled create/edit forms with no draft/snapshot pair at all. Booking
+  periods, minimum night stay, and the default cancellation policy now track
+  real dirtiness through the shared `useSectionEditState` hook, so **Update
+  Period**, **Update Policy**, and **Save Default Policy** stay greyed out until
+  the form actually differs from what is stored — and light up again the moment
+  it does, or go back to grey if you undo the change by hand. That closes two
+  more audit-erosion paths of exactly the kind #2143 describes: the cancellation
+  write route logs `cancellation-policy.update` unconditionally, and the
+  per-period write route logs a `booking-period.update` entry carrying a
+  `before`/`after` pair *even when the two halves are identical*. Neither is
+  reachable from the UI any more, and both are fixed at the form layer rather
+  than by bolting an ad-hoc comparison onto the routes. Because these sections
+  edit rows rather than one config object, each **open editor** gets its own
+  draft/snapshot pair keyed on the row being edited; the list around it stays
+  ordinary state, and the row-level Activate/Deactivate/Delete buttons are
+  unchanged direct actions. The first-save exception carries over where it
+  applies: creating a period or a minimum-stay policy is always savable (there
+  is no stored row to be unchanged from), as is the first club-wide cancellation
+  policy on a club that has never saved one — but, as with the group discount, a
+  **failed** load never gets that exception, so a load error can never turn into
+  a one-click overwrite of a real policy. Comparisons are semantic rather than
+  literal: a re-ordered but otherwise identical set of refund rules is not a
+  change (the routes sort before storing), and neither is ticking a trigger day
+  and unticking it again.
 
 ## 0.12.2 - 2026-07-20
 

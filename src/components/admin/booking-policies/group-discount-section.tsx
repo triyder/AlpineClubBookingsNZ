@@ -11,7 +11,7 @@ import {
   useSectionEditState,
 } from "@/hooks/use-section-edit-state"
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { PolicyFeedback } from "./policy-feedback"
@@ -135,6 +135,16 @@ export function GroupDiscountSection() {
         onClearSuccess={() => section.setSuccess("")}
       />
 
+      {/*
+        #2142: the view-only explanation lives here, once, at the top of the
+        section — announced on arrival and in the reading order — instead of on
+        each disabled (and therefore unfocusable) button below.
+      */}
+      <AdminViewOnlySectionBanner canEdit={canEdit}>
+        Your admin role can view the group discount policy but cannot change
+        it. Bookings edit access is required.
+      </AdminViewOnlySectionBanner>
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
@@ -144,16 +154,12 @@ export function GroupDiscountSection() {
             </CardDescription>
           </div>
           {!editing && (
-            <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={section.startEditing}>
+            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={section.startEditing}>
               Edit
             </ViewOnlyActionButton>
           )}
         </CardHeader>
         <CardContent className="space-y-4">
-          <AdminViewOnlyNotice canEdit={canEdit}>
-            Your admin role can view the group discount policy but cannot change
-            it. Bookings edit access is required.
-          </AdminViewOnlyNotice>
           <div className="flex items-center space-x-2">
             <input
               type="checkbox"
@@ -204,6 +210,7 @@ export function GroupDiscountSection() {
             <div className="flex space-x-3">
               <ViewOnlyActionButton
                 canEdit={canEdit}
+                describeReason={false}
                 onClick={() => void section.save()}
                 disabled={!dirty || saving}
               >

@@ -18,6 +18,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", () => ({
 }));
 
 import { GroupDiscountSection } from "../group-discount-section";
+import { ADMIN_VIEW_ONLY_SECTION_HEADING } from "@/components/admin/view-only-action";
 
 // Reference implementation of the canonical settings-section pattern (#2136).
 // The hook suite covers the draft/snapshot mechanics; this covers THIS card's
@@ -333,7 +334,7 @@ describe("GroupDiscountSection (#2136)", () => {
     expect(saveButton().disabled).toBe(true);
   });
 
-  it("permissions narrowing mid-edit disables Save and exposes the reason (#2142)", async () => {
+  it("permissions narrowing mid-edit disables Save and explains it section-wide (#2142)", async () => {
     // The tri-state `useAdminAreaEditAccess` can flip after mount (a session
     // refetch narrowing the actor). Save must follow the Edit button's gating
     // rather than staying clickable into a 403.
@@ -352,11 +353,14 @@ describe("GroupDiscountSection (#2136)", () => {
     fireEvent.change(minSizeInput(), { target: { value: "9" } });
 
     expect(saveButton().disabled).toBe(true);
-    expect(saveButton().getAttribute("title")).toBe("View-only reason");
-    const describedBy = saveButton().getAttribute("aria-describedby");
-    expect(describedBy).toBeTruthy();
-    expect(document.getElementById(String(describedBy))?.textContent).toBe(
-      "View-only reason",
+    // The reason is no longer hung off the button — a disabled button is out of
+    // the tab order, so neither the title nor the described-by line was ever
+    // reachable by keyboard or screen reader. The section banner says it once,
+    // in the reading order, in a live region (#2142 owner decision).
+    expect(saveButton().getAttribute("title")).toBeNull();
+    expect(saveButton().getAttribute("aria-describedby")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain(
+      ADMIN_VIEW_ONLY_SECTION_HEADING,
     );
   });
 
@@ -378,6 +382,7 @@ describe("GroupDiscountSection (#2136)", () => {
     expect(saveButton().disabled).toBe(true);
     expect(saveButton().getAttribute("title")).toBeNull();
     expect(saveButton().getAttribute("aria-describedby")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("canEdit=undefined (resolving) disables Edit and shows NO notice", async () => {

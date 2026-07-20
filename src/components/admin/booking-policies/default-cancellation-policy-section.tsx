@@ -1,7 +1,10 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
-import { normalizeCancellationRule } from "@/lib/cancellation-rules"
+import { useEffect, useRef, useState } from "react"
+import {
+  cancellationRuleSetsEqual,
+  normalizeCancellationRule,
+} from "@/lib/cancellation-rules"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -14,8 +17,12 @@ import { PolicyScopeSelect, usePolicyScopeLodgeName } from "./policy-scope-selec
 import { useLodgeOptions } from "@/components/lodge-select"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import {
+  ForbiddenSaveError,
+  useSectionEditState,
+} from "@/hooks/use-section-edit-state"
+import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import type { PolicyRule } from "./types"
@@ -28,20 +35,66 @@ const FALLBACK_RULES: PolicyRule[] = [
   { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, creditFixedFeeCents: 0 },
 ]
 
-async function fetchPartition(lodgeId: string | null): Promise<{
+const ENDPOINT = "/api/admin/booking-policies/cancellation"
+
+function endpointFor(lodgeId: string | null) {
+  return lodgeId ? `${ENDPOINT}?lodgeId=${encodeURIComponent(lodgeId)}` : ENDPOINT
+}
+
+/**
+ * The section's draft. Unlike the two list sections, this one edits a single
+ * config object per SCOPE, so a single `useSectionEditState` instance owns it
+ * and the scope switch drives `reload`.
+ */
+interface CancellationDraft {
   rules: PolicyRule[]
-  nonMemberHoldDays: number
-}> {
-  const res = await fetch(
-    lodgeId
-      ? `/api/admin/booking-policies/cancellation?lodgeId=${encodeURIComponent(lodgeId)}`
-      : "/api/admin/booking-policies/cancellation",
+  holdEnabled: boolean
+  holdDays: number
+  waitlistOrder: WaitlistCrossLodgeOrder
+  /**
+   * Whether this partition actually has persisted rules, as reported by the GET
+   * (#2142). Club-wide with no rows yet gets `FALLBACK_RULES` seeded into BOTH
+   * the draft and the snapshot, so without this flag the #2143 dirty gate would
+   * make committing the defaults unreachable. Never sent to the server.
+   */
+  configured: boolean
+}
+
+const CANCELLATION_DEFAULTS: CancellationDraft = {
+  // Deliberately `configured: true`: this seed is also the fallback a FAILED
+  // load leaves in the form, where we know nothing about the stored rows.
+  // Claiming "nothing persisted" would enable a pristine Save that blind-writes
+  // these rules over a club's real policy. Failing closed costs nothing — the
+  // admin can still save after changing a field, or reload.
+  configured: true,
+  rules: FALLBACK_RULES,
+  holdEnabled: true,
+  holdDays: 7,
+  waitlistOrder: "OWN_LODGE_FIRST",
+}
+
+function toDraft(
+  data: {
+    rules?: PolicyRule[]
+    nonMemberHoldEnabled?: boolean
+    nonMemberHoldDays?: number
+    waitlistCrossLodgeOrder?: string
+  },
+  lodgeId: string | null,
+): CancellationDraft {
+  const fetchedRules: PolicyRule[] = (data.rules ?? []).map((rule) =>
+    normalizeCancellationRule(rule),
   )
-  if (!res.ok) throw new Error("Failed to fetch policy")
-  const data = await res.json()
   return {
-    rules: (data.rules ?? []).map((r: PolicyRule) => normalizeCancellationRule(r)),
-    nonMemberHoldDays: data.nonMemberHoldDays ?? 7,
+    // Club-wide with no rows yet gets a sensible editable starting point. A
+    // lodge with no rows has NO override — seeding defaults there would invite
+    // accidentally creating one, so keep the list empty instead.
+    rules: fetchedRules.length > 0 || lodgeId ? fetchedRules : FALLBACK_RULES,
+    holdEnabled: data.nonMemberHoldEnabled ?? true,
+    holdDays: data.nonMemberHoldDays ?? 7,
+    waitlistOrder:
+      data.waitlistCrossLodgeOrder === "MERGED" ? "MERGED" : "OWN_LODGE_FIRST",
+    configured: fetchedRules.length > 0,
   }
 }
 
@@ -52,149 +105,136 @@ export function DefaultCancellationPolicySection() {
   // while fewer than two lodges exist.
   const [scopeLodgeId, setScopeLodgeId] = useState<string | null>(null)
   const scopeLodgeName = usePolicyScopeLodgeName(scopeLodgeId)
-  const [hasOverride, setHasOverride] = useState(false)
-  const [defaultRules, setDefaultRules] = useState<PolicyRule[]>([])
-  const [defaultHoldEnabled, setDefaultHoldEnabled] = useState(true)
-  const [defaultHoldDays, setDefaultHoldDays] = useState(7)
-  // Cross-lodge waitlist queue order (ADR-004): club-wide, only rendered
-  // when a second lodge exists.
-  const [defaultWaitlistOrder, setDefaultWaitlistOrder] =
-    useState<WaitlistCrossLodgeOrder>("OWN_LODGE_FIRST")
+  // Optimistic "an override is being created" flag: the editor opens seeded
+  // from the club-wide rules before anything is persisted for this lodge.
+  const [creatingOverride, setCreatingOverride] = useState(false)
+  const [removingOverride, setRemovingOverride] = useState(false)
   const { lodges } = useLodgeOptions("admin")
-  const [loadingDefaults, setLoadingDefaults] = useState(true)
-  const [savingDefaults, setSavingDefaults] = useState(false)
-  const [editingDefaults, setEditingDefaults] = useState(false)
-  const [savedDefaultRules, setSavedDefaultRules] = useState<PolicyRule[]>([])
-  const [savedDefaultHoldEnabled, setSavedDefaultHoldEnabled] = useState(true)
-  const [savedDefaultHoldDays, setSavedDefaultHoldDays] = useState(7)
-  const [savedDefaultWaitlistOrder, setSavedDefaultWaitlistOrder] =
-    useState<WaitlistCrossLodgeOrder>("OWN_LODGE_FIRST")
-  const [error, setError] = useState("")
-  const [success, setSuccess] = useState("")
   // Booking-policy config gates on the bookings area (its write route enforces
   // bookings:edit); a bookings:view admin sees it read-only (#1940).
   const canEdit = useAdminAreaEditAccess("bookings")
 
-  const fetchDefaults = useCallback(async (signal?: AbortSignal) => {
-    setLoadingDefaults(true)
-    try {
-      const res = await fetch(
-        scopeLodgeId
-          ? `/api/admin/booking-policies/cancellation?lodgeId=${encodeURIComponent(scopeLodgeId)}`
-          : "/api/admin/booking-policies/cancellation",
-        { signal },
-      )
+  // Mirrors `scopeLodgeId` for the async callbacks below, which need to know
+  // the CURRENT scope at the moment they resolve rather than the one they
+  // closed over. Assigned in an effect, never during render.
+  const scopeRef = useRef(scopeLodgeId)
+
+  const section = useSectionEditState<CancellationDraft>({
+    // Seeded so a failed load still renders the form with its defaults
+    // alongside the error, as it always has.
+    initial: CANCELLATION_DEFAULTS,
+    load: async (signal) => {
+      // `useSectionEditState` reads its callbacks from a latest-ref refreshed on
+      // every commit, so this closure always carries the CURRENT scope.
+      const scope = scopeLodgeId
+      const res = await fetch(endpointFor(scope), { signal })
       if (!res.ok) throw new Error("Failed to fetch policy")
       const data = await res.json()
-      const fetchedRules: PolicyRule[] = (data.rules ?? []).map(
-        (r: PolicyRule) => normalizeCancellationRule(r),
-      )
-      // Club-wide with no rows yet gets a sensible editable starting point.
-      // A lodge with no rows has NO override — seeding defaults here would
-      // invite accidentally creating one, so keep the list empty instead.
-      const rules =
-        fetchedRules.length > 0 || scopeLodgeId ? fetchedRules : FALLBACK_RULES
-      const holdEnabled = data.nonMemberHoldEnabled ?? true
-      const holdDays = data.nonMemberHoldDays ?? 7
-      const waitlistOrder: WaitlistCrossLodgeOrder =
-        data.waitlistCrossLodgeOrder === "MERGED" ? "MERGED" : "OWN_LODGE_FIRST"
-      setHasOverride(Boolean(scopeLodgeId) && fetchedRules.length > 0)
-      setDefaultRules(rules)
-      setDefaultHoldEnabled(holdEnabled)
-      setDefaultHoldDays(holdDays)
-      setDefaultWaitlistOrder(waitlistOrder)
-      setSavedDefaultRules(rules)
-      setSavedDefaultHoldEnabled(holdEnabled)
-      setSavedDefaultHoldDays(holdDays)
-      setSavedDefaultWaitlistOrder(waitlistOrder)
-      setEditingDefaults(false)
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return
-      setError(err instanceof Error ? err.message : "Unknown error")
-    } finally {
-      setLoadingDefaults(false)
-    }
-  }, [scopeLodgeId])
-
-  useEffect(() => {
-    const controller = new AbortController()
-    fetchDefaults(controller.signal)
-    return () => controller.abort()
-  }, [fetchDefaults])
-
-  function handleCancelDefaults() {
-    setDefaultRules(savedDefaultRules)
-    setDefaultHoldEnabled(savedDefaultHoldEnabled)
-    setDefaultHoldDays(savedDefaultHoldDays)
-    setDefaultWaitlistOrder(savedDefaultWaitlistOrder)
-    setEditingDefaults(false)
-    // Cancelling an unsaved "create override" must also drop the optimistic
-    // override state; a refetch restores whatever the server actually holds.
-    if (scopeLodgeId && savedDefaultRules.length === 0) {
-      void fetchDefaults()
-    }
-  }
-
-  async function saveRules(rules: PolicyRule[], successMessage: string) {
-    setSavingDefaults(true)
-    setError("")
-    setSuccess("")
-    try {
-      const res = await fetch("/api/admin/booking-policies/cancellation", {
+      // A scope switch during the fetch makes this response the wrong
+      // partition's. `reload` cannot abort the in-flight request the way the
+      // mount-time controller does, so drop it the one way the hook already
+      // understands: it swallows AbortError without touching state.
+      if (scopeRef.current !== scope) {
+        throw new DOMException("Stale policy scope", "AbortError")
+      }
+      return toDraft(data, scope)
+    },
+    save: async (draft) => {
+      const lodgeId = scopeLodgeId
+      const res = await fetch(ENDPOINT, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          rules,
+          rules: draft.rules,
           // Hold enablement, hold days, and waitlist queue order are club-wide;
           // only the club-wide scope edits them.
-          ...(scopeLodgeId
-            ? { lodgeId: scopeLodgeId }
+          ...(lodgeId
+            ? { lodgeId }
             : {
-                nonMemberHoldEnabled: defaultHoldEnabled,
-                nonMemberHoldDays: defaultHoldDays,
-                waitlistCrossLodgeOrder: defaultWaitlistOrder,
+                nonMemberHoldEnabled: draft.holdEnabled,
+                nonMemberHoldDays: draft.holdDays,
+                waitlistCrossLodgeOrder: draft.waitlistOrder,
               }),
         }),
       })
       if (!res.ok) {
-        if (res.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON)
-          return
-        }
+        if (res.status === 403) throw new ForbiddenSaveError()
         const data = await res.json()
         throw new Error(data.error || "Failed to save")
       }
-      await fetchDefaults()
-      setSuccess(successMessage)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
-    } finally {
-      setSavingDefaults(false)
-    }
-  }
+      // The PUT echoes the stored partition back, so re-seed from THAT — the
+      // route sorts and normalises the rules it persists.
+      return toDraft(await res.json(), lodgeId)
+    },
+    successMessage: () =>
+      scopeLodgeId
+        ? `Override saved for ${scopeLodgeName ?? "lodge"}`
+        : "Default policy saved",
+    // #2143: an Edit -> Save that changed nothing must not reach the PUT, which
+    // logs `cancellation-policy.update` and revalidates the public pages
+    // unconditionally — so a no-op save left an audit entry asserting a policy
+    // change that never happened. The one exception is the first save on a
+    // club-wide partition with no persisted rows: the form seeded itself from
+    // FALLBACK_RULES, so there is nothing for the draft to be unchanged FROM
+    // and committing those defaults must stay reachable (#2142).
+    isDirty: (draft, saved) =>
+      !draft.configured ||
+      draft.holdEnabled !== saved.holdEnabled ||
+      draft.holdDays !== saved.holdDays ||
+      draft.waitlistOrder !== saved.waitlistOrder ||
+      !cancellationRuleSetsEqual(draft.rules, saved.rules),
+  })
 
-  async function handleSaveDefaults() {
-    await saveRules(
-      defaultRules,
-      scopeLodgeId ? `Override saved for ${scopeLodgeName ?? "lodge"}` : "Default policy saved",
-    )
+  const { draft, saved, editing, saving, dirty, error, success } = section
+  const { reload } = section
+
+  // Re-fetch when the scope changes. The hook's own load is mount-only, so a
+  // scope switch drives `reload`; the first run is the mount load itself.
+  const scopeSettled = useRef(false)
+  useEffect(() => {
+    scopeRef.current = scopeLodgeId
+    if (!scopeSettled.current) {
+      scopeSettled.current = true
+      return
+    }
+    setCreatingOverride(false)
+    void reload()
+  }, [scopeLodgeId, reload])
+
+  function handleCancelDefaults() {
+    section.cancelEditing()
+    // Cancelling an unsaved "create override" must also drop the optimistic
+    // override state; a refetch restores whatever the server actually holds.
+    if (scopeLodgeId && (saved?.rules.length ?? 0) === 0) {
+      setCreatingOverride(false)
+      void reload()
+    }
   }
 
   async function handleCreateOverride() {
-    setError("")
-    setSuccess("")
+    section.setError("")
+    section.setSuccess("")
     try {
       // Seed the editor from the club-wide rules so the override starts as
       // a copy the admin adjusts, not a blank slate.
-      const clubWide = await fetchPartition(null)
-      setDefaultRules(clubWide.rules.length > 0 ? clubWide.rules : FALLBACK_RULES)
-      setHasOverride(true)
-      setEditingDefaults(true)
+      const res = await fetch(ENDPOINT)
+      if (!res.ok) throw new Error("Failed to fetch policy")
+      const clubWide = toDraft(await res.json(), null)
+      section.setDraft({
+        rules: clubWide.rules.length > 0 ? clubWide.rules : FALLBACK_RULES,
+      })
+      setCreatingOverride(true)
+      section.startEditing()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
+      section.setError(err instanceof Error ? err.message : "Unknown error")
     }
   }
 
+  /**
+   * Removing an override is a destructive ACTION, not a draft/snapshot save:
+   * it deletes the lodge's rows regardless of what the open editor holds, so it
+   * deliberately bypasses `section.save()` (and its dirty gate) and reloads.
+   */
   async function handleRemoveOverride() {
     if (
       !window.confirm(
@@ -203,31 +243,63 @@ export function DefaultCancellationPolicySection() {
     ) {
       return
     }
-    await saveRules([], "Override removed — this lodge uses the club-wide rules")
+    if (!scopeLodgeId) return
+    setRemovingOverride(true)
+    section.setError("")
+    section.setSuccess("")
+    try {
+      const res = await fetch(ENDPOINT, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rules: [], lodgeId: scopeLodgeId }),
+      })
+      if (!res.ok) {
+        if (res.status === 403) {
+          section.setError(ADMIN_FORBIDDEN_SAVE_REASON)
+          return
+        }
+        const data = await res.json()
+        throw new Error(data.error || "Failed to save")
+      }
+      setCreatingOverride(false)
+      await reload()
+      section.setSuccess("Override removed — this lodge uses the club-wide rules")
+    } catch (err) {
+      section.setError(err instanceof Error ? err.message : "Unknown error")
+    } finally {
+      setRemovingOverride(false)
+    }
   }
 
-  if (loadingDefaults) {
+  if (section.loading || !draft) {
     return <div className="text-center py-8">Loading...</div>
   }
 
   const scopeIsLodge = scopeLodgeId !== null
+  const hasOverride = creatingOverride || (saved?.rules.length ?? 0) > 0
   const showEditor = !scopeIsLodge || hasOverride
+  const busy = saving || removingOverride
 
   return (
     <div className="space-y-6">
       <PolicyFeedback
         error={error}
         success={success}
-        onClearError={() => setError("")}
-        onClearSuccess={() => setSuccess("")}
+        onClearError={() => section.setError("")}
+        onClearSuccess={() => section.setSuccess("")}
       />
 
-      <PolicyScopeSelect value={scopeLodgeId} onChange={setScopeLodgeId} />
-
-      <AdminViewOnlyNotice canEdit={canEdit}>
+      {/*
+        #2142: the view-only explanation lives here, once, at the top of the
+        section — announced on arrival and in the reading order — instead of on
+        each disabled (and therefore unfocusable) button below.
+      */}
+      <AdminViewOnlySectionBanner canEdit={canEdit}>
         Your admin role can view the cancellation policy but cannot change it.
         Bookings edit access is required.
-      </AdminViewOnlyNotice>
+      </AdminViewOnlySectionBanner>
+
+      <PolicyScopeSelect value={scopeLodgeId} onChange={setScopeLodgeId} />
 
       {scopeIsLodge && !hasOverride ? (
         <Card>
@@ -240,7 +312,7 @@ export function DefaultCancellationPolicySection() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <ViewOnlyActionButton canEdit={canEdit} onClick={() => void handleCreateOverride()}>
+            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={() => void handleCreateOverride()}>
               Create override for this lodge
             </ViewOnlyActionButton>
           </CardContent>
@@ -262,8 +334,8 @@ export function DefaultCancellationPolicySection() {
                   : "These rules apply to all bookings unless a date-specific period overrides them."}
               </CardDescription>
             </div>
-            {!editingDefaults && (
-              <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => setEditingDefaults(true)}>
+            {!editing && (
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={section.startEditing}>
                 Edit
               </ViewOnlyActionButton>
             )}
@@ -274,9 +346,9 @@ export function DefaultCancellationPolicySection() {
                 <div className="flex items-start gap-3 rounded-md border p-3">
                   <Checkbox
                     id="nonMemberHoldEnabled"
-                    checked={defaultHoldEnabled}
-                    disabled={!editingDefaults}
-                    onCheckedChange={(v) => setDefaultHoldEnabled(v === true)}
+                    checked={draft.holdEnabled}
+                    disabled={!editing}
+                    onCheckedChange={(v) => section.setDraft({ holdEnabled: v === true })}
                   />
                   <div className="space-y-1">
                     <Label htmlFor="nonMemberHoldEnabled">Members First booking policy</Label>
@@ -294,15 +366,17 @@ export function DefaultCancellationPolicySection() {
                       type="number"
                       min="1"
                       max="365"
-                      value={defaultHoldDays}
-                      onChange={(e) => setDefaultHoldDays(parseInt(e.target.value) || 7)}
-                      className={`w-20 ${!editingDefaults || !defaultHoldEnabled ? "bg-slate-50 text-slate-700" : ""}`}
-                      disabled={!editingDefaults || !defaultHoldEnabled}
+                      value={draft.holdDays}
+                      onChange={(e) =>
+                        section.setDraft({ holdDays: parseInt(e.target.value) || 7 })
+                      }
+                      className={`w-20 ${!editing || !draft.holdEnabled ? "bg-slate-50 text-slate-700" : ""}`}
+                      disabled={!editing || !draft.holdEnabled}
                     />
                     <span className="text-sm text-muted-foreground">days before check-in</span>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {defaultHoldEnabled
+                    {draft.holdEnabled
                       ? "Non-member bookings are held as pending until this many days before check-in, then confirmed automatically."
                       : "The threshold is retained but inactive while First Paid, First In is selected."}
                   </p>
@@ -315,12 +389,14 @@ export function DefaultCancellationPolicySection() {
                 <Label htmlFor="waitlistOrder">Cross-lodge waitlist queue order</Label>
                 <select
                   id="waitlistOrder"
-                  value={defaultWaitlistOrder}
+                  value={draft.waitlistOrder}
                   onChange={(e) =>
-                    setDefaultWaitlistOrder(e.target.value as WaitlistCrossLodgeOrder)
+                    section.setDraft({
+                      waitlistOrder: e.target.value as WaitlistCrossLodgeOrder,
+                    })
                   }
-                  disabled={!editingDefaults}
-                  className={`w-full rounded-md border border-input px-3 py-2 text-sm ${!editingDefaults ? "bg-slate-50 text-slate-700" : "bg-background"}`}
+                  disabled={!editing}
+                  className={`w-full rounded-md border border-input px-3 py-2 text-sm ${!editing ? "bg-slate-50 text-slate-700" : "bg-background"}`}
                 >
                   <option value="OWN_LODGE_FIRST">
                     Own lodge first — a lodge&apos;s own waitlist is served before cross-lodge opt-ins
@@ -342,38 +418,44 @@ export function DefaultCancellationPolicySection() {
               <p className="text-sm text-muted-foreground mb-3">
                 The first matching rule (highest days threshold) applies.
               </p>
-              <CancellationRulesEditor rules={defaultRules} onChange={setDefaultRules} disabled={!editingDefaults} />
+              <CancellationRulesEditor
+                rules={draft.rules}
+                onChange={(rules) => section.setDraft({ rules })}
+                disabled={!editing}
+              />
             </div>
 
             <div>
               <Label className="text-sm font-semibold">Preview</Label>
-              <PolicyPreview rules={defaultRules} />
+              <PolicyPreview rules={draft.rules} />
             </div>
 
-            {editingDefaults && (
+            {editing && (
               <div className="flex flex-wrap gap-3">
                 <ViewOnlyActionButton
                   canEdit={canEdit}
-                  onClick={handleSaveDefaults}
-                  disabled={savingDefaults}
+                  describeReason={false}
+                  onClick={() => void section.save()}
+                  disabled={busy || !dirty}
                 >
-                  {savingDefaults
+                  {saving
                     ? "Saving..."
                     : scopeIsLodge
                       ? "Save Lodge Override"
                       : "Save Default Policy"}
                 </ViewOnlyActionButton>
-                <Button variant="outline" onClick={handleCancelDefaults} disabled={savingDefaults}>
+                <Button variant="outline" onClick={handleCancelDefaults} disabled={busy}>
                   Cancel
                 </Button>
               </div>
             )}
-            {scopeIsLodge && hasOverride && !editingDefaults ? (
+            {scopeIsLodge && hasOverride && !editing ? (
               <ViewOnlyActionButton
                 canEdit={canEdit}
+                describeReason={false}
                 variant="outline"
                 onClick={() => void handleRemoveOverride()}
-                disabled={savingDefaults}
+                disabled={busy}
               >
                 Remove override (use club-wide rules)
               </ViewOnlyActionButton>

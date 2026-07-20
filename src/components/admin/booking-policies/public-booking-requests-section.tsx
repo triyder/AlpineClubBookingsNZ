@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
-import { ADMIN_FORBIDDEN_SAVE_REASON, AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action"
+import { ADMIN_FORBIDDEN_SAVE_REASON, AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { PolicyFeedback } from "./policy-feedback"
 
 interface BookingRequestSettings {
@@ -152,12 +152,15 @@ export function PublicBookingRequestsSection() {
         onClearSuccess={() => setSuccess("")}
       />
 
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view the public booking request settings but cannot
-          change them. Bookings edit access is required.
-        </AdminViewOnlyNotice>
-      ) : null}
+      {/*
+        #2142: one section-level banner carries the view-only explanation —
+        announced on arrival, in the reading order — instead of each disabled
+        (and therefore unfocusable) Save carrying its own copy.
+      */}
+      <AdminViewOnlySectionBanner canEdit={canEdit}>
+        Your admin role can view the public booking request settings but cannot
+        change them. Bookings edit access is required.
+      </AdminViewOnlySectionBanner>
 
       <Card>
         <CardHeader>
@@ -238,17 +241,19 @@ export function PublicBookingRequestsSection() {
 
           {/*
             #2142: these two Saves were already gated correctly, but as raw
-            <button> elements they could not carry the reason — a disabled
-            control with nothing said about why. `ViewOnlyActionButton` adds the
-            `title`, the `aria-describedby`, and the sr-only reason line, and
-            keeps the resolving (`undefined`) window neutral. The existing
-            `!canEdit` term is now redundant with the wrapper's own
+            <button> elements they were unthemed and could not participate in the
+            shared view-only treatment. `ViewOnlyActionButton` keeps the
+            resolving (`undefined`) window neutral, and `describeReason={false}`
+            defers the explanation to the section banner above (a disabled button
+            is out of the tab order, so its own reason was never reachable). The
+            existing `!canEdit` term is now redundant with the wrapper's own
             `canEdit !== true` check; it is kept so the gate is legible here
             rather than only inside the wrapper.
           */}
           <ViewOnlyActionButton
             type="button"
             canEdit={canEdit}
+            describeReason={false}
             onClick={handleSaveQuoteTiming}
             disabled={saving || !timingDirty || !canEdit}
           >
@@ -306,6 +311,7 @@ export function PublicBookingRequestsSection() {
           <ViewOnlyActionButton
             type="button"
             canEdit={canEdit}
+            describeReason={false}
             onClick={handleSaveAttendeeTiming}
             disabled={saving || !attendeeTimingDirty || !canEdit}
           >

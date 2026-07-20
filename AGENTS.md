@@ -94,10 +94,28 @@ before changing Next.js APIs or conventions.
   that DOES normalise and the form silently disagrees with storage. Keep the
   transport in your own `save` callback (throw the hook's `ForbiddenSaveError`
   for a 403) and keep the section's feedback rendering in the component. A
-  section whose snapshot is a LIST with per-row edits is a different shape and
-  is out of the hook's scope — such a section still follows the canonical
-  pattern by hand. `default-cancellation-policy-section` is a not-yet-adopted
-  holdover that still hand-rolls its draft/snapshot state.
+  section whose snapshot is a LIST with per-row edits is NOT out of scope, but
+  the hook belongs one level down: give the OPEN EDITOR its own instance, keyed
+  on the row being edited (`key={rowId ?? "new"}`), and leave the list itself as
+  ordinary state with its row-level actions as plain direct writes. The
+  booking-periods and minimum-night-stay sections are the reference for that
+  shape (#2142). Wherever the read endpoint SYNTHESISES defaults on a miss — or
+  the editor is creating a row that does not exist yet — carry the first-save
+  exception: count the draft as dirty so committing the defaults stays
+  reachable, but never extend that exception to a FAILED load, where the same
+  fallback values would let one click blind-write over a real stored policy.
+- Every gated section's Save must be dirty-gated, not just view-gated. Booking
+  write routes log audit entries and revalidate public content unconditionally,
+  so a pristine re-save writes an entry asserting a change that never happened
+  (#2143). Fix that at the FORM layer via the hook's `isDirty`; do not bolt an
+  ad-hoc no-op comparison onto the route.
+- Where a section renders an `AdminViewOnlySectionBanner`, its buttons pass
+  `describeReason={false}` so the view-only reason is stated once, in the
+  reading order, instead of on disabled buttons that are out of the tab order
+  and therefore unreachable by the keyboard and screen-reader users the reason
+  was for. Adopted by the five Booking Policies sections only (#2142); the rest
+  of the admin tree keeps `AdminViewOnlyNotice` plus the per-button reason,
+  which stays the default.
 - Security, payment, booking, membership lifecycle, Xero, Stripe, and
   data-integrity work requires high or xhigh reasoning effort and human review
   before merge.

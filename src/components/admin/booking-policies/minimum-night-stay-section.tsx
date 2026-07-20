@@ -11,11 +11,196 @@ import { PolicyFeedback } from "./policy-feedback"
 import { PolicyScopeSelect, usePolicyScopeLodgeName } from "./policy-scope-select"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import {
-  ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  ForbiddenSaveError,
+  useSectionEditState,
+} from "@/hooks/use-section-edit-state"
+import {
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { DAY_LABELS, type MinStayPolicy } from "./types"
+
+/**
+ * One open minimum-stay editor's draft. Like the booking-periods section, the
+ * section's own snapshot is a LIST, so the draft/snapshot pair that
+ * `useSectionEditState` owns is scoped to the ROW being edited: the form below
+ * mounts one hook instance per open editor, keyed on the row id.
+ */
+interface MinStayDraft {
+  name: string
+  startDate: string
+  endDate: string
+  triggerDays: number[]
+  minimumNights: number
+}
+
+const NEW_MIN_STAY_DRAFT: MinStayDraft = {
+  name: "",
+  startDate: "",
+  endDate: "",
+  triggerDays: [6], // default Saturday
+  minimumNights: 2,
+}
+
+function toDraft(policy: MinStayPolicy): MinStayDraft {
+  return {
+    name: policy.name,
+    startDate: policy.startDate.split("T")[0],
+    endDate: policy.endDate.split("T")[0],
+    triggerDays: [...policy.triggerDays].sort((a, b) => a - b),
+    minimumNights: policy.minimumNights,
+  }
+}
+
+function draftsEqual(a: MinStayDraft, b: MinStayDraft) {
+  return (
+    a.name === b.name &&
+    a.startDate === b.startDate &&
+    a.endDate === b.endDate &&
+    a.minimumNights === b.minimumNights &&
+    // Both sides are kept sorted ascending, so index-wise comparison is a set
+    // comparison here — ticking a day and unticking it again is not a change.
+    a.triggerDays.length === b.triggerDays.length &&
+    a.triggerDays.every((day, i) => day === b.triggerDays[i])
+  )
+}
+
+function MinStayForm({
+  policyId,
+  initial,
+  canEdit,
+  onSubmit,
+  onCancel,
+  onError,
+}: {
+  /** `null` while creating — there is no persisted row to be unchanged from. */
+  policyId: string | null
+  initial: MinStayDraft
+  canEdit: boolean | undefined
+  /** Persists the draft and closes the form. Throws to surface a failure. */
+  onSubmit: (draft: MinStayDraft) => Promise<MinStayDraft>
+  onCancel: () => void
+  onError: (message: string) => void
+}) {
+  const section = useSectionEditState<MinStayDraft>({
+    initial,
+    save: onSubmit,
+    // The section renders its own `PolicyFeedback` above the list, so the
+    // success copy is set by the parent when the form closes.
+    successMessage: "",
+    // #2143: an Edit -> Save that changed nothing must not reach the PUT, which
+    // logs and revalidates unconditionally. Creating is the first-save
+    // exception: there is no persisted row for the draft to be unchanged FROM.
+    isDirty: (draft, saved) => policyId === null || !draftsEqual(draft, saved),
+    isValid: (draft) =>
+      Boolean(draft.name) &&
+      Boolean(draft.startDate) &&
+      Boolean(draft.endDate) &&
+      draft.triggerDays.length > 0,
+  })
+
+  const { draft, saving, dirty, valid, error } = section
+
+  // The hook owns the save-failure message; this section presents every message
+  // in one place above the list, so mirror it up rather than rendering twice.
+  useEffect(() => {
+    if (error) onError(error)
+  }, [error, onError])
+
+  if (!draft) return null
+
+  function toggleTriggerDay(day: number) {
+    section.setDraft((current) => ({
+      ...current,
+      triggerDays: current.triggerDays.includes(day)
+        ? current.triggerDays.filter((d) => d !== day)
+        : [...current.triggerDays, day].sort((a, b) => a - b),
+    }))
+  }
+
+  return (
+    <Card className="border-blue-200 bg-blue-50/30">
+      <CardContent className="pt-6 space-y-4">
+        <h3 className="font-semibold">
+          {policyId ? "Edit Policy" : "New Minimum Stay Policy"}
+        </h3>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="msName">Policy Name</Label>
+            <Input
+              id="msName"
+              value={draft.name}
+              onChange={(e) => section.setDraft({ name: e.target.value })}
+              placeholder="e.g. Winter Saturday Minimum Stay"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="msMinNights">Minimum Nights</Label>
+            <Input
+              id="msMinNights"
+              type="number"
+              min="2"
+              value={draft.minimumNights}
+              onChange={(e) =>
+                section.setDraft({ minimumNights: parseInt(e.target.value) || 2 })
+              }
+              className="w-24"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="msStart">Start Date</Label>
+            <Input
+              id="msStart"
+              type="date"
+              value={draft.startDate}
+              onChange={(e) => section.setDraft({ startDate: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="msEnd">End Date</Label>
+            <Input
+              id="msEnd"
+              type="date"
+              value={draft.endDate}
+              onChange={(e) => section.setDraft({ endDate: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label className="text-sm font-semibold">Trigger Days</Label>
+          <p className="text-xs text-muted-foreground">
+            The minimum stay applies when a booking includes any of these days within the date range.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            {DAY_LABELS.map((label, i) => (
+              <label key={i} className="flex items-center gap-1.5 text-sm">
+                <Checkbox
+                  checked={draft.triggerDays.includes(i)}
+                  onCheckedChange={() => toggleTriggerDay(i)}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex space-x-3">
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            describeReason={false}
+            onClick={() => void section.save()}
+            disabled={saving || !valid || !dirty}
+          >
+            {saving ? "Saving..." : policyId ? "Update Policy" : "Create Policy"}
+          </ViewOnlyActionButton>
+          <Button variant="outline" onClick={onCancel}>Cancel</Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 export function MinimumNightStaySection() {
   // Booking-policy config gates on the bookings area (its write route enforces
@@ -30,12 +215,7 @@ export function MinimumNightStaySection() {
   const [loadingMinStay, setLoadingMinStay] = useState(true)
   const [showMinStayForm, setShowMinStayForm] = useState(false)
   const [editingMinStayId, setEditingMinStayId] = useState<string | null>(null)
-  const [msName, setMsName] = useState("")
-  const [msStart, setMsStart] = useState("")
-  const [msEnd, setMsEnd] = useState("")
-  const [msTriggerDays, setMsTriggerDays] = useState<number[]>([6]) // default Saturday
-  const [msMinNights, setMsMinNights] = useState(2)
-  const [savingMinStay, setSavingMinStay] = useState(false)
+  const [editingDraft, setEditingDraft] = useState<MinStayDraft>(NEW_MIN_STAY_DRAFT)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
@@ -67,34 +247,30 @@ export function MinimumNightStaySection() {
   function resetMinStayForm() {
     setShowMinStayForm(false)
     setEditingMinStayId(null)
-    setMsName("")
-    setMsStart("")
-    setMsEnd("")
-    setMsTriggerDays([6])
-    setMsMinNights(2)
+    setEditingDraft(NEW_MIN_STAY_DRAFT)
+  }
+
+  function startAddMinStay() {
+    setEditingMinStayId(null)
+    setEditingDraft(NEW_MIN_STAY_DRAFT)
+    setShowMinStayForm(true)
   }
 
   function startEditMinStay(policy: MinStayPolicy) {
     setEditingMinStayId(policy.id)
-    setMsName(policy.name)
-    setMsStart(policy.startDate.split("T")[0])
-    setMsEnd(policy.endDate.split("T")[0])
-    setMsTriggerDays(policy.triggerDays)
-    setMsMinNights(policy.minimumNights)
+    setEditingDraft(toDraft(policy))
     setShowMinStayForm(true)
   }
 
-  function toggleTriggerDay(day: number) {
-    setMsTriggerDays((prev) =>
-      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort()
-    )
-  }
-
-  async function handleSaveMinStay() {
-    setSavingMinStay(true)
-    setError("")
-    setSuccess("")
-    try {
+  /**
+   * The open editor's transport. Throws so `useSectionEditState` surfaces the
+   * message; on success it closes the form and refreshes the list, which is why
+   * the returned value (the hook's re-seed) is never actually rendered again.
+   */
+  const submitMinStay = useCallback(
+    async (draft: MinStayDraft): Promise<MinStayDraft> => {
+      setError("")
+      setSuccess("")
       const url = editingMinStayId
         ? `/api/admin/booking-policies/minimum-stay/${editingMinStayId}`
         : "/api/admin/booking-policies/minimum-stay"
@@ -104,32 +280,38 @@ export function MinimumNightStaySection() {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: msName,
-          startDate: msStart,
-          endDate: msEnd,
-          triggerDays: msTriggerDays,
-          minimumNights: msMinNights,
+          name: draft.name,
+          startDate: draft.startDate,
+          endDate: draft.endDate,
+          triggerDays: draft.triggerDays,
+          minimumNights: draft.minimumNights,
           // Partition is set at creation; edits keep the row's partition.
           ...(editingMinStayId ? {} : scopeLodgeId ? { lodgeId: scopeLodgeId } : {}),
         }),
       })
       if (!res.ok) {
-        if (res.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON)
-          return
-        }
+        if (res.status === 403) throw new ForbiddenSaveError()
         const data = await res.json()
         throw new Error(data.error || "Failed to save")
       }
+      const saved = await res.json()
+      // Parse the SERVER row into the re-seed value BEFORE closing the form, so
+      // a malformed response surfaces as a save error rather than after a
+      // success message has already been shown.
+      const reseeded = toDraft({
+        ...saved,
+        triggerDays: saved.triggerDays ?? draft.triggerDays,
+      })
+      const wasEditing = editingMinStayId !== null
       resetMinStayForm()
-      fetchMinStay()
-      setSuccess(editingMinStayId ? "Minimum stay policy updated" : "Minimum stay policy created")
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
-    } finally {
-      setSavingMinStay(false)
-    }
-  }
+      void fetchMinStay()
+      setSuccess(
+        wasEditing ? "Minimum stay policy updated" : "Minimum stay policy created",
+      )
+      return reseeded
+    },
+    [editingMinStayId, scopeLodgeId, fetchMinStay],
+  )
 
   async function handleDeleteMinStay(id: string) {
     if (!confirm("Deactivate this minimum stay policy?")) return
@@ -170,6 +352,16 @@ export function MinimumNightStaySection() {
         onClearSuccess={() => setSuccess("")}
       />
 
+      {/*
+        #2142: the view-only explanation lives here, once, at the top of the
+        section — announced on arrival and in the reading order — instead of on
+        each disabled (and therefore unfocusable) button below.
+      */}
+      <AdminViewOnlySectionBanner canEdit={canEdit}>
+        Your admin role can view minimum-stay policies but cannot change them.
+        Bookings edit access is required.
+      </AdminViewOnlySectionBanner>
+
       <PolicyScopeSelect
         value={scopeLodgeId}
         onChange={setScopeLodgeId}
@@ -199,96 +391,22 @@ export function MinimumNightStaySection() {
               </CardDescription>
             </div>
             {!showMinStayForm && (
-              <ViewOnlyActionButton canEdit={canEdit} onClick={() => setShowMinStayForm(true)}>Add Policy</ViewOnlyActionButton>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={startAddMinStay}>Add Policy</ViewOnlyActionButton>
             )}
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {!canEdit && (
-            <AdminViewOnlyNotice canEdit={canEdit}>
-              Your admin role can view minimum-stay policies but cannot change
-              them. Bookings edit access is required.
-            </AdminViewOnlyNotice>
-          )}
-          {/* Min Stay Form */}
+          {/* Min Stay Form — one `useSectionEditState` instance per open editor. */}
           {showMinStayForm && (
-            <Card className="border-blue-200 bg-blue-50/30">
-              <CardContent className="pt-6 space-y-4">
-                <h3 className="font-semibold">
-                  {editingMinStayId ? "Edit Policy" : "New Minimum Stay Policy"}
-                </h3>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="msName">Policy Name</Label>
-                    <Input
-                      id="msName"
-                      value={msName}
-                      onChange={(e) => setMsName(e.target.value)}
-                      placeholder="e.g. Winter Saturday Minimum Stay"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="msMinNights">Minimum Nights</Label>
-                    <Input
-                      id="msMinNights"
-                      type="number"
-                      min="2"
-                      value={msMinNights}
-                      onChange={(e) => setMsMinNights(parseInt(e.target.value) || 2)}
-                      className="w-24"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="msStart">Start Date</Label>
-                    <Input
-                      id="msStart"
-                      type="date"
-                      value={msStart}
-                      onChange={(e) => setMsStart(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="msEnd">End Date</Label>
-                    <Input
-                      id="msEnd"
-                      type="date"
-                      value={msEnd}
-                      onChange={(e) => setMsEnd(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Trigger Days</Label>
-                  <p className="text-xs text-muted-foreground">
-                    The minimum stay applies when a booking includes any of these days within the date range.
-                  </p>
-                  <div className="flex flex-wrap gap-3">
-                    {DAY_LABELS.map((label, i) => (
-                      <label key={i} className="flex items-center gap-1.5 text-sm">
-                        <Checkbox
-                          checked={msTriggerDays.includes(i)}
-                          onCheckedChange={() => toggleTriggerDay(i)}
-                        />
-                        {label}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex space-x-3">
-                  <ViewOnlyActionButton
-                    canEdit={canEdit}
-                    onClick={handleSaveMinStay}
-                    disabled={savingMinStay || !msName || !msStart || !msEnd || msTriggerDays.length === 0}
-                  >
-                    {savingMinStay ? "Saving..." : editingMinStayId ? "Update Policy" : "Create Policy"}
-                  </ViewOnlyActionButton>
-                  <Button variant="outline" onClick={resetMinStayForm}>Cancel</Button>
-                </div>
-              </CardContent>
-            </Card>
+            <MinStayForm
+              key={editingMinStayId ?? "new"}
+              policyId={editingMinStayId}
+              initial={editingDraft}
+              canEdit={canEdit}
+              onSubmit={submitMinStay}
+              onCancel={resetMinStayForm}
+              onError={setError}
+            />
           )}
 
           {/* Min Stay List */}
@@ -315,14 +433,14 @@ export function MinimumNightStaySection() {
                         </p>
                       </div>
                       <div className="flex space-x-2">
-                        <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => handleToggleMinStay(policy)}>
+                        <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleToggleMinStay(policy)}>
                           {policy.active ? "Deactivate" : "Activate"}
                         </ViewOnlyActionButton>
-                        <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => startEditMinStay(policy)}>
+                        <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => startEditMinStay(policy)}>
                           Edit
                         </ViewOnlyActionButton>
                         {policy.active && (
-                          <ViewOnlyActionButton canEdit={canEdit} variant="destructive" size="sm" onClick={() => handleDeleteMinStay(policy.id)}>
+                          <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" onClick={() => handleDeleteMinStay(policy.id)}>
                             Deactivate
                           </ViewOnlyActionButton>
                         )}

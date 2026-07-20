@@ -13,11 +13,29 @@ interface ViewOnlyActionButtonProps extends ButtonProps {
   // know the admin is view-only (`canEdit === false`).
   canEdit: boolean | undefined;
   readOnlyReason?: string;
+  /**
+   * Whether THIS button explains its own view-only state (#2142 owner
+   * decision). Default `true` — the historical behaviour every admin surface
+   * outside Booking Policies still relies on: a `title`, an `aria-describedby`,
+   * and an sr-only line carrying {@link readOnlyReason}.
+   *
+   * Pass `false` where the surrounding section already renders an
+   * {@link AdminViewOnlySectionBanner}. A `disabled` button is out of the tab
+   * order, so neither the `title` nor the `aria-describedby` it points at is
+   * ever reachable by keyboard or announced by a screen reader — the reason was
+   * attached to the one element that can never surface it. The banner says it
+   * once, in the reading order, in a live region; repeating it per button then
+   * only adds noise for the pointer users who could read it. Gating stays
+   * exactly the same either way: this prop changes where the EXPLANATION lives,
+   * never whether the button is disabled.
+   */
+  describeReason?: boolean;
 }
 
 export function ViewOnlyActionButton({
   canEdit,
   readOnlyReason = ADMIN_VIEW_ONLY_ACTION_REASON,
+  describeReason = true,
   disabled,
   title,
   "aria-describedby": ariaDescribedBy,
@@ -30,18 +48,20 @@ export function ViewOnlyActionButton({
   // …but the button stays disabled until we positively know editing is allowed,
   // so the resolving window (undefined) is a neutral disabled state.
   const isDisabled = canEdit !== true || disabled;
+  // Opted out => the caller's own title/aria-describedby survive untouched.
+  const annotate = isReadOnly && describeReason;
 
   return (
     <>
       <Button
         {...props}
         disabled={isDisabled}
-        title={isReadOnly ? readOnlyReason : title}
-        aria-describedby={isReadOnly ? reasonId : ariaDescribedBy}
+        title={annotate ? readOnlyReason : title}
+        aria-describedby={annotate ? reasonId : ariaDescribedBy}
       >
         {children}
       </Button>
-      {isReadOnly ? (
+      {annotate ? (
         <span id={reasonId} className="sr-only">
           {readOnlyReason}
         </span>
@@ -75,6 +95,66 @@ export function AdminForbiddenSaveNotice({
     >
       {children}
     </p>
+  );
+}
+
+/**
+ * Headline for the section-level view-only banner (#2142 owner decision).
+ * Deliberately addressed to the person ("You have…") rather than to their role,
+ * because it is read on arrival at the section, not hung off a control.
+ */
+export const ADMIN_VIEW_ONLY_SECTION_HEADING =
+  "You have view-only access to this area";
+
+/**
+ * Section-level view-only banner (#2142 owner decision).
+ *
+ * The per-button affordance it replaces was unreachable where it mattered most:
+ * `ViewOnlyActionButton` disables the button, and a disabled button is out of
+ * the tab order, so a keyboard or screen-reader user never lands on it and
+ * never hears the `title` / `aria-describedby` reason. Saying it once at the
+ * top of the section fixes both halves of that:
+ *
+ *  - it sits in the normal reading order, ahead of the controls it explains, so
+ *    it is met before the dead buttons rather than after; and
+ *  - `role="status"` (an implicit polite live region) announces it when it
+ *    appears, which is the real arrival moment here — `canEdit` is tri-state
+ *    and resolves from `undefined` AFTER hydration, so the banner is always a
+ *    dynamic insertion, never part of the first paint.
+ *
+ * Same tri-state contract as {@link AdminViewOnlyNotice}: renders only once we
+ * positively know the admin is view-only, so it never flashes while the session
+ * is still resolving. `canEdit` is required for the same reason — a default
+ * would fire on an explicitly-passed `undefined`.
+ *
+ * Adopters pass the section-specific detail as `children`; the shared heading
+ * is what makes it recognisable as the same banner from section to section.
+ * Currently adopted by the five Booking Policies sections only — the rest of
+ * the admin tree still uses {@link AdminViewOnlyNotice} plus the per-button
+ * reason, and rolling this wider is tracked separately.
+ */
+export function AdminViewOnlySectionBanner({
+  className,
+  children,
+  canEdit,
+}: {
+  className?: string;
+  children?: ReactNode;
+  canEdit: boolean | undefined;
+}) {
+  if (canEdit !== false) return null;
+
+  return (
+    <div
+      role="status"
+      className={cn(
+        "rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700",
+        className,
+      )}
+    >
+      <span className="font-medium">{ADMIN_VIEW_ONLY_SECTION_HEADING}.</span>
+      {children ? <span> {children}</span> : null}
+    </div>
   );
 }
 
