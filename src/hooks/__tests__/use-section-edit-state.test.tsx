@@ -242,6 +242,38 @@ describe("useSectionEditState", () => {
       expect(result.current.saved).toEqual({ minGroupSize: 8, enabled: true });
     });
 
+    it("loads exactly once across re-renders with a fresh inline `load`", async () => {
+      // Every adopter passes a NON-memoised inline arrow for `load`, so its
+      // identity changes on every render. The hook holds callbacks in a
+      // latest-ref precisely so the mount effect can depend on the stable
+      // `runLoad` instead. Widening those deps back to `options.load` would
+      // refetch on every render — a fetch loop on `/admin/booking-policies` and
+      // `/admin/security` — which this rerender is here to catch.
+      const load = vi.fn(async (_signal: AbortSignal) => ({
+        minGroupSize: 8,
+        enabled: true,
+      }));
+      const { result, rerender } = renderHook(() =>
+        useSectionEditState<Draft>({
+          // A brand-new arrow identity on every render, as the cards do.
+          load: (signal) => load(signal),
+          save: async (draft) => draft,
+          successMessage: "Saved",
+        }),
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(load).toHaveBeenCalledTimes(1);
+
+      rerender();
+      rerender();
+      // A state change re-renders too, and must not re-trigger the load.
+      act(() => result.current.startEditing());
+
+      await waitFor(() => expect(result.current.editing).toBe(true));
+      expect(load).toHaveBeenCalledTimes(1);
+    });
+
     it("keeps the seeded draft visible when the load fails", async () => {
       const { result } = renderSection({
         load: vi.fn(async () => {
