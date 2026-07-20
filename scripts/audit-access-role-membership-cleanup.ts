@@ -225,12 +225,13 @@ export function evaluateAuditSnapshots(
     17,
     asCount(after.metrics.membershipTypeAgeTierRows),
   );
-  addCheck(
-    checks,
-    "Managed Xero age-tier rules backfilled",
-    asCount(before.metrics.managedAgeTierSettings),
-    asCount(after.xeroRulesByMode.MANAGED),
-  );
+  // The "Managed Xero age-tier rules backfilled" check was REMOVED by #2130.
+  // Its expected value came from AgeTierSetting."xeroContactGroupId", the very
+  // column the follow-on contract migration drops — and that column is the
+  // migration's own input, so the check cannot be re-sourced from
+  // XeroContactGroupRule without losing what it verified (the "before" snapshot
+  // predates that table). The ACCEPTED half below is unaffected: it reads the
+  // separate AgeTierXeroAcceptedContactGroup fixture.
   addCheck(
     checks,
     "Accepted Xero age-tier rules backfilled",
@@ -396,6 +397,12 @@ function buildRepresentativeSeedSql(): string {
       "financialYearEndMonthOverride" = 3,
       "updatedAt" = CURRENT_TIMESTAMP;
 
+    -- #2130 runtime-prep: this fixture no longer seeds the legacy
+    -- "xeroContactGroupId"/"xeroContactGroupName" columns, which the next
+    -- release drops. They were the SOURCE the 20260629160000 migration read to
+    -- backfill MANAGED "XeroContactGroupRule" rows, so the paired
+    -- "Managed Xero age-tier rules backfilled" check went with them (see
+    -- evaluateAuditSnapshots) — the precondition can no longer be expressed.
     INSERT INTO "AgeTierSetting" (
       "id",
       "tier",
@@ -404,8 +411,6 @@ function buildRepresentativeSeedSql(): string {
       "label",
       "subscriptionRequiredForBooking",
       "familyGroupRequestCreateMemberAllowed",
-      "xeroContactGroupId",
-      "xeroContactGroupName",
       "sortOrder",
       "updatedAt"
     ) VALUES
@@ -417,8 +422,6 @@ function buildRepresentativeSeedSql(): string {
         'Infant (under 5)',
         false,
         true,
-        NULL,
-        NULL,
         0,
         CURRENT_TIMESTAMP
       ),
@@ -430,8 +433,6 @@ function buildRepresentativeSeedSql(): string {
         'Child (5-9)',
         false,
         true,
-        'xero-group-child-managed',
-        'Children Managed',
         1,
         CURRENT_TIMESTAMP
       ),
@@ -443,8 +444,6 @@ function buildRepresentativeSeedSql(): string {
         'Youth (10-17)',
         true,
         false,
-        NULL,
-        NULL,
         2,
         CURRENT_TIMESTAMP
       ),
@@ -456,8 +455,6 @@ function buildRepresentativeSeedSql(): string {
         'Adult (18+)',
         true,
         false,
-        'xero-group-adult-managed',
-        'Adults Managed',
         3,
         CURRENT_TIMESTAMP
       )
@@ -468,8 +465,6 @@ function buildRepresentativeSeedSql(): string {
       "label" = EXCLUDED."label",
       "subscriptionRequiredForBooking" = EXCLUDED."subscriptionRequiredForBooking",
       "familyGroupRequestCreateMemberAllowed" = EXCLUDED."familyGroupRequestCreateMemberAllowed",
-      "xeroContactGroupId" = EXCLUDED."xeroContactGroupId",
-      "xeroContactGroupName" = EXCLUDED."xeroContactGroupName",
       "sortOrder" = EXCLUDED."sortOrder",
       "updatedAt" = CURRENT_TIMESTAMP;
 
@@ -871,10 +866,9 @@ function collectSnapshot(databaseUrl: string): AuditSnapshot {
             AND membership_type."key" = 'NON_MEMBER';
         `,
       ),
-      managedAgeTierSettings: queryNumber(
-        databaseUrl,
-        'SELECT COUNT(*) FROM "AgeTierSetting" WHERE "xeroContactGroupId" IS NOT NULL;',
-      ),
+      // managedAgeTierSettings was dropped by #2130 along with its check: it
+      // counted AgeTierSetting."xeroContactGroupId", a column the follow-on
+      // contract migration removes.
       acceptedAgeTierGroups: queryNumber(
         databaseUrl,
         'SELECT COUNT(*) FROM "AgeTierXeroAcceptedContactGroup";',

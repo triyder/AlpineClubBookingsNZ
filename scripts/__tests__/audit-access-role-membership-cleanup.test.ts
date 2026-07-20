@@ -88,7 +88,9 @@ describe("evaluateAuditSnapshots", () => {
       metrics: {
         acceptedAgeTierGroups: 2,
         familyGroupMemberRows: 2,
-        managedAgeTierSettings: 2,
+        // managedAgeTierSettings removed with its check (#2130) — it counted
+        // AgeTierSetting."xeroContactGroupId", dropped by the follow-on
+        // contract migration.
         nonMemberFullAssignments: 1,
         schoolFullAssignments: 2,
         schoolLoginMembers: 1,
