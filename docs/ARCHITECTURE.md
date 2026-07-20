@@ -123,6 +123,16 @@ enforce this:
   still carries raw slate in many files and would have to be migrated before the
   check could be widened.
 
+The dark-mode colored-callout pass in `globals.css` (#1248) re-tints literal
+Tailwind `bg-{family}-50/100/200`, `text-{family}-600..950`, and
+`border-{family}-100..300` inside `app-theme-scope`. It is a UNIFORM,
+palette-wide block covering every Tailwind family, not a teal-specific shim, so
+its teal rows are kept even though the migrations above left almost no teal
+literals behind: dropping them alone would make the block asymmetric for no
+benefit. The one remaining teal literal, the calendar's `bg-teal-500`, is
+outside the pass's range (it only remaps `-50/-100/-200` fills) and does not
+depend on it.
+
 Chart colours are a documented carve-out. `FINANCE_MIX_COLORS` in
 `src/components/finance/charts/finance-chart-theme.ts` stays a literal hex
 palette (#1801, re-affirmed in #2137): the values feed Recharts `fill`/`stroke`
